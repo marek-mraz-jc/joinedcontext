@@ -14,16 +14,13 @@ import { constraintInWords } from "../policies/constraintWords";
 import type { ConstraintName } from "../policies/constraintWords";
 import { constraintText } from "../../api/access";
 import type { GrantDocument, GrantEntry } from "../../api/access";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import {
   Badge,
+  EmptyState,
   Field,
   Select,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
   Term,
 } from "../../components/ui";
 
@@ -186,6 +183,13 @@ function useLabels(slug: string, language: string): (type: string) => Record<str
   }, [model.data, language]);
 }
 
+interface GrantRow {
+  entry: GrantEntry;
+  key: string;
+  /** How many grants the same type and selector holds. */
+  grants: number;
+}
+
 function GrantTable({
   project,
   slug,
@@ -205,62 +209,87 @@ function GrantTable({
 }): JSX.Element {
   const { t, i18n } = useTranslation();
   const labelsOf = useLabels(slug, i18n.language);
+  const rows: GrantRow[] = byType(entries).flatMap((group) =>
+    group.map((entry) => ({ entry, key: `${group[0].resource?.type ?? "?"}-${entries.indexOf(entry)}`, grants: group.length })),
+  );
+  const operationsText = (actions: string[]) => {
+    if (actions.length === 0) return t("access.matrix.none");
+    const { areas, other } = operationAreas(actions);
+    return [...areas.map(({ area }) => t(`access.words.area.${area}`)), ...other].join(", ");
+  };
+  const columns: DataColumn<GrantRow>[] = [
+    {
+      key: "type",
+      label: t("access.matrix.type"),
+      heading: <Term name="entityType">{t("access.matrix.type")}</Term>,
+      text: ({ entry }) => entry.resource?.type ?? "?",
+      cell: ({ entry, grants }) => (
+        <>
+          {entry.resource?.type ?? "?"}
+          {entry.resource?.idPatterns?.length ? (
+            <div className="font-mono text-caption font-normal text-fg-muted">{entry.resource.idPatterns.join(", ")}</div>
+          ) : null}
+          {/* Two grants on one type are two Policies or rules, each its own filters. */}
+          {grants > 1 ? (
+            <div className="mt-1">
+              <Badge>{t("access.matrix.grants", { count: grants })}</Badge>
+            </div>
+          ) : null}
+        </>
+      ),
+    },
+    {
+      key: "read",
+      label: t("access.matrix.read"),
+      text: ({ entry }) => operationsText(readsOf(entry.actions ?? [])),
+      cell: ({ entry }) => <Operations actions={readsOf(entry.actions ?? [])} />,
+    },
+    {
+      key: "write",
+      label: t("access.matrix.write"),
+      text: ({ entry }) => operationsText(writesOf(entry.actions ?? [])),
+      cell: ({ entry }) => <Operations actions={writesOf(entry.actions ?? [])} tone="warning" />,
+    },
+    {
+      key: "attributes",
+      label: t("access.matrix.attributes"),
+      text: ({ entry }) =>
+        entry.attributes === "*" || entry.attributes === undefined
+          ? t("access.matrix.allAttributes")
+          : entry.attributes.map((attribute) => labelsOf(entry.resource?.type ?? "")[attribute] ?? attribute).join(", "),
+      cell: ({ entry }) => <Attributes attributes={entry.attributes} labels={labelsOf(entry.resource?.type ?? "")} />,
+    },
+    {
+      key: "residual",
+      label: t("access.matrix.residual"),
+      text: ({ entry }) => {
+        const held = CONSTRAINT_NAMES.flatMap((name) => {
+          const value = entry.constraints?.[name];
+          return value ? [`${name}=${constraintText(value)}`] : [];
+        });
+        return held.length === 0 ? t("access.matrix.unconstrained") : held.join("; ");
+      },
+      cell: ({ entry }) => <ConstraintList entry={entry} labels={labelsOf(entry.resource?.type ?? "")} />,
+    },
+    {
+      key: "source",
+      label: t("access.matrix.source"),
+      text: ({ entry }) => sourcesOf(entry, policies, space, effect).join(", ") || t("access.matrix.noSource"),
+      cell: ({ entry }) => <Sources project={project} names={sourcesOf(entry, policies, space, effect)} />,
+    },
+  ];
   return (
     // A card per grant below 640 px: six columns of chips were cut off at 400 px.
-    <Table stack caption={caption}>
-      <TableHead>
-        <TableHeaderCell>
-          <Term name="entityType">{t("access.matrix.type")}</Term>
-        </TableHeaderCell>
-        <TableHeaderCell>{t("access.matrix.read")}</TableHeaderCell>
-        <TableHeaderCell>{t("access.matrix.write")}</TableHeaderCell>
-        <TableHeaderCell>{t("access.matrix.attributes")}</TableHeaderCell>
-        <TableHeaderCell>{t("access.matrix.residual")}</TableHeaderCell>
-        <TableHeaderCell>{t("access.matrix.source")}</TableHeaderCell>
-      </TableHead>
-      <TableBody>
-        {byType(entries).flatMap((group) => {
-          const first = group[0];
-          const labels = labelsOf(first.resource?.type ?? "");
-          return group.map((entry, index) => {
-            const actions = entry.actions ?? [];
-            return (
-              <TableRow key={`${first.resource?.type ?? "?"}-${entries.indexOf(entry)}`}>
-                {index === 0 ? (
-                  <th scope="row" rowSpan={group.length} className="px-4 py-3 text-left align-top font-medium text-fg">
-                    {first.resource?.type ?? "?"}
-                    {first.resource?.idPatterns?.length ? (
-                      <div className="font-mono text-caption font-normal text-fg-muted">{first.resource.idPatterns.join(", ")}</div>
-                    ) : null}
-                    {/* Two grants on one type are two Policies or rules, each its own filters. */}
-                    {group.length > 1 ? (
-                      <div className="mt-1">
-                        <Badge>{t("access.matrix.grants", { count: group.length })}</Badge>
-                      </div>
-                    ) : null}
-                  </th>
-                ) : null}
-                <TableCell data-label={t("access.matrix.read")}>
-                  <Operations actions={readsOf(actions)} />
-                </TableCell>
-                <TableCell data-label={t("access.matrix.write")}>
-                  <Operations actions={writesOf(actions)} tone="warning" />
-                </TableCell>
-                <TableCell data-label={t("access.matrix.attributes")}>
-                  <Attributes attributes={entry.attributes} labels={labels} />
-                </TableCell>
-                <TableCell data-label={t("access.matrix.residual")}>
-                  <ConstraintList entry={entry} labels={labels} />
-                </TableCell>
-                <TableCell data-label={t("access.matrix.source")}>
-                  <Sources project={project} names={sourcesOf(entry, policies, space, effect)} />
-                </TableCell>
-              </TableRow>
-            );
-          });
-        })}
-      </TableBody>
-    </Table>
+    <AdminGrid
+      stack
+      storageKey={`${project}:access-${effect}`}
+      query={{ isPending: false, isError: false, error: null, refetch: () => undefined }}
+      caption={caption}
+      rows={rows}
+      columns={columns}
+      rowKey={(row) => row.key}
+      empty={<EmptyState bare title={t("access.matrix.empty")} description={t("access.matrix.emptyHint")} />}
+    />
   );
 }
 

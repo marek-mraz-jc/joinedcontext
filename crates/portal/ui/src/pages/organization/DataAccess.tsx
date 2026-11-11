@@ -11,14 +11,9 @@ import {
   EmptyState,
   PageFailed,
   PageLoading,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-  TableRowHeaderCell,
 } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import { AccessBadge } from "../catalogue/ReadableDatasets";
 import { AskAdmins } from "./AskAdmins";
 
@@ -198,6 +193,18 @@ function AllEndpoints(): JSX.Element {
   );
 }
 
+/** The grid's data is already in: the panel around it drew the wait and the failure. */
+const LOADED = { isPending: false, isError: false, error: null, refetch: () => undefined };
+
+/** What a cell says as text, for the grid's search, sort and filter. */
+function cellText(cell: AccessCell | undefined, t: (key: string) => string): string {
+  if (!cell) return "";
+  if (cell.unanswered) return t("dataAccess.cellUnanswered");
+  if (!cell.granted) return t("dataAccess.notGranted");
+  if (cell.throughOrganization) return t("dataAccess.throughEveryone");
+  return [t("dataAccess.reads"), ...cell.rules.map((rule) => `${rule.policy} ${rule.types.join(" ")}`)].join(" ");
+}
+
 export function MatrixTable({ data }: { data: DataAccess }): JSX.Element {
   const { t } = useTranslation();
   if (data.rows.length === 0) {
@@ -211,34 +218,36 @@ export function MatrixTable({ data }: { data: DataAccess }): JSX.Element {
       />
     );
   }
+  const columns: DataColumn<AccessRow>[] = [
+    {
+      key: "endpoint",
+      label: t("dataAccess.endpoint"),
+      text: (row) => `${row.title ?? row.name} ${row.project}`,
+      cell: (row) => <EndpointName row={row} />,
+    },
+    ...data.columns.map((column, index) => ({
+      key: `column-${column.group ?? column.kind}`,
+      label: columnLabel(column, t),
+      text: (row: AccessRow) => cellText(row.cells[index], t),
+      cell: (row: AccessRow) => {
+        const cell = row.cells[index];
+        return cell ? <Cell project={row.project} cell={cell} /> : null;
+      },
+    })),
+  ];
   return (
     <>
       <Unanswered count={data.unanswered} />
-      <Table caption={t("dataAccess.title")} stack>
-        <TableHead>
-          <TableHeaderCell>{t("dataAccess.endpoint")}</TableHeaderCell>
-          {data.columns.map((column) => (
-            <TableHeaderCell key={column.group ?? column.kind}>{columnLabel(column, t)}</TableHeaderCell>
-          ))}
-        </TableHead>
-        <TableBody>
-          {data.rows.map((row) => (
-            <TableRow key={`${row.project}/${row.name}`}>
-              <TableRowHeaderCell>
-                <EndpointName row={row} />
-              </TableRowHeaderCell>
-              {row.cells.map((cell, index) => {
-                const column = data.columns[index];
-                return (
-                  <TableCell key={column?.group ?? column?.kind ?? index} data-label={column ? columnLabel(column, t) : ""}>
-                    <Cell project={row.project} cell={cell} />
-                  </TableCell>
-                );
-              })}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+      <AdminGrid<AccessRow>
+        query={LOADED}
+        caption={t("dataAccess.title")}
+        storageKey="organization:data-access"
+        rows={data.rows}
+        rowKey={(row) => `${row.project}/${row.name}`}
+        columns={columns}
+        stack
+        empty={<EmptyState bare title={t("dataAccess.empty.title")} description={t("dataAccess.empty.description")} />}
+      />
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-3 gap-y-2 text-body text-fg-muted">
         <dt>
           <Badge tone="neutral" className="w-fit">

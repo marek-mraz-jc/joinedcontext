@@ -342,7 +342,8 @@ export function DataGrid<T>({
       </div>
       {loading ? (
         <p role="status" className="jc-grid-sr-only">{labels.loading}</p>
-      ) : page.total === 0 ? null : (
+      ) : page.total === 0 || (pages === 1 && pageSizes.length === 1) ? null : (
+        // One fixed page size and one page: nothing to step or choose (a list the server pages brings its own pager).
         <div className="jc-grid-pager">
           <button type="button" className="jc-grid-pager-step" disabled={current <= 1} onClick={() => setQuery({ ...query, offset: (current - 2) * query.pageSize })}>
             <span aria-hidden="true">‹</span> <span className="jc-grid-pager-word">{labels.previous}</span>

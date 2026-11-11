@@ -174,13 +174,15 @@ describe("data sources view", () => {
 
     // The name is in two columns, its own and the credentials, so the cells are read in order.
     const row = (await screen.findByText("City MQTT broker")).closest("tr") as HTMLElement;
+    // The name is the row header of the grid; the other columns are its cells.
+    const name = within(row).getByRole("rowheader");
     const cells = within(row).getAllByRole("cell");
-    expect(cells[0]).toHaveTextContent("mqtt-mesto");
+    expect(name).toHaveTextContent("mqtt-mesto");
     // The title is the link and reads first; the id is the line under it.
-    expect(within(cells[0]).getByRole("link")).toHaveTextContent("City MQTT broker");
-    expect(cells[1]).toHaveTextContent(en.datasources.type.mqtt);
-    expect(cells[2]).toHaveTextContent("mqtt.banskabystrica.sk:8883");
-    expect(cells[3]).toHaveTextContent("mqtt-mesto");
+    expect(within(name).getByRole("link")).toHaveTextContent("City MQTT broker");
+    expect(cells[0]).toHaveTextContent(en.datasources.type.mqtt);
+    expect(cells[1]).toHaveTextContent("mqtt.banskabystrica.sk:8883");
+    expect(cells[2]).toHaveTextContent("mqtt-mesto");
     // A card per source on a phone: the credentials and the row's menu were past the edge.
     expectStacked(row.closest("table") as HTMLElement, [
       en.datasources.field.type,

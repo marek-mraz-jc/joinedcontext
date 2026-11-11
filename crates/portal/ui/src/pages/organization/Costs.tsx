@@ -6,23 +6,22 @@ import { api, unwrap, reasonOf } from "../../api/client";
 import { ORG_NAMESPACE } from "../../api/manifest";
 import { administersOrganization, usePermissions } from "../../api/permissions";
 import type { components } from "../../api/schema";
-import {
-  Alert,
-  Button,
-  Field,
-  Input,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-  TableSkeleton,
-} from "../../components/ui";
-import { PageFailed } from "../../components/ui/PageState";
+import { Alert, Button, EmptyState, Field, Input } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import { download } from "../models/diagramExport";
 
 type ProjectCost = components["schemas"]["ProjectCost"];
+
+/** One line of the table: a project, or the platform's own share (no project, no AI). */
+interface CostRow {
+  key: string;
+  project: ProjectCost | null;
+  node: number;
+  storage: number;
+  ai: number | null;
+  total: number;
+}
 
 /** The month before `now`'s as `2026-09`: the last one billed whole, which the page opens on. */
 export function lastMonth(now: Date): string {
@@ -72,6 +71,83 @@ export function Costs(): JSX.Element {
   const partial = (data?.projects ?? []).some(
     (p) => p.spaces.some((s) => s.reason) || p.assistants.some((a) => a.reason),
   );
+
+  const rows: CostRow[] = data
+    ? [
+        ...data.projects.map((p) => ({
+          key: `p-${p.project}`,
+          project: p,
+          node: p.node,
+          storage: p.storage,
+          ai: p.ai,
+          total: p.total,
+        })),
+        ...(data.projects.length === 0
+          ? []
+          : [
+              {
+                key: "platform",
+                project: null,
+                node: data.platform.node,
+                storage: data.platform.storage,
+                ai: null,
+                total: data.platform.total,
+              },
+            ]),
+      ]
+    : [];
+  const amount = (value: number | null) => (value === null ? "" : String(value));
+  const columns: DataColumn<CostRow>[] = [
+    {
+      key: "project",
+      label: t("organization.costs.project"),
+      text: (row) => (row.project ? row.project.project : t("organization.costs.platform")),
+      cell: (row) =>
+        row.project ? (
+          <>
+            <span className="font-mono">{row.project.project}</span>
+            {details(row.project)}
+          </>
+        ) : (
+          <>
+            {t("organization.costs.platform")}
+            <span className="block text-caption text-fg-muted">{t("organization.costs.platformHint")}</span>
+          </>
+        ),
+    },
+    {
+      key: "node",
+      label: t("organization.costs.node"),
+      kind: "number",
+      align: "right",
+      text: (row) => amount(row.node),
+      cell: (row) => money.format(row.node),
+    },
+    {
+      key: "storage",
+      label: t("organization.costs.storage"),
+      kind: "number",
+      align: "right",
+      text: (row) => amount(row.storage),
+      cell: (row) => money.format(row.storage),
+    },
+    {
+      key: "ai",
+      label: t("organization.costs.ai"),
+      kind: "number",
+      align: "right",
+      text: (row) => amount(row.ai),
+      cell: (row) => (row.ai === null ? "—" : money.format(row.ai)),
+    },
+    {
+      key: "total",
+      label: t("organization.costs.total"),
+      kind: "number",
+      align: "right",
+      text: (row) => amount(row.total),
+      cell: (row) => money.format(row.total),
+    },
+  ];
 
   const save = async () => {
     if (saving) return;
@@ -148,79 +224,37 @@ export function Costs(): JSX.Element {
             ) : null}
           </div>
           {failed ? <Alert tone="danger">{failed}</Alert> : null}
-          {costs.isError ? (
-            <PageFailed error={costs.error} onRetry={() => void costs.refetch()} />
-          ) : (
-            <>
-              {data ? (
-                <p className="text-body text-fg">
-                  {t("organization.costs.summary", {
-                    infrastructure: money.format(data.infrastructure),
-                    ai: money.format(data.ai),
-                    total: money.format(data.total),
-                  })}
-                  <span className="block text-caption text-fg-muted">
-                    {t("organization.costs.measured", {
-                      at: new Date(data.measuredAt).toLocaleString(locale),
-                      rate: new Intl.NumberFormat(locale, { maximumFractionDigits: 4 }).format(data.prices.perUsd),
-                      currency: data.currency,
-                    })}
-                  </span>
-                </p>
-              ) : null}
-              {partial ? (
-                <Alert tone="warning" role="status">
-                  {t("organization.costs.partial")}
-                </Alert>
-              ) : null}
-              {data && data.projects.length === 0 ? (
-                <Alert tone="info">{t("organization.costs.empty")}</Alert>
-              ) : (
-                <Table
-                  caption={t("organization.costs.caption", { month })}
-                  status={costs.isPending ? t("app.loading") : undefined}
-                >
-                  <TableHead>
-                    <TableHeaderCell>{t("organization.costs.project")}</TableHeaderCell>
-                    <TableHeaderCell align="right">{t("organization.costs.node")}</TableHeaderCell>
-                    <TableHeaderCell align="right">{t("organization.costs.storage")}</TableHeaderCell>
-                    <TableHeaderCell align="right">{t("organization.costs.ai")}</TableHeaderCell>
-                    <TableHeaderCell align="right">{t("organization.costs.total")}</TableHeaderCell>
-                  </TableHead>
-                  {costs.isPending ? (
-                    <TableSkeleton columns={5} />
-                  ) : (
-                    <TableBody>
-                      {(data?.projects ?? []).map((p) => (
-                        <TableRow key={p.project}>
-                          <TableCell primary>
-                            <span className="font-mono">{p.project}</span>
-                            {details(p)}
-                          </TableCell>
-                          <TableCell align="right">{money.format(p.node)}</TableCell>
-                          <TableCell align="right">{money.format(p.storage)}</TableCell>
-                          <TableCell align="right">{money.format(p.ai)}</TableCell>
-                          <TableCell align="right">{money.format(p.total)}</TableCell>
-                        </TableRow>
-                      ))}
-                      {data ? (
-                        <TableRow>
-                          <TableCell primary>
-                            {t("organization.costs.platform")}
-                            <span className="block text-caption text-fg-muted">{t("organization.costs.platformHint")}</span>
-                          </TableCell>
-                          <TableCell align="right">{money.format(data.platform.node)}</TableCell>
-                          <TableCell align="right">{money.format(data.platform.storage)}</TableCell>
-                          <TableCell align="right">—</TableCell>
-                          <TableCell align="right">{money.format(data.platform.total)}</TableCell>
-                        </TableRow>
-                      ) : null}
-                    </TableBody>
-                  )}
-                </Table>
-              )}
-            </>
-          )}
+          {data ? (
+            <p className="text-body text-fg">
+              {t("organization.costs.summary", {
+                infrastructure: money.format(data.infrastructure),
+                ai: money.format(data.ai),
+                total: money.format(data.total),
+              })}
+              <span className="block text-caption text-fg-muted">
+                {t("organization.costs.measured", {
+                  at: new Date(data.measuredAt).toLocaleString(locale),
+                  rate: new Intl.NumberFormat(locale, { maximumFractionDigits: 4 }).format(data.prices.perUsd),
+                  currency: data.currency,
+                })}
+              </span>
+            </p>
+          ) : null}
+          {partial ? (
+            <Alert tone="warning" role="status">
+              {t("organization.costs.partial")}
+            </Alert>
+          ) : null}
+          <AdminGrid<CostRow>
+            query={costs}
+            caption={t("organization.costs.caption", { month })}
+            storageKey="organization:costs"
+            rows={rows}
+            rowKey={(row) => row.key}
+            columns={columns}
+            stack
+            empty={<EmptyState bare title={t("organization.costs.empty")} />}
+          />
         </>
       )}
     </section>

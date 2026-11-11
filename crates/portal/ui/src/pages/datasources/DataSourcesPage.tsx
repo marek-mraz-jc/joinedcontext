@@ -2,7 +2,8 @@ import { useFormRoute, useOpenFromAddress } from "../../components/forms/FormRou
 import { RecordLink } from "../../components/RecordLink";
 import { withoutUserinfo } from "../../components/ui/safeHref";
 import { useMemo, useState } from "react";
-import { ResourceList } from "../../components/ResourceList";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -23,10 +24,6 @@ import { RecordView,
   Field,
   PageHeader,
   Select,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
 } from "../../components/ui";
 import { PlanDiffViewer } from "../../components/diff/PlanDiffViewer";
 import type { FieldChange } from "../../components/diff/PlanDiffViewer";
@@ -566,6 +563,96 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
   const noSources = list.isSuccess && sources.length === 0;
   const setUps = <BlueprintCards category="ingestion" onRun={setSettingUp} />;
 
+  const typeLabel = (source: Manifest) =>
+    isTypedDataSource(typeOf(source.spec))
+      ? t(`datasources.type.${typeOf(source.spec)}`, { defaultValue: typeOf(source.spec) })
+      : inputLabel(typeOf(source.spec));
+  const sourceTitle = (source: Manifest) =>
+    source.metadata.title ? localized(source.metadata.title, locale, source.metadata.name) : source.metadata.name;
+  const columns: DataColumn<Manifest>[] = [
+    {
+      key: "name",
+      label: t("datasources.field.name"),
+      text: (source) => `${sourceTitle(source)} ${source.metadata.name}`,
+      // The title reads first, as on the pipelines list; the id under it. A source
+      // without a title is its id, printed once.
+      cell: (source) =>
+        source.metadata.title ? (
+          <>
+            <RecordLink project={project} plural="datasources" name={source.metadata.name}>
+              {sourceTitle(source)}
+            </RecordLink>
+            <span className="block font-mono text-caption text-fg-muted">{source.metadata.name}</span>
+          </>
+        ) : (
+          <RecordLink project={project} plural="datasources" name={source.metadata.name} className="font-mono" />
+        ),
+    },
+    {
+      key: "type",
+      label: t("datasources.field.type"),
+      text: typeLabel,
+      cell: (source) => <span className="whitespace-nowrap">{typeLabel(source)}</span>,
+    },
+    {
+      key: "endpoint",
+      label: t("datasources.field.endpoint"),
+      text: (source) => endpointOf(source.spec),
+      // At least 12rem wide, so a phone scrolls the table sideways instead of breaking
+      // the address every nine characters into a 25-line row (T-4992).
+      cell: (source) => (
+        <div className="min-w-60">
+          <EndpointCell raw={endpointOf(source.spec)} />
+        </div>
+      ),
+    },
+    {
+      key: "secrets",
+      label: t("datasources.field.secrets"),
+      text: (source) => knownSecretNames([source]).join(", "),
+      // The names of the references, never a value: the store holds the rest.
+      cell: (source) => {
+        const used = knownSecretNames([source]);
+        return <span className="text-caption">{used.length > 0 ? used.join(", ") : t("datasources.noSecret")}</span>;
+      },
+    },
+    {
+      key: "actions",
+      label: t("datasources.edit"),
+      text: () => "",
+      actions: true,
+      align: "right",
+      // Edit in the open, the rest in the row's menu (T-2287).
+      cell: (source) => (
+        <ResourceRowActions
+          project={project}
+          target={{
+            project,
+            kind: "DataSource",
+            plural: "datasources",
+            name: source.metadata.name,
+          }}
+          onEdit={() => (formRoute ? formRoute.openEdit(source.metadata.name) : openEdit(source))}
+          extra={[
+            {
+              // What a source is for: the pipeline that reads it, started on it (T-3091).
+              key: "pipeline",
+              label: t("datasources.newPipeline"),
+              onSelect: () => {
+                const pipelines = `/projects/${project}/pipelines`;
+                handPrefill(pipelines, {
+                  class: "auto",
+                  source: { dataSourceRef: source.metadata.name },
+                });
+                void navigate({ href: pipelines });
+              },
+            },
+          ]}
+        />
+      ),
+    },
+  ];
+
   if (settingUp) {
     return (
       <Instantiate
@@ -592,94 +679,19 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
 
       {noSources ? setUps : null}
 
-      <ResourceList
+      <AdminGrid
         query={list}
         caption={t("datasources.title")}
+        rows={sources}
+        rowKey={(source) => source.metadata.name}
+        columns={columns}
+        storageKey={`${project}:datasources`}
         stack
-        head={
-          <TableHead>
-            <TableHeaderCell>{t("datasources.field.name")}</TableHeaderCell>
-            <TableHeaderCell>{t("datasources.field.type")}</TableHeaderCell>
-            <TableHeaderCell>{t("datasources.field.endpoint")}</TableHeaderCell>
-            <TableHeaderCell>{t("datasources.field.secrets")}</TableHeaderCell>
-            <TableHeaderCell align="right">
-              <span className="sr-only">{t("datasources.edit")}</span>
-            </TableHeaderCell>
-          </TableHead>
-        }
-        columns={5}
-        count={sources.length}
         empty={<EmptyState bare
             title={t("datasources.empty")}
             description={t("datasources.emptyHint")}
             action={addButton} />}
-      >
-        {sources.map((source) => {
-          const used = knownSecretNames([source]);
-          return (
-            <TableRow key={source.metadata.name}>
-              <TableCell>
-                {/* The title reads first, as on the pipelines list; the id under it. A source
-                    without a title is its id, printed once. */}
-                {source.metadata.title ? (
-                  <>
-                    <RecordLink project={project} plural="datasources" name={source.metadata.name}>
-                      {localized(source.metadata.title, locale, source.metadata.name)}
-                    </RecordLink>
-                    <span className="block font-mono text-caption text-fg-muted">{source.metadata.name}</span>
-                  </>
-                ) : (
-                  <RecordLink project={project} plural="datasources" name={source.metadata.name} className="font-mono" />
-                )}
-              </TableCell>
-              <TableCell className="whitespace-nowrap" data-label={t("datasources.field.type")}>
-                {isTypedDataSource(typeOf(source.spec))
-                  ? t(`datasources.type.${typeOf(source.spec)}`, { defaultValue: typeOf(source.spec) })
-                  : inputLabel(typeOf(source.spec))}
-              </TableCell>
-              {/* At least 12rem wide, so a phone scrolls the table sideways instead of breaking
-                  the address every nine characters into a 25-line row (T-4992). */}
-              <TableCell className="min-w-60" data-label={t("datasources.field.endpoint")}>
-                <EndpointCell raw={endpointOf(source.spec)} />
-              </TableCell>
-              <TableCell className="text-caption" data-label={t("datasources.field.secrets")}>
-                {/* The names of the references, never a value: the store holds the rest. */}
-                {used.length > 0 ? used.join(", ") : t("datasources.noSecret")}
-              </TableCell>
-              <TableCell align="right">
-                {/* Edit in the open, the rest in the row's menu (T-2287). */}
-                <ResourceRowActions
-                  project={project}
-                  target={{
-                    project,
-                    kind: "DataSource",
-                    plural: "datasources",
-                    name: source.metadata.name,
-                  }}
-                  onEdit={() =>
-                    formRoute ? formRoute.openEdit(source.metadata.name) : openEdit(source)
-                  }
-                  extra={[
-                    {
-                      // What a source is for: the pipeline that reads it, started on it (T-3091).
-                      key: "pipeline",
-                      label: t("datasources.newPipeline"),
-                      onSelect: () => {
-                        const pipelines = `/projects/${project}/pipelines`;
-                        handPrefill(pipelines, {
-                          class: "auto",
-                          source: { dataSourceRef: source.metadata.name },
-                        });
-                        void navigate({ href: pipelines });
-                      },
-                    },
-                  ]}
-                />
-              </TableCell>
-            </TableRow>
-          );
-        })}
-      </ResourceList>
+      />
 
       {noSources || list.isPending ? null : setUps}
 

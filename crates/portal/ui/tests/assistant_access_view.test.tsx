@@ -100,9 +100,11 @@ describe("Agent access on the Assistant page (UI-56)", () => {
       within(rows.find((row) => within(row).queryByText(name)) as HTMLElement)
         .getAllByRole("cell")
         .map((cell) => cell.textContent);
-    expect(cells("jc_catalog_search")).toEqual(["jc_catalog_search", "yes", "yes", ""]);
-    expect(cells("jc_endpoint_propose")).toEqual(["jc_endpoint_propose", "yes", "no", "no role grants propose on Endpoint"]);
-    expect(cells("jc_space_complete")[1]).toBe("no");
+    // The operation name is the row's header cell on the grid; the rest are cells.
+    const named = (name: string) => [name, ...cells(name)];
+    expect(named("jc_catalog_search")).toEqual(["jc_catalog_search", "yes", "yes", ""]);
+    expect(named("jc_endpoint_propose")).toEqual(["jc_endpoint_propose", "yes", "no", "no role grants propose on Endpoint"]);
+    expect(cells("jc_space_complete")[0]).toBe("no");
     expect(screen.getByText(i18n.t("assistantPage.access.available", { count: 1, total: 3 }))).toBeInTheDocument();
     // T-4160 #31: the registry in words, the host a hover away; the title in the page's language.
     expect(screen.getByText(en.assistantPage.access.packageHosts)).toHaveAttribute("title", "registry.npmjs.org");

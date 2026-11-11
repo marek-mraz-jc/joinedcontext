@@ -244,7 +244,7 @@ describe("the MQTT brokers page", () => {
     const orphan = await screen.findByText("No broker gone in this project");
     const row = orphan.closest("tr") as HTMLElement;
     expect(row.closest("table")?.querySelector("caption")?.textContent).toBe(en.mqttbrokers.connections.title);
-    expect(row.dataset.edge).toBe("red");
+    expect(row.querySelector("[data-edge]")).toHaveAttribute("data-edge", "red");
     expect(within(row).getByText(en.mqttbrokers.connections.fix).closest("a")).toHaveAttribute(
       "href",
       `/projects/${PROJECT}/datasources/orphan/edit`,

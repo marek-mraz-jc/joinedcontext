@@ -6,6 +6,8 @@ import { api, ApiError, forPeople, unwrap } from "../../api/client";
 import { asManifests } from "../../api/manifest";
 import { useReadableList } from "../../api/permissions";
 import type { components } from "../../api/schema";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import {
   Alert,
   Badge,
@@ -13,12 +15,6 @@ import {
   Field,
   Select,
   Skeleton,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
 } from "../../components/ui";
 
 type Access = components["schemas"]["Access"];
@@ -99,6 +95,40 @@ function Held({ project, broker, account }: { project: string; broker: string; a
   }
   const answer: Access = access.data;
   const lapsed = answer.outOfWindow ?? [];
+  const columns: DataColumn<Access["roles"][number]>[] = [
+    { key: "role", label: t("mqttbrokers.acl.role"), text: (role) => role.role },
+    {
+      key: "publish",
+      label: t("mqttbrokers.acl.publish"),
+      text: (role) => role.publish.join(", "),
+      cell: (role) => <span className="font-mono">{role.publish.join(", ") || "—"}</span>,
+    },
+    {
+      key: "subscribe",
+      label: t("mqttbrokers.acl.subscribe"),
+      text: (role) => role.subscribe.join(", "),
+      cell: (role) => <span className="font-mono">{role.subscribe.join(", ") || "—"}</span>,
+    },
+    {
+      key: "through",
+      label: t("mqttbrokers.access.through"),
+      text: (role) =>
+        [role.bound ? t("mqttbrokers.access.bound") : "", role.legacy ? t("mqttbrokers.access.legacy") : ""].filter(Boolean).join(", "),
+      cell: (role) => (
+        <span className="flex flex-wrap gap-1">
+          {role.bound ? <Badge tone="success">{t("mqttbrokers.access.bound")}</Badge> : null}
+          {role.legacy ? <Badge tone="warning">{t("mqttbrokers.access.legacy")}</Badge> : null}
+        </span>
+      ),
+    },
+    {
+      key: "until",
+      label: t("mqttbrokers.access.until"),
+      kind: "date",
+      text: (role) => role.until ?? "",
+      cell: (role) => (role.until ? time.format(new Date(role.until)) : t("mqttbrokers.access.noEnd")),
+    },
+  ];
   return (
     <div className="flex flex-col gap-2" data-access={answer.roles.length > 0 ? "held" : lapsed.length > 0 ? "expired" : "none"}>
       {answer.roles.length === 0 ? (
@@ -106,35 +136,17 @@ function Held({ project, broker, account }: { project: string; broker: string; a
           {t("mqttbrokers.access.noneHint", { broker })}
         </Alert>
       ) : (
-        <Table stack caption={t("mqttbrokers.access.caption", { account, broker })}>
-          <TableHead>
-            <TableHeaderCell>{t("mqttbrokers.acl.role")}</TableHeaderCell>
-            <TableHeaderCell>{t("mqttbrokers.acl.publish")}</TableHeaderCell>
-            <TableHeaderCell>{t("mqttbrokers.acl.subscribe")}</TableHeaderCell>
-            <TableHeaderCell>{t("mqttbrokers.access.through")}</TableHeaderCell>
-            <TableHeaderCell>{t("mqttbrokers.access.until")}</TableHeaderCell>
-          </TableHead>
-          <TableBody>
-            {answer.roles.map((role) => (
-              <TableRow key={role.role}>
-                <TableCell primary>{role.role}</TableCell>
-                <TableCell data-label={t("mqttbrokers.acl.publish")}>
-                  <span className="font-mono">{role.publish.join(", ") || "—"}</span>
-                </TableCell>
-                <TableCell data-label={t("mqttbrokers.acl.subscribe")}>
-                  <span className="font-mono">{role.subscribe.join(", ") || "—"}</span>
-                </TableCell>
-                <TableCell data-label={t("mqttbrokers.access.through")}>
-                  <span className="flex flex-wrap gap-1">
-                    {role.bound ? <Badge tone="success">{t("mqttbrokers.access.bound")}</Badge> : null}
-                    {role.legacy ? <Badge tone="warning">{t("mqttbrokers.access.legacy")}</Badge> : null}
-                  </span>
-                </TableCell>
-                <TableCell data-label={t("mqttbrokers.access.until")}>{role.until ? time.format(new Date(role.until)) : t("mqttbrokers.access.noEnd")}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <AdminGrid
+          query={access}
+          caption={t("mqttbrokers.access.caption", { account, broker })}
+          rows={answer.roles}
+          rowKey={(role) => role.role}
+          columns={columns}
+          storageKey={`${project}:mqtt-access`}
+          stack
+          noSearch
+          empty={<EmptyState bare title={t("mqttbrokers.access.noneTitle", { account })} description={t("mqttbrokers.access.noneHint")} />}
+        />
       )}
       {answer.roles.some((role) => role.legacy) ? (
         <p className="text-caption text-fg-muted">{t("mqttbrokers.access.legacyHint", { broker })}</p>

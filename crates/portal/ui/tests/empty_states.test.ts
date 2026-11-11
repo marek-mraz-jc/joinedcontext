@@ -20,6 +20,7 @@ const WITHOUT_A_SENTENCE: Record<string, string> = {
   "workspaces.compare.empty":
     "a comparison of one copy against main, which is empty because nothing was changed in it",
   "assistantPage.empty": "its own title says the first step: ask the assistant or start below",
+  "organization.costs.empty": "its own title says the first step: create a Context Space in a project",
 };
 
 function sources(dir: string, found: string[] = []): string[] {

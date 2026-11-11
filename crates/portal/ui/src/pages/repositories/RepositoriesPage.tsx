@@ -1,3 +1,5 @@
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import { useState } from "react";
 import type { JSX } from "react";
 import { Link } from "@tanstack/react-router";
@@ -10,13 +12,6 @@ import {
   Input,
   PageFailed,
   PageHeader,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-  PageLoading,
 } from "../../components/ui";
 import { bytesText } from "../knowledge/knowledge";
 import { isNotFound, useRepositoryRead } from "./api";
@@ -42,6 +37,50 @@ export function RepositoriesPage({ project }: { project: string }): JSX.Element 
   const list = useRepositoryRead<Page<RepositorySummary>>(project, "jc_repository_list", input);
   const items = list.data?.items ?? [];
   const language = i18n.resolvedLanguage ?? "en";
+  const columns: DataColumn<RepositorySummary>[] = [
+    {
+      key: "name",
+      label: t("repositories.column.name"),
+      text: (repository) => `${repository.name} ${repository.description ?? ""}`.trim(),
+      cell: (repository) => (
+        <>
+          <Link
+            to="/projects/$project/repositories/$name"
+            params={{ project, name: repository.name }}
+            data-row-link=""
+            className="focus-ring rounded-sm font-mono font-semibold text-primary-soft-fg underline-offset-2 hover:underline"
+          >
+            {repository.name}
+          </Link>
+          {repository.description ? <p className="mt-0.5 text-caption text-fg-muted">{repository.description}</p> : null}
+        </>
+      ),
+    },
+    {
+      key: "role",
+      label: t("repositories.column.role"),
+      text: (repository) => `${repository.role}${repository.archived ? ` ${t("repositories.archived")}` : ""}`,
+      cell: (repository) => (
+        <span className="inline-flex flex-wrap items-center gap-1">
+          <RoleBadge role={repository.role} />
+          {repository.archived ? <Badge tone="warning">{t("repositories.archived")}</Badge> : null}
+        </span>
+      ),
+    },
+    {
+      key: "branch",
+      label: t("repositories.column.branch"),
+      text: (repository) => repository.defaultBranch,
+      cell: (repository) => <span className="font-mono">{repository.defaultBranch}</span>,
+    },
+    {
+      key: "size",
+      label: t("repositories.column.size"),
+      kind: "number",
+      text: (repository) => String(repository.sizeBytes ?? ""),
+      cell: (repository) => bytesText(repository.sizeBytes, language),
+    },
+  ];
 
   return (
     <section aria-labelledby="repositories-title" className="space-y-6">
@@ -64,50 +103,27 @@ export function RepositoriesPage({ project }: { project: string }): JSX.Element 
         <PageFailed error={list.error} onRetry={() => void list.refetch()}>
           {isNotFound(list.error) ? t("repositories.refused.list", { project }) : undefined}
         </PageFailed>
-      ) : list.isPending ? (
-        <PageLoading label={t("repositories.loading")} />
-      ) : items.length === 0 ? (
-        <EmptyState
-          icon="git"
-          title={filter.trim() ? t("repositories.empty.filtered") : t("repositories.empty.title")}
-          description={filter.trim() ? t("repositories.empty.filteredHint") : t("repositories.empty.description")}
-        />
       ) : (
         <>
-          <Table caption={t("repositories.title")} stack>
-            <TableHead>
-              <TableHeaderCell>{t("repositories.column.name")}</TableHeaderCell>
-              <TableHeaderCell>{t("repositories.column.role")}</TableHeaderCell>
-              <TableHeaderCell>{t("repositories.column.branch")}</TableHeaderCell>
-              <TableHeaderCell>{t("repositories.column.size")}</TableHeaderCell>
-            </TableHead>
-            <TableBody>
-              {items.map((repository) => (
-                <TableRow key={repository.name}>
-                  <TableCell>
-                    <Link
-                      to="/projects/$project/repositories/$name"
-                      params={{ project, name: repository.name }}
-                      className="focus-ring rounded-sm font-mono font-semibold text-primary-soft-fg underline-offset-2 hover:underline"
-                    >
-                      {repository.name}
-                    </Link>
-                    {repository.description ? <p className="mt-0.5 text-caption text-fg-muted">{repository.description}</p> : null}
-                  </TableCell>
-                  <TableCell data-label={t("repositories.column.role")}>
-                    <span className="inline-flex flex-wrap items-center gap-1">
-                      <RoleBadge role={repository.role} />
-                      {repository.archived ? <Badge tone="warning">{t("repositories.archived")}</Badge> : null}
-                    </span>
-                  </TableCell>
-                  <TableCell data-label={t("repositories.column.branch")} className="font-mono">
-                    {repository.defaultBranch}
-                  </TableCell>
-                  <TableCell data-label={t("repositories.column.size")}>{bytesText(repository.sizeBytes, language)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <AdminGrid<RepositorySummary>
+            query={list}
+            caption={t("repositories.title")}
+            rows={items}
+            columns={columns}
+            rowKey={(repository) => repository.name}
+            storageKey={`${project}:repositories`}
+            stack
+            noSearch
+            pageSizes={[PAGE]}
+            empty={
+              <EmptyState
+                bare
+                icon="git"
+                title={filter.trim() ? t("repositories.empty.filtered") : t("repositories.empty.title")}
+                description={filter.trim() ? t("repositories.empty.filteredHint") : t("repositories.empty.description")}
+              />
+            }
+          />
           <Pager total={list.data?.total ?? 0} cursor={cursor} size={PAGE} onCursor={setCursor} next={list.data?.nextCursor} />
         </>
       )}

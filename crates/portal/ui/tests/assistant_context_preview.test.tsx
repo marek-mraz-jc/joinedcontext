@@ -110,7 +110,7 @@ describe("the preview of what the assistant will read (AG-121)", () => {
     const { previews } = await openForm(CONTEXT);
     const preview = await screen.findByRole("region", { name: "What the assistant will know" });
     const table = await within(preview).findByRole("table");
-    expect(within(table).getByRole("cell", { name: "Regional roads" })).toBeInTheDocument();
+    expect(within(table).getByRole("rowheader", { name: "Regional roads" })).toBeInTheDocument();
     expect(within(table).getByRole("cell", { name: "Road" })).toBeInTheDocument();
     expect(within(preview).getAllByText("Transport").length).toBeGreaterThan(0);
     expect(within(preview).getByText(/zzzzzzzzzzzzzzzzzzzzzzzzzz/)).toBeInTheDocument();

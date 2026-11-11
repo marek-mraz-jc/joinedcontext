@@ -8,7 +8,7 @@ import { useMemo } from "react";
 import type { JSX, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { DataGrid } from "@joinedcontext/sdk/grid";
-import type { DataColumn, DataGridLabels } from "@joinedcontext/sdk/grid";
+import type { DataColumn, DataGridLabels, DataQuery } from "@joinedcontext/sdk/grid";
 import { gridLabels } from "../entities/PortalEntityGrid";
 import { PageFailed } from "../ui/PageState";
 import { recordCard } from "../ui";
@@ -25,6 +25,9 @@ export function AdminGrid<T>({
   storageKey,
   stack,
   noSearch,
+  pageSizes,
+  view,
+  onViewChange,
 }: {
   /** The list's read: the skeleton while it runs, the API's reason and a retry when it fails. */
   query: { isPending: boolean; isError: boolean; error: unknown; refetch: () => unknown };
@@ -39,6 +42,11 @@ export function AdminGrid<T>({
   stack?: boolean;
   /** The page searches the list itself, with its own words. */
   noSearch?: boolean;
+  /** Rows per page; a list the server pages gives its own page size, so one server page is one grid page. */
+  pageSizes?: number[];
+  /** The grid's search, filters, sort and page, held by a page that acts on the rows it shows (People's bulk actions). */
+  view?: DataQuery;
+  onViewChange?: (view: DataQuery) => void;
 }): JSX.Element {
   const { t } = useTranslation();
   const labels = useMemo<DataGridLabels>(
@@ -73,6 +81,9 @@ export function AdminGrid<T>({
       storageKey={`portal:${storageKey}`}
       stack={stack}
       noSearch={noSearch}
+      pageSizes={pageSizes}
+      query={view}
+      onQueryChange={onViewChange}
       // A click on a plain cell opens the row's record link, as on every list (T-2875).
       rowProps={() => recordCard}
     />
