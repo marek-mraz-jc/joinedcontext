@@ -6675,6 +6675,7 @@ output_error{stream="kpi"} 6
             _staged: Vec::new(),
             projects: BTreeMap::new(),
             unstaged: Vec::new(),
+            unloaded: Vec::new(),
             refused: Vec::new(),
             listings: BTreeMap::new(),
         };

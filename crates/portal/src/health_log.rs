@@ -189,7 +189,7 @@ const SAY: &[(&str, &str)] = &[
     ("anonymousRefused", "{surface} refused an anonymous reader ({status}) though the Endpoint is public"),
     ("notServed", "{surface} answered {status}"),
     ("noAnswer", "{surface} did not answer: {reason}"),
-    ("policyWrite", "The broker refused the write: the target Endpoint's Policy must grant pl-{name} create and update, or spec.outputs[].targetEndpoint must name an Endpoint without policyRef."),
+    ("policyWrite", "The broker refused the write: spec.outputs[].targetEndpoint must name an Endpoint of the space the output writes, not an App's Endpoint, and no prohibition of that space may cover create and update for pl-{name}."),
     ("policy", "A Policy refuses this operation: check the Endpoint's policyRef and the Policy's rules on the Policies page."),
     ("token", "The account's token was refused: check the service account and its secretRef, then sync again."),
     ("robots", "The source's robots.txt disallows the reader: point spec.source.url at an allowed address or ask the publisher."),
