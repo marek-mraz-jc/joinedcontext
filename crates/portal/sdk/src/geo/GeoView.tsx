@@ -11,7 +11,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Map as MapLibreMap } from "maplibre-gl";
 import type { ExpressionSpecification, GeoJSONSource } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { mapWorkerReady, NO_BASEMAP, styleFor } from "../sdk/map";
+import { mapWorkerReady, NO_BASEMAP, startMap, styleFor } from "../sdk/map";
+import type { MapFailure } from "../sdk/map";
+import { MapFailed } from "../sdk/MapFailed";
 import { mapColors } from "../sdk/tokens";
 import type { Geometry, Position } from "./validate";
 import { registerTileProtocol, tileUrl } from "./tiles";
@@ -128,6 +130,9 @@ export function GeoView({
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
   const [ready, setReady] = useState(false);
+  const [failed, setFailed] = useState<MapFailure | null>(null);
+  // A retry builds the map again: the effect below runs once per attempt.
+  const [attempt, setAttempt] = useState(0);
   const select = useRef(onSelect);
   select.current = onSelect;
   const features = useMemo(() => featuresOf(value), [value]);
@@ -149,18 +154,25 @@ export function GeoView({
 
   useEffect(() => {
     let gone = false;
-    let instance: MapLibreMap | null = null;
+    let started: { map: MapLibreMap; dispose: () => void } | null = null;
     void workerReady.then(() => {
-      if (gone || !container.current || map.current) {
+      const box = container.current;
+      if (gone || !box || map.current) {
         return;
       }
-      instance = new MapLibreMap({
-        container: container.current,
-        style,
-        center: [0, 0],
-        zoom: 1,
-        canvasContextAttributes: { preserveDrawingBuffer: true },
-      });
+      started = startMap(
+        () => new MapLibreMap({ container: box, style, center: [0, 0], zoom: 1, canvasContextAttributes: { preserveDrawingBuffer: true } }),
+        (kind) => {
+          if (gone) return;
+          map.current = null;
+          setReady(false);
+          setFailed(kind);
+        },
+      );
+      if (!started) {
+        return;
+      }
+      const instance: MapLibreMap | null = started.map;
       map.current = instance;
       // For a person debugging a screenshot or a journey: the map instance, as `MapView` has `kitMap`.
       (window as unknown as { kitGeoMap?: MapLibreMap }).kitGeoMap = instance;
@@ -215,12 +227,12 @@ export function GeoView({
     });
     return () => {
       gone = true;
-      instance?.remove();
+      started?.dispose();
       map.current = null;
     };
-    // The map is built once and every later value reaches it through `setData`, as in `MapView`.
+    // The map is built once per attempt and every later value reaches it through `setData`, as in `MapView`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [attempt]);
 
   // Another indicator is another range: the fill follows it without rebuilding the map.
   const low = ramp?.[0];
@@ -275,6 +287,20 @@ export function GeoView({
     }
   }, [collection, features, ready]);
 
+  if (failed) {
+    return (
+      <div className="map-wrap">
+        <MapFailed
+          failure={failed}
+          onRetry={() => {
+            fitted.current = false;
+            setFailed(null);
+            setAttempt((n) => n + 1);
+          }}
+        />
+      </div>
+    );
+  }
   return (
     <div className="map-wrap">
       <div className="map" ref={container} data-testid="geo-map" role="application" aria-label={label} />

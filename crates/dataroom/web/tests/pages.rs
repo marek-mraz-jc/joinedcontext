@@ -56,6 +56,35 @@ fn assert_safe_page(name: &str, html: &str, lang: &str) {
         !html.contains("<script>alert"),
         "{name}: publisher script rendered"
     );
+    assert_icons(name, html, lang);
+}
+
+/// Font Awesome is not served: an `fa` class renders a blob or nothing (T-6745). Every icon is an
+/// inline outline svg hidden from screen readers; the breadcrumb's home link keeps its name.
+fn assert_icons(name: &str, html: &str, lang: &str) {
+    assert!(
+        !html.contains("class=\"fa "),
+        "{name}: Font Awesome class left"
+    );
+    for (i, _) in html.match_indices("<svg class=\"jc-icon\"") {
+        let tag = &html[i..i + html[i..].find('>').expect("svg tag end")];
+        assert!(
+            tag.contains("aria-hidden=\"true\""),
+            "{name}: icon not hidden: {tag}"
+        );
+    }
+    if let Some(i) = html.find("<li class=\"home\">") {
+        let item = &html[i..i + html[i..].find("</li>").expect("home item end")];
+        let label = format!("aria-label=\"{}\"", esc_t("home", lang));
+        assert!(
+            item.contains(&label),
+            "{name}: home link without {label}: {item}"
+        );
+        assert!(
+            item.contains("<svg class=\"jc-icon\""),
+            "{name}: home link without its icon: {item}"
+        );
+    }
 }
 
 /// The attribute names of one opening tag, quoted values skipped.
@@ -891,6 +920,28 @@ fn g1_dataset_page_follows_the_addresses_named_one_by_one() {
         "the height messages come from the viz origin"
     );
     assert!(html.contains("http://localhost:42241/api/mcp"));
+    // The assistant setup is a native disclosure, closed until opened; its summary names it (T-6745).
+    let mcp = html
+        .split("<details class=\"jc-live jc-mcp\">")
+        .nth(1)
+        .expect("the assistant section is a closed <details>");
+    let summary = mcp.split("</summary>").next().expect("summary end");
+    assert!(summary.trim_start().starts_with("<summary>"), "{summary}");
+    assert!(
+        summary.contains(&format!(
+            "<h2 id=\"jc-mcp-title\">{}</h2>",
+            esc_t("mcp", "sk")
+        )),
+        "{summary}"
+    );
+    assert!(
+        summary.contains(&esc_t("mcp_lead", "sk")),
+        "the lead line in the summary"
+    );
+    assert!(
+        mcp.contains("data-jc-copy=\"jc-mcp-url\""),
+        "the copy buttons inside"
+    );
     // Snippets carry no credential.
     for secret in ["token", "Bearer", "apikey", "Authorization"] {
         let curl = html

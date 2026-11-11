@@ -23,7 +23,8 @@ use axum::body::Body;
 use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use jc_router::Mount;
-use std::sync::Arc;
+use std::io::Write;
+use std::sync::{Arc, LazyLock};
 
 /// Every served file: (path under the mount, bytes). `.mjs` modules are stored gzipped.
 const FILES: &[(&str, &[u8])] = &[
@@ -220,6 +221,69 @@ fn file(path: &str) -> Option<&'static [u8]> {
     FILES.iter().find(|(p, _)| *p == path).map(|(_, b)| *b)
 }
 
+/// A static file as served: its strong ETag (the `SHA256SUMS` sum of its bytes) and, when gzip
+/// makes it smaller, its gzipped bytes. Pages are left out: they carry the per-site meta.
+struct Packed {
+    etag: String,
+    gzip: Option<Vec<u8>>,
+}
+
+/// Built once (`build` forces it at start): the 1.3 MB explorer bundle goes out as about 360 kB.
+/// Only public, fixed files are compressed, never a per-user body, so gzip reveals nothing.
+static PACKED: LazyLock<Vec<Option<Packed>>> = LazyLock::new(|| {
+    let sums = include_str!("../../../../vendor/viz/SHA256SUMS");
+    FILES
+        .iter()
+        .map(|(path, bytes)| {
+            if path.ends_with(".html") || path.ends_with(".gz") {
+                return None;
+            }
+            let sum = sums
+                .lines()
+                .filter_map(|l| l.split_once("  "))
+                .find(|(_, p)| p == path)?
+                .0;
+            let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+            let gzip = gz
+                .write_all(bytes)
+                .and_then(|()| gz.finish())
+                .ok()
+                .filter(|z| z.len() < bytes.len());
+            Some(Packed {
+                etag: format!("\"{sum}\""),
+                gzip,
+            })
+        })
+        .collect()
+});
+
+fn packed(path: &str) -> Option<&'static Packed> {
+    let i = FILES.iter().position(|(p, _)| *p == path)?;
+    PACKED.get(i)?.as_ref()
+}
+
+/// Whether `Accept-Encoding` takes gzip (by name or `*`) with a non-zero weight.
+fn takes_gzip(accept: &str) -> bool {
+    accept.split(',').any(|item| {
+        let mut parts = item.split(';').map(str::trim);
+        let name = parts.next().unwrap_or_default();
+        let refused = parts.any(|p| {
+            p.strip_prefix("q=")
+                .and_then(|q| q.parse::<f32>().ok())
+                .is_some_and(|q| q <= 0.0)
+        });
+        (name.eq_ignore_ascii_case("gzip") || name == "*") && !refused
+    })
+}
+
+/// Whether `If-None-Match` names `etag` (weak comparison, RFC 9110 13.1.2) or is `*`.
+fn matches(if_none_match: &str, etag: &str) -> bool {
+    if_none_match
+        .split(',')
+        .map(str::trim)
+        .any(|t| t == "*" || t.trim_start_matches("W/") == etag)
+}
+
 fn content_type(path: &str) -> &'static str {
     match path.rsplit('.').next() {
         Some("html") => "text/html; charset=utf-8",
@@ -264,7 +328,7 @@ fn public(res: &mut Response) {
     );
 }
 
-fn serve(site: &Site, method: &Method, path: &str) -> Response {
+fn serve(site: &Site, method: &Method, path: &str, req: &header::HeaderMap) -> Response {
     let not_found = || {
         answer(
             StatusCode::NOT_FOUND,
@@ -344,8 +408,40 @@ fn serve(site: &Site, method: &Method, path: &str) -> Response {
                     } else {
                         "no-cache"
                     };
-                    let mut res =
-                        answer(StatusCode::OK, content_type(p), cache, INERT, Body::from(b));
+                    let value = |name: header::HeaderName| {
+                        req.get(name)
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or_default()
+                    };
+                    let pack = packed(p);
+                    let gzip = pack
+                        .and_then(|k| k.gzip.as_deref())
+                        .filter(|_| takes_gzip(value(header::ACCEPT_ENCODING)));
+                    // Each encoding is its own representation, so its own strong ETag.
+                    let etag = pack.map(|k| {
+                        if gzip.is_some() {
+                            format!("{}-gzip\"", k.etag.trim_end_matches('"'))
+                        } else {
+                            k.etag.clone()
+                        }
+                    });
+                    let fresh = etag
+                        .as_deref()
+                        .is_some_and(|e| matches(value(header::IF_NONE_MATCH), e));
+                    let (status, body) = match (fresh, gzip) {
+                        (true, _) => (StatusCode::NOT_MODIFIED, Body::empty()),
+                        (false, Some(z)) => (StatusCode::OK, Body::from(z)),
+                        (false, None) => (StatusCode::OK, Body::from(b)),
+                    };
+                    let mut res = answer(status, content_type(p), cache, INERT, body);
+                    let h = res.headers_mut();
+                    if let Some(etag) = etag.and_then(|e| HeaderValue::from_str(&e).ok()) {
+                        h.insert(header::ETAG, etag);
+                        h.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+                    }
+                    if gzip.is_some() {
+                        h.insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+                    }
                     if vendor {
                         public(&mut res);
                     }
@@ -360,10 +456,13 @@ fn serve(site: &Site, method: &Method, path: &str) -> Response {
 /// viz's router at `mount`, reading the gateway, tiles and catalogue at `live`.
 pub fn build(live: &LiveAddresses, mount: &Mount) -> Router {
     let site = Arc::new(Site::new(&mount.public_base(), live));
-    Router::new().fallback(move |method: Method, uri: axum::http::Uri| {
-        let site = site.clone();
-        async move { serve(&site, &method, uri.path()) }
-    })
+    LazyLock::force(&PACKED);
+    Router::new().fallback(
+        move |method: Method, uri: axum::http::Uri, headers: header::HeaderMap| {
+            let site = site.clone();
+            async move { serve(&site, &method, uri.path(), &headers) }
+        },
+    )
 }
 
 #[cfg(test)]
@@ -381,10 +480,19 @@ mod tests {
     }
 
     fn get(path: &str) -> Response {
+        get_with(path, &[])
+    }
+
+    fn get_with(path: &str, headers: &[(header::HeaderName, &str)]) -> Response {
+        let mut req = header::HeaderMap::new();
+        for (k, v) in headers {
+            req.insert(k.clone(), HeaderValue::from_str(v).unwrap());
+        }
         serve(
             &Site::new("http://city.test:8080", &live()),
             &Method::GET,
             path,
+            &req,
         )
     }
 
@@ -520,7 +628,7 @@ mod tests {
                 "/map.html",
                 "/render.html",
             ] {
-                let res = serve(&site, &Method::GET, path);
+                let res = serve(&site, &Method::GET, path, &header::HeaderMap::new());
                 let csp = header(&res, "content-security-policy");
                 // The renderer ends on its sandbox: it names no `frame-ancestors` (below).
                 let held = if path == "/render.html" {
@@ -540,7 +648,7 @@ mod tests {
         }
         let own = Site::new("https://viz.city.test", &live());
         for path in ["/explore.html", "/embed.html", "/", "/map.html"] {
-            let res = serve(&own, &Method::GET, path);
+            let res = serve(&own, &Method::GET, path, &header::HeaderMap::new());
             let csp = header(&res, "content-security-policy");
             assert!(!csp.contains("sandbox"), "{path}: {csp}");
         }
@@ -557,7 +665,12 @@ mod tests {
             ..LiveAddresses::default()
         };
         let site = Site::new("http://localhost:42102", &shared);
-        let res = serve(&site, &Method::GET, "/render.html");
+        let res = serve(
+            &site,
+            &Method::GET,
+            "/render.html",
+            &header::HeaderMap::new(),
+        );
         // The whole header, pinned: only `frame-ancestors *` left it; it still runs nothing but
         // its own scripts, connects nowhere and stays sandboxed without `allow-same-origin`.
         assert_eq!(
@@ -567,7 +680,7 @@ mod tests {
         assert!(res.headers().get("x-frame-options").is_none());
         // Every other page answers the framing rule it answered before.
         let ancestors = |path: &str| {
-            let res = serve(&site, &Method::GET, path);
+            let res = serve(&site, &Method::GET, path, &header::HeaderMap::new());
             let csp = header(&res, "content-security-policy").to_owned();
             csp.split(';')
                 .map(str::trim)
@@ -584,7 +697,12 @@ mod tests {
             assert_eq!(ancestors(path).as_deref(), Some(rule), "{path}");
         }
         let own = Site::new("https://viz.city.test", &live());
-        let res = serve(&own, &Method::GET, "/render.html");
+        let res = serve(
+            &own,
+            &Method::GET,
+            "/render.html",
+            &header::HeaderMap::new(),
+        );
         let csp = header(&res, "content-security-policy");
         assert!(csp.ends_with("frame-ancestors *"), "{csp}");
     }
@@ -623,6 +741,100 @@ mod tests {
         }
     }
 
+    /// The explorer bundle goes out gzipped to a client that takes gzip and plain to one that
+    /// does not, each with its own strong ETag from `SHA256SUMS`, and a reload is a 304.
+    #[tokio::test]
+    async fn the_explorer_bundle_is_gzipped_and_revalidates_to_304() {
+        use std::io::Read;
+        let plain = file("explorer/explorer.js").unwrap();
+        let sum = include_str!("../../../../vendor/viz/SHA256SUMS")
+            .lines()
+            .find(|l| l.ends_with("  explorer/explorer.js"))
+            .unwrap()
+            .split_once("  ")
+            .unwrap()
+            .0;
+
+        let res = get_with(
+            "/explorer/explorer.js",
+            &[(header::ACCEPT_ENCODING, "gzip, deflate, br, zstd")],
+        );
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(header(&res, "content-encoding"), "gzip");
+        assert_eq!(header(&res, "vary"), "Accept-Encoding");
+        assert_eq!(header(&res, "cache-control"), "no-cache");
+        assert_eq!(header(&res, "content-security-policy"), INERT);
+        assert_eq!(header(&res, "x-content-type-options"), "nosniff");
+        let etag = header(&res, "etag").to_owned();
+        assert_eq!(etag, format!("\"{sum}-gzip\""));
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(
+            body.len() * 3 < plain.len(),
+            "{} of {}",
+            body.len(),
+            plain.len()
+        );
+        let mut unzipped = Vec::new();
+        flate2::read::GzDecoder::new(&body[..])
+            .read_to_end(&mut unzipped)
+            .unwrap();
+        assert!(unzipped == plain, "the gzip holds the summed bytes");
+
+        for accept in ["", "identity", "gzip;q=0", "br", "*;q=0"] {
+            let res = get_with(
+                "/explorer/explorer.js",
+                &[(header::ACCEPT_ENCODING, accept)],
+            );
+            assert!(res.headers().get("content-encoding").is_none(), "{accept}");
+            assert_eq!(header(&res, "etag"), format!("\"{sum}\""), "{accept}");
+            let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert!(body == plain, "{accept}");
+        }
+
+        let again = get_with(
+            "/explorer/explorer.js",
+            &[
+                (header::ACCEPT_ENCODING, "gzip"),
+                (header::IF_NONE_MATCH, &format!("W/\"x\", {etag}")),
+            ],
+        );
+        assert_eq!(again.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(header(&again, "etag"), etag);
+        assert_eq!(header(&again, "content-security-policy"), INERT);
+        // The 304 describes the stored gzip representation it revalidates.
+        assert_eq!(header(&again, "content-encoding"), "gzip");
+        let body = axum::body::to_bytes(again.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(body.is_empty());
+        // The gzip ETag never revalidates the plain body, nor a stale sum either.
+        for (accept, tag) in [("identity", etag.as_str()), ("gzip", "\"0000\"")] {
+            let res = get_with(
+                "/explorer/explorer.js",
+                &[
+                    (header::ACCEPT_ENCODING, accept),
+                    (header::IF_NONE_MATCH, tag),
+                ],
+            );
+            assert_eq!(res.status(), StatusCode::OK, "{accept} {tag}");
+        }
+
+        let css = get_with(
+            "/explorer/explorer.css",
+            &[(header::ACCEPT_ENCODING, "gzip")],
+        );
+        assert_eq!(header(&css, "content-encoding"), "gzip");
+        assert!(header(&css, "etag").ends_with("-gzip\""));
+        // The pages carry the per-site meta: neither gzipped nor tagged here.
+        let page = get_with("/explore.html", &[(header::ACCEPT_ENCODING, "gzip")]);
+        assert!(page.headers().get("content-encoding").is_none());
+        assert!(page.headers().get("etag").is_none());
+    }
+
     #[tokio::test]
     async fn without_tiles_or_catalogue_nothing_is_named_for_them() {
         let site = Site::new(
@@ -632,11 +844,16 @@ mod tests {
                 ..LiveAddresses::default()
             },
         );
-        let res = serve(&site, &Method::GET, "/explore.html");
+        let res = serve(
+            &site,
+            &Method::GET,
+            "/explore.html",
+            &header::HeaderMap::new(),
+        );
         let csp = header(&res, "content-security-policy").to_owned();
         assert!(csp.contains("connect-src https://api.x.test;"), "{csp}");
         assert!(csp.ends_with("frame-ancestors 'none'"), "{csp}");
-        let map = serve(&site, &Method::GET, "/map.html");
+        let map = serve(&site, &Method::GET, "/map.html", &header::HeaderMap::new());
         assert!(header(&map, "content-security-policy").contains("connect-src 'none';"));
     }
 
@@ -674,6 +891,7 @@ mod tests {
             &Site::new("http://h", &live()),
             &Method::POST,
             "/explore.html",
+            &header::HeaderMap::new(),
         );
         assert_eq!(post.status(), StatusCode::METHOD_NOT_ALLOWED);
     }

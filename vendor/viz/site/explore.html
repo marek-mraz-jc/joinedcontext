@@ -58,7 +58,8 @@
       <div class="map-chips"><span id="map-chips"></span><button type="button" id="map-reset" class="page-button" data-t="reset" hidden></button></div>
       <p id="map-fallback" class="hint map-fallback" role="status" hidden></p>
       <div class="map-box">
-        <div id="map" role="region" aria-labelledby="map-title" aria-describedby="map-note map-count"></div>
+        <div id="map" tabindex="-1" role="region" aria-labelledby="map-title" aria-describedby="map-note map-count"></div>
+        <div id="map-off" class="map-off-box" hidden><p id="map-off-text" role="status"></p><button type="button" id="map-retry" class="page-button" data-t="mapRetry" hidden></button></div>
         <p id="map-count" class="map-count" role="status" aria-live="polite" hidden></p>
       </div>
       <ul id="map-legend" class="map-legend" hidden></ul>

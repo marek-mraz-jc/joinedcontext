@@ -38,6 +38,7 @@ fn realm_file(dir: &Path, attributes: Value) {
 
 fn jc(state: &Path, import: &Path) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
+    cmd.args(["--profile", "development"]);
     for (key, _) in std::env::vars() {
         if key.starts_with("JCBIN_") {
             cmd.env_remove(key);

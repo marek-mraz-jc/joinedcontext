@@ -6235,6 +6235,7 @@ dependencies = [
  "dataroom-store-pg",
  "ekiben-core",
  "ekiben-server",
+ "flate2",
  "futures",
  "getrandom 0.3.4",
  "hex",
