@@ -42,6 +42,7 @@ use axum::response::Response;
 use axum::routing::any;
 use axum::Router;
 
+pub mod facets;
 pub mod union;
 
 /// The variables this crate reads, for the broker's unknown-key check.
@@ -119,7 +120,15 @@ impl Surface for Views {
 
     fn router(&self, ops: Ops) -> Router {
         let union_ops = ops.clone();
+        let facet_ops = ops.clone();
         Router::new()
+            .route(
+                facets::ROUTE,
+                any(move |caller: Caller, req: Request| {
+                    let ops = facet_ops.clone();
+                    async move { facets::serve(&ops, &caller, req).await }
+                }),
+            )
             .route(
                 union::ROUTE,
                 any(move |caller: Caller, req: Request| {

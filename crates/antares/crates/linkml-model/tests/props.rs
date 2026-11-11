@@ -202,6 +202,8 @@ fn classes_of(s: &Shape, names: &[String], slot_names: &[String]) -> BTreeMap<St
             let class = Class {
                 name: even(i).then(|| name.clone()),
                 class_uri: Some(format!("ex:c{i}")),
+                // a view's own (T-6747); a load drops a source's, so none round-trip here
+                exact_mappings: Vec::new(),
                 is_a,
                 slots: own,
                 slot_usage,
@@ -282,6 +284,12 @@ fn schema(s: &Shape) -> Schema {
         id: "https://example.org/s".into(),
         name: s.name.clone(),
         version: s.version.clone(),
+        title: s.version.clone(),
+        description: s
+            .version
+            .as_ref()
+            .map(|v| format!("{v}: a model\nof two lines")),
+        license: Some("https://creativecommons.org/licenses/by/4.0/".into()),
         prefixes: BTreeMap::from([(
             "ex".into(),
             Prefix {
@@ -308,8 +316,12 @@ proptest! {
     fn emitted_yaml_parses_back_to_the_same_model(s in shape()) {
         let model = Model::new(schema(&s), &LIMITS).unwrap();
         let yaml = linkml_model::yaml(&model);
-        let back: Schema = serde_saphyr::from_str(&yaml)
+        // read as a LinkML reader reads it: the short `prefix: IRI` and `tag: value` forms
+        let mut raw: serde_json::Value = serde_saphyr::from_str(&yaml)
             .unwrap_or_else(|e| panic!("emitted YAML does not parse: {e}\n{yaml}"));
+        linkml_model::normalize(&mut raw);
+        let back: Schema = serde_json::from_value(raw)
+            .unwrap_or_else(|e| panic!("emitted YAML is not the subset: {e}\n{yaml}"));
         prop_assert_eq!(&back, model.schema());
         // and the parsed copy is a model that emits the same bytes
         let again = Model::new(back, &LIMITS).unwrap();

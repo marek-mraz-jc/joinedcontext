@@ -745,7 +745,7 @@ fn check_iri(schema: &Schema, what: &str, value: &str) -> Result<(), Error> {
 }
 
 fn check_slot(schema: &Schema, what: &str, slot: &Slot) -> Result<(), Error> {
-    if let Some(uri) = &slot.slot_uri {
+    for uri in slot.slot_uri.iter().chain(&slot.exact_mappings) {
         check_iri(schema, what, uri)?;
     }
     if let Some(r) = &slot.range {
@@ -901,6 +901,9 @@ fn validate(schema: &Schema) -> Result<(), Error> {
         check_key("class", key, class.name.as_deref())?;
         let what = format!("class {key:?}");
         check_iri(schema, &what, class.class_uri.as_deref().unwrap_or(key))?;
+        for uri in &class.exact_mappings {
+            check_iri(schema, &what, uri)?;
+        }
         if let Some(parent) = &class.is_a {
             if !schema.classes.contains_key(parent) {
                 return malformed(format!("{what}: is_a {parent:?} is no class"));
