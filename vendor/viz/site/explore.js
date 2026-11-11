@@ -51,7 +51,7 @@
       timeout: "The data took longer than 15 seconds. Narrow the search or try again.", noAddress: "This page shows the live data of an open-data Endpoint; the address names none.",
       noWidget: "The table could not start. Reload the page; if it stays, the catalogue's administrators can see why in the browser console.",
       mapHint: "Click a point to open its details. The table lists the same entities.", mapCap: "The map shows the first {n} of {total} in view; zoom in for the rest.",
-      mapNone: "No entity of this query has a location.", links: "This query elsewhere", entityLink: "This entity in NGSI-LD", queryLink: "This query in NGSI-LD",
+      mapNone: "No entity of this query has a location.", mapLoading: "Loading map…", links: "This query elsewhere", entityLink: "This entity in NGSI-LD", queryLink: "This query in NGSI-LD",
       viewLink: "This view (type, filter and order)", yes: "yes", no: "no",
       cardYes: "Yes", cardNo: "No", dev: "For developers", onMap: "Show on the map", idLabel: "Identifier", typeLabel: "Type", placeMap: "Location map",
       embed: "Embed", embedLead: "Put this live table on your own website. It keeps reading the current data; nothing is copied.",
@@ -76,7 +76,7 @@
       timeout: "Dáta sa načítavali dlhšie ako 15 sekúnd. Zúžte hľadanie alebo to skúste znova.", noAddress: "Táto stránka ukazuje živé dáta Endpointu otvorených dát; adresa žiadny neuvádza.",
       noWidget: "Tabuľka sa nespustila. Načítajte stránku znova; ak to pretrváva, správcovia katalógu vidia príčinu v konzole prehliadača.",
       mapHint: "Kliknite na bod a otvorí sa jeho detail. Tabuľka uvádza tie isté entity.", mapCap: "Mapa ukazuje prvých {n} z {total} vo výreze; priblížte pre ďalšie.",
-      mapNone: "Žiadna entita tohto dopytu nemá polohu.", links: "Tento dopyt inde", entityLink: "Táto entita v NGSI-LD", queryLink: "Tento dopyt v NGSI-LD",
+      mapNone: "Žiadna entita tohto dopytu nemá polohu.", mapLoading: "Načítavam mapu…", links: "Tento dopyt inde", entityLink: "Táto entita v NGSI-LD", queryLink: "Tento dopyt v NGSI-LD",
       viewLink: "Toto zobrazenie (typ, filter a poradie)", yes: "áno", no: "nie",
       cardYes: "Áno", cardNo: "Nie", dev: "Pre vývojárov", onMap: "Zobraziť na mape", idLabel: "Identifikátor", typeLabel: "Typ", placeMap: "Mapa miesta",
       embed: "Vložiť na web", embedLead: "Dajte túto živú tabuľku na svoj web. Stále číta aktuálne dáta; nič sa nekopíruje.",
@@ -449,6 +449,40 @@
     return { points: points, shapes: shapes };
   }
 
+  // Every position of a feature's geometry, [lon, lat] each; none for a feature without one.
+  function positions(f) {
+    var out = [];
+    var walk = function (c) { if (typeof c[0] === "number") { if (isFinite(c[0]) && isFinite(c[1])) out.push(c); } else c.forEach(walk); };
+    if (f && f.geometry && Array.isArray(f.geometry.coordinates)) walk(f.geometry.coordinates);
+    return out;
+  }
+
+  // The box around every located feature, [[west, south], [east, north]], or null when none has a position.
+  function boundsOf(features) {
+    var w = Infinity, s = Infinity, e = -Infinity, n = -Infinity;
+    (features || []).forEach(function (f) {
+      positions(f).forEach(function (p) { w = Math.min(w, p[0]); s = Math.min(s, p[1]); e = Math.max(e, p[0]); n = Math.max(n, p[1]); });
+    });
+    return w === Infinity ? null : [[w, s], [e, n]];
+  }
+
+  // How many features lie within the view [west, south, east, north], as the broker's `within` counts them.
+  function inBox(features, b) {
+    return (features || []).filter(function (f) {
+      var ps = positions(f);
+      return ps.length > 0 && ps.every(function (p) { return p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3]; });
+    }).length;
+  }
+
+  // What a view change needs (T-5794 follow-up, brief 132): the rows held already when the first read
+  // returned every row of the query (counted in view, no read), nothing when this very read was asked
+  // last, else one read.
+  function viewPlan(held, lastUrl, url, b) {
+    if (held) return { local: inBox(held, b) };
+    if (url === lastUrl) return { skip: true };
+    return { read: url };
+  }
+
   // "Na mape 412 z 1 680 · 96 bez polohy", numbers in the page's language.
   function countLine(t, c) {
     var n = function (v) { return new Intl.NumberFormat(t.locale).format(v); };
@@ -495,15 +529,35 @@
 
     // The catalogue sizes the frame from this message. The content's own box, not the document's:
     // the view's stylesheet makes html as tall as the frame, which would hold the frame at its size.
+    // `map` is where the map section starts in this page (null while hidden): the host page tells this
+    // frame when that point comes within a viewport of the reader (jc-viz-near), as only it can.
+    var told = "", polls = 0;
     function height() {
       var h = Math.ceil(document.querySelector("main").getBoundingClientRect().bottom + window.scrollY);
-      if (window.parent !== window) window.parent.postMessage({ type: "jc-viz-height", height: h }, "*");
+      var section = document.getElementById("map-section");
+      // Only once the table's first page has pushed the map down (or 10 s passed): an early, short
+      // page would put the map within reach of a reader who never scrolls to it.
+      var settled = !!document.querySelector("#grid tbody tr") || polls >= 20;
+      var top = section && !section.hidden && settled ? Math.round(section.getBoundingClientRect().top + window.scrollY) : null;
+      if (window.parent === window || told === h + "/" + top) return;
+      told = h + "/" + top;
+      window.parent.postMessage({ type: "jc-viz-height", height: h, map: top }, "*");
     }
     if (typeof ResizeObserver === "function") new ResizeObserver(height).observe(document.querySelector("main"));
+    // A cross-origin frame below the fold runs no ResizeObserver until it is scrolled to, so its first
+    // (empty) height stuck at 120 px on a phone (brief 132): the first 15 seconds also ask on a timer.
+    var poll = setInterval(function () { height(); if (++polls >= 30) clearInterval(poll); }, 500);
     // The slice of this frame the reader sees, from the page around it (T-5192): dialogs open there.
     window.addEventListener("message", function (event) {
       var d = event.data || {};
-      if (event.source !== window.parent || window.parent === window || d.type !== "jc-viz-viewport") return;
+      if (event.source !== window.parent || window.parent === window) return;
+      if (d.type === "jc-viz-near") {
+        if (!state) return;
+        state.near = true;
+        if (state.mapWait) state.mapWait();
+        return;
+      }
+      if (d.type !== "jc-viz-viewport") return;
       if (typeof d.top !== "number" || typeof d.height !== "number" || !isFinite(d.top) || !isFinite(d.height)) return;
       var top = Math.max(0, Math.min(d.top, document.documentElement.scrollHeight));
       var h = Math.max(120, Math.min(d.height, 4000));
@@ -646,17 +700,18 @@
       var section = $("map-section");
       var type = state.type;
       var listed = state.types.filter(function (x) { return x.typeName === type; })[0];
-      if (where.view === "table" || !listed) { section.hidden = true; return; }
-      typeInfo(type).then(function (info) {
+      if (where.view === "table" || !type || (state.typesIn && !listed)) { section.hidden = true; return; }
+      var ready = function (info) {
         if (state.type !== type) return;
         var card = state.card && state.card.type === type ? state.card : null;
-        var geos = geoProps(info && info.attributeDetails ? info : listed, card);
+        var geos = geoProps(info, card);
+        // The quick look found a location before the type's details came: never hide what it showed.
+        if (!geos.length && state.mapping && state.mapping.type === type) return;
         section.hidden = !geos.length;
         if (!geos.length) return;
         var o = mapOptions(geos, card);
         var picked = mapChoice(state.mapRaw, o);
-        var moved = state.mapping && state.mapping.choice.geo !== picked.choice.geo;
-        state.mapping = { options: o, choice: picked.choice, card: card };
+        state.mapping = { type: type, options: o, choice: picked.choice, card: card };
         // Which of the type's GeoProperties the points come from, in sight beside Map settings.
         $("map-from").textContent = say(t.pointsFrom, { attr: o.labels[picked.choice.geo] || humanise(picked.choice.geo) });
         // Only with the model in hand is a slot the address names known to be wrong: drop it, say so.
@@ -667,11 +722,46 @@
           address();
         }
         panel();
-        // Another geometry: the map opens where it is, as the first view did.
-        if (state.map && moved && state.map.getSource("jc")) return fitFirst().then(mapMoved);
-        if (state.map) return mapMoved();
+        height();
+        if (state.map && state.map.getSource("jc")) {
+          // Another query or geometry: one read of its rows, the map fitted to them; else the same
+          // rows in the reader's new colours.
+          if (state.drawn !== viewKey()) return firstView(firstRead());
+          paint(state.mapData || []);
+          return mapMoved();
+        }
+        if (state.map) return;
+        loading(true);
         startMap();
+      };
+      typeInfo(type).then(function (info) {
+        if (info && info.attributeDetails) ready(info);
+        else if (listed) ready(listed);
       });
+      // The type's details can take seconds on a large type (GET /types/{type} counts every row's
+      // attributes): one row tells already whether the query's rows have the core location.
+      if (!state.mapping || state.mapping.type !== type) locationProbe(type).then(function (has) {
+        if (has && (!state.mapping || state.mapping.type !== type)) ready({ attributeNames: ["location"] });
+      });
+    }
+
+    // Whether a row of the type has a `location`: one keyValues row as GeoJSON.
+    function locationProbe(type) {
+      state.probes = state.probes || {};
+      if (state.probes[type]) return state.probes[type];
+      var url = entitiesUrl(api, { type: type, q: "location", limit: 1, attrs: "location", format: "keyValues" });
+      return (state.probes[type] = get(url, "application/geo+json").then(function (a) {
+        return ((a.body && a.body.features) || []).some(function (f) { return f && f.geometry && typeof f.geometry.type === "string"; });
+      }, function () { return false; }));
+    }
+
+    function viewKey() { return [state.type, state.q, geoOf()].join("\u0000"); }
+
+    // "Loading map…" over the map's box from the moment the section shows until its first rows are drawn.
+    function loading(on) {
+      if (on) $("map").setAttribute("data-loading", t.mapLoading);
+      else $("map").removeAttribute("data-loading");
+      if (on) $("map-note").textContent = t.mapLoading;
     }
 
     function startMap() {
@@ -679,20 +769,25 @@
       if (state.mapLoading) return;
       state.mapLoading = true;
       // MapLibre and its tiles cost seconds of a phone's main thread (T-5794: 6.5 s of a dataset
-      // page's blocking time): they load once the map has stayed in view for MAP_DWELL ms. Inside a
-      // frame the observer judges by the reader's window, so a map below the page's fold waits for
-      // the scroll; the dwell lets the table's first page push the map down before it counts.
-      if (typeof IntersectionObserver !== "function") return loadMap();
+      // page's blocking time): they load once the map comes within a viewport of the reader. Only the
+      // host page knows that of a frame (jc-viz.js says jc-viz-near); without such a host the map
+      // loads once it has stayed in view for MAP_DWELL ms, the dwell letting the table's first page
+      // push the map down before it counts.
+      if (state.near || typeof IntersectionObserver !== "function") return loadMap();
       var timer = null;
       var seen = new IntersectionObserver(function (entries) {
         var inView = entries[entries.length - 1].isIntersecting;
         clearTimeout(timer);
-        if (inView) timer = setTimeout(function () { seen.disconnect(); loadMap(); }, MAP_DWELL);
+        if (inView) timer = setTimeout(go, MAP_DWELL);
       });
+      var go = function () { seen.disconnect(); clearTimeout(timer); state.mapWait = null; loadMap(); };
+      state.mapWait = go;
       seen.observe($("map"));
     }
 
     function loadMap() {
+      // The query's rows load beside MapLibre, not after its style.
+      var first = firstRead();
       maplibreReady().then(function (maplibre) {
         if (root.pmtiles) maplibre.addProtocol("pmtiles", new root.pmtiles.Protocol().tile);
         // The Endpoint's vector tiles, read like every other request here: anonymous, no referrer.
@@ -750,29 +845,63 @@
             map.on("mouseleave", layer, function () { map.getCanvas().style.cursor = ""; });
           });
           map.on("moveend", mapMoved);
-          fitFirst().then(function () {
+          firstView(first).then(function () {
             if (state.mapAt) map.jumpTo({ center: state.mapAt, zoom: 15 });
             state.mapAt = null;
-          }).then(mapMoved);
+          });
         });
-      }, function () { $("map-note").textContent = failure(null); });
+      }, function () { loading(false); $("map-note").textContent = failure(null); });
     }
 
-    // The first view: the bounds of the query's first page, so the map opens where the data is.
-    function fitFirst() {
-      var url = entitiesUrl(api, Object.assign({ type: state.type, q: state.q, limit: 25, lang: lang, format: "keyValues" }, ownGeo()));
-      return get(url, "application/geo+json").then(function (answer) {
-        var all = [];
-        ((answer.body && answer.body.features) || []).forEach(function (f) {
-          var walk = function (c) { if (typeof c[0] === "number") all.push(c); else c.forEach(walk); };
-          if (f.geometry && f.geometry.coordinates) walk(f.geometry.coordinates);
-        });
-        if (!all.length) return;
-        var lon = all.map(function (p) { return p[0]; }), lat = all.map(function (p) { return p[1]; });
-        var box = [[Math.min.apply(null, lon), Math.min.apply(null, lat)], [Math.max.apply(null, lon), Math.max.apply(null, lat)]];
-        if (box[0][0] === box[1][0] && box[0][1] === box[1][1]) state.map.jumpTo({ center: box[0], zoom: 14 });
-        else state.map.fitBounds(box, { padding: 30, maxZoom: 15, animate: false });
-      }, function () {});
+    // The query's rows for the map, up to MAP_LIMIT, wherever they are: the first view fits them all.
+    function firstRead() {
+      var query = Object.assign({ type: state.type, q: state.q, limit: MAP_LIMIT, count: "true", lang: lang, format: "keyValues" }, ownGeo());
+      var key = viewKey();
+      if (state.first && state.first.key === key) return state.first.read;
+      state.first = { key: key };
+      return (state.first.read = get(entitiesUrl(api, query), "application/geo+json").then(function (answer) {
+        var features = ((answer.body && answer.body.features) || []).filter(function (f) { return f && f.geometry && typeof f.geometry.type === "string"; });
+        var rows = ((answer.body && answer.body.features) || []).length;
+        // Every row of the query came back: the map holds them and counts each view itself.
+        var whole = rows < MAP_LIMIT && (answer.count === null || +answer.count <= rows);
+        return { key: key, features: features, whole: whole, total: answer.count === null ? null : +answer.count };
+      }, function (e) { if (state.first && state.first.key === key) state.first = null; return { key: key, error: e }; }));
+    }
+
+    // The first view of a query: its rows drawn, the map fitted to every located one. A read that
+    // stopped at MAP_LIMIT draws what it has; panning then reads each view (or the type's tiles).
+    function firstView(first) {
+      var asked = ++state.mapAsk;
+      return first.then(function (got) {
+        var map = state.map;
+        if (asked !== state.mapAsk) return;
+        // The query moved while MapLibre loaded: read the one now shown.
+        if (got.key !== viewKey()) return firstView(firstRead());
+        state.drawn = got.key;
+        loading(false);
+        if (got.error) { $("map-note").textContent = failure(got.error); return; }
+        counts();
+        state.mapData = got.features;
+        state.held = got.whole ? got.features : null;
+        state.viewUrl = null;
+        paint(got.features);
+        var box = boundsOf(got.features);
+        state.fitting = true;
+        try {
+          if (box && box[0][0] === box[1][0] && box[0][1] === box[1][1]) map.jumpTo({ center: box[0], zoom: 14 });
+          else if (box) map.fitBounds(box, { padding: 30, maxZoom: 15, animate: false });
+        } finally { state.fitting = false; }
+        if (!got.features.length) { $("map-note").textContent = t.mapNone; state.inView = 0; showCount(); return; }
+        if (got.whole) return mapMoved();
+        // The view now shows what the read held; its count in view comes from the query.
+        var b = map.getBounds(), bb = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+        state.viewUrl = entitiesUrl(api, Object.assign({ type: state.type, q: state.q, limit: MAP_LIMIT, count: "true", lang: lang, format: "keyValues" }, bboxQuery(bb), ownGeo()));
+        $("map-note").textContent = say(t.mapCap, { n: got.features.length, total: got.total === null ? "…" : got.total });
+        get(entitiesUrl(api, Object.assign({ type: state.type, q: state.q, limit: 0, count: "true" }, bboxQuery(bb), ownGeo()))).then(function (a) {
+          if (asked === state.mapAsk && a.count !== null) { state.inView = +a.count; showCount(); }
+        }, function () {});
+        if (!state.q) tile(state.type).then(function (on) { if (on && asked === state.mapAsk) $("map-note").textContent = t.mapHint; });
+      });
     }
 
     // Past MAP_LIMIT and with no filter (a tile takes no query), the map draws the type's vector
@@ -875,20 +1004,30 @@
 
     function mapMoved() {
       var map = state.map;
-      if (!map || !map.getSource("jc") || !state.mapping) return;
+      if (!map || !map.getSource("jc") || !state.mapping || state.fitting) return;
       if (state.tiled && (state.tiled !== state.type || state.q || geoOf() !== "location")) untile();
       counts();
-      var b = map.getBounds();
-      var box = Object.assign(bboxQuery([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]), ownGeo());
-      var asked = ++state.mapAsk;
-      var shown = function (n) { if (asked === state.mapAsk) { state.inView = n; showCount(); } };
+      var b = map.getBounds(), bb = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+      var box = Object.assign(bboxQuery(bb), ownGeo());
       // Tiles draw the view themselves; the count in view still comes from the query.
       if (state.tiled) {
-        get(entitiesUrl(api, Object.assign({ type: state.type, limit: 0, count: "true" }, box))).then(function (a) { if (a.count !== null) shown(+a.count); }, function () {});
+        var asked = ++state.mapAsk;
+        get(entitiesUrl(api, Object.assign({ type: state.type, limit: 0, count: "true" }, box))).then(function (a) { if (asked === state.mapAsk && a.count !== null) { state.inView = +a.count; showCount(); } }, function () {});
         return;
       }
       var query = Object.assign({ type: state.type, q: state.q, limit: MAP_LIMIT, count: "true", lang: lang, format: "keyValues" }, box);
-      get(entitiesUrl(api, query), "application/geo+json").then(function (answer) {
+      var plan = viewPlan(state.held, state.viewUrl, entitiesUrl(api, query), bb);
+      if (plan.local !== undefined) {
+        state.inView = plan.local;
+        showCount();
+        $("map-note").textContent = t.mapHint;
+        return;
+      }
+      if (plan.skip) return;
+      state.viewUrl = plan.read;
+      asked = ++state.mapAsk;
+      var shown = function (n) { if (asked === state.mapAsk) { state.inView = n; showCount(); } };
+      get(plan.read, "application/geo+json").then(function (answer) {
         if (asked !== state.mapAsk) return;
         var features = ((answer.body && answer.body.features) || []).filter(function (f) { return f && f.geometry && typeof f.geometry.type === "string"; });
         state.mapData = features;
@@ -1107,6 +1246,7 @@
     // The type list only says which types have a location, for the map; the view reads its own.
     get(api + "ngsi-ld/v1/types?details=true").then(function (answer) {
       state.types = (Array.isArray(answer.body) ? answer.body : []).filter(function (x) { return x && NAME.test(x.typeName || ""); });
+      state.typesIn = true;
       drawMap();
     }, function () {});
 
@@ -1137,7 +1277,7 @@
     height();
   }
 
-  root.jcExplore = { parseHash: parseHash, hashOf: hashOf, base: base, hosts: hosts, styleOf: styleOf, entitiesUrl: entitiesUrl, bboxQuery: bboxQuery, links: links, templateOf: templateOf, tilesetUrl: tilesetUrl, geoProps: geoProps, mapOptions: mapOptions, mapChoice: mapChoice, colourClasses: colourClasses, splitPoints: splitPoints, countLine: countLine, show: show, cardValue: cardValue, namedLink: namedLink, cardOf: cardOf, hostOf: hostOf, humanise: humanise, TEXT: TEXT };
+  root.jcExplore = { parseHash: parseHash, hashOf: hashOf, base: base, hosts: hosts, styleOf: styleOf, entitiesUrl: entitiesUrl, bboxQuery: bboxQuery, links: links, templateOf: templateOf, tilesetUrl: tilesetUrl, geoProps: geoProps, mapOptions: mapOptions, mapChoice: mapChoice, colourClasses: colourClasses, splitPoints: splitPoints, boundsOf: boundsOf, inBox: inBox, viewPlan: viewPlan, countLine: countLine, show: show, cardValue: cardValue, namedLink: namedLink, cardOf: cardOf, hostOf: hostOf, humanise: humanise, TEXT: TEXT };
   if (typeof module === "object" && module.exports) module.exports = root.jcExplore;
   else if (typeof document !== "undefined") main();
 })(typeof self !== "undefined" ? self : this);

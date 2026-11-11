@@ -43,6 +43,9 @@ main:has(#data-api-tool) .page-head .actions { display: none; }
 .status:empty { display: none; }
 .status.error { padding: 10px 12px; border-radius: 8px; background: var(--err-bg); color: var(--err); }
 #map { height: 420px; border: 1px solid var(--line); border-radius: 8px; }
+/* Until the map's first rows are drawn (brief 132): a calm box saying so, never a blank one. */
+#map { position: relative; background: var(--soft); }
+#map[data-loading]::after { content: attr(data-loading); position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--soft) 82%, transparent); color: var(--fg); font-size: 0.9375rem; pointer-events: none; }
 @media (max-width: 600px) { #map { height: 300px; } }
 #detail, #embed { max-width: min(40rem, calc(100vw - 32px)); width: 100%; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--fg); padding: 16px; box-sizing: border-box; }
 #detail::backdrop, #embed::backdrop { background: rgba(15, 23, 42, 0.5); }
