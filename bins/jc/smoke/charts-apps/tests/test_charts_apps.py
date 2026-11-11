@@ -103,6 +103,11 @@ def test_a_closed_panel_read_by_a_person_no_policy_names_passes_only_on_the_gate
     assert suite.judge_refused(200, [], "")[0] == suite.FAIL  # silence is no refusal
     assert suite.judge_refused(500, [], "upstream status 403")[0] == suite.FAIL
     assert suite.judge_refused(200, [], "upstream status 500: boom")[0] == suite.FAIL
+    # smoke 42975117838: the gateway's 404 reached the page in the Portal's own words
+    silent = "the panel's datasource did not answer; try again in a minute, or ask the dashboard's owner"
+    assert suite.judge_refused(200, [], silent, source_answered=True)[0] == suite.PASS
+    assert suite.judge_refused(200, [], silent)[0] == suite.FAIL  # a source down for everyone
+    assert suite.judge_refused(200, frames, silent, source_answered=True)[0] == suite.FAIL
 
 
 def test_a_closed_panel_gives_one_row_per_person_with_the_answer_it_got():
@@ -124,6 +129,13 @@ def test_a_closed_panel_gives_one_row_per_person_with_the_answer_it_got():
         ("portal.panel", suite.PASS, "200, 1 frames, 2 rows"),
         ("portal.panel.refused", suite.PASS,
          "200, 0 frames, 0 rows, error: outbound datasource error: upstream status 404: not found")]
+    # the Portal's own words for the refusal pass only beside the reader's rows
+    rows["person-token"] = {"error": suite.SOURCE_SILENT + "; try again in a minute"}
+    for reader, verdict in ((rows["reader-token"], suite.PASS), ({"frames": []}, suite.FAIL)):
+        rows["reader-token"] = reader
+        res = Results("charts-apps", "http://127.0.0.1:1")
+        suite.read_closed(Portal(), res, "/p?x", "t", tokens.get)
+        assert res.rows[1]["result"] == verdict, res.rows
     res = Results("charts-apps", "http://127.0.0.1:1")
     suite.read_closed(Portal(), res, "/p?x", "t", lambda who: (None, "login of x at edge: 400"))
     assert [(r["result"], r["reason"]) for r in res.rows] == [(suite.FAIL, "no edge token: login of x at edge: 400")] * 2
