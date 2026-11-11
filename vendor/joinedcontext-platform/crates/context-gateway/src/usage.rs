@@ -80,7 +80,7 @@ pub fn surface(route: &str) -> Option<&'static str> {
     let rest = route.strip_prefix("/api/endpoint/{slug}/")?;
     let first = rest.split('/').next().unwrap_or_default();
     Some(match first {
-        "ngsi-ld" => "ngsi-ld",
+        "ngsi-ld" | "facets" => "ngsi-ld",
         "odata" => "odata",
         "ogc" => "ogc",
         "sta" => "sta",

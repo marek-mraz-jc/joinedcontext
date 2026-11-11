@@ -2128,8 +2128,8 @@
         "bad": "Verwenden Sie 1 bis 40 Kleinbuchstaben, Ziffern oder -, beginnend mit Buchstabe oder Ziffer."
       },
       "filterField": {
-        "label": "Nur passende Entitäten (optional)",
-        "hint": "Eine NGSI-LD-Abfrage, die diese Ausgabe eingrenzt und nie erweitert, zum Beispiel eventCategory==\"sport\"."
+        "label": "Abfrage der Vorlage (optional)",
+        "hint": "q, scopeQ und eine Geo-Abfrage als eine Abfragezeichenkette; sie grenzt diese Vorlage ein, erweitert sie nie. Zum Beispiel q=category==\"sport\"&georel=near;maxDistance==5000&geometry=Point&coordinates=[19.15,48.73]. In einem Wert & als %26 und % als %25 schreiben."
       },
       "sourceAdd": {
         "label": "Weiteren Typ hinzufügen",

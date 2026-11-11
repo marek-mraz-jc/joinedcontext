@@ -65,7 +65,8 @@ fn asked(client: &reqwest::Client, base: &str, surface: &str) -> Option<reqwest:
         "ogc-features" => get("ogc/features/collections").header(reqwest::header::ACCEPT, json),
         "sta" => get("sta/v1.1"),
         "csv" => get("file.csv"),
-        "ical" => get("ical/v1/events.ics"),
+        // The first stored preset (API/02 §4a): an Endpoint names its calendars, `events` or not.
+        "ical" => get("entities.ics"),
         "websocket" => get("ws")
             .header(reqwest::header::CONNECTION, "Upgrade")
             .header(reqwest::header::UPGRADE, "websocket")

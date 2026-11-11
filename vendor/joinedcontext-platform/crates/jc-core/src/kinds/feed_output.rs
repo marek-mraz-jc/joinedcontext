@@ -10,7 +10,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_norway::Value;
 
-use super::ical_mapping::{fits, is_language, is_name, is_path, is_plain, resolve, Accepts, Model};
+use super::ical_mapping::{
+    effective_filter, fits, is_language, is_name, is_path, is_plain, query_gaps, resolve, Accepts,
+    Model,
+};
 
 /// The most outputs one Endpoint lists (EP-151).
 pub const MAX_FEED_OUTPUTS: usize = 20;
@@ -40,7 +43,8 @@ pub const FEED_FORMATS: [(&str, &str, &str); 3] = [
 ];
 
 /// Each output's three documents, as a record, a page head and a catalogue list them:
-/// `(output, path under the Endpoint, format name, media type)`.
+/// `(output, path under the Endpoint, format name, media type)`; the path is the preset path
+/// `feeds/{name}.{rss,atom,json}`, `feed/v1/{name}/{file}` staying its alias (API/02 §4a).
 pub fn feed_links(
     outputs: &[FeedOutput],
 ) -> Vec<(&FeedOutput, String, &'static str, &'static str)> {
@@ -50,13 +54,22 @@ pub fn feed_links(
             FEED_FORMATS.iter().map(move |(file, media_type, format)| {
                 (
                     output,
-                    format!("feed/v1/{}/{file}", output.name),
+                    format!("feeds/{}.{}", output.name, feed_extension(file)),
                     *format,
                     *media_type,
                 )
             })
         })
         .collect()
+}
+
+/// The preset path's extension of a feed document (API/02 §4a): `rss`, `atom` or `json`.
+fn feed_extension(file: &str) -> &'static str {
+    match file {
+        "rss.xml" => "rss",
+        "atom.xml" => "atom",
+        _ => "json",
+    }
 }
 
 fn first_version() -> u64 {
@@ -87,6 +100,9 @@ pub struct FeedOutput {
     /// What narrows the view for this output; it never widens it.
     #[serde(default, skip_serializing_if = "FeedFilter::is_empty")]
     pub filter: FeedFilter,
+    /// The preset's query string over the alias allow-list (API/02 §4a); it replaces `filter`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
     /// The feed's language when the request names none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
@@ -356,16 +372,28 @@ impl FeedOutput {
 
     /// The filter's gaps, when it has one: each query parsed as the broker parses it, a geo filter whole.
     fn filter_gaps(&self, gaps: &mut Vec<String>) {
-        if self.filter.is_empty() {
-            return;
-        }
         let name = &self.name;
+        let filter = Some(&self.filter).filter(|f| !f.is_empty());
         gaps.extend(
-            self.filter
-                .gaps()
+            query_gaps(self.query.as_deref(), filter, &self.types())
                 .into_iter()
                 .map(|gap| format!("feed output `{name}`: {gap}")),
         );
+    }
+
+    /// The NGSI-LD types the output's sources list.
+    pub fn types(&self) -> Vec<&str> {
+        self.sources
+            .iter()
+            .map(|s| s.entity_type.as_str())
+            .collect()
+    }
+
+    /// The filter the broker applies: the preset's `query` read into its members, else
+    /// `filter`; empty for a query that does not read (the save refuses it).
+    pub fn effective_filter(&self) -> FeedFilter {
+        let filter = Some(&self.filter).filter(|f| !f.is_empty());
+        effective_filter(self.query.as_deref(), filter, &self.types()).unwrap_or_default()
     }
 
     /// Every gap of the output against the space's LinkML model, one sentence each: a type the

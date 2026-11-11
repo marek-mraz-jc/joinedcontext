@@ -27,6 +27,7 @@ Desired specification of an `Endpoint` resource (EP-01..EP-28).
 | `disabledRepresentations` | list of [Representation](#representation) | no | Representations an Endpoint without `enabledRepresentations` does not serve (EP-104). |
 | `display` | map of [Display](#display) | no | Per entity type, the slots this Endpoint's tables, popups and CKAN columns show and its key attributes, reordering and narrowing the model's display order (EP-135, DM-98). |
 | `enabledRepresentations` | list of [Representation](#representation) | no | The representations this Endpoint serves, listed (EP-05). Omitted: every one but `sta`, less `disabledRepresentations` (EP-104); see [`EndpointSpec::served_representations`]. |
+| `facets` | list of string | no | The attributes a reader may list distinct values of at `/facets` (EP-178), at most [`MAX_FACETS`]: an attribute name or `name.member`, e.g. `address.addressLocality`. |
 | `fileLimits` | [FileLimits](#filelimits) | no | Optional ceiling on one `file.*` download (EP-44). |
 | `mcp` | boolean | no | `false` turns the Endpoint's MCP instance off. Every Endpoint serves `mcp` without listing it, public or internal, gated by its own Policy (EP-24, T-2901); see [`EndpointSpec::served_representations`]. |
 | `policyRef` | [Urn](#urn) | no | Optional NGSI-LD Policy URN attached to this endpoint; means `policyRefs: [it]`. Written `urn:ngsi-ld:Policy:{orgDomain}:{space}:{name}`, where `{space}` is the rendered segment of the space: its `urnSegment`, else `{project}-{name}`, never the bare space name (EP-117). |
@@ -316,6 +317,7 @@ One output of `spec.representations.feed`.
 | `lang` | string | no | The feed's language when the request names none. |
 | `limit` | integer (uint64) | no | The default page size, 1 to 200 (50 when left out). |
 | `name` | string | yes | A slug `[a-z0-9-]`, 1 to 63, unique on the Endpoint: the URL segment after `feed/v1/`. |
+| `query` | string | no | The preset's query string over the alias allow-list (API/02 §4a); it replaces `filter`. |
 | `sort` | [FeedSort](#feedsort) | no | The order: `updated`, newest first, the only one. |
 | `sources` | list of [FeedSource](#feedsource) | yes | The model classes the feed lists, each with its roles. |
 | `title` | map of string | no | The feed's title per language (`sk`, `en`). |
@@ -328,10 +330,11 @@ One named calendar of `spec.representations.ical` (API/11 EP-159), served at `/i
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `description` | map of string | no | The calendar's description per language tag. |
-| `filter` | [OutputFilter](#outputfilter) | no | A query that narrows the view for this calendar, never widens it. |
+| `filter` | [OutputFilter](#outputfilter) | no | A query that narrows the view for this calendar, never widens it (deprecated: `query`). |
 | `lang` | string | no | The language tag (BCP 47) a LanguageProperty is read in when a field names none. |
 | `limit` | integer (uint32) | no | At most this many Events, 1 to 10000. |
 | `name` | string | yes | The URL slug: lowercase letters, digits and `-`, 1 to 40, unique on the Endpoint. |
+| `query` | string | no | The preset's query string over the alias allow-list (API/02 §4a), such as `q=eventCategory=="koncert"&georel=near;maxDistance==5000&geometry=Point&coordinates=[19.15,48.73]`; it narrows the view like `filter`, which it replaces. |
 | `sort` | string | no | `start` or `-start`: the order the first `limit` Events are kept in. |
 | `sources` | list of [IcalMapping](#icalmapping) | yes | The model classes the calendar maps, each with its preset or mapping; 1 to 10. |
 | `timezone` | string | no | The IANA zone a time without offset is read in; default `Europe/Bratislava`. |

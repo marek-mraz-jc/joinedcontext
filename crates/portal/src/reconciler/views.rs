@@ -941,15 +941,39 @@ fn view_of(
     // the broker serves a calendar only for the outputs listed here (EP-159, T-5208), and the feed
     // outputs as the Endpoint lists them, the broker's `antares-feed` contract (EP-150); a view
     // without a member serves no such format.
+    // A stored preset's `query` (API/02 §4a) reaches the broker as the `filter` it stands for,
+    // so a preset and the output it replaced render the same bytes.
     let mut representations = serde_json::Map::new();
-    let ical = e.spec.ical_outputs();
+    let ical: Vec<_> = e
+        .spec
+        .ical_outputs()
+        .iter()
+        .map(|output| jc_core::kinds::IcalOutput {
+            filter: output.effective_filter(),
+            query: None,
+            ..output.clone()
+        })
+        .collect();
     if !ical.is_empty() {
         let outputs = serde_json::to_value(ical).map_err(|err| err.to_string())?;
         representations.insert("ical".into(), outputs);
     }
-    let feeds = e.spec.feed_outputs();
+    let feeds: Vec<_> = e
+        .spec
+        .feed_outputs()
+        .iter()
+        .map(|output| jc_core::kinds::FeedOutput {
+            filter: output.effective_filter(),
+            query: None,
+            ..output.clone()
+        })
+        .collect();
     if !feeds.is_empty() {
         representations.insert("feed".into(), json!(feeds));
+    }
+    // the closed list of attributes `/facets` counts values of is the Endpoint's (EP-178)
+    if !e.spec.facets.is_empty() {
+        representations.insert("facets".into(), json!(e.spec.facets));
     }
     if !representations.is_empty() {
         view.insert("representations".into(), Value::Object(representations));
@@ -3877,6 +3901,15 @@ mod tests {
         };
         let view = with(json!(["ngsi-ld", "ical"]), Some(&outputs));
         assert_eq!(view["representations"], json!({ "ical": outputs }));
+        // T-6756: the same output stored as a preset `query` hands the broker the same bytes.
+        let mut preset = outputs.clone();
+        preset[0].as_object_mut().map(|o| o.remove("filter"));
+        preset[0]["query"] = json!("type=Event&q=eventCategory==%22sport%22");
+        let as_preset = with(json!(["ngsi-ld", "ical"]), Some(&preset));
+        assert_eq!(
+            serde_json::to_vec(&as_preset["representations"]).ok(),
+            serde_json::to_vec(&view["representations"]).ok()
+        );
         assert!(with(json!(["ngsi-ld", "ical"]), None)
             .get("representations")
             .is_none());
@@ -3889,6 +3922,26 @@ mod tests {
             json!({"ical": [{"name": "events", "sources": [{"type": "Event", "preset": "schema-org"}]}]}),
             "the deprecated single object is the output `events`"
         );
+    }
+
+    /// T-6758 (EP-178): the view lists the Endpoint's `spec.facets` as written, so the broker
+    /// counts values of the publisher's attributes alone, and nothing when it lists none.
+    #[test]
+    fn the_view_carries_the_facets_the_endpoint_lists() {
+        let s = sources(vec![("cars", cars())]);
+        let with = |facets: Option<Value>| {
+            let mut spec = json!({"policyRef": "urn:ngsi-ld:Policy:city.example:city-air:cars"});
+            if let Some(facets) = facets {
+                spec["facets"] = facets;
+            }
+            endpoint_view(&s, &endpoint(spec)).unwrap_or_else(|why| panic!("a view: {why}"))
+        };
+        let listed = json!(["eventCategory", "address.addressLocality"]);
+        assert_eq!(
+            with(Some(listed.clone()))["representations"],
+            json!({ "facets": listed })
+        );
+        assert!(with(None).get("representations").is_none());
     }
 
     /// T-3788: the space view is the `*` form, every type and Attribute; the engine narrows
