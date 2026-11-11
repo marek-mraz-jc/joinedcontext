@@ -5724,6 +5724,7 @@
     "page": "Page",
     "showMetadata": "Show metadata for",
     "error": "Not loaded, try again",
+    "retry": "Try again",
     "filter": "Filter",
     "noFilter": "Any",
     "ops": {

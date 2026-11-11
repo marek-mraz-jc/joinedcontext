@@ -107,6 +107,8 @@ export interface GridLabels {
   queryRefused: string;
   /** The disclosure holding the broker's own sentence about a refused query. */
   errorDetail: string;
+  /** The button under a failed read that reads the rows again. */
+  retry: string;
   /** What the footer calls the endpoint's own count of matching entities: a word after the number, or a
    *  text holding `{n}` where the number goes, for a language whose word agrees with it (sk "Vyhovuje: {n}"). */
   matching: string;
@@ -372,6 +374,7 @@ export const DEFAULT_LABELS: GridLabels = {
   notReadableOne: "1 more field is not shown: your access does not include it.",
   queryRefused: "The broker refused this query",
   errorDetail: "What the broker said",
+  retry: "Try again",
   matching: "matching",
   noTotal: "the endpoint gives no total for this answer",
   rowsShown: "Rows {first}–{last}",

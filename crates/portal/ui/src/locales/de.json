@@ -5724,6 +5724,7 @@
     "page": "Seite",
     "showMetadata": "Metadaten anzeigen für",
     "error": "Nicht geladen, versuchen Sie es erneut",
+    "retry": "Erneut versuchen",
     "filter": "Filter",
     "noFilter": "Beliebig",
     "ops": {

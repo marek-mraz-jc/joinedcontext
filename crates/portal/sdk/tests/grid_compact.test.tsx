@@ -51,6 +51,17 @@ describe("EntityGrid compact (T-6748)", () => {
     expect(container.querySelector(".jc-grid-typeline")).not.toHaveTextContent("Category");
   });
 
+  it("offers Try again under a failed read, and the press reads the rows again (T-6781)", async () => {
+    const real = fixtureSource(entities);
+    let calls = 0;
+    const flaky = { ...real, query: (q: Parameters<typeof real.query>[0], page: Parameters<typeof real.query>[1]) => (page.limit > 0 && ++calls === 1 ? Promise.reject(new Error("timeout")) : real.query(q, page)) };
+    render(<EntityGrid config={config} source={flaky} compact filterRow={false} />);
+    const retry = await screen.findByRole("button", { name: "Try again" });
+    fireEvent.click(retry);
+    await waitFor(() => expect(screen.getByText("Kallio")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+
   it("keeps a column whose rows differ", async () => {
     const { container } = render(<EntityGrid config={config} source={fixtureSource(entities)} compact filterRow={false} />);
     await waitFor(() => expect(screen.getByText("Kallio")).toBeInTheDocument());

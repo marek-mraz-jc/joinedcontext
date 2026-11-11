@@ -73,6 +73,9 @@ export function GridStatus({ view }: { view: GridView }): React.JSX.Element {
       {error && (
         <div className="jc-grid-error">
           {labels.error}: {error}
+          <button type="button" onClick={grid.reload}>
+            {labels.retry}
+          </button>
           {grid.errorDetail && (
             <details className="jc-grid-error-detail">
               <summary>{labels.errorDetail}</summary>

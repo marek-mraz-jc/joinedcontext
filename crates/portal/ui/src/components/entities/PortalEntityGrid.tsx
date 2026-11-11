@@ -114,6 +114,7 @@ export function gridLabels(t: (key: string, values?: Record<string, string>) => 
     page: t("entityGrid.page"),
     showMetadata: t("entityGrid.showMetadata"),
     error: t("entityGrid.error"),
+    retry: t("entityGrid.retry"),
     filter: t("entityGrid.filter"),
     noFilter: t("entityGrid.noFilter"),
     filterHintText: t("entityGrid.hint.filterText"),

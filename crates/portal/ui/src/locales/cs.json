@@ -5724,6 +5724,7 @@
     "page": "Strana",
     "showMetadata": "Zobrazit metadata pro",
     "error": "Nenačteno, zkuste znovu",
+    "retry": "Zkusit znovu",
     "filter": "Filtr",
     "noFilter": "Libovolné",
     "ops": {
