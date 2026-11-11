@@ -42,6 +42,10 @@ pub struct Mirror {
     removals_held: std::sync::atomic::AtomicBool,
     /// What the syncs would have removed this run while removals were held, as `Kind name`.
     held_back: std::sync::Mutex<Vec<String>>,
+    /// Manifests on the default branch that their kind's validation refuses and that have no
+    /// last good revision to serve (CHG-05). Kept apart from `resources`, so no converge step
+    /// and no reader of the mirror acts on one; only a person's read of the project shows it.
+    refused: RwLock<BTreeMap<ResourceKey, Arc<ResourceEnvelope>>>,
 }
 
 impl Mirror {
@@ -204,6 +208,43 @@ impl Mirror {
         self.set_repositories(repositories);
         self.set_layout(other.layout());
         self.hold_removals(other.removals_held());
+        let refused = other
+            .refused
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        *self.refused.write().unwrap_or_else(|p| p.into_inner()) = refused;
+    }
+
+    /// Records `env` as refused (CHG-05): it is shown to a person reading its project and to
+    /// nothing else.
+    pub fn refuse(&self, env: ResourceEnvelope) {
+        let key = env.key();
+        if !is_dns1123(&key.namespace) || !is_manifest_name(&key.kind, &key.name) {
+            return;
+        }
+        let mut lock = self.refused.write().unwrap_or_else(|p| p.into_inner());
+        lock.insert(key, Arc::new(env));
+    }
+
+    /// The refused manifest `name` of `kind` in `namespace`, if the last run refused one.
+    pub fn refused(&self, namespace: &str, kind: &str, name: &str) -> Option<ResourceEnvelope> {
+        let key = ResourceKey {
+            namespace: namespace.to_string(),
+            kind: kind.to_string(),
+            name: name.to_string(),
+        };
+        let lock = self.refused.read().unwrap_or_else(|p| p.into_inner());
+        lock.get(&key).map(|env| (**env).clone())
+    }
+
+    /// Every refused manifest of `kind` in `namespace`, by name.
+    pub fn refused_of(&self, namespace: &str, kind: &str) -> Vec<ResourceEnvelope> {
+        let lock = self.refused.read().unwrap_or_else(|p| p.into_inner());
+        lock.iter()
+            .filter(|(key, _)| key.namespace == namespace && key.kind == kind)
+            .map(|(_, env)| (**env).clone())
+            .collect()
     }
 
     /// Every resource matching a predicate, in no particular order.
