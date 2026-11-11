@@ -213,12 +213,7 @@ async fn a_template_lands_in_its_own_repository_and_the_app_is_proposed_without_
     );
     // No credential of the platform rides in the source.
     assert!(files.values().all(|text| !text.contains("token-xyz")));
-    assert_eq!(
-        sent(&server, "POST", &format!("{LANDED}/Shako.Protect"))
-            .await
-            .len(),
-        1
-    );
+    common::assert_portal_branch_rules(&server, LANDED).await;
 
     // The App, proposed in the project's repository, builds from the first commit and reads the
     // Endpoint's space.

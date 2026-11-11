@@ -227,8 +227,18 @@ impl RefPolicy {
             .check(ctx, Action::Write, &target)
             .into_result("repository not found")?;
 
-        // Protected branches can never be deleted
-        if is_delete {
+        let principals = ctx.subject.principals();
+
+        // A protected branch is deleted only by a subject its rule names to rewrite it: a force
+        // push already replaces its whole history, so deleting grants nothing more. That is how
+        // the Portal closes the `workspace/*` branches reserved to it (T-6706); `main` is never.
+        let may_rewrite = rule.enable_push
+            && rule.enable_force_push
+            && rule
+                .force_push_allowlist_usernames
+                .iter()
+                .any(|u| principals.contains(&u.as_str()));
+        if is_delete && !may_rewrite {
             return Err(ShakoError::Forbidden(format!(
                 "branch '{branch_name}' is protected and cannot be deleted"
             )));
@@ -241,7 +251,6 @@ impl RefPolicy {
             )));
         }
 
-        let principals = ctx.subject.principals();
         let whitelist_active =
             rule.enable_push_whitelist || !rule.push_whitelist_usernames.is_empty();
         if whitelist_active
@@ -692,5 +701,90 @@ mod tests {
                 )
                 .is_ok()
         );
+    }
+
+    /// T-6706: a prefix reserved to the Portal takes no push, rewrite or delete from anyone
+    /// else, the Portal deletes its own branch there, and `main` is deleted by nobody.
+    #[test]
+    fn a_reserved_prefix_is_written_and_deleted_by_its_allowlist_alone() {
+        let inst = InstanceId::from_u128(1);
+        let org = OrgId::from_u128(1);
+        let authz = LocalAuthorizer::new(
+            ["jc-portal", "writer-bob"]
+                .into_iter()
+                .map(|principal| RoleBinding {
+                    org_id: org,
+                    principal: principal.into(),
+                    actions: vec![Action::Write],
+                    project_id: None,
+                    repo: None,
+                })
+                .collect(),
+        );
+        let only = |who: &str| vec![who.to_owned()];
+        let policy = RefPolicy {
+            branch_rules: vec![
+                BranchProtectionRule {
+                    rule_name: "main".into(),
+                    enable_push: false,
+                    enable_merge_whitelist: true,
+                    merge_whitelist_usernames: only("jc-portal"),
+                    ..BranchProtectionRule::default()
+                },
+                BranchProtectionRule {
+                    rule_name: "portal/*".into(),
+                    enable_push: true,
+                    enable_push_whitelist: true,
+                    push_whitelist_usernames: only("jc-portal"),
+                    enable_force_push: true,
+                    enable_force_push_allowlist: true,
+                    force_push_allowlist_usernames: only("jc-portal"),
+                    ..BranchProtectionRule::default()
+                },
+            ],
+            tag_rules: vec![],
+        };
+        let ctx = |who: &str| {
+            RequestCtx::new(
+                inst,
+                org,
+                Subject::authenticated(who, who, vec![org], vec![]),
+            )
+        };
+        let update = |who: &str, refname: &str, is_delete: bool, is_fast_forward: bool| {
+            policy.check_ref_update(
+                &ctx(who),
+                &authz,
+                "jc",
+                "cfg",
+                RefUpdate {
+                    refname,
+                    is_delete,
+                    is_create: false,
+                    is_fast_forward,
+                    changed_paths: &[],
+                },
+            )
+        };
+        for (is_delete, is_fast_forward) in [(false, true), (false, false), (true, true)] {
+            let bob = update(
+                "writer-bob",
+                "refs/heads/portal/a/b",
+                is_delete,
+                is_fast_forward,
+            );
+            assert_eq!(bob.map_err(|e| e.status_code()), Err(403));
+            assert!(
+                update(
+                    "jc-portal",
+                    "refs/heads/portal/a/b",
+                    is_delete,
+                    is_fast_forward
+                )
+                .is_ok()
+            );
+        }
+        let deleted = update("jc-portal", "refs/heads/main", true, true);
+        assert!(deleted.is_err_and(|e| e.to_string().contains("cannot be deleted")));
     }
 }
