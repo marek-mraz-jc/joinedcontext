@@ -77,7 +77,7 @@ fn every_layout_class_the_templates_use_has_a_rule() {
     let css = dataroom_web::JC_THEME_CSS;
     let missing: Vec<_> = template_classes()
         .into_iter()
-        .filter(|c| !c.starts_with("jc-") && !c.starts_with("fa") && !HOOKS.contains(&c.as_str()))
+        .filter(|c| !c.starts_with("jc-") && !HOOKS.contains(&c.as_str()))
         .filter(|c| !styled(css, c))
         .collect();
     assert!(
@@ -107,6 +107,20 @@ fn the_base_layout_comes_before_the_theme_so_the_theme_wins() {
         // showed through `.d-none`); the script-on hide stays without it for the no-JS path.
         ".d-none { display: none !important; }",
         ".js .js-hide { display: none; }",
+    ] {
+        assert!(css.contains(rule), "{rule}");
+    }
+}
+
+#[test]
+fn a_publisher_cards_dataset_count_sits_on_its_bottom_edge() {
+    // The grid stretches a row's cards to one height; the count pushed down lines the counts up
+    // whatever the description's length (owner, T-6745; e2e/catalogue.spec.ts measures it live).
+    let css = dataroom_web::JC_THEME_CSS;
+    for rule in [
+        ".media-item { display: flex; flex-direction: column; }",
+        ".media-item > .count { margin-top: auto;",
+        "> .count { grid-column: 2; grid-row: 3; align-self: end; }",
     ] {
         assert!(css.contains(rule), "{rule}");
     }

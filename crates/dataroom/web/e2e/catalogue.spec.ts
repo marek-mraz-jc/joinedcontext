@@ -121,3 +121,19 @@ async function otherLanguage(page: import("@playwright/test").Page): Promise<num
   expect(index, "a second language").toBeGreaterThanOrEqual(0);
   return index;
 }
+
+test("every publisher card in a row ends its dataset count on one line at 1440px", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/en/organization/");
+  const rows = await page.evaluate(() => {
+    const byRow = new Map<number, number[]>();
+    for (const card of Array.from(document.querySelectorAll<HTMLElement>(".media-grid > .media-item"))) {
+      const top = Math.round(card.getBoundingClientRect().top);
+      const count = card.querySelector(".count")!.getBoundingClientRect();
+      byRow.set(top, [...(byRow.get(top) ?? []), Math.round(card.getBoundingClientRect().bottom - count.bottom)]);
+    }
+    return Array.from(byRow.values());
+  });
+  expect(rows.length).toBeGreaterThan(0);
+  for (const offsets of rows) expect(new Set(offsets).size, `bottom offsets ${offsets}`).toBe(1);
+});
