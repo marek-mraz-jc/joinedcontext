@@ -141,7 +141,7 @@ impl HarvestScheduler {
             let sources = match self.store.list_harvest_sources(&ctx).await {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("dataroom harvest: catalogue {catalogue_id}: list sources: {e}");
+                    tracing::warn!(catalogue = %catalogue_id, error = %e, "dataroom harvest: list sources failed");
                     continue;
                 }
             };
@@ -150,7 +150,7 @@ impl HarvestScheduler {
                     Ok(true) => {}
                     Ok(false) => continue,
                     Err(e) => {
-                        eprintln!("dataroom harvest: source {}: {e}", source.name);
+                        tracing::warn!(source = %source.name, error = %e, "dataroom harvest: source schedule unreadable");
                         continue;
                     }
                 }
@@ -174,7 +174,7 @@ impl HarvestScheduler {
                         Err(DataroomError::Forbidden(decision.reason))
                     };
                     if let Err(e) = &res {
-                        eprintln!("dataroom harvest: source {} failed: {e}", source.name);
+                        tracing::warn!(source = %source.name, error = %e, "dataroom harvest: source failed");
                     }
                     (source.name, res)
                 });
@@ -231,10 +231,11 @@ async fn run_with_retries(
             Err(e @ DataroomError::Conflict(_)) => return Err(e),
             Err(e) if attempt >= RETRIES => return Err(e),
             Err(e) => {
-                eprintln!(
-                    "dataroom harvest: source {} attempt {} failed, trying again: {e}",
-                    source.name,
-                    attempt + 1
+                tracing::warn!(
+                    source = %source.name,
+                    attempt = attempt + 1,
+                    error = %e,
+                    "dataroom harvest: attempt failed, trying again"
                 );
                 attempt += 1;
                 tokio::time::sleep(delay).await;
