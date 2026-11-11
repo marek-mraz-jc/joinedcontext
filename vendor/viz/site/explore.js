@@ -51,7 +51,7 @@
       timeout: "The data took longer than 15 seconds. Narrow the search or try again.", noAddress: "This page shows the live data of an open-data Endpoint; the address names none.",
       noWidget: "The table could not start. Reload the page; if it stays, the catalogue's administrators can see why in the browser console.",
       mapHint: "Click a point to open its details. The table lists the same entities.", mapCap: "The map shows the first {n} of {total} in view; zoom in for the rest.",
-      mapNone: "No entity of this query has a location.", mapLoading: "Loading map…", links: "This query elsewhere", entityLink: "This entity in NGSI-LD", queryLink: "This query in NGSI-LD",
+      mapNone: "No entity of this query has a location.", mapLoading: "Loading map…", mapTwoFingers: "Use two fingers to move the map", links: "This query elsewhere", entityLink: "This entity in NGSI-LD", queryLink: "This query in NGSI-LD",
       viewLink: "This view (type, filter and order)", yes: "yes", no: "no",
       cardYes: "Yes", cardNo: "No", dev: "For developers", onMap: "Show on the map", idLabel: "Identifier", typeLabel: "Type", placeMap: "Location map",
       embed: "Embed", embedLead: "Put this live table on your own website. It keeps reading the current data; nothing is copied.",
@@ -76,7 +76,7 @@
       timeout: "Dáta sa načítavali dlhšie ako 15 sekúnd. Zúžte hľadanie alebo to skúste znova.", noAddress: "Táto stránka ukazuje živé dáta Endpointu otvorených dát; adresa žiadny neuvádza.",
       noWidget: "Tabuľka sa nespustila. Načítajte stránku znova; ak to pretrváva, správcovia katalógu vidia príčinu v konzole prehliadača.",
       mapHint: "Kliknite na bod a otvorí sa jeho detail. Tabuľka uvádza tie isté entity.", mapCap: "Mapa ukazuje prvých {n} z {total} vo výreze; priblížte pre ďalšie.",
-      mapNone: "Žiadna entita tohto dopytu nemá polohu.", mapLoading: "Načítavam mapu…", links: "Tento dopyt inde", entityLink: "Táto entita v NGSI-LD", queryLink: "Tento dopyt v NGSI-LD",
+      mapNone: "Žiadna entita tohto dopytu nemá polohu.", mapLoading: "Načítavam mapu…", mapTwoFingers: "Mapu posuniete dvoma prstami", links: "Tento dopyt inde", entityLink: "Táto entita v NGSI-LD", queryLink: "Tento dopyt v NGSI-LD",
       viewLink: "Toto zobrazenie (typ, filter a poradie)", yes: "áno", no: "nie",
       cardYes: "Áno", cardNo: "Nie", dev: "Pre vývojárov", onMap: "Zobraziť na mape", idLabel: "Identifikátor", typeLabel: "Typ", placeMap: "Mapa miesta",
       embed: "Vložiť na web", embedLead: "Dajte túto živú tabuľku na svoj web. Stále číta aktuálne dáta; nič sa nekopíruje.",
@@ -809,7 +809,11 @@
               return r.arrayBuffer().then(function (data) { return { data: data }; });
             });
         });
-        var map = new maplibre.Map({ container: "map", style: styleOf(H.tiles, lang), attributionControl: false, center: [17.1, 48.15], zoom: 4 });
+        // On a touch screen one finger scrolls the page past the map and two move it: a phone map
+        // fills most of a short screen.
+        var touch = !!(root.matchMedia && root.matchMedia("(pointer: coarse)").matches);
+        var map = new maplibre.Map({ container: "map", style: styleOf(H.tiles, lang), attributionControl: false, center: [17.1, 48.15], zoom: 4,
+          cooperativeGestures: touch, locale: { "CooperativeGesturesHandler.MobileHelpText": t.mapTwoFingers } });
         state.map = map;
         root.jcExploreMap = map; // for the browser journey
         state.maplibre = maplibre;
@@ -828,7 +832,9 @@
           // The count on a cluster needs the style's glyphs; the basemap styles have them.
           if (map.getStyle().glyphs) map.addLayer({ id: "jc-cluster-count", type: "symbol", source: "jc-pts", filter: ["has", "point_count"], layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 12 }, paint: { "text-color": "#fff" } });
           var stacked = [">", ["coalesce", ["get", "jcStack"], 1], 1];
-          map.addLayer({ id: "jc-point", type: "circle", source: "jc-pts", filter: ["!", ["has", "point_count"]], paint: { "circle-color": colour, "circle-radius": ["case", stacked, 13, 9], "circle-stroke-color": "#fff", "circle-stroke-width": 2.5 } });
+          // A dark halo under each dot keeps the data apart from the basemap's own blue icons.
+          map.addLayer({ id: "jc-point-halo", type: "circle", source: "jc-pts", filter: ["!", ["has", "point_count"]], paint: { "circle-color": "rgba(15, 23, 42, 0.35)", "circle-radius": ["case", stacked, 19, 14], "circle-blur": 0.3 } });
+          map.addLayer({ id: "jc-point", type: "circle", source: "jc-pts", filter: ["!", ["has", "point_count"]], paint: { "circle-color": colour, "circle-radius": ["case", stacked, 15, 10], "circle-stroke-color": "#fff", "circle-stroke-width": 3 } });
           if (map.getStyle().glyphs) map.addLayer({ id: "jc-stack", type: "symbol", source: "jc-pts", filter: ["all", ["!", ["has", "point_count"]], stacked], layout: { "text-field": ["to-string", ["get", "jcStack"]], "text-size": 12, "text-allow-overlap": true }, paint: { "text-color": "#fff" } });
           // On a narrow map the attribution starts folded to its (i) button, off the data.
           if (map.getContainer().clientWidth < 640) Array.prototype.forEach.call(map.getContainer().querySelectorAll(".maplibregl-compact-show"), function (n) { n.classList.remove("maplibregl-compact-show"); });
