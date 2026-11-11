@@ -14,7 +14,8 @@ import type { ValueRule } from "./rules";
 import type { TypeChoice } from "./GridFilterRow";
 import { GridCellPanels, GridDetail } from "./GridDetail";
 import { GridMapPanel } from "./GridMapPanel";
-import { GridNotices, GridStatus } from "./GridNotices";
+import { ArrangeColumns } from "./ArrangeColumns";
+import { GridNotices, GridStatus, HiddenFields } from "./GridNotices";
 import { GridPager } from "./GridPager";
 import { GridQueryBox } from "./GridQueryBox";
 import { GridReview } from "./GridReview";
@@ -273,7 +274,15 @@ function GridBody(props: EntityGridProps & { onDrill?: (urn: string, type: strin
   const { toolbar } = props;
   return (
     <GridFrame view={view}>
-      {toolbar && <div className="jc-grid-toolbar">{toolbar}</div>}
+      {/* The host's tools, then the grid's own: Arrange columns (T-6738). */}
+      <div className="jc-grid-toolbar">
+        {toolbar && <div className="jc-grid-toolbar-host">{toolbar}</div>}
+        {/* The way back from the grid's own hides sits beside the panel that also brings them back (T-5620). */}
+        {!props.onHide && view.ownHidden.length > 0 && (
+          <HiddenFields attrs={view.ownHidden} labels={view.labels} labelOf={view.hiddenLabel} onShow={view.showColumns} />
+        )}
+        <ArrangeColumns view={view} />
+      </div>
       <GridNotices view={view} />
       <GridTable view={view} />
       <GridMapPanel view={view} />

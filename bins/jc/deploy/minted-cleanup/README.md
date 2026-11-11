@@ -18,6 +18,11 @@ unanchored (context-gateway pdp/id_match.rs). With both anchors and the tail, bo
 exactly the ids under the prefix and refuse the bare prefix, a longer domain
 (`...joinedcontext.com.evil:`) and every `hel.fi` id.
 
+Another wrong-domain cleanup passes `--domain <wrong domain> --account <name> --label <task>` before
+the subcommand (T-6743: `--domain hel.fi --account cleanup-t6743 --label T-6743` for the hel.fi
+copies in project zilina's spaces). The SQL files below name the T-6676 R prefix; write the
+other run's list with its own read-only query in the same five columns.
+
 ## 1. Reference count
 
 Read-only, 2026-11-10 14:01Z and 14:13Z, identical apart from the read time
