@@ -238,7 +238,9 @@ def queue_portal(clock, ahead: int, starts_at: float | None, drain: float | None
                          for i in range(ahead if drain is None
                                         else max(0, ahead - int((clock.now - t0) // drain)))]
                 return 200, {}, json.dumps({"items": items}).encode()
-            msg = "running since x" if started else "queued, due 2026-11-09T15:59:15Z"
+            ended = started and clock.now >= starts_at + 10
+            msg = ("the last run ended " + suite.time.strftime("%Y-%m-%dT%H:%M:%SZ", suite.time.gmtime(starts_at + 10))
+                   + " after 10 s" if ended else "running since x" if started else "queued, due 2026-11-09T15:59:15Z")
             return 200, {}, json.dumps({"status": {"conditions": [{"reason": "Queued", "message": msg}]}}).encode()
     return P()
 
@@ -360,3 +362,149 @@ def test_expectations_from_prods_run_log(tmp_path):
     assert rows("helsinki", "vision-counts", prod, short)["held"]["result"] == "fail"
     # Without prod's run the held row still wants the stream.
     assert rows("praha", "golemio-garages", prod)["held"]["result"] == "fail"
+
+
+def stamp(t):
+    import suite
+    return suite.time.strftime("%Y-%m-%dT%H:%M:%SZ", suite.time.gmtime(t))
+
+
+def ending_portal(clock, listed_at, ended_at, early, final, lines, name="2026-11-10T23:11:39Z"):
+    """A Portal whose run-now is listed at `listed_at` with the counts `early`, runs until
+    `ended_at` and then holds the counts `final` and its log `lines`."""
+    class P:
+        def call(self, method, path, *a, **k):
+            done = clock.now >= ended_at
+            if method == "POST":
+                return 202, {}, json.dumps({"run": name}).encode()
+            if path.endswith("/runs?limit=5"):
+                row = {"run": name, "firstAt": stamp(listed_at), "lastAt": stamp(ended_at if done else listed_at),
+                       **(final if done else early)}
+                return 200, {}, json.dumps({"items": [row] if clock.now >= listed_at else []}).encode()
+            if path.endswith("/log?limit=50"):
+                return 200, {}, json.dumps({"items": lines if done else []}).encode()
+            if "/pipelines?" in path:
+                return 200, {}, b'{"items":[]}'
+            msg = (f"next run 2026-11-16T04:43:00Z; the last run ended {stamp(ended_at)} after 120 s" if done
+                   else f"running since {stamp(listed_at)}")
+            return 200, {}, json.dumps({"status": {"conditions": [{"reason": "x", "message": msg}]}}).encode()
+    return P()
+
+
+ZERO = {"sent": 0, "failed": 0, "rejected": 0}
+SOURCE = "https://data.statistics.sk/api/v2/dataset/ku5008rr/SK0321508438/*/*?lang=sk&type=json"
+TIMEOUT_LINE = {"outcome": "failed", "recordId": "",
+                "message": f"{SOURCE} error sending request: operation timed out (connect timeout)"}
+
+
+def one_run(monkeypatch, p, early, final, lines, prod=None, runlog=None, found=None, ends_after=150, name=None):
+    import suite
+    clock = Clock(monkeypatch)
+    t0 = clock.now
+    portal = ending_portal(clock, t0 + 30, t0 + ends_after, early, final, lines,
+                           **({"name": name} if name else {}))
+    r = suite.Results("pipelines", "http://x")
+    suite.run_pipeline(r, portal, portal, p, 300, [p.project], prod, runlog, found if found is not None else {})
+    return {c["id"]: c for c in r.rows}, clock.now - t0
+
+
+def test_a_run_whose_failure_is_filed_after_its_row_appears_is_read_when_it_ended(monkeypatch):
+    """Gate 2026-11-10T203500Z-gc: banskabystrica/kniznice was listed at 0/0/0 and its failure
+    filed 120 s later (prod's same runs take 123 s); the suite read the counts after 20 s of no new
+    line and failed `log` with 0 lines. The suite now reads the run once the status says it ended."""
+    p = manifests.Pipeline("banskabystrica", "kniznice", "p.yaml", {"period": "168h"}, True,
+                           source_type="http", source_url=SOURCE, slug="s" * 32, out_type="T")
+    rows, took = one_run(monkeypatch, p, ZERO, {**ZERO, "failed": 1}, [TIMEOUT_LINE])
+    assert rows["history"]["result"] == "pass" and '"failed": 1' in rows["history"]["actual"], rows["history"]
+    assert rows["log"]["result"] == "pass" and rows["log"]["actual"] == "200 1 lines", rows["log"]
+    assert 150 <= took < 170, took
+    # A run listed and never ended is a fail after RUN_TIMEOUT, not a read of half its counts.
+    import suite
+    rows, took = one_run(monkeypatch, p, ZERO, ZERO, [], ends_after=10 ** 6)
+    assert rows["history"]["result"] == "fail" and "not ended within 900 s" in rows["history"]["actual"]
+    assert took < 30 + suite.RUN_TIMEOUT + 20, took
+
+
+def test_schedule_hours_reads_the_hour_field():
+    import suite
+    assert suite.schedule_hours("41 2,10,18 * * 0") == [2, 10, 18]
+    assert suite.schedule_hours("0 */8 * * *") == [0, 8, 16]
+    assert suite.schedule_hours("0 3-5 * * *") == [3, 4, 5]
+    assert suite.schedule_hours("0 20/2 * * *") == [20, 22]
+    assert suite.schedule_hours("") is None and suite.schedule_hours("0 x * * *") is None
+
+
+def kataster_prod(sent_in_slot):
+    return {"banskabystrica/kataster": {"all": [
+        {"run": "2026-11-08T02:00Z", "last_at": "2026-11-08T02:43:43", "sent": 10000},
+        {"run": "2026-11-08T10:00Z", "last_at": "2026-11-08T10:42:33", "sent": 9773},
+        {"run": "2026-11-01T18:00Z", "last_at": "2026-11-01T18:42:30", "sent": 0},
+        {"run": "2026-11-08T18:00Z", "last_at": "2026-11-08T18:41:04", "sent": sent_in_slot}]}}
+
+
+def test_a_run_of_no_records_is_checked_against_prods_runs_of_its_schedule_slot(monkeypatch):
+    """Gate 2026-11-10T203500Z-gc: kataster ran at 23:00Z and sent 0, failed 0, rejected 0. Its
+    mapping pages by the 8 h slot of the day and the third of 16:00Z to 24:00Z is empty, on prod
+    too (every T18:00Z run sent 0). As on prod is a pass; prod sending in that slot, or holding no
+    run of it, is a fail."""
+    p = manifests.Pipeline("banskabystrica", "kataster", "p.yaml", {"schedule": "41 2,10,18 * * 0"}, True,
+                           source_type="generate", slug="s" * 32, out_type="T")
+    rows, _ = one_run(monkeypatch, p, ZERO, ZERO, [], kataster_prod(0), name="2026-11-10T23:00Z")
+    for row in ("log", "landed"):
+        assert rows[row]["result"] == "pass", rows[row]
+        assert "as on prod: run 2026-11-08T18:00Z sent 0 (2 run(s) of slot 18:00Z" in rows[row]["expected"]
+    rows, _ = one_run(monkeypatch, p, ZERO, ZERO, [], kataster_prod(10000), name="2026-11-10T23:00Z")
+    for row in ("log", "landed"):
+        assert rows[row]["result"] == "fail" and "2026-11-08T18:00Z of slot 18:00Z sent 10000" in rows[row]["expected"]
+    # 05:00Z falls in the 02:00Z slot, where prod sent 10,000: jc's 0 is a fail.
+    rows, _ = one_run(monkeypatch, p, ZERO, ZERO, [], kataster_prod(0), name="2026-11-10T05:00Z")
+    assert rows["landed"]["result"] == "fail" and "slot 02:00Z sent 10000" in rows["landed"]["expected"]
+    rows, _ = one_run(monkeypatch, p, ZERO, ZERO, [], None, name="2026-11-10T23:00Z")
+    assert rows["landed"]["result"] == "fail" and "prod holds no run of slot 18:00Z" in rows["landed"]["expected"]
+
+
+def unreachable_case(monkeypatch, tmp_path, drop=None):
+    """kniznice of gate 2026-11-10T203500Z-gc with the evidence of the four conditions, less `drop`."""
+    import gzip
+
+    import suite
+    suite.prod_log.cache_clear()
+    monkeypatch.setattr(suite, "probe", lambda host, port: None if drop == "b" else "TimeoutError timed out")
+    prod_line = {"project": "banskabystrica", "pipeline": "kniznice", "run": "2026-11-09T04:43:00Z",
+                 "message": f"{SOURCE} Get: context deadline exceeded (Client.Timeout exceeded while awaiting headers)"}
+    if drop == "c":
+        prod_line["message"] = "the write failed: 401"
+    with gzip.open(tmp_path / "pipeline_log.newest-run.jsonl.gz", "wt") as f:
+        f.write(json.dumps(prod_line, separators=(",", ":")) + "\n")
+    prod = {"banskabystrica/kniznice": {"last": {"run": "2026-11-09T04:43:00Z", "sent": 0, "failed": 1}}}
+    line = TIMEOUT_LINE if drop != "a" else {**TIMEOUT_LINE, "message": f"{SOURCE} json parse error"}
+    p = manifests.Pipeline("banskabystrica", "kniznice", "p.yaml", {"period": "168h"}, True,
+                           source_type="http", source_url=SOURCE, slug="s" * 32, out_type="T")
+    found = {}
+    rows, _ = one_run(monkeypatch, p, ZERO, {**ZERO, "failed": 1}, [line], prod, tmp_path, found)
+    r = suite.Results("pipelines", "http://x")
+    landed = [] if drop == "d" else [("banskabystrica/od-aktuality", "www.banskabystrica.sk")]
+    suite.decide_unreachable(r, found.get("unreachable", []), landed)
+    return rows.get("landed") or next(c for c in r.rows if c["id"] == "landed")
+
+
+def test_a_source_down_for_prod_too_is_the_named_skip_source_unreachable(monkeypatch, tmp_path):
+    """data.statistics.sk times out from the sandbox and failed on every prod run since 2026-10-26.
+    With all four conditions the landed row is the skip `source-unreachable`, naming host and port,
+    never the URL; its log row is a real check and passes."""
+    row = unreachable_case(monkeypatch, tmp_path)
+    assert row["result"] == "skip", row
+    assert row["reason"].startswith("source-unreachable: data.statistics.sk:443; (a)"), row
+    assert "(d) banskabystrica/od-aktuality landed from www.banskabystrica.sk" in row["reason"]
+    assert "/api/v2" not in json.dumps(row) and "https://" not in json.dumps(row)
+
+
+@pytest.mark.parametrize("drop,why", [
+    ("a", "(a) jc's run does not fail with a connect or timeout error"),
+    ("b", "(b) the suite's TCP connect to data.statistics.sk:443 succeeds"),
+    ("c", "(c) prod's newest run does not fail naming data.statistics.sk"),
+    ("d", "(d) no other run of this suite run landed from a non-loopback source"),
+])
+def test_source_unreachable_without_one_of_its_conditions_stays_a_fail(monkeypatch, tmp_path, drop, why):
+    row = unreachable_case(monkeypatch, tmp_path, drop)
+    assert row["result"] == "fail" and why in row["actual"], row
