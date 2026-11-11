@@ -103,6 +103,10 @@ fn the_base_layout_comes_before_the_theme_so_the_theme_wins() {
         ".form-control, .form-select { display: block",
         ".page-link { display: block",
         ".jc-brand { flex-shrink: 0",
+        // Bootstrap's own weight: `.btn` and every later display rule lose to it (the footer's Go
+        // showed through `.d-none`); the script-on hide stays without it for the no-JS path.
+        ".d-none { display: none !important; }",
+        ".js .js-hide { display: none; }",
     ] {
         assert!(css.contains(rule), "{rule}");
     }
