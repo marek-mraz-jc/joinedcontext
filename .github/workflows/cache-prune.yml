@@ -1,0 +1,24 @@
+name: cache-prune
+# Drops the Actions cache entries a newer save superseded (.github/scripts/cache-prune.sh: rust-cache
+# targets under an old key, layer cache indexes and blobs no newest export reads) on every
+# jc-portal-1 push. It ran only beside a layer export (dockerfile-cache.yml) while the 10 GB cache
+# sat over its cap and its eviction took the oldest entries, the jc layer cache the branch
+# `dockerfile` job reads among them. Its own workflow, so it never gates or delays a merge.
+on:
+  push:
+    branches: [jc-portal-1]
+  workflow_dispatch:
+permissions: { contents: read }
+concurrency:
+  group: "cache-prune-${{ github.ref }}"
+  cancel-in-progress: true
+jobs:
+  prune:
+    if: github.ref == 'refs/heads/jc-portal-1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: { actions: write }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - env: { GH_TOKEN: "${{ github.token }}" }
+        run: sh .github/scripts/cache-prune.sh
