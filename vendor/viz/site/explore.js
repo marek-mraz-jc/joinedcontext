@@ -51,7 +51,7 @@
       timeout: "The data took longer than 15 seconds. Narrow the search or try again.", noAddress: "This page shows the live data of an open-data Endpoint; the address names none.",
       noWidget: "The table could not start. Reload the page; if it stays, the catalogue's administrators can see why in the browser console.",
       mapHint: "Click a point to open its details. The table lists the same entities.", mapCap: "The map shows the first {n} of {total} in view; zoom in for the rest.",
-      mapNone: "No entity of this query has a location.", mapLoading: "Loading map…", links: "This query elsewhere", entityLink: "This entity in NGSI-LD", queryLink: "This query in NGSI-LD",
+      mapNone: "No entity of this query has a location.", mapLoading: "Loading map…", mapTwoFingers: "Use two fingers to move the map", links: "This query elsewhere", entityLink: "This entity in NGSI-LD", queryLink: "This query in NGSI-LD",
       viewLink: "This view (type, filter and order)", yes: "yes", no: "no",
       cardYes: "Yes", cardNo: "No", dev: "For developers", onMap: "Show on the map", idLabel: "Identifier", typeLabel: "Type", placeMap: "Location map",
       embed: "Embed", embedLead: "Put this live table on your own website. It keeps reading the current data; nothing is copied.",
@@ -76,7 +76,7 @@
       timeout: "Dáta sa načítavali dlhšie ako 15 sekúnd. Zúžte hľadanie alebo to skúste znova.", noAddress: "Táto stránka ukazuje živé dáta Endpointu otvorených dát; adresa žiadny neuvádza.",
       noWidget: "Tabuľka sa nespustila. Načítajte stránku znova; ak to pretrváva, správcovia katalógu vidia príčinu v konzole prehliadača.",
       mapHint: "Kliknite na bod a otvorí sa jeho detail. Tabuľka uvádza tie isté entity.", mapCap: "Mapa ukazuje prvých {n} z {total} vo výreze; priblížte pre ďalšie.",
-      mapNone: "Žiadna entita tohto dopytu nemá polohu.", mapLoading: "Načítavam mapu…", links: "Tento dopyt inde", entityLink: "Táto entita v NGSI-LD", queryLink: "Tento dopyt v NGSI-LD",
+      mapNone: "Žiadna entita tohto dopytu nemá polohu.", mapLoading: "Načítavam mapu…", mapTwoFingers: "Mapu posuniete dvoma prstami", links: "Tento dopyt inde", entityLink: "Táto entita v NGSI-LD", queryLink: "Tento dopyt v NGSI-LD",
       viewLink: "Toto zobrazenie (typ, filter a poradie)", yes: "áno", no: "nie",
       cardYes: "Áno", cardNo: "Nie", dev: "Pre vývojárov", onMap: "Zobraziť na mape", idLabel: "Identifikátor", typeLabel: "Typ", placeMap: "Mapa miesta",
       embed: "Vložiť na web", embedLead: "Dajte túto živú tabuľku na svoj web. Stále číta aktuálne dáta; nič sa nekopíruje.",
@@ -449,6 +449,16 @@
     return { points: points, shapes: shapes };
   }
 
+  // Rows at one position draw as one dot: each point carries how many share its position, so the
+  // dot can say so (29 events at 2 venues read as 2 dots otherwise).
+  function stacks(points) {
+    var n = {};
+    var key = function (p) { return p.geometry.coordinates.join(","); };
+    points.forEach(function (p) { n[key(p)] = (n[key(p)] || 0) + 1; });
+    points.forEach(function (p) { p.properties = Object.assign({}, p.properties, { jcStack: n[key(p)] }); });
+    return points;
+  }
+
   // Every position of a feature's geometry, [lon, lat] each; none for a feature without one.
   function positions(f) {
     var out = [];
@@ -799,7 +809,11 @@
               return r.arrayBuffer().then(function (data) { return { data: data }; });
             });
         });
-        var map = new maplibre.Map({ container: "map", style: styleOf(H.tiles, lang), attributionControl: false, center: [17.1, 48.15], zoom: 4 });
+        // On a touch screen one finger scrolls the page past the map and two move it: a phone map
+        // fills most of a short screen.
+        var touch = !!(root.matchMedia && root.matchMedia("(pointer: coarse)").matches);
+        var map = new maplibre.Map({ container: "map", style: styleOf(H.tiles, lang), attributionControl: false, center: [17.1, 48.15], zoom: 4,
+          cooperativeGestures: touch, locale: { "CooperativeGesturesHandler.MobileHelpText": t.mapTwoFingers } });
         state.map = map;
         root.jcExploreMap = map; // for the browser journey
         state.maplibre = maplibre;
@@ -817,7 +831,11 @@
           map.addLayer({ id: "jc-cluster", type: "circle", source: "jc-pts", filter: ["has", "point_count"], paint: { "circle-color": COLOUR, "circle-opacity": 0.85, "circle-radius": ["step", ["get", "point_count"], 14, 50, 18, 200, 24], "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
           // The count on a cluster needs the style's glyphs; the basemap styles have them.
           if (map.getStyle().glyphs) map.addLayer({ id: "jc-cluster-count", type: "symbol", source: "jc-pts", filter: ["has", "point_count"], layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 12 }, paint: { "text-color": "#fff" } });
-          map.addLayer({ id: "jc-point", type: "circle", source: "jc-pts", filter: ["!", ["has", "point_count"]], paint: { "circle-color": colour, "circle-radius": 7, "circle-stroke-color": "#fff", "circle-stroke-width": 2.5 } });
+          var stacked = [">", ["coalesce", ["get", "jcStack"], 1], 1];
+          // A dark halo under each dot keeps the data apart from the basemap's own blue icons.
+          map.addLayer({ id: "jc-point-halo", type: "circle", source: "jc-pts", filter: ["!", ["has", "point_count"]], paint: { "circle-color": "rgba(15, 23, 42, 0.35)", "circle-radius": ["case", stacked, 19, 14], "circle-blur": 0.3 } });
+          map.addLayer({ id: "jc-point", type: "circle", source: "jc-pts", filter: ["!", ["has", "point_count"]], paint: { "circle-color": colour, "circle-radius": ["case", stacked, 15, 10], "circle-stroke-color": "#fff", "circle-stroke-width": 3 } });
+          if (map.getStyle().glyphs) map.addLayer({ id: "jc-stack", type: "symbol", source: "jc-pts", filter: ["all", ["!", ["has", "point_count"]], stacked], layout: { "text-field": ["to-string", ["get", "jcStack"]], "text-size": 12, "text-allow-overlap": true }, paint: { "text-color": "#fff" } });
           // On a narrow map the attribution starts folded to its (i) button, off the data.
           if (map.getContainer().clientWidth < 640) Array.prototype.forEach.call(map.getContainer().querySelectorAll(".maplibregl-compact-show"), function (n) { n.classList.remove("maplibregl-compact-show"); });
           ["jc-point", "jc-line", "jc-fill"].forEach(function (layer) {
@@ -968,6 +986,7 @@
       var m = state.mapping, map = state.map;
       var c = colourClasses(features, m.choice.color, m.card, t);
       var parts = splitPoints(features.map(function (f, i) { return { type: "Feature", geometry: f.geometry, properties: { jcId: f.id, jcColour: c.colours[i] } }; }));
+      stacks(parts.points);
       var fc = function (list) { return { type: "FeatureCollection", features: list }; };
       map.getSource("jc").setData(fc(parts.shapes));
       var pts = map.getSource("jc-pts");
@@ -1128,6 +1147,9 @@
       state.sort = next.sort || null;
       state.all = next.noDefault === true;
       address();
+      // The catalogue's Subscribe menu builds a calendar of these rows (brief 132, END-16): the
+      // type and q go to the catalogue's origin alone, never to any page that frames this one.
+      if (window.parent !== window && H.catalogue) window.parent.postMessage({ type: "jc-viz-query", entityType: state.type || "", q: state.q }, H.catalogue);
       if (moved) drawMap();
     }
 
@@ -1280,7 +1302,7 @@
     height();
   }
 
-  root.jcExplore = { parseHash: parseHash, hashOf: hashOf, base: base, hosts: hosts, styleOf: styleOf, entitiesUrl: entitiesUrl, bboxQuery: bboxQuery, links: links, templateOf: templateOf, tilesetUrl: tilesetUrl, geoProps: geoProps, mapOptions: mapOptions, mapChoice: mapChoice, colourClasses: colourClasses, splitPoints: splitPoints, boundsOf: boundsOf, inBox: inBox, viewPlan: viewPlan, countLine: countLine, show: show, cardValue: cardValue, namedLink: namedLink, cardOf: cardOf, hostOf: hostOf, humanise: humanise, TEXT: TEXT };
+  root.jcExplore = { parseHash: parseHash, hashOf: hashOf, base: base, hosts: hosts, styleOf: styleOf, entitiesUrl: entitiesUrl, bboxQuery: bboxQuery, links: links, templateOf: templateOf, tilesetUrl: tilesetUrl, geoProps: geoProps, mapOptions: mapOptions, mapChoice: mapChoice, colourClasses: colourClasses, splitPoints: splitPoints, boundsOf: boundsOf, stacks: stacks, inBox: inBox, viewPlan: viewPlan, countLine: countLine, show: show, cardValue: cardValue, namedLink: namedLink, cardOf: cardOf, hostOf: hostOf, humanise: humanise, TEXT: TEXT };
   if (typeof module === "object" && module.exports) module.exports = root.jcExplore;
   else if (typeof document !== "undefined") main();
 })(typeof self !== "undefined" ? self : this);

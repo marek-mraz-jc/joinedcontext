@@ -1246,6 +1246,70 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
         "Hírcsatorna megnyitása",
     );
     add(
+        "subscribe_mine",
+        "Your calendar from these rows",
+        "Váš kalendár z týchto riadkov",
+        "Váš kalendář z těchto řádků",
+        "Ihr Kalender aus diesen Zeilen",
+        "Saját naptár ezekből a sorokból",
+    );
+    add(
+        "subscribe_mine_lead",
+        "The table's filter and search become the calendar's query: only matching events arrive.",
+        "Filter a hľadanie tabuľky sa stanú dopytom kalendára: prídu len zodpovedajúce podujatia.",
+        "Filtr a hledání tabulky se stanou dotazem kalendáře: přijdou jen odpovídající akce.",
+        "Filter und Suche der Tabelle werden zur Abfrage des Kalenders: nur passende Termine kommen an.",
+        "A táblázat szűrője és keresése lesz a naptár lekérdezése: csak az egyező események érkeznek.",
+    );
+    add(
+        "subscribe_query",
+        "Filter",
+        "Filter",
+        "Filtr",
+        "Filter",
+        "Szűrő",
+    );
+    add(
+        "subscribe_query_hint",
+        "An NGSI-LD query, for example name~=\"(?i).*concert.*\" for names with concert; leave it empty for every event.",
+        "Dopyt NGSI-LD, napríklad name~=\"(?i).*koncert.*\" pre názvy so slovom koncert; prázdne pre všetky podujatia.",
+        "Dotaz NGSI-LD, například name~=\"(?i).*koncert.*\" pro názvy se slovem koncert; prázdné pro všechny akce.",
+        "Eine NGSI-LD-Abfrage, zum Beispiel name~=\"(?i).*konzert.*\" für Namen mit Konzert; leer für alle Termine.",
+        "NGSI-LD lekérdezés, például name~=\"(?i).*koncert.*\" a koncert szót tartalmazó nevekhez; üresen az összes esemény.",
+    );
+    add(
+        "subscribe_preview",
+        "Next 5 events",
+        "Najbližších 5 podujatí",
+        "Nejbližších 5 akcí",
+        "Nächste 5 Termine",
+        "A következő 5 esemény",
+    );
+    add(
+        "subscribe_preview_none",
+        "No upcoming event matches this query.",
+        "Tomuto dopytu nezodpovedá žiadne nadchádzajúce podujatie.",
+        "Tomuto dotazu neodpovídá žádná nadcházející akce.",
+        "Kein kommender Termin passt zu dieser Abfrage.",
+        "Egyetlen közelgő esemény sem felel meg a lekérdezésnek.",
+    );
+    add(
+        "subscribe_preview_loading",
+        "Loading the calendar…",
+        "Načítavam kalendár…",
+        "Načítám kalendář…",
+        "Kalender wird geladen…",
+        "A naptár betöltése…",
+    );
+    add(
+        "subscribe_preview_failed",
+        "The calendar cannot use this filter; compare it with the example above. The server says: {detail}",
+        "Kalendár tento filter nevie použiť; porovnajte ho s príkladom vyššie. Server hlási: {detail}",
+        "Kalendář tento filtr neumí použít; porovnejte ho s příkladem výše. Server hlásí: {detail}",
+        "Der Kalender kann diesen Filter nicht verwenden; vergleichen Sie ihn mit dem Beispiel oben. Der Server meldet: {detail}",
+        "A naptár nem tudja használni ezt a szűrőt; vesse össze a fenti példával. A szerver üzenete: {detail}",
+    );
+    add(
         "search_publishers",
         "Search publishers…",
         "Hľadať vydavateľov…",
