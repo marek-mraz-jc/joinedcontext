@@ -243,6 +243,25 @@ def apps_owner_of(job_text: str, org: str) -> str:
     return _env_value(job_text, "APPS_ORG") or org
 
 
+def sample_apps(apps: dict[str, dict[str, str]], apps_owner: str, project: str, org: str,
+                public_base: str | None) -> dict[tuple[str, str], dict[str, str]]:
+    """The sample Apps as the forge bootstrap writes them (layout 2, job step 5d): each App's
+    source in `<apps owner>/<project>_<app>` without its manifest, and the manifest in the
+    project's repository at `apps/<app>/app.yaml`, its `url:` naming that source repository.
+    The Portal lists an App from the project's repository only (smoke run 42952957041:
+    charts-apps app.portal 404 for helsinki/air-quality)."""
+    out: dict[tuple[str, str], dict[str, str]] = {}
+    for app, files in apps.items():
+        repo = f"{project}_{app}"
+        out[(apps_owner, repo)] = {k: v for k, v in files.items() if k != "app.yaml"}
+        if "app.yaml" in files:
+            manifest = files["app.yaml"]
+            if public_base:
+                manifest = re.sub(r"(?m)^(      url: ).*$", rf"\g<1>{public_base}/{apps_owner}/{repo}.git", manifest)
+            out.setdefault((org, project), {})[f"apps/{app}/app.yaml"] = manifest
+    return out
+
+
 def layout2(seed: dict[str, str], org: str, repo: str):
     """Splits seed files (`a__b__c` keys) into repositories the way the forge bootstrap's layout
     2 does (components/gitea/charts/bootstrap/templates/job.yaml step 5d)."""
@@ -347,8 +366,9 @@ def cmd_synth(a):
         elif n.startswith("gitea-sample-apps-"):
             apps[n.removeprefix("gitea-sample-apps-")] = {k.replace("__", "/"): v for k, v in data.items()}
     repos = layout2(seed, org, repo)
-    for app, files in apps.items():
-        repos[(apps_owner, f"{apps_project}_{app}")] = files
+    apps_base = _env_value(job, "APPS_PUBLIC_BASE")
+    for (owner, name), files in sample_apps(apps, apps_owner, apps_project, org, apps_base).items():
+        repos.setdefault((owner, name), {}).update(files)
     gitea = out / "gitea"
     listing = []
     for (owner, name), files in sorted(repos.items()):

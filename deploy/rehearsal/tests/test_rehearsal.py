@@ -1636,3 +1636,13 @@ classes:
     assert {e["entity"]["type"] for e in entities} == {"KeyPerformanceIndicator"}
     assert all(set(e["entity"]) == {"id", "type", "name", "currentValue"} for e in entities)
     assert {t["attr"] for t in temporal} == {"currentValue"} and len(temporal) == 6
+
+
+def test_a_sample_apps_manifest_goes_into_the_projects_repository_naming_its_source():
+    manifest = "kind: App\nmetadata:\n  name: air-quality\nspec:\n  source:\n    git:\n      url: https://x/git/joinedcontext/helsinki_air-quality.git\n      ref: main\n"
+    out = rh.sample_apps({"air-quality": {"app.yaml": manifest, "src/main.rs": "fn main() {}"}},
+                         "joinedcontext-apps", "helsinki", "joinedcontext", "https://dev.example/git")
+    assert out[("joinedcontext-apps", "helsinki_air-quality")] == {"src/main.rs": "fn main() {}"}
+    held = out[("joinedcontext", "helsinki")]["apps/air-quality/app.yaml"]
+    assert "      url: https://dev.example/git/joinedcontext-apps/helsinki_air-quality.git\n" in held
+    assert "      ref: main\n" in held
