@@ -173,6 +173,19 @@ def judge(status: int, frames, error: str, expect: str, why: str) -> tuple[str, 
     return SKIP, actual, f"no rows and nothing to compare with: {why}"
 
 
+def judge_closed(status: int, frames, error: str) -> tuple[str, str, str]:
+    """(result, actual, reason) of a daiya render, without a person, of a panel whose datasource
+    passes the caller's token on (oauthPassThru) to a closed Endpoint: daiya then reads
+    anonymously, and the gateway must refuse it. A row is a leak; the person's read is portal.panel."""
+    rows = frame_rows(frames)
+    actual = f"{status}, {len(frames or [])} frames, {rows} rows" + (f", error: {error}" if error else "")
+    if rows:
+        return FAIL, actual, "rows of a closed Endpoint read without a person token"
+    if re.search(r"upstream status 40[13]\b", error or ""):
+        return PASS, actual, "refused upstream: no person token for a closed Endpoint (portal.panel reads it as the person)"
+    return FAIL, actual, "neither rows nor the gateway's refusal"
+
+
 class Daiya:
     def __init__(self, s: Session, password: str | None):
         self.s = s
@@ -263,6 +276,7 @@ def main(argv=None) -> int:
     dashboards, file_ds = inv.load_dashboards([d for d in dirs if d.exists()])
     endpoints = ex.load_endpoints(export / "gitea" / "files")
     slug_tenant = {e.slug: e.tenant for e in endpoints}
+    closed = {e.slug for e in endpoints if e.closed}
     index = ex.load_index(export, endpoints, Path(a.cache) if a.cache else out.parent / ".cache", log=lambda m: print(m, file=sys.stderr))
     types = {t.get("entityType") for d in dashboards for pn in d.panels for t in pn.targets if t.get("entityType")}
     temporal = inv.temporal_index(export, types)
@@ -323,9 +337,13 @@ def main(argv=None) -> int:
                 frames, err = daiya_frames(ans)
                 if st != 200 and not err and isinstance(ans, dict):
                     err = str(ans)[:160]
-                r, act, reason = judge(st, frames, err, expect, why)
+                if (dsrc.get("jsonData") or {}).get("oauthPassThru") and slug in closed:
+                    r, act, reason = judge_closed(st, frames, err)
+                    daiya_exp = "refused upstream, no rows (closed Endpoint, no person token)"
+                else:
+                    (r, act, reason), daiya_exp = judge(st, frames, err, expect, why), exp_txt
                 res.add("daiya.panel", ptgt, f"GET /dashboards/api/dashboards/{d.uid}/render?panel={pn.id}&from&to (org {org}, datasource {pn.ds_uid})",
-                        exp_txt, act, r, reason)
+                        daiya_exp, act, r, reason)
             elif daiya.auth:
                 res.add("daiya.panel", ptgt, "render", exp_txt, "", FAIL, "the dashboard is not in daiya")
             # -- the same panel through the Portal

@@ -67,6 +67,16 @@ def test_judge_never_passes_a_missing_answer():
     assert suite.daiya_frames({"message": "no"})[1] == "no"
 
 
+def test_a_closed_endpoints_panel_without_a_person_passes_only_on_the_gateways_refusal():
+    frame = [{"data": {"values": [[1], [2]]}}]
+    refused = "outbound datasource error: upstream status 401: unauthorized"
+    assert suite.judge_closed(502, [], refused)[0] == suite.PASS
+    assert suite.judge_closed(502, [], "upstream status 403: forbidden")[0] == suite.PASS
+    assert suite.judge_closed(200, frame, "")[0] == suite.FAIL  # a row is a leak
+    assert suite.judge_closed(502, [], "upstream status 500: boom")[0] == suite.FAIL
+    assert suite.judge_closed(200, [], "")[0] == suite.FAIL
+
+
 def test_apps_from_manifests(tmp_path):
     d = tmp_path / "joinedcontext" / "helsinki" / "apps" / "air"
     d.mkdir(parents=True)
