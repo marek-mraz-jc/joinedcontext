@@ -328,8 +328,8 @@ pub fn load(dir: &Path) -> Result<Tables, jc_manifest::loader::LoadError> {
 
 /// [`load`] of the organization checked out at `dir`: a layout 1 repository as it is, a
 /// layout 2 one assembled with the project checkouts of `checkouts` at their refs (CC-86). A
-/// project whose checkout is missing keeps the render the last assembly gave it; a name two
-/// projects claim refuses the whole load, so the tables that are serving keep serving.
+/// project whose checkout is missing, or that does not load (a bad file, a name another project
+/// serves), keeps the render the last assembly gave it while the others load (T-6709).
 pub fn load_from(
     dir: &Path,
     checkouts: Option<&Checkouts>,

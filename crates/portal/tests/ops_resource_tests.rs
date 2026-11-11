@@ -786,6 +786,49 @@ async fn a_refused_manifest_is_listed_and_read_with_its_reason_by_whoever_may_re
     assert_eq!(status, StatusCode::NOT_FOUND, "existence is not disclosed");
 }
 
+/// CHG-05 (T-6709): a refused manifest is paged with the served ones, so walking a list one row
+/// at a time meets it once, never on every page.
+#[tokio::test]
+async fn a_refused_manifest_takes_one_place_in_a_paged_list() {
+    let state = AppState::new(Config::for_tests(), None);
+    for name in ["air-a", "air-c"] {
+        state.mirror.upsert(envelope(
+            "Endpoint",
+            name,
+            "helsinki",
+            json!({ "slug": name }),
+        ));
+    }
+    state.mirror.refuse(envelope(
+        "Endpoint",
+        "air-b",
+        "helsinki",
+        json!({ "slug": 7 }),
+    ));
+
+    let mut names = Vec::new();
+    let mut uri = "/api/v1/projects/helsinki/endpoints?limit=1".to_string();
+    for _ in 0..5 {
+        let (status, page) = send_once(&state, steward(), "GET", &uri, Value::Null).await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        let items = page["items"].as_array().expect("items");
+        assert_eq!(items.len(), 1, "one row per page: {page}");
+        names.push(
+            items[0]["metadata"]["name"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+        );
+        match page["metadata"]["continue"].as_str() {
+            Some(token) => {
+                uri = format!("/api/v1/projects/helsinki/endpoints?limit=1&continue={token}")
+            }
+            None => break,
+        }
+    }
+    assert_eq!(names, ["air-a", "air-b", "air-c"]);
+}
+
 /// PF-59, T-0840: an organization-level kind lives in `org`, and the operations find it there
 /// without the caller naming another project.
 #[tokio::test]

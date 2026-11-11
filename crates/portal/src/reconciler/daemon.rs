@@ -1298,8 +1298,8 @@ impl Syncer {
                     _staged: vec![org],
                     projects: BTreeMap::new(),
                     unstaged: Vec::new(),
-                    unloaded: Vec::new(),
                     refused: Vec::new(),
+                    unloaded: Vec::new(),
                     listings,
                 },
                 repository,
@@ -1399,8 +1399,8 @@ impl Syncer {
                 _staged: staged,
                 projects,
                 unstaged,
-                unloaded,
                 refused,
+                unloaded,
                 listings,
             },
             assembly.repository,
@@ -3691,12 +3691,12 @@ struct Render {
     /// holds of them is the last render, or nothing on a replica's first run, so a step that
     /// removes what the mirror lacks waits for a run where this is empty.
     unstaged: Vec<String>,
-    /// The unstaged projects with no last render either: the mirror holds nothing of them, so
-    /// every removal waits for a run where this is empty (T-6708, P-5).
-    unloaded: Vec<String>,
     /// The registered projects whose own manifests did not load in this run, each also in
     /// `unstaged`: the mirror holds their last render, or nothing (T-6709).
     refused: Vec<ProjectRefusal>,
+    /// The unstaged projects with no last render either: the mirror holds nothing of them, so
+    /// every removal waits for a run where this is empty (T-6708, P-5).
+    unloaded: Vec<String>,
     /// What each repository listed when this render staged it: the organization under `""`,
     /// each staged project under its slug.
     listings: BTreeMap<String, Listing>,
@@ -6613,8 +6613,8 @@ output_error{stream="kpi"} 6
             _staged: Vec::new(),
             projects: BTreeMap::new(),
             unstaged: Vec::new(),
-            unloaded: Vec::new(),
             refused: Vec::new(),
+            unloaded: Vec::new(),
             listings: BTreeMap::new(),
         };
         let syncer = bare_syncer();
@@ -6677,6 +6677,7 @@ output_error{stream="kpi"} 6
             unstaged: Vec::new(),
             unloaded: Vec::new(),
             refused: Vec::new(),
+            unloaded: Vec::new(),
             listings: BTreeMap::new(),
         };
         let syncer = bare_syncer();
@@ -6744,8 +6745,8 @@ output_error{stream="kpi"} 6
             _staged: Vec::new(),
             projects: BTreeMap::new(),
             unstaged: Vec::new(),
-            unloaded: Vec::new(),
             refused: Vec::new(),
+            unloaded: Vec::new(),
             listings: BTreeMap::new(),
         };
         let invalid = |name: &str| format!("{}  notAField: 1\n", PIPELINE.replace("NAME", name));
