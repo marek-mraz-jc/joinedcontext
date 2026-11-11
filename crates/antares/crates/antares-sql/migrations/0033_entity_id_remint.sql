@@ -82,6 +82,9 @@ DECLARE
   n bigint;
   clash text;
 BEGIN
+  -- guarded here too: REVOKE does not bind the function's owner, so an owner
+  -- under row-level security calling remint_apply directly is refused as well
+  PERFORM remint_guard(p_tenant, p_from, p_to);
   IF p_from = p_to THEN
     RAISE EXCEPTION 'from and to are both %', p_from;
   END IF;

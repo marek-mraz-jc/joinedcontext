@@ -321,18 +321,24 @@ async fn remint_refuses_a_clash_a_stray_rollback_and_the_broker_role() {
     let stray = call(&pool, "rollback", t).await.expect_err("a stray");
     assert!(stray.contains("pg_dump"), "{stray}");
 
-    // a role under row-level security may not run it
-    let mut tx = pool.begin().await.expect("tx");
-    sqlx::query("SET LOCAL ROLE pg_read_all_data")
-        .execute(&mut *tx)
-        .await
-        .expect("role");
-    let refused = sqlx::query("SELECT antares_remint($1, 'bbsk.sk', 'sk_bbsk')")
-        .bind(t)
-        .execute(&mut *tx)
-        .await;
-    assert!(refused.is_err(), "a role without the bypass runs no remint");
-    drop(tx);
+    // a role under row-level security may not run it, not even with EXECUTE
+    // granted the way the functions' owner holds it, and not by calling
+    // remint_apply directly
+    for sql in [
+        "SELECT antares_remint($1, 'bbsk.sk', 'sk_bbsk')",
+        "SELECT remint_apply($1, 'bbsk.sk', 'sk_bbsk', true)",
+    ] {
+        let refused = as_role_without_bypass(&pool, sql, t).await;
+        assert!(
+            refused.contains("bypasses row-level security"),
+            "{sql}: {refused}"
+        );
+    }
+    assert_eq!(
+        digest(&pool, t, "bbsk.sk", "bbsk.sk").await,
+        before,
+        "nothing renamed"
+    );
 
     let bad = sqlx::query_scalar::<_, Value>("SELECT antares_remint($1, 'bbsk.sk', 'x''; --')")
         .bind(t)
@@ -340,4 +346,30 @@ async fn remint_refuses_a_clash_a_stray_rollback_and_the_broker_role() {
         .await
         .expect_err("a segment outside the grammar");
     assert!(bad.to_string().contains("owner segments"), "{bad}");
+}
+
+/// Runs `sql` as a fresh role without superuser or BYPASSRLS that holds
+/// EXECUTE on the remint functions; the role and grants roll back.
+async fn as_role_without_bypass(pool: &PgPool, sql: &str, tenant: &str) -> String {
+    let role = format!(
+        "remintrole{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..12]
+    );
+    let mut tx = pool.begin().await.expect("tx");
+    for stmt in [
+        format!("CREATE ROLE {role} NOSUPERUSER NOBYPASSRLS"),
+        format!(
+            "GRANT EXECUTE ON FUNCTION remint_guard(text, text, text), \
+             remint_apply(text, text, text, boolean), antares_remint(text, text, text) TO {role}"
+        ),
+        format!("SET LOCAL ROLE {role}"),
+    ] {
+        sqlx::query(&stmt).execute(&mut *tx).await.expect(&stmt);
+    }
+    let err = sqlx::query(sql)
+        .bind(tenant)
+        .execute(&mut *tx)
+        .await
+        .expect_err("refused");
+    err.to_string()
 }
