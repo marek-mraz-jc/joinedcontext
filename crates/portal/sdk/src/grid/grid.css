@@ -2935,7 +2935,7 @@ a.jc-cell--link:focus-visible {
   overflow: visible;
 }
 
-.jc-data-grid-end {
+.jc-data-grid tbody td.jc-data-grid-end {
   text-align: right;
 }
 
