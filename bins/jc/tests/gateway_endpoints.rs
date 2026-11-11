@@ -381,6 +381,7 @@ async fn start_on(
     let config = root.join("jc.toml");
     std::fs::write(&config, "[mounts.portal]\npath_prefix = \"\"\n").unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
+    cmd.args(["--profile", "development"]);
     // The service tokens between modules live in jc's memory only; the test acts as the Portal
     // with a shako token it gives jc as a file.
     let given = root.join("given");

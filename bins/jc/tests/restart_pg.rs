@@ -209,6 +209,7 @@ fn start(config: &Path, state: &Path, port: u16) -> Jc {
 /// One jc; `None` when it stopped because another bind took `port` first.
 fn start_once(config: &Path, state: &Path, port: u16) -> Option<Jc> {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
+    cmd.args(["--profile", "development"]);
     // The service tokens between modules live in jc's memory only (new per boot); the test acts
     // as the Portal with tokens it gives jc as files.
     let given = given_dir(state);
@@ -593,6 +594,7 @@ async fn a_module_whose_database_refuses_it_stops_jc() {
     )
     .unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_jc"))
+        .args(["--profile", "development"])
         .args(["--role", "daiya", "--log-format", "text"])
         .arg("--config")
         .arg(&config)
@@ -693,6 +695,7 @@ async fn a_superuser_request_role_is_refused_by_every_module() {
         )
         .unwrap();
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
+        cmd.args(["--profile", "development"]);
         for (key, _) in std::env::vars() {
             if key.starts_with("JCBIN_") || key.starts_with("JC_") || key.starts_with("ANTARES_") {
                 cmd.env_remove(key);

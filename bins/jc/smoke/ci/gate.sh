@@ -43,6 +43,9 @@ probe=$!
 trap 'kill "$probe" 2>/dev/null' EXIT
 tar -xzf "$here/synth-export.tgz" -C "$export_dir"
 python3 -I "$here/redate.py" "$export_dir"
+# redate rewrites the history lines, so the bundle is stamped again: the import refuses a file that
+# differs from its manifest's digest (P-26).
+python3 -I "$repo/deploy/rehearsal/rehearsal.py" digest --export "$export_dir" >/dev/null
 "$repo/deploy/rehearsal/import.sh" gate "$port" "$pg_port" "$export_dir"
 # The red proof: SMOKE_STOP=<module> restarts jc without that module, and the verdict must be RED.
 if [ -n "${SMOKE_STOP:-}" ]; then

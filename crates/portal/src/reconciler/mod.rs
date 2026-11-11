@@ -27,6 +27,7 @@ pub mod registrations;
 pub mod removal_hold;
 pub mod representations;
 pub mod run_queue;
+pub mod space_retention;
 pub mod space_rules;
 pub mod staging;
 pub mod stall;
