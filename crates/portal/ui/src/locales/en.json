@@ -7653,7 +7653,7 @@
       "creationAdmin": "Only an organization administrator opens projects.",
       "cooldown": "{days} days",
       "noQuota": "No limit is set for a new project.",
-      "fromInstallation": "the installation's"
+      "fromInstallation": "installation default"
     },
     "members": {
       "title": "Members",

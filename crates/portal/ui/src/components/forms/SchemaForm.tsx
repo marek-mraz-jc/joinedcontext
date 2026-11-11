@@ -186,7 +186,7 @@ export function SchemaForm<T>(props: SchemaFormProps<T>): React.JSX.Element {
             {checked && refused > 0 ? (
               <span role="alert" className="mr-auto flex flex-wrap items-center gap-2 text-caption text-danger">
                 {t("form.fixCount", { count: refused })}
-                <Button type="button" variant="ghost" size="sm" onClick={showFirstRefused}>
+                <Button type="button" variant="secondary" size="sm" onClick={showFirstRefused}>
                   {t("form.fixFirst")}
                 </Button>
               </span>

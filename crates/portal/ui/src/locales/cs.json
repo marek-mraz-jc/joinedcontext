@@ -7653,7 +7653,7 @@
       "creationAdmin": "Projekty otevírá jen administrátor organizace.",
       "cooldown": "{days} dní",
       "noQuota": "Pro nový projekt není stanoven žádný limit.",
-      "fromInstallation": "z instalace"
+      "fromInstallation": "výchozí z instalace"
     },
     "members": {
       "title": "Členové",

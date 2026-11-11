@@ -95,7 +95,7 @@ test.describe("an Organization's appearance", () => {
       await expect(page.getByText("zilina.sk").first()).toBeVisible();
       // Settings reads the appearance member by member, the unset ones as the installation's.
       await expect(page.getByText("#0b5394", { exact: true })).toBeVisible();
-      await expect(page.getByText("the installation's")).toHaveCount(6);
+      await expect(page.getByText("installation default", { exact: true })).toHaveCount(6);
       await expect(page.getByRole("img", { name: "Logo (SVG)" })).toBeVisible();
       // The Portal on Žilina's host is drawn in Žilina's colour.
       const brand = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--portal-color-primary"));
@@ -115,11 +115,14 @@ test.describe("an Organization's appearance", () => {
       await expect(page.getByTestId("required-count")).toHaveCount(0);
       const showFirst = page.getByRole("button", { name: "Show the first" });
       await showFirst.scrollIntoViewIfNeeded();
-      await shot(page, `appearance-refused-${width}`, false);
+      await shot(page, `appearance-refused-summary-${width}`, false);
       await showFirst.click();
       await expect(primary).toBeFocused();
+      await expect(primary).toHaveAttribute("aria-invalid", "true");
+      await shot(page, `appearance-refused-${width}`, false);
 
       await primary.fill("#0b5394");
+      await expect(primary).not.toHaveAttribute("aria-invalid", "true");
       await expect(page.getByTestId("required-count")).toBeVisible();
       // The pasted logo is previewed as an image, never as markup in the page.
       await page.getByRole("textbox", { name: /^Logo/ }).fill('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="#0b5394"/></svg>');

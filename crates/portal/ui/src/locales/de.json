@@ -7653,7 +7653,7 @@
       "creationAdmin": "Nur die Organisationsverwaltung eröffnet Projekte.",
       "cooldown": "{days} Tage",
       "noQuota": "Für ein neues Projekt ist keine Grenze gesetzt.",
-      "fromInstallation": "die der Installation"
+      "fromInstallation": "Vorgabe der Installation"
     },
     "members": {
       "title": "Mitglieder",

@@ -117,7 +117,7 @@ function AppearanceSummary({ appearance }: { appearance?: OrganizationSpec["appe
             {row(
               t(`organization.field.appearance.colour.${name}`),
               <span className="inline-flex items-center gap-2">
-                <Swatch colour={value} className={clsx("h-control-xs w-control-xs", !value && "border-dashed")} />
+                <Swatch colour={value} className={clsx("h-control-xs w-control-xs", !value && "border-dashed border-fg-muted")} />
                 {value ?? installation}
               </span>,
             )}
