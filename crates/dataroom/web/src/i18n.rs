@@ -1330,19 +1330,19 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
     );
     add(
         "subscribe_near_hint",
-        "For example {example}: events within the chosen distance of this place; your device's location is not used.",
-        "Napríklad {example}: podujatia do zvolenej vzdialenosti od tejto obce; poloha vášho zariadenia sa nepoužije.",
-        "Například {example}: akce do zvolené vzdálenosti od této obce; poloha vašeho zařízení se nepoužije.",
-        "Zum Beispiel {example}: Termine im gewählten Umkreis dieses Ortes; der Standort Ihres Geräts wird nicht verwendet.",
-        "Például {example}: események a településtől a választott távolságon belül; az eszköz helyzetét nem használjuk.",
+        "For example {example}; your device's location is not used.",
+        "Napríklad {example}; poloha zariadenia sa nepoužije.",
+        "Například {example}; poloha zařízení se nepoužije.",
+        "Zum Beispiel {example}; der Gerätestandort wird nicht verwendet.",
+        "Például {example}; az eszköz helyzetét nem használjuk.",
     );
     add(
         "subscribe_near_unknown",
-        "No event in „{value}“ has a location yet; pick another place or clear the field.",
-        "Žiadne podujatie v obci „{value}“ zatiaľ nemá polohu; vyberte iné miesto alebo pole vymažte.",
-        "Žádná akce v obci „{value}“ zatím nemá polohu; vyberte jiné místo nebo pole vymažte.",
-        "Kein Termin in „{value}“ hat bisher einen Standort; wählen Sie einen anderen Ort oder leeren Sie das Feld.",
-        "„{value}” egyetlen eseményének sincs még helye; válasszon másik helyet, vagy törölje a mezőt.",
+        "No event in „{value}“ has a location; pick another town or clear the field.",
+        "Podujatia v obci „{value}“ nemajú polohu; vyberte inú obec alebo pole vymažte.",
+        "Akce v obci „{value}“ nemají polohu; vyberte jinou obec nebo pole vymažte.",
+        "Kein Termin in „{value}“ hat einen Standort; wählen Sie einen anderen Ort oder leeren Sie das Feld.",
+        "„{value}” eseményeinek nincs helye; válasszon másik települést, vagy törölje a mezőt.",
     );
     add(
         "subscribe_no_facets",
