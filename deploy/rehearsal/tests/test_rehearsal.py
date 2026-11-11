@@ -553,6 +553,52 @@ def test_the_import_leaves_out_a_role_binding_whose_people_the_export_removed(tm
     assert not rh.binding_without_people(b": not yaml: [")
 
 
+def test_only_a_synthetic_bundle_gets_the_kits_panel_reader_and_its_binding(tmp_path):
+    """The closed panel's reader (jc-panel-grant): a kit person, bound viewer on project helsinki so
+    the reconciler puts them into helsinki-readers; a dev or prod export never gets them."""
+    d = tmp_path / "gitea" / "files" / "joinedcontext" / "configuration" / "users" / "assignments"
+    d.mkdir(parents=True)
+    (d / "viewers.yaml").write_text("kind: RoleBinding\nspec:\n  subjects:\n    - group: g\n  role: viewer\n")
+    (tmp_path / "gitea" / "repos.json").write_text(json.dumps([{"owner": "joinedcontext", "name": "configuration"}]))
+
+    class Refusing:
+        def json(self, *a, **k):
+            return 500, {}
+
+    for synthetic in (False, True):
+        (tmp_path / "manifest.json").write_text(json.dumps({"synthetic": synthetic} if synthetic else {"env": "dev"}))
+        report = {}
+        rh.import_shako(Refusing(), "token", tmp_path, report)
+        assert rh.is_synthetic(tmp_path) is synthetic
+        assert ("reader" in report) is synthetic, report
+    binding = yaml.safe_load(rh.reader_binding())
+    assert binding["kind"] == "RoleBinding" and binding["spec"]["role"] == "viewer"
+    assert binding["spec"]["scope"] == {"project": "helsinki"}
+    assert binding["spec"]["subjects"] == [{"user": rh.READER_ID}]
+    realm = rh.add_reader(rh.add_reader({"realm": "dev", "users": [{"username": "service-account-c"}]}))
+    readers = [u for u in realm["users"] if u["username"] == rh.READER]
+    assert len(readers) == 1 and readers[0]["id"] == rh.READER_ID
+    assert readers[0]["credentials"][0]["value"] == "$(env:REHEARSAL_READER_PASSWORD)"
+    assert "groups" not in readers[0], "membership comes from the binding, never by hand"
+
+
+def test_the_committed_bundles_closed_panel_policy_names_the_group_the_reader_is_bound_into(tmp_path):
+    """bikes-ops-read grants group helsinki-readers on project helsinki of Organization hel: the
+    group the reader's binding fills (`{project}-readers`, PF-87)."""
+    import tarfile
+
+    with tarfile.open(HERE.parents[1] / "bins/jc/smoke/ci/synth-export.tgz") as t:
+        t.extractall(tmp_path, filter="data")
+    files = tmp_path / "gitea" / "files" / "joinedcontext"
+    policy = yaml.safe_load((files / "helsinki/spaces/helsinki/policies/bikes-ops-read.yaml").read_text())
+    endpoint = yaml.safe_load((files / "helsinki/spaces/helsinki/endpoints/helsinki-bikes-ops.yaml").read_text())
+    project = yaml.safe_load((files / "configuration/projects/helsinki.yaml").read_text())
+    assert policy["spec"]["assignee"] == {"kind": "group", "id": f"{rh.READER_PROJECT}-readers"}
+    assert endpoint["spec"]["audience"] == "organization"
+    assert project["spec"]["organizationRef"] == "hel"
+    assert rh.is_synthetic(tmp_path)
+
+
 PG_IMAGE = "postgis/postgis:17-3.5"
 
 
