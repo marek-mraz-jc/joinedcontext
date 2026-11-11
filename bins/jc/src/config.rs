@@ -1521,7 +1521,10 @@ mod tests {
         let err = with("role = \"all\"\n", None).expect_err("no profile refuses the start");
         assert!(matches!(err, ConfigError::NoProfile(_)), "{err}");
         let text = err.to_string();
-        assert!(text.contains("profile = ") && text.contains("jc.toml"), "{text}");
+        assert!(
+            text.contains("profile = ") && text.contains("jc.toml"),
+            "{text}"
+        );
         let err = Config::resolve(Cli::default()).expect_err("no file and no flag refuses too");
         assert!(matches!(err, ConfigError::NoProfile(_)), "{err}");
         let cfg = with("profile = \"production\"\nrole = \"all\"\n", None).expect("named");

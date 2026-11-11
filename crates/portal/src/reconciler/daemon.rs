@@ -180,6 +180,9 @@ pub struct Syncer {
     applied: super::removal_hold::Applied,
     /// The share of a project's objects one revision may remove unconfirmed (P-6).
     removal_hold_percent: u8,
+    /// The tenants of applied and of removed Context Spaces: a removed space's data is purged at
+    /// the broker once its grace ends (T-6717, P-21).
+    space_retention: super::space_retention::SpaceRetention,
     /// The mirror from before the removals were held: the subscription and registration syncs
     /// delete what it declared and the released run does not (T-6708).
     held_from: std::sync::Mutex<Option<Arc<Mirror>>>,
@@ -362,6 +365,7 @@ impl Syncer {
             },
             applied: super::removal_hold::Applied::new(None),
             removal_hold_percent: super::removal_hold::DEFAULT_PERCENT,
+            space_retention: super::space_retention::SpaceRetention::new(None),
             held_from: Default::default(),
             leadership: None,
             converger: None,
@@ -507,6 +511,8 @@ impl Syncer {
             }
             self.assembly = dir.join("assembly");
             self.applied = super::removal_hold::Applied::new(Some(dir.join("applied.json")));
+            self.space_retention =
+                super::space_retention::SpaceRetention::new(Some(dir.join("retained-spaces.json")));
         }
         self
     }
@@ -2323,13 +2329,45 @@ impl Syncer {
     async fn converge_views(&self, fresh_mirror: &Mirror, repository: &Repository) {
         if let Some(views) = self.views.as_ref() {
             // A held run writes what the repository asks and removes nothing (T-6708).
-            let outcomes = if fresh_mirror.removals_held() {
+            let held = fresh_mirror.removals_held();
+            let outcomes = if held {
                 views.converge_merged(repository).await
             } else {
                 views.converge(repository).await
             };
             super::views::record(fresh_mirror, outcomes);
+            self.retain_removed_spaces(views, fresh_mirror, held).await;
         }
+    }
+
+    /// A removed Context Space's data (T-6717, P-21): retained from the run its removal applied,
+    /// listed on its project's status, and purged at its broker once the grace ends. A purge the
+    /// broker refuses is tried again on the next run.
+    async fn retain_removed_spaces(
+        &self,
+        views: &super::views::ViewSync,
+        fresh_mirror: &Mirror,
+        held: bool,
+    ) {
+        use super::space_retention::mark;
+        let Some(sources) = views.last_sources() else {
+            return;
+        };
+        let now = chrono::Utc::now().timestamp().try_into().unwrap_or(0);
+        self.space_retention
+            .observe(&sources.spaces, &sources.brokers, held, now);
+        for (tenant, retained) in self.space_retention.due(now) {
+            match views.purge_tenant(&retained.space.broker, &tenant).await {
+                Ok(()) => {
+                    tracing::info!(%tenant, project = %retained.space.project, space = %retained.space.space, "a removed Context Space's grace ended: its data was purged at the broker");
+                    self.space_retention.purged(&tenant);
+                }
+                Err(reason) => {
+                    tracing::warn!(%tenant, project = %retained.space.project, space = %retained.space.space, %reason, "a removed Context Space's data was not purged; the next run tries again");
+                }
+            }
+        }
+        mark(fresh_mirror, &self.space_retention.retained());
     }
 
     async fn converge_groups(&self, fresh_mirror: &Mirror, projects: &BTreeMap<String, String>) {
