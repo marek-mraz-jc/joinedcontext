@@ -87,6 +87,23 @@ fn environment() -> Option<String> {
 /// A project that cannot be checked out, a literal where a parameter exists and a mapping
 /// reading an undeclared one are findings like any other (CC-83, CC-88).
 pub fn run_assembled(org_dir: &Path, resolver: &dyn Resolver) -> Report {
+    run_assembled_judged(org_dir, resolver, &|_| Vec::new())
+}
+
+/// [`run_assembled`], with the findings of `judge` over the repository the checks read added:
+/// the Portal's own judge of every manifest (`joinedcontext-portal validate --as-portal`, P-15),
+/// so an offline run refuses what the Portal's propose, approve and load would refuse.
+pub fn run_assembled_judged(
+    org_dir: &Path,
+    resolver: &dyn Resolver,
+    judge: &dyn Fn(&Repository) -> Vec<Finding>,
+) -> Report {
+    let judged = |dir: &Path, repository: Repository| {
+        let mut judged = judge(&repository);
+        let mut report = check(dir, repository, true);
+        report.findings.append(&mut judged);
+        report
+    };
     let into = scratch("validate");
     let environment = environment();
     let report = match assemble(
@@ -95,10 +112,13 @@ pub fn run_assembled(org_dir: &Path, resolver: &dyn Resolver) -> Report {
         &into.join("render"),
         environment.as_deref(),
     ) {
-        Ok(assembly) if assembly.layout == 1 => run(org_dir),
+        Ok(assembly) if assembly.layout == 1 => match Repository::load(org_dir) {
+            Ok(repository) => judged(org_dir, repository),
+            Err(err) => refused(err.into()),
+        },
         Ok(assembly) => {
             let mut found = assembly_findings(&assembly, |path| path.to_path_buf());
-            let mut report = check(&into.join("render"), assembly.repository, true);
+            let mut report = judged(&into.join("render"), assembly.repository);
             found.append(&mut report.findings);
             report.findings = found;
             report

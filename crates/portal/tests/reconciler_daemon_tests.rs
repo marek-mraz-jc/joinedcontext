@@ -582,10 +582,17 @@ mod pass_edges {
     /// One project's space, and a pipeline per `(pipeline, secret)` reading a DataSource of its
     /// own that names that secret.
     fn project(name: &str, pipelines: &[(&str, Option<&str>)]) -> Vec<(String, String)> {
-        let mut files = vec![(
-            format!("projects/{name}/spaces/mobility/space.yaml"),
-            space_of(name),
-        )];
+        // The Endpoint every pipeline writes through, so the Portal's judge passes them (PL-20).
+        let mut files = vec![
+            (
+                format!("projects/{name}/spaces/mobility/space.yaml"),
+                space_of(name),
+            ),
+            (
+                format!("projects/{name}/spaces/mobility/endpoints/vehicles-in.yaml"),
+                format!("apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: vehicles-in\n  namespace: {name}\nspec:\n  contextSpaceRef: mobility\n  slug: {}\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n", name.chars().filter(char::is_ascii_lowercase).chain(std::iter::repeat('a')).take(26).collect::<String>()),
+            ),
+        ];
         for (pipe, secret) in pipelines {
             let source = format!("{pipe}-source");
             files.push((
@@ -719,6 +726,8 @@ mod pass_edges {
         use std::time::{Duration, Instant};
 
         let mut files = project("helsinki", &[("vehicles", None)]);
+        // This case's own Endpoint, an organization one, in place of the project's.
+        files.retain(|(path, _)| !path.ends_with("/vehicles-in.yaml"));
         files.push((
             "projects/helsinki/endpoints/vehicles-in.yaml".to_owned(),
             "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: vehicles-in\n  namespace: helsinki\nspec:\n  contextSpaceRef: mobility\n  slug: mluyob4nz52lok3ssk7pgn5vwt\n  audience: organization\n  enabledRepresentations:\n    - ngsi-ld\n".to_owned(),
@@ -902,6 +911,8 @@ mod pass_edges {
     async fn a_credential_that_never_reached_the_runner_refuses_its_pipeline() {
         for refused_write in [None, Some(422u16)] {
             let mut files = project("helsinki", &[("vehicles", Some("mqtt-mesto"))]);
+            // This case's own Endpoint, an organization one, in place of the project's.
+            files.retain(|(path, _)| !path.ends_with("/vehicles-in.yaml"));
             files.push((
                 "projects/helsinki/endpoints/vehicles-in.yaml".to_owned(),
                 "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: vehicles-in\n  namespace: helsinki\nspec:\n  contextSpaceRef: mobility\n  slug: mluyob4nz52lok3ssk7pgn5vwt\n  audience: organization\n  enabledRepresentations:\n    - ngsi-ld\n".to_owned(),
@@ -1023,6 +1034,8 @@ mod pass_edges {
         assert!(holder.acquire().await.expect("the old pod leads"));
 
         let mut files = project("helsinki", &[("vehicles", None)]);
+        // This case's own Endpoint, an organization one, in place of the project's.
+        files.retain(|(path, _)| !path.ends_with("/vehicles-in.yaml"));
         files.push((
             "projects/helsinki/endpoints/vehicles-in.yaml".to_owned(),
             "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: vehicles-in\n  namespace: helsinki\nspec:\n  contextSpaceRef: mobility\n  slug: mluyob4nz52lok3ssk7pgn5vwt\n  audience: organization\n  enabledRepresentations:\n    - ngsi-ld\n".to_owned(),

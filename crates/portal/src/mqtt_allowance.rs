@@ -268,7 +268,7 @@ pub fn ports_in_use(brokers: &[(String, MqttBrokerSpec)]) -> Vec<(u16, String)> 
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
     use serde_json::json;

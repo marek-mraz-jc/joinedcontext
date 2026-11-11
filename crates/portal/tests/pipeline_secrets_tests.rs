@@ -44,6 +44,19 @@ spec:
     - { name: mqtt-mesto, key: password, envVar: MQTT_PASSWORD }
 "#;
 
+/// The Endpoint the pipeline writes through, so the Portal's judge passes it (PL-20).
+const ENDPOINT: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: vehicles-in
+  namespace: helsinki
+spec:
+  contextSpaceRef: mobility
+  slug: helsinkiaaaaaaaaaaaaaaaaaa
+  audience: public
+  enabledRepresentations: [ngsi-ld]
+"#;
+
 const PIPELINE: &str = r#"apiVersion: joinedcontext.com/v1alpha1
 kind: Pipeline
 metadata:
@@ -111,6 +124,10 @@ fn repository() -> Vec<(&'static str, &'static str)> {
         ("org.yaml", ORGANIZATION),
         ("projects/helsinki/spaces/mobility/space.yaml", SPACE),
         ("projects/helsinki/datasources/mesto-mqtt.yaml", DATA_SOURCE),
+        (
+            "projects/helsinki/spaces/mobility/endpoints/vehicles-in.yaml",
+            ENDPOINT,
+        ),
         (
             "projects/helsinki/pipelines/vehicles/pipeline.yaml",
             PIPELINE,

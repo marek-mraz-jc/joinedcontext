@@ -41,6 +41,7 @@ pub mod grafana_builder;
 pub mod groups;
 pub mod health_log;
 pub mod health_probe;
+pub mod judge;
 pub mod keyed;
 pub mod link_check;
 pub mod live;

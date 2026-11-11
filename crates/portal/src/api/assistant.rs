@@ -526,13 +526,30 @@ fn item(
 /// installation's `JC_PORTAL_ORG_DOMAIN`; the project name stands in when none is known, so a
 /// draft still renders (an entity URN needs a dotted domain, so that draft is red).
 pub fn org_domain(state: &AppState, fallback: &str) -> String {
+    org_domain_in(
+        &state.mirror,
+        state
+            .config
+            .app_settings
+            .as_ref()
+            .map(|settings| settings.org_domain.as_str()),
+        fallback,
+    )
+}
+
+/// [`org_domain`] over `mirror`, with the deployment's domain `configured` when no Organization
+/// names one.
+pub fn org_domain_in(
+    mirror: &crate::store::Mirror,
+    configured: Option<&str>,
+    fallback: &str,
+) -> String {
     let domain_of =
         |env: crate::resource::ResourceEnvelope| env.spec["domain"].as_str().map(str::to_owned);
-    crate::permissions::installation_organization_manifest(&state.mirror)
+    crate::permissions::installation_organization_manifest(mirror)
         .and_then(domain_of)
         .or_else(|| {
-            state
-                .mirror
+            mirror
                 .list(
                     crate::api::blueprints::ORG_NAMESPACE,
                     "Organization",
@@ -542,13 +559,7 @@ pub fn org_domain(state: &AppState, fallback: &str) -> String {
                 .into_iter()
                 .find_map(domain_of)
         })
-        .or_else(|| {
-            state
-                .config
-                .app_settings
-                .as_ref()
-                .map(|settings| settings.org_domain.clone())
-        })
+        .or_else(|| configured.map(str::to_owned))
         .unwrap_or_else(|| fallback.to_owned())
 }
 
