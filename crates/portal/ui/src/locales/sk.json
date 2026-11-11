@@ -7602,7 +7602,8 @@
           "background": "Pozadie",
           "text": "Text"
         },
-        "homeWidgets": "Nástenky na domovskej stránke"
+        "homeWidgets": "Nástenky na domovskej stránke",
+        "homeWidgetsNone": "Zatiaľ niet nástenky na výber: najprv vytvorte nástenku v projekte tejto organizácie."
       }
     },
     "contactRole": {

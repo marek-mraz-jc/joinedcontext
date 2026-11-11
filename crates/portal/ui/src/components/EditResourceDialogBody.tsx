@@ -12,6 +12,8 @@ import { ChangeNotice } from "./ChangeNotice";
 import { SchemaForm } from "./forms/LazySchemaForm";
 import { portalThemeWidgets } from "./forms/theme";
 import { arrange, index, mergeUi, paths } from "./forms/uischema";
+import { atPath, fieldPath, findingSentence } from "./forms/resourceForm";
+import type { ErrorSchema } from "@rjsf/utils";
 import { portalWidgets } from "./forms/widgets";
 import { shippedForms } from "../schemas/forms";
 import { useBranding } from "../branding";
@@ -218,6 +220,17 @@ export function EditResourceDialogBody({
   const refusals =
     propose.error instanceof ApiError ? (propose.error.problem?.errors ?? []).filter((e): e is string => typeof e === "string") : [];
   const marks = marksOf(source, refusals);
+  // A refusal led by the member it is about (`spec.appearance.homeWidgets[0]: …`) stands beside
+  // that field in the form too, not only in the banner and the YAML (UI-45, T-6779).
+  let refusedFields: ErrorSchema | undefined;
+  if (form) {
+    for (const refusal of refusals) {
+      const led = /^((?:spec|metadata)\.[A-Za-z0-9_.[\]-]+): (.+)$/s.exec(refusal);
+      if (!led) continue;
+      refusedFields ??= {};
+      atPath(refusedFields, fieldPath(led[1], form.schema)).push(findingSentence(led[2], t));
+    }
+  }
   const yamlView = (readOnlyView: boolean) => (
     <div className="overflow-hidden rounded-md border border-border">
       <Suspense fallback={<PageLoading label={t("models.loadingEditor")} lines={1} className="p-3" />}>
@@ -328,6 +341,7 @@ export function EditResourceDialogBody({
                   ...(readOnly ? { "ui:submitButtonOptions": { norender: true } } : {}),
                 }}
                 disabled={readOnly}
+                extraErrors={refusedFields}
                 formData={edited ?? form.fromManifest(current.data)}
                 submitLabel={t("resourceEdit.propose")}
                 submitting={propose.isPending}

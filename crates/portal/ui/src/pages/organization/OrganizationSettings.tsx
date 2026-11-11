@@ -193,7 +193,17 @@ export function OrganizationSettings(): JSX.Element {
   }));
   const form: EditableForm = {
     schema: withMqttDefault(organizationSchema(t, limits.data?.entries ?? [], widgets), t),
-    uiSchema: { policies: { apps: { services: APP_SERVICES_UI } }, limits: { mqtt: ALLOWANCE_UI } },
+    uiSchema: {
+      policies: { apps: { services: APP_SERVICES_UI } },
+      limits: { mqtt: ALLOWANCE_UI },
+      // One box per Dashboard the server offers; with none offered, the field says what to do first.
+      appearance: {
+        homeWidgets:
+          widgets.length > 0
+            ? { "ui:widget": "checkboxes" }
+            : { "ui:help": t("organization.field.appearance.homeWidgetsNone"), "ui:options": { addable: false } },
+      },
+    },
     fromManifest: fromOrganization,
     toManifest: toOrganization,
   };

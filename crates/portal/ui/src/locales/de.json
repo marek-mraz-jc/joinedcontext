@@ -7602,7 +7602,8 @@
           "background": "Hintergrund",
           "text": "Text"
         },
-        "homeWidgets": "Dashboards auf der Startseite"
+        "homeWidgets": "Dashboards auf der Startseite",
+        "homeWidgetsNone": "Noch kein Dashboard zur Auswahl: Legen Sie zuerst eines in einem Projekt dieser Organisation an."
       }
     },
     "contactRole": {

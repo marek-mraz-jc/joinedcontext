@@ -7602,7 +7602,8 @@
           "background": "Background",
           "text": "Text"
         },
-        "homeWidgets": "Home page dashboards"
+        "homeWidgets": "Home page dashboards",
+        "homeWidgetsNone": "No dashboard to offer yet: make one in a project of this organization first."
       }
     },
     "contactRole": {

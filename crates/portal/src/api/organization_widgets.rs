@@ -115,9 +115,10 @@ pub fn check(
             .as_str()
             .and_then(|reference| readable(state, identity, &envelope.metadata.name, reference));
         if shown.is_none() {
+            let named = reference.as_str().unwrap_or_default();
             let line = format!(
-                "spec.appearance.homeWidgets[{at}]: must name a Dashboard of this Organization's \
-                 projects that you may read, as project/name"
+                "spec.appearance.homeWidgets[{at}]: {named} is not a Dashboard of this \
+                 Organization's projects that you may read; choose one the list offers"
             );
             return Err(ApiError::Unprocessable {
                 detail: line.clone(),

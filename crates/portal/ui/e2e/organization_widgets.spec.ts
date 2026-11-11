@@ -41,6 +41,8 @@ const OPTIONS = [
 
 interface Stub {
   proposed: unknown[];
+  /** The Dashboards the server offers; the default two. */
+  options?: unknown[];
   /** The 422 the server answers a proposal, when it refuses one. */
   refuse?: string;
 }
@@ -61,19 +63,25 @@ async function stubApi(page: Page, stub: Stub): Promise<void> {
     }
     if (path === "/api/v1/organization/widgets") return json({ widgets: OPTIONS });
     if (path === "/api/v1/organization/widgets/options") {
-      return json({ options: url.searchParams.get("organization") === "zilina" ? OPTIONS : [] });
+      return json({ options: url.searchParams.get("organization") === "zilina" ? (stub.options ?? OPTIONS) : [] });
     }
     if (path === "/api/v1/projects/org/permissions/me") return json(ADMIN);
     if (path === "/api/v1/projects/ovzdusie/permissions/me") return json(VIEWER);
-    if (path === "/api/v1/projects/org/organizations") return json(list([ZILINA]));
+    if (path === "/api/v1/projects/org/organizations" && request.method() === "GET") return json(list([ZILINA]));
     if (/\/drafts\//.test(path)) {
       if (request.method() !== "PUT") return route.fulfill({ status: 204 });
       const { manifest } = request.postDataJSON() as { manifest: unknown };
       return json({ project: "org", kind: "Organization", name: "zilina", manifest, version: 1, updatedAt: new Date().toISOString() });
     }
-    if (path === "/api/v1/projects/org/organizations/zilina") {
+    // The form's own check posts to the kind's list, the proposal goes to the resource.
+    if (path === "/api/v1/projects/org/organizations/zilina" || (path === "/api/v1/projects/org/organizations" && url.searchParams.get("dryRun"))) {
       if (request.method() === "GET") return json(ZILINA);
       if (stub.refuse) {
+        // The server's dry run: a red verdict whose finding names the member (dry_run.rs led_by_its_member).
+        const [path, message] = stub.refuse.split(": ");
+        if (url.searchParams.get("dryRun")) {
+          return json({ valid: false, verdict: { ok: false, inputDigest: "d", checkedAt: new Date().toISOString(), findings: [{ level: "error", path, message }] } });
+        }
         return json({ type: "about:blank", title: "Unprocessable Entity", status: 422, detail: stub.refuse, errors: [stub.refuse] }, 422);
       }
       if (url.searchParams.get("dryRun")) return json({ valid: true });
@@ -116,12 +124,13 @@ test.describe("an Organization's home page dashboards", () => {
       await page.setViewportSize({ width, height: 900 });
       await stubApi(page, stub);
       await openWidgets(page);
-      // A list of the Dashboards the server offers this person, each picked or not.
-      const choice = page.getByRole("listbox", { name: "Home page dashboards" });
-      await expect(choice.getByRole("option")).toHaveText(["Air quality overview (ovzdusie/prehlad)", "Traffic accidents (doprava/nehody)"]);
-      await choice.selectOption([{ label: "Air quality overview (ovzdusie/prehlad)" }]);
+      // One box per Dashboard the server offers this person.
+      const field = page.locator("#root_appearance_homeWidgets");
+      await expect(field.getByRole("checkbox")).toHaveCount(2);
+      await field.getByRole("checkbox", { name: "Air quality overview (ovzdusie/prehlad)" }).check();
       await expect(page.getByText(/each person sees the ones they may open/)).toBeVisible();
-      await shot(page, `widgets-form-${width}`);
+      await field.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: process.env.JC_EVIDENCE_DIR ? join(process.env.JC_EVIDENCE_DIR, `widgets-form-${width}.png`) : undefined });
       await page.getByRole("button", { name: "Propose change" }).click();
       await expect.poll(() => stub.proposed.length).toBe(1);
       const spec = (stub.proposed[0] as { spec: { appearance?: { homeWidgets?: string[] } } }).spec;
@@ -131,16 +140,30 @@ test.describe("an Organization's home page dashboards", () => {
     test(`refused by the server names the field at ${width} px`, async ({ page }) => {
       const stub: Stub = {
         proposed: [],
-        refuse: "spec.appearance.homeWidgets[0]: must name a Dashboard of this Organization's projects that you may read, as project/name",
+        refuse: "spec.appearance.homeWidgets[0]: doprava/nehody is not a Dashboard of this Organization's projects that you may read; choose one the list offers",
       };
       await page.setViewportSize({ width, height: 900 });
       await stubApi(page, stub);
       await openWidgets(page);
-      await page.getByRole("listbox", { name: "Home page dashboards" }).selectOption([{ label: "Traffic accidents (doprava/nehody)" }]);
+      const field = page.locator("#root_appearance_homeWidgets");
+      await field.getByRole("checkbox", { name: "Traffic accidents (doprava/nehody)" }).check();
       await page.getByRole("button", { name: "Propose change" }).click();
-      await expect(page.getByText(/must name a Dashboard of this Organization's projects/).first()).toBeVisible();
+      // The refusal stands beside the field it is about.
+      await expect(page.locator("#root_appearance_homeWidgets__error")).toContainText("doprava/nehody is not a Dashboard of this Organization's projects that you may read");
       expect(stub.proposed).toHaveLength(0);
-      await shot(page, `widgets-refused-${width}`);
+      await field.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: process.env.JC_EVIDENCE_DIR ? join(process.env.JC_EVIDENCE_DIR, `widgets-refused-${width}.png`) : undefined });
+    });
+
+    test(`says what to do first when no dashboard is offered at ${width} px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await stubApi(page, { proposed: [], options: [] });
+      await openWidgets(page);
+      await expect(page.getByText("No dashboard to offer yet: make one in a project of this organization first.")).toBeVisible();
+      // Nothing to add by hand: a typed name would only be refused.
+      await expect(page.locator("#root_appearance_homeWidgets").getByRole("button", { name: /Add/ })).toHaveCount(0);
+      await page.getByText("No dashboard to offer yet").scrollIntoViewIfNeeded();
+      await page.screenshot({ path: process.env.JC_EVIDENCE_DIR ? join(process.env.JC_EVIDENCE_DIR, `widgets-empty-${width}.png`) : undefined });
     });
   }
 });

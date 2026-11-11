@@ -7602,7 +7602,8 @@
           "background": "Pozadí",
           "text": "Text"
         },
-        "homeWidgets": "Nástěnky na domovské stránce"
+        "homeWidgets": "Nástěnky na domovské stránce",
+        "homeWidgetsNone": "Zatím není nástěnka na výběr: nejprve vytvořte nástěnku v projektu této organizace."
       }
     },
     "contactRole": {
