@@ -16,7 +16,7 @@ import type { Change, ResourceProposal } from "../../api/manifest";
 import { useProposal } from "../../api/proposal";
 import { ChangeNotice } from "../../components/ChangeNotice";
 import { DashboardWidgets } from "../../components/dashboards/DashboardWidgets";
-import { Alert, Button, buttonClass, Card, EmptyState, Field, PageHeader, Select, Skeleton, Tabs, tabPanelProps } from "../../components/ui";
+import { Alert, Button, buttonClass, Card, EmptyState, Field, InlineError, PageHeader, Select, Skeleton, Tabs, tabPanelProps } from "../../components/ui";
 import { entityTypesOf, spaceOf } from "../spaces/spaceFacts";
 import {
   insertWidget,
@@ -197,7 +197,13 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
               label={t("dashboards.json.views")}
               tabs={[
                 { value: "edit", label: t("dashboards.json.source") },
-                { value: "preview", label: t("dashboards.json.preview") },
+                {
+                  value: "preview",
+                  label:
+                    !parsed.manifest || refusals.length > 0
+                      ? t("dashboards.json.previewNeedsFix")
+                      : t("dashboards.json.preview"),
+                },
               ]}
               value={view}
               onChange={setView}
@@ -208,7 +214,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
             hidden={phone && view !== "edit"}
             className="flex min-w-0 flex-col gap-3"
           >
-            <h2 id={`${ids.editor}-title`} className="text-title">
+            <h2 id={`${ids.editor}-title`} className={phone ? "sr-only" : "text-title"}>
               {t("dashboards.json.source")}
             </h2>
             <Card padding="sm" className="flex flex-col gap-3">
@@ -287,6 +293,17 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
                 />
               </Suspense>
             </Card>
+            {/* Right under the editor, where the person is typing. */}
+            {parsed.error ? (
+              <InlineError>
+                <strong>{t("dashboards.json.invalid")}</strong>{" "}
+                <span>
+                  {parsed.error.line
+                    ? t("dashboards.json.invalidAt", { line: parsed.error.line, column: parsed.error.column })
+                    : parsed.error.message}
+                </span>
+              </InlineError>
+            ) : null}
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="secondary"
@@ -324,13 +341,6 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
               </span>
             </div>
             <div id={`${ids.editor}-state`} className="flex flex-col gap-3 empty:hidden">
-              {parsed.error ? (
-                <Alert tone="danger" title={t("dashboards.json.invalid")}>
-                  {parsed.error.line
-                    ? t("dashboards.json.invalidAt", { line: parsed.error.line, column: parsed.error.column })
-                    : parsed.error.message}
-                </Alert>
-              ) : null}
               {refusals.length > 0 ? (
                 <Alert tone="danger" title={t("dashboards.json.refused")}>
                   <p>{t("dashboards.json.refusedHint")}</p>
@@ -358,7 +368,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
             aria-live="polite"
             className="flex min-w-0 flex-col gap-3"
           >
-            <h2 id={`${ids.editor}-preview`} className="text-title">
+            <h2 id={`${ids.editor}-preview`} className={phone ? "sr-only" : "text-title"}>
               {t("dashboards.json.preview")}
             </h2>
             {!parsed.manifest ? (

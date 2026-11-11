@@ -3789,7 +3789,8 @@
       "nextStepEmpty": "Das JSON lässt sich lesen, zeichnet aber noch nichts: fügen Sie ein Widget ein oder schreiben Sie eines, dann Prüfen.",
       "widgetRefused": "Dieses Widget wird nicht gezeichnet",
       "widgetRefusedAt": "Der Server hat es bei {path} abgelehnt: {reason}. Korrigieren Sie dieses Feld und prüfen Sie erneut.",
-      "views": "Manifest oder Vorschau"
+      "views": "Manifest oder Vorschau",
+      "previewNeedsFix": "Vorschau (Manifest korrigieren)"
     }
   },
   "access": {

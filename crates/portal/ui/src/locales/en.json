@@ -3789,7 +3789,8 @@
       "nextStepEmpty": "The JSON reads but draws nothing yet: insert a widget, or write one, then Check.",
       "widgetRefused": "This widget is not drawn",
       "widgetRefusedAt": "The server refused it at {path}: {reason}. Fix that field and Check again.",
-      "views": "Manifest or preview"
+      "views": "Manifest or preview",
+      "previewNeedsFix": "Preview (fix the manifest)"
     }
   },
   "access": {

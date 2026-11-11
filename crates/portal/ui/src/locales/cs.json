@@ -3789,7 +3789,8 @@
       "nextStepEmpty": "JSON jde přečíst, ale zatím nic nekreslí: vložte widget nebo jej napište a zkontrolujte.",
       "widgetRefused": "Tento widget se nekreslí",
       "widgetRefusedAt": "Server jej odmítl na cestě {path}: {reason}. Opravte toto pole a zkontrolujte znovu.",
-      "views": "Manifest nebo náhled"
+      "views": "Manifest nebo náhled",
+      "previewNeedsFix": "Náhled (opravte manifest)"
     }
   },
   "access": {

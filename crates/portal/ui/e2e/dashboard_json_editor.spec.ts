@@ -133,7 +133,7 @@ for (const width of [1440, 400]) {
     await page.evaluate(() => window.scrollTo(0, 0));
     if (width < 640) {
       await page.screenshot({ path: `test-results/T-6791/editor-refused-list-${width}.png`, fullPage: true });
-      await page.getByRole("tab", { name: "Preview" }).click();
+      await page.getByRole("tab", { name: "Preview (fix the manifest)" }).click();
     }
     // The refused widget is not drawn: the preview shows what the server would publish.
     await expect(page.getByText("This widget is not drawn")).toBeVisible();
