@@ -250,11 +250,9 @@ class Suite:
                     continue
                 op["sha"] = cur["sha"]
             ops.append(op)
-        if ops:
-            st, body = h.json("POST", f"/git/api/v1/projects/{owner}/repositories/{repo}/contents", headers=auth,
-                              body={"branch": "main", "files": ops, "message": message})
-            if st not in (200, 201):
-                raise RuntimeError(f"commit {message}: {st} {body}")
+        if ops:  # through a pull request: the imported main takes no direct push
+            R.merge_change(lambda m, path, body: h.json(m, f"/git/api/v1{path}", headers=auth, body=body),
+                           owner, repo, ops, message)
 
     def session(self, key, on: str | None = None) -> R.Http:
         """Persona `key` signed in; in host mode on its own Organization's Portal host, or on

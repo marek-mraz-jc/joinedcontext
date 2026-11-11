@@ -62,6 +62,9 @@ jobs:
       - run: cd crates/portal/sdk && pnpm install --frozen-lockfile && pnpm build
       - run: cd crates/portal/ui && pnpm install --frozen-lockfile && pnpm build
       - run: cargo build --locked -p jc -p kaisatsu-server -p daiya-server
+      # The import validates every manifest with jcctl (deploy/rehearsal/import.sh JCCTL_BIN, default
+      # beside jc): jcctl is a crate of the vendored platform workspace, built into jc's target.
+      - run: cargo build --locked --manifest-path vendor/joinedcontext-platform/Cargo.toml -p jcctl --target-dir target
       # The App bundles (bins/jc/Dockerfile apps-bundles: the apps stage's /srv/apps alone) built by
       # BuildKit in its own container: apps.sh's own `docker build --target apps` ran inside dockerd,
       # which grew to 13.8 GB and the runner out of memory (run 42931221810, brief 120). The memory
