@@ -165,6 +165,39 @@ def test_the_persona_admin_calls_the_realm_it_is_given():
     assert h.seen == ["/id/admin/realms/smartcity/groups?briefRepresentation=false&max=1000"]
 
 
+def test_the_persona_admin_mints_its_token_in_the_realm_and_names_a_refusal():
+    import personas
+
+    class H:
+        def __init__(self, st, raw):
+            self.st, self.raw, self.seen = st, raw, []
+
+        def call(self, m, path, *a, headers=None, body=None, **k):
+            self.seen.append((m, path, headers, body))
+            return self.st, {}, self.raw
+
+    h = H(200, b'{"access_token": "jwt"}')
+    assert personas.admin_token(h, "s3", "smartcity") == "jwt"
+    m, path, headers, body = h.seen[0]
+    assert (m, path) == ("POST", "/id/realms/smartcity/protocol/openid-connect/token")
+    assert headers["Content-Type"] == "application/x-www-form-urlencoded"
+    assert b"client_id=portal-reconciler" in body and b"grant_type=client_credentials" in body
+    with pytest.raises(RuntimeError, match="portal-reconciler token: 401"):
+        personas.admin_token(H(401, b"{}"), "s3")
+
+
+def test_the_runner_never_hands_ui_or_charts_apps_jcs_admin_listener_token():
+    # The runner's --admin-token-file is jc's admin listener token (logs reads it with --admin-url);
+    # the realm refuses it as a bearer (smoke run 42945870109: persona rows "invalid admin bearer token").
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "all"))
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("all_suite", Path(__file__).resolve().parents[2] / "all/suite.py")
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    for name in ("ui", "charts-apps"):
+        assert "--admin-token-file" not in runner.declared(name), name
+
+
 def test_a_page_whose_only_finding_is_the_assistants_5xx_is_a_kept_component_skip(tmp_path):
     assert suite.kept_component("http-5xx: 503 GET /api/v1/projects/bbsk/knowledge/sources")
     assert suite.kept_component("http-5xx: 503 GET /api/v1/projects/bbsk/knowledge?x=1")

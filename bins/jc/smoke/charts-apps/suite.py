@@ -28,8 +28,9 @@ Apps (every App manifest of the export's repositories, every joinedcontext-apps 
 
 Credentials come from the rehearsal's state dir (0600 files written by up.sh): dashboards-password
 (daiya Basic), portal-admin-client-secret (makes the suite's person), shako-token, and realms/*.json
-(the App clients' secrets and the rehearsal persons' passwords, each by its $(file:...) reference). --admin-token-file
-takes a portal-reconciler token instead of the secret. No secret value is written anywhere."""
+(the App clients' secrets and the rehearsal persons' passwords, each by its $(file:...) reference). --realm-token-file
+takes a portal-reconciler token instead of the secret (not the runner's --admin-token-file: that is
+jc's admin listener token, which the realm refuses). No secret value is written anywhere."""
 
 from __future__ import annotations
 
@@ -205,7 +206,7 @@ def main(argv=None) -> int:
     p.add_argument("--dashboards", action="append", default=[],
                    help="a rehearsal.py dashboards dir (the deployment's Grafana files); repeatable")
     p.add_argument("--state", help="the rehearsal's state dir (dashboards-password, portal-admin-client-secret, shako-token)")
-    p.add_argument("--admin-token-file", help="a portal-reconciler token (else from --state)")
+    p.add_argument("--realm-token-file", help="a portal-reconciler token (else from --state)")
     p.add_argument("--person-token-file", help="unused by this suite (accepted for the common runner)")
     p.add_argument("--cache", help="where the export index is kept (default <out>/../.cache)")
     p.add_argument("--only", help="regex over project, dashboard uid or App name")
@@ -246,11 +247,11 @@ def main(argv=None) -> int:
     signed = False
     realm = realm_of(a.state)
     try:
-        tok = read_token(a.admin_token_file) or (admin_token(s, secret("portal-admin-client-secret"), realm)
+        tok = read_token(a.realm_token_file) or (admin_token(s, secret("portal-admin-client-secret"), realm)
                                                   if secret("portal-admin-client-secret") else None)
         if not tok:
             res.skip("session", "portal", "sign in", "a signed-in platform admin",
-                     "no --admin-token-file and no portal-admin-client-secret in --state")
+                     "no --realm-token-file and no portal-admin-client-secret in --state")
         else:
             ok, detail = sign_in(s, make_person(s, tok, realm=realm))
             res.check("session", "portal", "GET /api/v1/auth/login (code flow)", "signed in", detail, ok)

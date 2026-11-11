@@ -1,8 +1,14 @@
 """Smoke suite `ui`: the Portal live walker over a jc, signed in as each persona, plus the other UIs.
 
-    bins/jc/smoke/run ui --base-url http://localhost:42101 --admin-token-file <f> --out <dir>
+    bins/jc/smoke/run ui --base-url http://localhost:42101 --state <dir> --out <dir>
         [--export <export dir>] [--project <p>] [--widths 1440,400] [--only <regex>]
         [--shako-token-file <f>] [--judge-file <scores.json>] [--personas admin,viewer,outsider]
+        [--realm-token-file <f>]
+
+The test persons are made with a portal-reconciler token: --realm-token-file, else one minted from
+--state's portal-admin-client-secret. The runner's --admin-token-file is jc's admin listener token
+(logs), which the realm refuses, so this suite does not take it (smoke run 42945870109: "invalid
+admin bearer token").
 
 Per persona (personas.py: admin, viewer, outsider) the suite signs in through the Portal's own
 login at 1440 px, gathers every route the live walker gathers (walk.py, a port of
@@ -492,7 +498,7 @@ def fold_judge(res: Results, shots: list[dict], judge_file: str | None):
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="run ui", description=__doc__.splitlines()[0])
     p.add_argument("--base-url", required=True)
-    p.add_argument("--admin-token-file", help="kaisatsu admin token (manage-users in realm jc)")
+    p.add_argument("--realm-token-file", help="a portal-reconciler token (manage-users), else minted from --state")
     p.add_argument("--person-token-file", help="unused: the walk signs in through the browser")
     p.add_argument("--shako-token-file")
     p.add_argument("--export", type=Path)
@@ -511,12 +517,22 @@ def main(argv=None) -> int:
     h = Http(a.base_url)
     plan = [x for x in ps.plan(a.export, a.project) if x["name"] in a.personas.split(",")]
     passwords: dict[str, str | None] = {}
-    token = read_token(a.admin_token_file)
-    admin = ps.Admin(h, token, realm_of(a.state)) if token else None
+    realm = realm_of(a.state)
+    secret = Path(a.state) / "portal-admin-client-secret" if a.state else None
+    try:
+        token = read_token(a.realm_token_file) or (
+            ps.admin_token(h, secret.read_text().strip(), realm) if secret and secret.exists() else None)
+        refused = None
+    except RuntimeError as e:  # the realm refused the client: each persona is a failing row
+        token, refused = None, str(e)
+    admin = ps.Admin(h, token, realm) if token else None
     for x in plan:
         if not admin:
-            x["skip"] = "no --admin-token-file: no test person can be made"
+            x["skip"] = (f"person not made: {refused}" if refused else
+                         "no --realm-token-file and no portal-admin-client-secret in --state: no test person can be made")
             passwords[x["name"]] = None
+            if refused:
+                res.check(f"persona:{x['name']}", "realm", f"make smoke-ui-{x['name']} in realm jc", "created", refused, False)
             continue
         try:
             passwords[x["name"]] = admin.person(f"smoke-ui-{x['name']}", x["groups"])
