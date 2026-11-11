@@ -101,6 +101,9 @@ pub async fn build(
     server::spawn_build_listener(&state, async move { token.cancelled().await })
         .await
         .map_err(|e| err(format!("build listener: {e}")))?;
+    // Set once this attempt is the one that serves: a failed attempt's state stays out of it.
+    #[cfg(feature = "daiya")]
+    let _ = super::PORTAL_STATE.set(state.clone());
     Ok((server::app(state), internal))
 }
 

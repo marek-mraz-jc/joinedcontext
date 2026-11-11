@@ -22,6 +22,12 @@ use tokio_util::task::TaskTracker;
 pub(crate) static PORTAL_INTERNAL: std::sync::LazyLock<Arc<std::sync::OnceLock<SocketAddr>>> =
     std::sync::LazyLock::new(Default::default);
 
+/// The Portal's state once built (`portal::build`): daiya's dashboard page asks it whom a
+/// browser's Portal cookie names (`daiya::page_reader`). ponytail: one Portal per process.
+#[cfg(all(feature = "daiya", feature = "portal"))]
+pub(crate) static PORTAL_STATE: std::sync::OnceLock<joinedcontext_portal::state::AppState> =
+    std::sync::OnceLock::new();
+
 #[cfg(feature = "antares")]
 pub mod antares;
 #[cfg(feature = "assistant")]
