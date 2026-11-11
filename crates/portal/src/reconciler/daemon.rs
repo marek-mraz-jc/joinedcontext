@@ -1555,11 +1555,11 @@ impl Syncer {
                 );
             }
         }
-        let change = self
-            .warned_invalid
-            .cycle(refusals.iter().map(|(_, refusal)| {
-                format!("{}: {}", refusal.resource.path.display(), refusal.reason)
-            }));
+        let change = self.warned_invalid.cycle(
+            refusals
+                .values()
+                .map(|refusal| format!("{}: {}", refusal.resource.path.display(), refusal.reason)),
+        );
         for warning in &change.new {
             tracing::warn!(%warning, standing = change.standing, "manifest fails its kind's validation and is refused");
         }
