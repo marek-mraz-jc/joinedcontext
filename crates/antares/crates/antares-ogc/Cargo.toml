@@ -33,6 +33,8 @@ uuid = { version = "1", default-features = false, features = ["v4"] }
 # a file is written on its own task, sent as it is written, within its time (jc-ogc-stream); extent
 # reads share one process-wide bound (jc-memory-cut2), so it is no longer optional
 tokio = { version = "1", default-features = false, features = ["rt", "sync", "time"] }
+# a file cut by its time or bytes is logged once at WARN under the request's span (jc-garden-zip)
+tracing = { version = "0.1", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 antares-ops = { workspace = true, features = ["test-kit"] }
@@ -41,8 +43,10 @@ parquet = { version = "60", default-features = false, features = ["zstd"] }
 http-body-util = { version = "0.1", default-features = false }
 # the tabular tests read the bundles back
 zip = { version = "9.0.1", default-features = false, features = ["deflate"] }
-tokio = { version = "1", default-features = false, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+# test-util: paused time drives a prod-size file's pages without waiting for them (jc-garden-zip)
+tokio = { version = "1", default-features = false, features = ["macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }
+tracing-subscriber = { workspace = true }
 
 # surfaces-threat-model 10.1: the full table, not the workspace's.
 [lints.rust]

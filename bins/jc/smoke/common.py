@@ -4,6 +4,7 @@ results.json + REPORT.md writer. Python 3 stdlib only (run with /opt/jc-py or an
 from __future__ import annotations
 
 import base64
+import http.client
 import ipaddress
 import json
 import re
@@ -110,6 +111,9 @@ class Http:
             return e.code, {k.lower(): v for k, v in (e.headers or {}).items()}, e.read() or b""
         except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
             return 0, {}, str(e).encode()
+        except http.client.HTTPException as e:
+            # A body cut mid-read (IncompleteRead) is a failed call, never a crash of the suite.
+            return 0, {}, repr(e).encode()
 
 
 def as_json(raw: bytes):

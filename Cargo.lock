@@ -485,6 +485,7 @@ dependencies = [
  "ogc-cql2",
  "serde_json",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
