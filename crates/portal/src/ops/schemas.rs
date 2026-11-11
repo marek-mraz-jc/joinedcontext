@@ -568,7 +568,10 @@ const EXAMPLES: &[(&str, &str)] = &[
         "ScopeDefinition",
         r#"{"spec":{"scopeString":"/domain/example","isRoot":false,"isChildOf":"/domain"}}"#,
     ),
-    ("Endpoint", r#"{"spec":{"slug":null,"audience":"public"}}"#),
+    (
+        "Endpoint",
+        r#"{"spec":{"slug":null,"audience":"public","policyRef":null,"policyRefs":["urn:ngsi-ld:Policy:example.org:example-project-example:example-read"]}}"#,
+    ),
     (
         "ModelProjection",
         r#"{"spec":{"dataModelRef":{"version":"1"},"classes":[{"name":"Example"}]}}"#,

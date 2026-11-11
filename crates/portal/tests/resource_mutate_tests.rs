@@ -857,6 +857,13 @@ async fn lane_classification_public_endpoint_red_and_sandbox_space_green() {
     let state = AppState::new(config.clone(), None)
         .with_shako(Arc::new(client))
         .with_mirror(mirror_holding("ovzdusie", &[("ContextSpace", "mobility")]));
+    // The Policy the Endpoint names (P-18, T-6740).
+    state.mirror.upsert(common::envelope(
+        "Policy",
+        "public-read",
+        "ovzdusie",
+        json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": "mobility" } }),
+    ));
     let app = server::app(state);
 
     // 1. Public Endpoint -> Red Lane
@@ -874,7 +881,8 @@ async fn lane_classification_public_endpoint_red_and_sandbox_space_green() {
             "contextSpaceRef": "mobility",
             "slug": "zt4qm7ge2xdv6ksb3ncf5arw2y",
             "audience": "public",
-            "enabledRepresentations": ["ngsi-ld"]
+            "enabledRepresentations": ["ngsi-ld"],
+            "policyRefs": ["urn:ngsi-ld:Policy:hel.fi:ovzdusie-mobility:public-read"]
         }
     });
 
