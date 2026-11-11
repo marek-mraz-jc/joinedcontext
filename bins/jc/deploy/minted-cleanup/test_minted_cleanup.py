@@ -541,6 +541,38 @@ class Policies(Case):
                    "--state", str(self.state), "--until", "2026-11-10T20:00:00Z"])
         self.assertEqual(list(self.state.glob("serviceaccount-*")), [])
 
+    def test_another_domain_selects_only_its_copies_and_the_next_call_starts_from_the_defaults(self):
+        self.endpoints("zilina-verejne\tzslug\tzilina-verejne\tzilina\nzilina-uniza\tuslug\tzilina-uniza\tzilina\n")
+        stale = "urn:ngsi-ld:GtfsStop:hel.fi:zilina-verejne:zsr-1"
+        self.listing([("zilina-verejne", stale, "GtfsStop", "", ""),
+                      ("zilina-uniza", "urn:ngsi-ld:Article:hel.fi:zilina-uniza:1", "Article", "", "")])
+        opts = ["--domain", "hel.fi", "--account", "cleanup-t6743", "--label", "T-6743"]
+        code, out = self.main([*opts, "policies", "--list", str(self.dir / "l.tsv"), "--endpoints",
+                               str(self.dir / "e.tsv"), "--state", str(self.state), "--until", "2026-11-11T20:00:00Z"])
+        self.assertEqual(code, 0, out)
+        doc = json.loads((self.state / "policy-zilina-verejne.json").read_text())
+        # Two spaces of one project: Policy names are unique per project, so each space names its own.
+        self.assertEqual(doc["metadata"]["name"], "cleanup-t6743-zilina-verejne")
+        self.assertEqual(json.loads((self.state / "policy-zilina-uniza.json").read_text())["metadata"]["name"],
+                         "cleanup-t6743-zilina-uniza")
+        spec = doc["spec"]
+        self.assertEqual(spec["assignee"], {"kind": "serviceAccount", "id": "cleanup-t6743"})
+        p = spec["information"][0]["entities"][0]["idPattern"]
+        self.assertEqual(p, r"^urn:ngsi-ld:GtfsStop:hel\.fi:.+$")
+        self.assertTrue(re.fullmatch(p, stale))
+        self.assertFalse(re.search(p, "urn:ngsi-ld:GtfsStop:zilina.sk:zilina-verejne:zsr-1"), "the live twin")
+        self.assertEqual(self.main([*opts, *self.args()])[0], 0)
+        # A later call without --domain is back on the T-6676 R prefix: the hel.fi id is refused.
+        code, out = self.main(self.args())
+        self.assertEqual(code, 1, out)
+        self.assertIn("not under", out)
+
+    def test_a_domain_that_is_not_a_dns_name_is_refused(self):
+        self.listing([row("Tree", 1)])
+        code, out = self.main(["--domain", "hel.fi:.*", *self.args()])
+        self.assertEqual(code, 1, out)
+        self.assertIn("not a lowercase DNS name", out)
+
 
 class Verify(Case):
     def verify(self, recount: str, history: str) -> tuple[int, str]:
