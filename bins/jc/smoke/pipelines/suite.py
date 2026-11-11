@@ -26,9 +26,18 @@ portal-reconciler client of --state, signed in by the browser flow, deleted at t
              one still Queued after --wait is waited for as long as the runs the statuses report
              queued ahead of it take (at most 15 min, prod's RUN_TIMEOUT, a round), again while
              fewer runs are ahead than at the last look; a look with no progress ends the wait
+             a run is read once the status says it ended (nothing running, the last run ended
+             after the request), at most RUN_TIMEOUT after it was listed
   log        GET  .../runs/{run}/log                             one line per record
   landed     GET  /api/endpoint/{slug}/ngsi-ld/v1/entities/{id}  a record the run sent, modifiedAt
              not before the run started; entities?type=T&count=true at least the run's sent
+             a run of 0 records (sent, failed, rejected 0) is checked against prod's runs of the
+             same schedule slot (the schedule hour at or before the run's UTC hour): as on prod
+             when each of them sent 0, a fail when one sent more or prod holds none
+             sent 0 with a failed source is the skip `source-unreachable` only when (a) jc's log
+             names the source host with a connect or timeout error, (b) the suite's own TCP
+             connect to that host and port fails, (c) prod's newest run sent 0, failed and names
+             the host, and (d) another run of this suite run landed from a non-loopback source
 
 The Portal decides which project repository it follows; the suite reads the export only to know
 what must be there. Nothing it starts writes outside the rehearsal (loopback base only)."""
@@ -36,8 +45,11 @@ what must be there. Nothing it starts writes outside the rehearsal (loopback bas
 from __future__ import annotations
 
 import argparse
+import functools
+import gzip
 import json
 import re
+import socket
 import sys
 import time
 import urllib.parse
@@ -68,7 +80,7 @@ def conditions(item: dict) -> list[dict]:
 
 def prod_runs(path: Path) -> dict | None:
     """prod's Portal run log beside the bundle (pipeline_runs.jsonl, rehearsal RUNLOG.md): per
-    project/pipeline its run count and newest run, or None when the file is not there."""
+    project/pipeline its run count, newest run and every run, or None when the file is not there."""
     f = path / "pipeline_runs.jsonl"
     if not f.is_file():
         return None
@@ -78,8 +90,115 @@ def prod_runs(path: Path) -> dict | None:
         k = f"{row['project']}/{row['pipeline']}"
         had = out.get(k)
         out[k] = {"runs": (had or {}).get("runs", 0) + 1,
-                  "last": row if not had or row["last_at"] > had["last"]["last_at"] else had["last"]}
+                  "last": row if not had or row["last_at"] > had["last"]["last_at"] else had["last"],
+                  "all": (had or {}).get("all", []) + [row]}
     return out
+
+
+@functools.cache
+def prod_log(path: Path, key: str, run: str) -> tuple:
+    """The messages of prod's run `run` of `key` in pipeline_log.newest-run.jsonl.gz (each
+    pipeline's newest run only), read when a row needs them; () without the file."""
+    f = path / "pipeline_log.newest-run.jsonl.gz"
+    if not f.is_file():
+        return ()
+    project, pipeline = key.split("/", 1)
+    needle = f'"project":"{project}","pipeline":"{pipeline}"'
+    with gzip.open(f, "rt") as lines:
+        rows = [json.loads(line) for line in lines if needle in line]
+    return tuple(x.get("message") or "" for x in rows if x.get("run") == run)
+
+
+def schedule_hours(schedule) -> list[int] | None:
+    """The hours of a five-field cron `schedule`, None when it is none or does not parse."""
+    fields = str(schedule or "").split()
+    if len(fields) != 5:
+        return None
+    hours = set()
+    try:
+        for part in fields[1].split(","):
+            rng, _, step = part.partition("/")
+            lo, hi = (0, 23) if rng == "*" else map(int, rng.split("-")) if "-" in rng else (int(rng), int(rng))
+            hours.update(range(lo, (23 if step and "-" not in rng else hi) + 1, int(step or 1)))
+    except ValueError:
+        return None
+    return sorted(h for h in hours if 0 <= h <= 23) or None
+
+
+def as_on_prod_empty(p: Pipeline, run: dict, prod: dict | None) -> tuple[bool, str]:
+    """A jc run of 0 records against prod's runs of the same schedule slot: the schedule hour at
+    or before the run's UTC hour (prod names a scheduled run by its hour, 2026-11-08T18:00Z).
+    banskabystrica/kataster writes one third of its pages by the 8 h slot of the day and the third
+    of 16:00Z to 24:00Z is empty, on prod too. (as on prod, what was compared)."""
+    name = str(run.get("run") or "")
+    hour = int(name[11:13]) if name[11:13].isdigit() else time.gmtime(_ts(run.get("firstAt")) or time.time()).tm_hour
+    hours = schedule_hours(p.spec.get("schedule")) or [hour]
+    slot = max((h for h in hours if h <= hour), default=max(hours))
+    runs = [x for x in ((prod or {}).get(p.key) or {}).get("all", [])
+            if str(x.get("run"))[11:13] == f"{slot:02d}"]
+    if not runs:
+        return False, f"prod holds no run of slot {slot:02d}:00Z"
+    more = [x for x in runs if int(x.get("sent") or 0) > 0]
+    if more:
+        return False, f"prod's run {more[-1]['run']} of slot {slot:02d}:00Z sent {more[-1]['sent']}"
+    newest = max(runs, key=lambda x: x.get("last_at") or "")
+    return True, f"as on prod: run {newest['run']} sent 0 ({len(runs)} run(s) of slot {slot:02d}:00Z, each sent 0)"
+
+
+SOURCE_ERROR = re.compile(r"(?i)time[ds]? ?out|deadline exceeded|connect|unreachable|no route to host")
+
+
+def source_host(url: str) -> tuple[str, int] | None:
+    """host and port of a source URL, None for none or a loopback host."""
+    u = urllib.parse.urlsplit(url or "")
+    if not u.hostname or u.hostname in ("localhost", "::1") or u.hostname.startswith("127."):
+        return None
+    return u.hostname, u.port or (443 if u.scheme == "https" else 80)
+
+
+def probe(host: str, port: int) -> str | None:
+    """The suite's own TCP connect to host:port (sends nothing): None when it connects, else why not."""
+    try:
+        socket.create_connection((host, port), timeout=10).close()
+        return None
+    except OSError as e:
+        return type(e).__name__ + (f" {e}" if str(e) else "")
+
+
+def source_unreachable(p: Pipeline, run: dict, lines: list, prod: dict | None, runlog: Path | None) -> tuple[str | None, str]:
+    """Conditions (a) to (c) of a `source-unreachable` landed row: (evidence, "") when all three
+    hold, else (None, the first that does not). The row names host and port only, never the URL."""
+    src = source_host(p.source_url)
+    if not src:
+        return None, "no non-loopback source URL in the DataSource"
+    host, port = src
+    if run.get("sent") or not int(run.get("failed") or 0) or not any(
+            host in (x.get("message") or "") and SOURCE_ERROR.search(x.get("message") or "") for x in lines):
+        return None, f"(a) jc's run does not fail with a connect or timeout error naming {host}"
+    why = probe(host, port)
+    if why is None:
+        return None, f"(b) the suite's TCP connect to {host}:{port} succeeds"
+    last = ((prod or {}).get(p.key) or {}).get("last") or {}
+    if (last.get("sent") or not int(last.get("failed") or 0) or runlog is None
+            or not any(host in m for m in prod_log(runlog, p.key, last.get("run") or ""))):
+        return None, f"(c) prod's newest run does not fail naming {host}"
+    return (f"{host}:{port}; (a) jc's run {run.get('run')} sent 0, failed {run.get('failed')}, its log names "
+            f"the host with a connect or timeout error; (b) the suite's TCP connect to {host}:{port} failed "
+            f"({why[:80]}); (c) prod's newest run {last.get('run')} sent 0, failed {last.get('failed')}, its log "
+            f"names the host"), ""
+
+
+def decide_unreachable(r: Results, candidates: list, landed_from: list) -> None:
+    """Condition (d): a candidate is the skip `source-unreachable` only when another run of this
+    suite run landed from a non-loopback source; else the sandbox may have no egress at all and
+    the row stays a fail."""
+    for key, call, evidence, actual in candidates:
+        other = next(((k, h) for k, h in landed_from if k != key), None)
+        if other:
+            r.skip("landed", key, call, "sent > 0", f"source-unreachable: {evidence}; (d) {other[0]} landed from {other[1]}")
+        else:
+            r.check("landed", key, call, "sent > 0", f"{actual}; not source-unreachable: (d) no other run of this "
+                    "suite run landed from a non-loopback source", False)
 
 
 def check_pipeline(r: Results, http: Http, ekiben_tok: str | None, p: Pipeline, prod: dict | None = None) -> dict:
@@ -168,7 +287,8 @@ def queue_wait(http: Http, projects, base: str, wait: float):
 
 
 RUNNING = re.compile(r"running since (\S+?Z)")
-ENDED = re.compile(r"the last run ended (\S+?Z)")
+# Finished: "the last run ended <t> after <n> s"; failed: "the last run, ended <t>, failed: ..."
+ENDED = re.compile(r"the last run,? ended (\S+?Z)")
 
 
 def started_since(http: Http, base: str, t0: float) -> bool:
@@ -180,7 +300,21 @@ def started_since(http: Http, base: str, t0: float) -> bool:
     return bool(RUNNING.search(said) or (ended and (_ts(ended.group(1)) or 0) >= t0))
 
 
-def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float, projects=()) -> None:
+def ended_since(http: Http, base: str, t0: float) -> bool:
+    """The run asked at `t0` ended, as the Portal's status says: nothing running and the last run
+    ended after the request. A run's row is listed with its first lines; its counts are final only
+    then (gate 2026-11-10T203500Z-gc read kniznice at 0/0/0, its failure was filed 120 s later)."""
+    st, _, raw = http.call("GET", base)
+    said = " ".join(c.get("message") or "" for c in conditions(as_json(raw) or {})) if st == 200 else ""
+    ended = ENDED.search(said)
+    return bool(not RUNNING.search(said) and ended and (_ts(ended.group(1)) or 0) >= int(t0))
+
+
+def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float, projects=(),
+                 prod: dict | None = None, runlog: Path | None = None, found: dict | None = None) -> None:
+    """One run-now of `p`. `found` collects for the whole suite run: "landed" (key, source host)
+    of each run that landed from a non-loopback source, "unreachable" the candidates of (d)."""
+    found = found if found is not None else {}
     base = f"/api/v1/projects/{p.project}/pipelines/{p.name}"
     st, _, raw = http.call("GET", base + "/runs?limit=5")
     before = {x.get("run"): x for x in (as_json(raw) or {}).get("items") or []} if st == 200 else {}
@@ -192,7 +326,7 @@ def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float, p
             r.skip(x, p.key, "", "", f"the run did not start ({st})")
         return
     started = (as_json(raw) or {}).get("run")
-    run, deadline, extended, rounds, ran_on = None, time.time() + wait, None, 0, False
+    run, deadline, extended, rounds, ran_on, listed, ended = None, time.time() + wait, None, 0, False, None, False
     while True:
         while time.time() < deadline:
             time.sleep(5)
@@ -202,10 +336,14 @@ def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float, p
                      or (x.get("run") not in before) or x != before.get(x.get("run"))]
             if fresh:
                 run = fresh[0]
-                # The run ended when its last line is older than 20 s.
-                last = _ts(run.get("lastAt"))
-                if last and time.time() - last > 20:
+                listed = listed or time.time()
+                if ended_since(http, base, t0):
+                    # Ended: read its row once more, the counts as the run left them.
+                    st, _, raw = http.call("GET", base + "/runs?limit=5")
+                    items = (as_json(raw) or {}).get("items") or [] if st == 200 else []
+                    run, ended = next((x for x in items if x.get("run") == run.get("run")), run), True
                     break
+                deadline = max(deadline, listed + RUN_TIMEOUT)
         if run:
             break
         # Still queued. Prod's Portal has no spacing to wait out: a run-now keeps its place in
@@ -233,22 +371,40 @@ def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float, p
         waited = (f"{time.time() - t0:.0f} s ({extended[1]} still queued ahead after {rounds} round(s) of "
                   f"the queue's estimate, its runs {extended[2]:.0f} s each)" if extended else f"{wait:.0f} s")
         why = f"none within {waited}; status {'; '.join(said)[:200]}"
-    r.check("history", p.key, f"GET {base}/runs", "the started run listed with its counts",
-            json.dumps(run)[:240] if run else why, run is not None)
+    if run and not ended:
+        why = f"listed, not ended within {RUN_TIMEOUT} s of it (status: running, or no end after the request)"
+    r.check("history", p.key, f"GET {base}/runs", "the started run listed with its counts, ended",
+            (json.dumps(run)[:240] + ("" if ended else f"; {why}")) if run else why, run is not None and ended)
     if not run:
         for x in ("log", "landed"):
             r.skip(x, p.key, "", "", "no run in the history")
         return
     st, _, raw = http.call("GET", f"{base}/runs/{urllib.parse.quote(run['run'], safe='')}/log?limit=50")
     lines = (as_json(raw) or {}).get("items") or [] if st == 200 else []
-    r.check("log", p.key, f"GET {base}/runs/{run['run']}/log", "200, one line per record",
-            f"{st} {len(lines)} lines", st == 200 and len(lines) > 0)
+    empty = not any(int(run.get(k) or 0) for k in ("sent", "failed", "rejected"))
+    if empty and not lines:
+        # A run of 0 records has no line to write: judged as prod's runs of the same slot.
+        ok, said = as_on_prod_empty(p, run, prod)
+        r.check("log", p.key, f"GET {base}/runs/{run['run']}/log", f"200, one line per record; 0 records {said}",
+                f"{st} 0 lines", st == 200 and ok)
+    else:
+        r.check("log", p.key, f"GET {base}/runs/{run['run']}/log", "200, one line per record",
+                f"{st} {len(lines)} lines", st == 200 and len(lines) > 0)
     sent = [x for x in lines if x.get("outcome") == "sent" and x.get("recordId")]
+    if empty:
+        ok, said = as_on_prod_empty(p, run, prod)
+        r.check("landed", p.key, f"{base}/runs (sent)", f"sent > 0, or 0 records {said}",
+                "sent 0, failed 0, rejected 0", ok)
+        return
     if not run.get("sent"):
         first = next((x for x in lines if x.get("message")), {})
-        r.check("landed", p.key, f"{base}/runs (sent)", "sent > 0",
-                f"sent 0, failed {run.get('failed')}, rejected {run.get('rejected')}: "
-                f"{first.get('message', '')[:160]}", False)
+        actual = (f"sent 0, failed {run.get('failed')}, rejected {run.get('rejected')}: "
+                  f"{first.get('message', '')[:160]}")
+        evidence, why = source_unreachable(p, run, lines, prod, runlog)
+        if evidence:
+            found.setdefault("unreachable", []).append((p.key, f"{base}/runs (sent)", evidence, actual))
+        else:
+            r.check("landed", p.key, f"{base}/runs (sent)", "sent > 0", f"{actual}; not source-unreachable: {why}", False)
         return
     if not p.slug or not sent:
         r.skip("landed", p.key, "", "", "no target Endpoint slug or no sent record in the log page")
@@ -261,8 +417,11 @@ def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float, p
         return
     e = as_json(raw) or {}
     mod = _ts(e.get("modifiedAt"))
+    ok = st == 200 and mod is not None and mod >= t0 - 5
     r.check("landed", p.key, f"GET {path}", f"200, modifiedAt >= {time.strftime('%H:%M:%SZ', time.gmtime(t0 - 5))}",
-            f"{st} modifiedAt {e.get('modifiedAt')}", st == 200 and mod is not None and mod >= t0 - 5)
+            f"{st} modifiedAt {e.get('modifiedAt')}", ok)
+    if ok and source_host(p.source_url):
+        found.setdefault("landed", []).append((p.key, source_host(p.source_url)[0]))
     if p.out_type:
         q = f"/api/endpoint/{p.slug}/ngsi-ld/v1/entities?type={urllib.parse.quote(p.out_type)}&count=true&limit=0"
         st, h, raw = anon.call("GET", q)
@@ -319,7 +478,8 @@ def main(argv):
     if a.only:
         pipelines = [p for p in pipelines if p.key in set(a.only)]
     ekiben_tok = ekiben_token(Path(a.state)) if a.state else None
-    prod = prod_runs(Path(a.runlog or a.export.rstrip("/") + "-runlog"))
+    runlog = Path(a.runlog or a.export.rstrip("/") + "-runlog")
+    prod = prod_runs(runlog)
     st, h, raw = http.call("GET", "/streams/streams", ekiben_tok)
     listed = runner_list(h, raw)
     r.check("runner", "ekiben", "GET /streams/streams", "200 the runner's JSON stream list",
@@ -333,14 +493,16 @@ def main(argv):
         admin = Admin(a.base_url, Path(a.state))
         try:
             admin.sign_in()
-            ran = 0
+            ran, found = 0, {}
             for p in pipelines:
                 check_pipeline(r, admin.browser, ekiben_tok, p, prod)
                 if p.resident:
                     r.skip("run", p.key, "", "", f"resident {p.source_type} source: runs continuously, no one-shot run")
                 elif ran < a.runs:
                     ran += 1
-                    run_pipeline(r, admin.browser, http, p, a.wait, sorted({q.project for q in pipelines}))
+                    run_pipeline(r, admin.browser, http, p, a.wait, sorted({q.project for q in pipelines}),
+                                 prod, runlog, found)
+            decide_unreachable(r, found.get("unreachable", []), found.get("landed", []))
         finally:
             admin.close()
     meta = {"export": a.export, "prod run log": None if prod is None else f"{len(prod)} pipelines", "pipelines": len(pipelines),
