@@ -178,15 +178,15 @@ def test_the_rate_cap_holds_across_threads_and_processes(tmp_path):
     child = subprocess.Popen([sys.executable, "-c", (
         "import json, sys, time; sys.path.insert(0, sys.argv[1]); import live\n"
         "g = live.Guard(json.loads(sys.argv[2]))\n"
-        "for _ in range(4):\n    g.wait(); print(time.time())\n"), str(HERE.parent.parent), json.dumps(cfg)],
+        "for _ in range(4):\n    print(g.wait())\n"), str(HERE.parent.parent), json.dumps(cfg)],
         stdout=subprocess.PIPE, text=True)
     g, times, lock = live.Guard(cfg), [], threading.Lock()
 
     def waiter():
         for _ in range(4):
-            g.wait()
+            t = g.wait()  # the grant time, read under the bucket lock
             with lock:
-                times.append(time.time())
+                times.append(t)
 
     threads = [threading.Thread(target=waiter) for _ in range(3)]
     for t in threads:
@@ -196,7 +196,7 @@ def test_the_rate_cap_holds_across_threads_and_processes(tmp_path):
     times += [float(x) for x in child.communicate()[0].split()]
     times.sort()
     gaps = [b - a for a, b in zip(times, times[1:])]
-    assert len(times) == 16 and min(gaps) > 0.04, gaps  # 20/s: one slot each 50 ms
+    assert len(times) == 16 and min(gaps) >= 0.049, gaps  # 20/s: one grant each 50 ms
 
 
 def test_loopback_only_takes_the_virtual_base_only_with_the_guard_installed(guard):
