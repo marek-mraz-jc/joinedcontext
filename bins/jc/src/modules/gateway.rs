@@ -891,15 +891,17 @@ async fn session_reads(mut req: Request, next: Next) -> Response {
     next.run(req).await
 }
 
-/// The Endpoint a Portal session may read as the person: a path under `/api/endpoint/{slug}`, a
-/// cookie, no `Authorization` of its own, and `Sec-Fetch-Site: same-origin`, which the browser
-/// alone sets. A cross-site form or an App on a sibling host (`same-site`) gets no token, so the
-/// cookie never acts for the person outside the Portal's pages.
+/// The Endpoint a Portal session may read as the person: a `GET` or `HEAD` under
+/// `/api/endpoint/{slug}`, a cookie, no `Authorization` of its own, and `Sec-Fetch-Site:
+/// same-origin`, which the browser alone sets. A write never borrows the session: the cookie is
+/// no credential for changing data. A cross-site form or an App on a sibling host (`same-site`)
+/// gets no token, so the cookie never acts for the person outside the Portal's pages.
 #[cfg(feature = "portal")]
 fn session_slug(req: &Request) -> Option<String> {
-    use axum::http::header;
+    use axum::http::{Method, header};
     let headers = req.headers();
-    if headers.contains_key(header::AUTHORIZATION)
+    if !matches!(*req.method(), Method::GET | Method::HEAD)
+        || headers.contains_key(header::AUTHORIZATION)
         || !headers.contains_key(header::COOKIE)
         || headers
             .get("sec-fetch-site")
@@ -1045,14 +1047,14 @@ mod tests {
         }
     }
 
-    /// T-6783: only a same-origin browser request under `/api/endpoint/{slug}` with a cookie and
-    /// no credential of its own is read as the Portal session's person.
+    /// T-6783: only a same-origin browser `GET`/`HEAD` under `/api/endpoint/{slug}` with a cookie
+    /// and no credential of its own is read as the Portal session's person; no write is.
     #[cfg(feature = "portal")]
     #[test]
     fn only_a_same_origin_cookie_request_names_an_endpoint_for_the_session() {
         use axum::http::header;
-        let ask = |path: &str, site: Option<&str>, cookie: bool, auth: bool| {
-            let mut req = axum::http::Request::get(path);
+        let ask_with = |method: &str, path: &str, site: Option<&str>, cookie: bool, auth: bool| {
+            let mut req = axum::http::Request::builder().method(method).uri(path);
             if let Some(site) = site {
                 req = req.header("sec-fetch-site", site);
             }
@@ -1064,7 +1066,24 @@ mod tests {
             }
             session_slug(&req.body(axum::body::Body::empty()).unwrap())
         };
+        let ask = |path: &str, site: Option<&str>, cookie: bool, auth: bool| {
+            ask_with("GET", path, site, cookie, auth)
+        };
         let read = "/api/endpoint/3jlwl5dg2oidblwqhc6qdi3zxl/schema/index.json";
+        assert_eq!(
+            ask_with("HEAD", read, Some("same-origin"), true, false).as_deref(),
+            Some("3jlwl5dg2oidblwqhc6qdi3zxl")
+        );
+        // A write never borrows the session, whatever else the request carries.
+        for method in ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"] {
+            for path in [read, "/api/endpoint/3jlwl5dg2oidblwqhc6qdi3zxl/mcp"] {
+                assert_eq!(
+                    ask_with(method, path, Some("same-origin"), true, false),
+                    None,
+                    "{method} {path}"
+                );
+            }
+        }
         assert_eq!(
             ask(read, Some("same-origin"), true, false).as_deref(),
             Some("3jlwl5dg2oidblwqhc6qdi3zxl")

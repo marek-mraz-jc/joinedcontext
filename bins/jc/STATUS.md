@@ -377,7 +377,8 @@ project `e2e` (layout 1: project, space `things`, a `public` and a `project-list
   cookie only and the gateway reads `Authorization` alone (`auth/subject.rs` `admit_on`). jc's gateway layer
   `session_reads` (`modules/gateway.rs`) now asks the Portal in the same process for the person's token for that
   Endpoint (`auth::endpoint_token`: the session's access token, kept server-side, exchanged for audience `mcp-hub`
-  and scope `endpoint:{slug}`), only on a `Sec-Fetch-Site: same-origin` request with no `Authorization`; the
+  and scope `endpoint:{slug}`), only on a `Sec-Fetch-Site: same-origin` GET or HEAD with no `Authorization` (no write,
+  so the page's POST /mcp stays 401 on a closed Endpoint); the
   gateway then answers 200 or 403 on the person's grants. A Portal in another container than the gateway still
   reads anonymously. On dev APISIX's openid-connect plugin turns the session into a bearer.
 - Stale since T-6063, corrected by jc-kaisatsu-audience (2026-11-09): jc's linker (`modules/kaisatsu.rs`
