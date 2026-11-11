@@ -30,6 +30,26 @@ function heads(container: HTMLElement): string[] {
 }
 
 describe("EntityGrid compact (T-6748)", () => {
+  it("moves a value every row shares out of the columns, to the line above", async () => {
+    const same = entities.map((each) => ({ ...each, category: { type: "Property", value: "socialService" } }));
+    const { container } = render(<EntityGrid config={config} source={fixtureSource(same)} compact filterRow={false} />);
+    await waitFor(() => expect(screen.getByText("Kallio")).toBeInTheDocument());
+    await waitFor(() => expect(heads(container).some((name) => /^Category/.test(name))).toBe(false));
+    const line = container.querySelector(".jc-grid-typeline")!;
+    expect(line).toHaveTextContent("Category");
+    expect(line).toHaveTextContent("socialService");
+    expect(line).toHaveTextContent("PointOfInterest");
+    // The label is never moved, even where two rows share it.
+    expect(heads(container)[0]).toMatch(/^Title/);
+  });
+
+  it("keeps a column whose rows differ", async () => {
+    const { container } = render(<EntityGrid config={config} source={fixtureSource(entities)} compact filterRow={false} />);
+    await waitFor(() => expect(screen.getByText("Kallio")).toBeInTheDocument());
+    expect(heads(container).some((name) => /^Category/.test(name))).toBe(true);
+    expect(container.querySelector(".jc-grid-typeline")).not.toHaveTextContent("library");
+  });
+
   it("leads with the label, drops the id and the shared type, and shows the type above", async () => {
     const onChange = vi.fn();
     const onOpenRow = vi.fn();

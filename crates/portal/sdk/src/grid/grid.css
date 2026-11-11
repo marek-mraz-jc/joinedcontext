@@ -41,6 +41,17 @@
   padding: var(--jc-space-1, 4px) var(--jc-space-2, 8px);
 }
 
+.jc-grid-typeline__part {
+  display: flex;
+  align-items: center;
+  gap: var(--jc-space-2, 8px);
+  min-width: 0;
+}
+
+.jc-grid-typeline__part:has(.jc-grid-filter-cell) {
+  flex: 1 1 100%;
+}
+
 .jc-grid-typeline .jc-grid-filter-cell {
   flex: 1 1 12rem;
   min-width: 0;

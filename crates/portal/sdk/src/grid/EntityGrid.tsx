@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { RichRow, RichCell } from "./model";
 import type { ColumnLayout, GridLabels, GridRefusal, UseEntityGridOptions, VisibleColumn } from "./useEntityGrid";
-import { DEFAULT_LABELS } from "./useEntityGrid";
+import { DEFAULT_LABELS, readableName } from "./useEntityGrid";
 import { targetName } from "./cells";
 import type { FilterColumn } from "./filters";
 import type { GridMapLabels } from "./GridMap";
@@ -294,15 +294,30 @@ function GridBody(props: EntityGridProps & { onDrill?: (urn: string, type: strin
   );
 }
 
-/** The type every row shares, out of a compact grid's columns: its name, or the choice of another (T-6748). */
+/**
+ * What every row shares, out of a compact grid's columns (T-6748): the type, or the choice of
+ * another, then each value every loaded row holds, by its column's label.
+ */
 function GridTypeLine({ view }: { view: GridView }): React.JSX.Element | null {
-  const { props, labels, options } = view;
+  const { props, labels, options, shared } = view;
   const type = options.config.type;
-  if (!props.compact || type.includes(",")) return null;
+  const oneType = !type.includes(",");
+  if (!props.compact || (!oneType && shared.length === 0)) return null;
+  const labelOf = (attr: string) => options.layout?.labels?.[attr] ?? options.config.columns.find((column) => column.attr === attr)?.label ?? readableName(attr);
   return (
     <div className="jc-grid-typeline">
-      <span className="jc-grid-typeline__label">{labels.type}</span>
-      {props.typeChoice ? <TypeChoiceCell choice={props.typeChoice} /> : <span>{type}</span>}
+      {oneType ? (
+        <span className="jc-grid-typeline__part">
+          <span className="jc-grid-typeline__label">{labels.type}</span>
+          {props.typeChoice ? <TypeChoiceCell choice={props.typeChoice} /> : <span>{type}</span>}
+        </span>
+      ) : null}
+      {shared.map((each) => (
+        <span key={each.attr} className="jc-grid-typeline__part">
+          <span className="jc-grid-typeline__label">{labelOf(each.attr)}</span>
+          <span>{each.value}</span>
+        </span>
+      ))}
     </div>
   );
 }
