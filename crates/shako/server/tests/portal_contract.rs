@@ -34,6 +34,8 @@ const OWNER: &str = "joinedcontext";
 const APPS_OWNER: &str = "joinedcontext-apps";
 const PORTAL_TOKEN: &str = "portal-token-0123456789";
 const APPS_TOKEN: &str = "apps-token-0123456789";
+/// A person with Write on the organization's repositories who is not the Portal (PF-87).
+const WRITER_TOKEN: &str = "writer-token-0123456789";
 const WEBHOOK_SECRET: &str = "portal-webhook-secret-value";
 
 const AUTHOR: Author<'static> = Author {
@@ -79,6 +81,13 @@ impl World {
                 project_id: None,
                 repo: None,
             },
+            RoleBinding {
+                org_id: org,
+                principal: "writer-bob".into(),
+                actions: vec![Action::Write],
+                project_id: None,
+                repo: None,
+            },
         ]));
         let verifier = TokenVerifier::new(ShakoSigningKey::generate().expect("key"))
             .with_static_tokens(vec![
@@ -89,6 +98,10 @@ impl World {
                 StaticTokenBinding::new(
                     APPS_TOKEN,
                     Subject::authenticated("jc-apps", "jc-apps", vec![apps_org], vec![]),
+                ),
+                StaticTokenBinding::new(
+                    WRITER_TOKEN,
+                    Subject::authenticated("writer-bob", "writer-bob", vec![org], vec![]),
                 ),
             ]);
         let guard = OutboundGuard::new(OutboundPolicy {
@@ -663,6 +676,108 @@ async fn merge_requests_reviews_merge_and_webhooks() {
         .filter(|(ev, st)| ev == "pull_request" && *st == 202)
         .count();
     assert_eq!(merges, 2, "{seen:?}");
+}
+
+/// Only the Portal moves a protected `main` and writes a Change branch (T-6706, CHG-12, AUZ-08):
+/// a person holding Write merges nothing into `main` through shako's own API, pushes, moves and
+/// deletes no `portal/` or `workspace/` branch, so a Change branch's head commit, and the author
+/// it names, is always one the Portal wrote for its signed-in proposer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn only_the_portal_merges_into_main_and_writes_change_branches() {
+    let w = World::start().await;
+    let forge = w.client("config");
+    assert!(forge.ensure_repository("Configuration").await.unwrap());
+    let (st, me) = w.raw("GET", "odata/Me()", None).await;
+    assert_eq!((st, &me["Login"]), (200, &json!("jc-portal")), "{me}");
+    forge.protect_branch("main").await.unwrap();
+    let writer = ShakoClient::new(
+        reqwest::Url::parse(&w.base).unwrap(),
+        OWNER,
+        "config",
+        WRITER_TOKEN,
+    )
+    .unwrap();
+
+    // The writer's own branch and merge request: proposing stays open to them.
+    writer.create_branch("feature/x", "main").await.unwrap();
+    writer
+        .write_files(
+            "feature/x",
+            "Propose x",
+            AUTHOR,
+            &[("spaces/s/endpoints/x.yaml".into(), manifest("x"), None)],
+        )
+        .await
+        .unwrap();
+    let pr = writer
+        .create_pull_request("feature/x", "main", "Add x", "")
+        .await
+        .unwrap();
+    let main0 = forge.branch_head("main").await.unwrap();
+    let own_merge = writer
+        .merge(pr.number, MergeStyle::Merge, "Merge x", Some(&pr.head_sha))
+        .await;
+    assert!(
+        matches!(own_merge, Err(GitError::Api { status: 403, .. })),
+        "a writer merges nothing into main: {own_merge:?}"
+    );
+    assert_eq!(forge.branch_head("main").await.unwrap(), main0);
+    forge
+        .merge(pr.number, MergeStyle::Merge, "Merge x", Some(&pr.head_sha))
+        .await
+        .expect("the Portal merges once the Change is approved");
+
+    // Change branches are the Portal's: a forged author never reaches one.
+    forge.create_branch("portal/a", "main").await.unwrap();
+    let refused = |what: &str, result: Result<(), GitError>| {
+        assert!(
+            matches!(result, Err(GitError::Api { status: 403, .. })),
+            "{what}: {result:?}"
+        );
+    };
+    refused(
+        "a writer cuts no portal/ branch",
+        writer.create_branch("portal/forged", "main").await,
+    );
+    refused(
+        "a writer cuts no workspace/ branch",
+        writer.create_branch("workspace/forged", "main").await,
+    );
+    let forged = Author {
+        name: "Carol Approver",
+        email: "carol@city.example",
+    };
+    refused(
+        "a writer writes nothing on the Portal's branch",
+        writer
+            .write_files(
+                "portal/a",
+                "Forged",
+                forged,
+                &[("spaces/s/endpoints/f.yaml".into(), manifest("f"), None)],
+            )
+            .await
+            .map(|_| ()),
+    );
+    refused(
+        "a writer deletes no portal/ branch",
+        writer.delete_branch("portal/a").await,
+    );
+    assert!(forge.branch_head("portal/a").await.is_ok());
+
+    // The Portal keeps writing, closing and deleting its own branches.
+    forge
+        .write_files(
+            "portal/a",
+            "Propose a",
+            AUTHOR,
+            &[("spaces/s/endpoints/a.yaml".into(), manifest("a"), None)],
+        )
+        .await
+        .unwrap();
+    forge.create_branch("workspace/w", "main").await.unwrap();
+    forge.delete_branch("workspace/w").await.unwrap();
+    forge.delete_branch("portal/a").await.unwrap();
 }
 
 /// A delivery signed with any other secret is refused by the Portal (red proof of the HMAC), and

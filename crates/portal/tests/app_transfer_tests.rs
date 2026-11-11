@@ -505,12 +505,7 @@ async fn an_exported_app_imports_into_another_project_under_a_new_name() {
         push.contains(&format!("{TAGGED} refs/tags/v1.0.0")),
         "{push}"
     );
-    assert_eq!(
-        sent(&server, "POST", &format!("{LANDED}/Shako.Protect"))
-            .await
-            .len(),
-        1
-    );
+    common::assert_portal_branch_rules(&server, LANDED).await;
 
     let written = common::committed_files(&server, TARGET).await;
     let (route, text) = written

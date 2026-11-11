@@ -6,7 +6,7 @@
 //! panicking, so hosted modules and tests can call them freely.
 
 use crate::config::LogFormat;
-use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use metrics_exporter_prometheus::{BuildError, Matcher, PrometheusBuilder, PrometheusHandle};
 use std::io::IsTerminal;
 use std::sync::OnceLock;
 
@@ -58,14 +58,50 @@ pub fn init_tracing(format: LogFormat) -> bool {
         .is_ok()
 }
 
+/// The default bucket edges of a duration, in seconds: the Portal's and the gateway's.
+const SECONDS: &[f64] = &[
+    0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+];
+
+/// The recorder every module records into, with each module's buckets as its own server sets
+/// them. Without buckets the exporter keeps each histogram as a summary: rolling sketches per
+/// label set, 45-305 MiB of the prod rehearsal's heap, and no `_bucket` series for the
+/// dashboards' `histogram_quantile` (jc-memory-peak).
+fn builder() -> Result<PrometheusBuilder, BuildError> {
+    let mut tables: Vec<(&str, &[f64])> = Vec::new();
+    #[cfg(feature = "portal")]
+    tables.extend_from_slice(joinedcontext_portal::telemetry::BUCKETS);
+    #[cfg(feature = "antares")]
+    tables.extend_from_slice(&[
+        (
+            "antares_answer_bytes",
+            antares_broker::telemetry::ANSWER_BUCKETS_BYTES,
+        ),
+        (
+            "antares_*",
+            antares_broker::telemetry::LATENCY_BUCKETS_SECONDS,
+        ),
+    ]);
+    tables.into_iter().try_fold(
+        PrometheusBuilder::new().set_buckets(SECONDS)?,
+        |builder, (name, buckets)| {
+            let matcher = match name.strip_suffix('*') {
+                Some(prefix) => Matcher::Prefix(prefix.to_owned()),
+                None => Matcher::Full(name.to_owned()),
+            };
+            builder.set_buckets_for_metric(matcher, buckets)
+        },
+    )
+}
+
 /// Installs the one Prometheus recorder for the `metrics` facade every module records into, and
 /// returns its handle. Later calls return the same handle. Fails only when some other recorder
 /// was installed before `jc` got to it.
 pub fn metrics_handle() -> Result<PrometheusHandle, String> {
     METRICS
         .get_or_init(|| {
-            PrometheusBuilder::new()
-                .install_recorder()
+            builder()
+                .and_then(PrometheusBuilder::install_recorder)
                 .map_err(|e| format!("metrics recorder: {e}"))
         })
         .clone()
@@ -100,6 +136,35 @@ mod tests {
         );
         // A library whose name only starts the same is no mention.
         assert!(of("rmcp_x=debug").contains("rmcp=warn"));
+    }
+
+    #[test]
+    fn every_modules_histogram_renders_as_its_own_buckets_never_a_summary() {
+        let recorder = builder().expect("the buckets").build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            for name in [
+                "kaisatsu_http_request_duration_seconds",
+                "antares_http_request_duration_seconds",
+                "antares_answer_bytes",
+                "jc_agent_answer_duration_seconds",
+                "jc_gateway_request_duration_seconds",
+            ] {
+                metrics::histogram!(name).record(0.5);
+            }
+        });
+        let text = handle.render();
+        assert!(!text.contains("quantile="), "{text}");
+        for (name, edge) in [
+            ("kaisatsu_http_request_duration_seconds", "0.001"),
+            ("antares_http_request_duration_seconds", "60"),
+            ("antares_answer_bytes", "67108864"),
+            ("jc_agent_answer_duration_seconds", "120"),
+            ("jc_gateway_request_duration_seconds", "0.001"),
+        ] {
+            let bucket = format!("{name}_bucket{{le=\"{edge}\"}}");
+            assert!(text.contains(&bucket), "{bucket} missing:\n{text}");
+        }
     }
 
     #[test]
