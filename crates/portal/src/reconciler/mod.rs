@@ -24,6 +24,7 @@ pub mod mqtt_brokers;
 pub mod pipeline_authors;
 pub mod realm;
 pub mod registrations;
+pub mod removal_hold;
 pub mod representations;
 pub mod run_queue;
 pub mod space_rules;

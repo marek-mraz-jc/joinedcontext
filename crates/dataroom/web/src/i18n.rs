@@ -1263,19 +1263,19 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
     );
     add(
         "subscribe_query",
-        "Query (NGSI-LD q)",
-        "Dopyt (NGSI-LD q)",
-        "Dotaz (NGSI-LD q)",
-        "Abfrage (NGSI-LD q)",
-        "Lekérdezés (NGSI-LD q)",
+        "Filter",
+        "Filter",
+        "Filtr",
+        "Filter",
+        "Szűrő",
     );
     add(
         "subscribe_query_hint",
-        "For example name~=\"(?i).*concert.*\"; leave it empty for every event of the feed.",
-        "Napríklad name~=\"(?i).*koncert.*\"; prázdne pre všetky podujatia kanála.",
-        "Například name~=\"(?i).*koncert.*\"; prázdné pro všechny akce kanálu.",
-        "Zum Beispiel name~=\"(?i).*konzert.*\"; leer für alle Termine des Feeds.",
-        "Például name~=\"(?i).*koncert.*\"; üresen a csatorna összes eseménye.",
+        "An NGSI-LD query, for example name~=\"(?i).*concert.*\" for names with concert; leave it empty for every event.",
+        "Dopyt NGSI-LD, napríklad name~=\"(?i).*koncert.*\" pre názvy so slovom koncert; prázdne pre všetky podujatia.",
+        "Dotaz NGSI-LD, například name~=\"(?i).*koncert.*\" pro názvy se slovem koncert; prázdné pro všechny akce.",
+        "Eine NGSI-LD-Abfrage, zum Beispiel name~=\"(?i).*konzert.*\" für Namen mit Konzert; leer für alle Termine.",
+        "NGSI-LD lekérdezés, például name~=\"(?i).*koncert.*\" a koncert szót tartalmazó nevekhez; üresen az összes esemény.",
     );
     add(
         "subscribe_preview",
@@ -1303,11 +1303,11 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
     );
     add(
         "subscribe_preview_failed",
-        "The calendar refused this query (HTTP {status}): {detail}",
-        "Kalendár tento dopyt odmietol (HTTP {status}): {detail}",
-        "Kalendář tento dotaz odmítl (HTTP {status}): {detail}",
-        "Der Kalender hat diese Abfrage abgelehnt (HTTP {status}): {detail}",
-        "A naptár elutasította a lekérdezést (HTTP {status}): {detail}",
+        "The calendar cannot use this filter; compare it with the example above. The server says: {detail}",
+        "Kalendár tento filter nevie použiť; porovnajte ho s príkladom vyššie. Server hlási: {detail}",
+        "Kalendář tento filtr neumí použít; porovnejte ho s příkladem výše. Server hlásí: {detail}",
+        "Der Kalender kann diesen Filter nicht verwenden; vergleichen Sie ihn mit dem Beispiel oben. Der Server meldet: {detail}",
+        "A naptár nem tudja használni ezt a szűrőt; vesse össze a fenti példával. A szerver üzenete: {detail}",
     );
     add(
         "search_publishers",

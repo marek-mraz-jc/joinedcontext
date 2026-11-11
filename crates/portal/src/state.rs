@@ -421,6 +421,14 @@ impl AppState {
                     Arc::clone(&state.pipeline_log),
                 )
                 .with_apps_cache_dir(state.config.apps_cache_dir.clone())
+                .with_state_dir(
+                    state
+                        .config
+                        .reconciler_state_dir
+                        .clone()
+                        .map(std::path::PathBuf::from),
+                )
+                .with_removal_hold_percent(state.config.removal_hold_percent)
                 .with_apps_dir(state.config.apps_dir.clone())
                 // The alerts people chose (T-3261): from the statuses every run of the leader sets.
                 .with_alerts(Arc::new(
