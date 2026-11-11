@@ -1514,7 +1514,10 @@ async fn a_loopback_self_read_is_decided_as_a_read_through_the_edge() {
     );
     assert_eq!(on_loopback, through_edge, "loopback and edge decide alike");
     assert_eq!(forged, through_edge, "a forged header changed the decision");
-    assert!(!forged.1.contains("urn:ngsi-ld:Thing:invalid_jc:one"), "{forged:?}");
+    assert!(
+        !forged.1.contains("urn:ngsi-ld:Thing:invalid_jc:one"),
+        "{forged:?}"
+    );
 }
 
 const MODELLED: &str = "modelled";
