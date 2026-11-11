@@ -458,13 +458,66 @@ type LastRows = std::collections::HashMap<(String, String, String, String), Last
 
 /// An attribute's newest row, and the last late row written below it.
 struct LastRow {
-    payload: Value,
+    payload: Kept,
     at: chrono::DateTime<chrono::Utc>,
     /// A late instance (older than `at`) is judged against the last late row,
     /// or against `at` before there is one, so a replayed or retried batch
     /// of older seconds records one row per heartbeat, not one per second
     /// (T-5157: a Vehicle wrote one row in 4.5 s under a 30 s heartbeat).
-    late: Option<(Value, chrono::DateTime<chrono::Utc>)>,
+    late: Option<(Kept, chrono::DateTime<chrono::Utc>)>,
+}
+
+/// What [`LAST_ROWS`] keeps of a row's payload: the `value` [`moved`] weighs (a number or a
+/// Point) and a SHA-256 of the whole payload for every other comparison, never the payload
+/// itself: whole payloads (polygons among them) held 197 MiB of the prod rehearsal's heap
+/// under its pipelines (jc-memory-peak).
+pub(crate) struct Kept {
+    pub(crate) value: Option<Value>,
+    digest: [u8; 32],
+}
+
+impl Kept {
+    pub(crate) fn of(payload: &Value) -> Self {
+        use sha2::Digest;
+        let weighed = payload
+            .get("value")
+            .filter(|v| v.is_number() || v.get("type").and_then(Value::as_str) == Some("Point"));
+        let mut hash = sha2::Sha256::new();
+        canonical(payload, &mut hash);
+        Kept {
+            value: weighed.cloned(),
+            digest: hash.finalize().into(),
+        }
+    }
+}
+
+/// Feeds `v` to `hash` with object keys in sorted order, so two payloads `Value` equality calls
+/// equal hash the same whatever their key order.
+fn canonical(v: &Value, hash: &mut sha2::Sha256) {
+    use sha2::Digest;
+    match v {
+        Value::Object(o) => {
+            let mut keys: Vec<&String> = o.keys().collect();
+            keys.sort();
+            hash.update(b"{");
+            for k in keys {
+                hash.update(serde_json::to_string(k).unwrap_or_default().as_bytes());
+                hash.update(b":");
+                canonical(&o[k], hash);
+                hash.update(b",");
+            }
+            hash.update(b"}");
+        }
+        Value::Array(a) => {
+            hash.update(b"[");
+            for item in a {
+                canonical(item, hash);
+                hash.update(b",");
+            }
+            hash.update(b"]");
+        }
+        other => hash.update(other.to_string().as_bytes()),
+    }
 }
 static LAST_ROWS: std::sync::LazyLock<std::sync::Mutex<LastRows>> =
     std::sync::LazyLock::new(Default::default);
@@ -573,7 +626,7 @@ pub(crate) fn admits_change(
         RecordMode::OnChange(mode) => mode,
     };
     let at = observed_at(instance).unwrap_or_else(chrono::Utc::now);
-    let payload = payload_of(instance);
+    let payload = Kept::of(&payload_of(instance));
     let key = (
         tenant.as_str().to_owned(),
         entity.to_owned(),
@@ -587,9 +640,9 @@ pub(crate) fn admits_change(
     let mut last = LAST_ROWS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let admits = |was: &Value, when: chrono::DateTime<chrono::Utc>| {
+    let admits = |was: &Kept, when: chrono::DateTime<chrono::Utc>| {
         if at == when {
-            return payload != *was;
+            return payload.digest != was.digest;
         }
         let apart = at.signed_duration_since(when).abs();
         apart.to_std().is_ok_and(|d| d >= mode.heartbeat) || moved(&mode, was, &payload)
@@ -666,20 +719,20 @@ fn payload_of(instance: &Value) -> Value {
 }
 
 /// Whether `now` moved from `was` enough to be a row under `mode`.
-fn moved(mode: &crate::state::OnChange, was: &Value, now: &Value) -> bool {
-    let number = |v: &Value| v.get("value").and_then(Value::as_f64);
+fn moved(mode: &crate::state::OnChange, was: &Kept, now: &Kept) -> bool {
+    let number = |v: &Kept| v.value.as_ref().and_then(Value::as_f64);
     if let (Some(band), Some(a), Some(b)) = (mode.deadband, number(was), number(now)) {
         return (a - b).abs() > band;
     }
-    let point = |v: &Value| {
-        let g = v.get("value")?;
+    let point = |v: &Kept| {
+        let g = v.value.as_ref()?;
         let c = g.get("coordinates")?.as_array()?;
         (g.get("type")?.as_str()? == "Point").then_some((c.first()?.as_f64()?, c.get(1)?.as_f64()?))
     };
     if let (Some(metres), Some(a), Some(b)) = (mode.min_distance, point(was), point(now)) {
         return haversine(a, b) > metres;
     }
-    was != now
+    was.digest != now.digest
 }
 
 /// Metres between two (longitude, latitude) points on a sphere of the
