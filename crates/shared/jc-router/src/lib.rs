@@ -305,9 +305,12 @@ impl JcRouter {
                     .is_some_and(|id| self.trusted_identities.iter().any(|t| t == id)))
     }
 
+    /// The client address of `req`, and on an edge request the `X-Forwarded-For` chain cut right
+    /// after it, so a module reading the chain's last entry (the gateway's and the basemap's
+    /// limits) reads the client and never one of our own proxies (T-6788).
     fn resolve_client_addr(
         &self,
-        req: &Request<Body>,
+        req: &mut Request<Body>,
         peer: Option<IpAddr>,
         from_edge: bool,
     ) -> Option<IpAddr> {
@@ -323,12 +326,23 @@ impl JcRouter {
             .flat_map(|v| v.split(','))
             .filter_map(|h| h.trim().parse::<IpAddr>().ok())
             .collect();
-        hops.iter()
-            .rev()
-            .find(|ip| !self.is_trusted_proxy(Some(**ip)))
-            .or_else(|| hops.first())
-            .copied()
-            .or(Some(peer))
+        let at = hops
+            .iter()
+            .rposition(|ip| !self.is_trusted_proxy(Some(*ip)))
+            .unwrap_or(0);
+        let chain = hops[..hops.len().min(at + 1)]
+            .iter()
+            .map(IpAddr::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let headers = req.headers_mut();
+        headers.remove("x-forwarded-for");
+        if let Ok(value) = axum::http::HeaderValue::from_str(&chain) {
+            if !chain.is_empty() {
+                headers.insert("x-forwarded-for", value);
+            }
+        }
+        hops.get(at).copied().or(Some(peer))
     }
 
     fn resolve_scheme_and_host(&self, req: &Request<Body>, trust_fwd: bool) -> (String, String) {
@@ -401,7 +415,7 @@ impl JcRouter {
                 .map(|c| c.0.ip())
         });
         let from_edge = self.came_from_edge(&req, peer);
-        let client = self.resolve_client_addr(&req, peer, from_edge);
+        let client = self.resolve_client_addr(&mut req, peer, from_edge);
         let (scheme, host_with_port) = self.resolve_scheme_and_host(&req, from_edge);
         // A module reads `X-Forwarded-For` itself (rate limits, the assistant's visitor): one that
         // did not come from the edge reaches no module with a forwarding header of its own.
@@ -540,6 +554,91 @@ mod tests {
         assert_eq!(client_of(&router, Some("10.0.0.5"), None).await, "10.0.0.5");
         // Unknown peer: no address, never a shared placeholder.
         assert_eq!(client_of(&router, None, Some("198.51.100.1")).await, "none");
+    }
+
+    /// Every caller on the internet reaches jc through the same edge hops, so a module that keys
+    /// a limit on the last `X-Forwarded-For` entry (the gateway's anonymous MCP bucket) must find
+    /// the client there, never the in-cluster proxy that forwarded it (T-6788): one flooding client
+    /// is refused while a second one behind the same proxy is still answered.
+    #[tokio::test]
+    async fn the_forwarded_chain_ends_at_the_client_so_each_client_has_its_own_bucket() {
+        use std::collections::HashMap;
+        use std::sync::Mutex;
+        let spent: Arc<Mutex<HashMap<String, u32>>> = Arc::default();
+        let limit = {
+            let spent = Arc::clone(&spent);
+            move |headers: axum::http::HeaderMap| async move {
+                let last = headers
+                    .get("x-forwarded-for")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.rsplit(',').next())
+                    .map_or("unknown", str::trim)
+                    .to_owned();
+                let mut spent = spent.lock().unwrap();
+                let used = spent.entry(last.clone()).or_default();
+                *used += 1;
+                let status = if *used > 3 {
+                    StatusCode::TOO_MANY_REQUESTS
+                } else {
+                    StatusCode::OK
+                };
+                (status, last)
+            }
+        };
+        let router = JcRouterBuilder::new("https", "city.example")
+            .trust_proxy("10.42.0.0/16".parse().unwrap())
+            .mount(
+                MountSpec {
+                    module: "gateway".into(),
+                    host: None,
+                    path_prefix: None,
+                },
+                Router::new().route("/mcp", get(limit)),
+            )
+            .build()
+            .unwrap();
+        let ask = |xff: &str| {
+            let req = Request::builder()
+                .uri("/mcp")
+                .header("host", "city.example")
+                .header("x-forwarded-for", xff)
+                .body(Body::empty())
+                .unwrap();
+            router.dispatch(req, Some("10.42.0.2".parse().unwrap()))
+        };
+        let body = |resp: Response<Body>| async move {
+            let status = resp.status();
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            (status, String::from_utf8(bytes.to_vec()).unwrap())
+        };
+        // A floods through the edge's hops; a forged leftmost entry buys it no new bucket.
+        for forged in ["1.1.1.1", "2.2.2.2", "3.3.3.3"] {
+            let chain = format!("{forged}, 198.51.100.1, 10.42.0.7, 10.42.0.2");
+            assert_eq!(body(ask(&chain).await).await, (StatusCode::OK, "198.51.100.1".into()));
+        }
+        assert_eq!(
+            body(ask("9.9.9.9, 198.51.100.1, 10.42.0.7, 10.42.0.2").await).await,
+            (StatusCode::TOO_MANY_REQUESTS, "198.51.100.1".into())
+        );
+        // B behind the same proxies is its own bucket.
+        assert_eq!(
+            body(ask("203.0.113.7, 10.42.0.7, 10.42.0.2").await).await,
+            (StatusCode::OK, "203.0.113.7".into())
+        );
+        // A chain of proxies alone names its first hop, as `ClientAddr` does.
+        assert_eq!(
+            body(ask("10.42.0.9, 10.42.0.2").await).await,
+            (StatusCode::OK, "10.42.0.9".into())
+        );
+        // The same chain from a peer that is not the edge reaches the module with no header.
+        let req = Request::builder()
+            .uri("/mcp")
+            .header("host", "city.example")
+            .header("x-forwarded-for", "203.0.113.7")
+            .body(Body::empty())
+            .unwrap();
+        let spoofed = router.dispatch(req, Some("198.51.100.200".parse().unwrap()));
+        assert_eq!(body(spoofed.await).await, (StatusCode::OK, "unknown".into()));
     }
 
     /// In a mesh every caller reaches jc from its own proxy's address, so the edge is named by its
