@@ -585,3 +585,80 @@ async fn a_group_that_lost_its_roles_behind_an_unchanged_file_gets_them_back() {
         .expect("third apply");
     assert!(!quiet.has_changes(), "nothing the file declares is missing");
 }
+
+/// A password the file seeds is set once, when the user has none: `jc` applies its realm files on
+/// every start, and a person who changed the first administrator's password keeps the new one
+/// across restarts and upgrades (P-23). An OTP seed is kept the same way.
+#[tokio::test]
+async fn a_restart_keeps_a_password_changed_after_the_user_was_created() {
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let mut opts = default_opts();
+    opts.env_vars
+        .insert("FIRST_PW".into(), "FirstPassword123!Valid".into());
+    let doc = json!({
+        "realm": "restart",
+        "users": [{
+            "username": "first-admin",
+            "enabled": true,
+            "credentials": [
+                {"type": "password", "value": "$(env:FIRST_PW)"},
+                {"type": "otp", "secretData": json!({"value": "$(env:USER_TOTP_DEMO_STEWARD)"}).to_string()}
+            ]
+        }]
+    });
+    let files = [("u.json".to_owned(), doc)];
+    apply_realm_files(&store, &files, &opts)
+        .await
+        .expect("first start");
+    let user = store
+        .get_user_by_username_or_email("restart", None, "first-admin")
+        .await
+        .unwrap()
+        .expect("user created");
+    let held = store.list_credentials("restart", &user.id).await.unwrap();
+    assert_eq!(held.len(), 2, "the first apply seeds both: {held:?}");
+
+    // The person changes the password (the account console writes a credential of its own).
+    for old in held.iter().filter(|c| c.credential_type == "password") {
+        store
+            .delete_credential("restart", &user.id, &old.id)
+            .await
+            .unwrap();
+    }
+    let changed = kaisatsu_core::CredentialRecord {
+        id: "console-set".into(),
+        realm_id: "restart".into(),
+        user_id: user.id.clone(),
+        credential_type: "password".into(),
+        user_label: None,
+        created_date: 1,
+        secret_data: "the-hash-the-person-set".into(),
+        credential_data: String::new(),
+        temporary: false,
+    };
+    store.upsert_credential(changed).await.unwrap();
+
+    // A restart with the same files takes the unchanged fast path; one after an upgrade (the
+    // files differ) applies them again, and neither may touch the password.
+    for version in ["same", "upgraded", "upgraded again"] {
+        let mut doc = files[0].1.clone();
+        if version != "same" {
+            doc["displayName"] = json!(version);
+        }
+        apply_realm_files(&store, &[("u.json".to_owned(), doc)], &opts)
+            .await
+            .expect("restart");
+    }
+    let after = store.list_credentials("restart", &user.id).await.unwrap();
+    let passwords: Vec<_> = after
+        .iter()
+        .filter(|c| c.credential_type == "password")
+        .map(|c| c.secret_data.as_str())
+        .collect();
+    assert_eq!(passwords, ["the-hash-the-person-set"], "{after:?}");
+    assert_eq!(
+        after.iter().filter(|c| c.credential_type == "otp").count(),
+        1,
+        "{after:?}"
+    );
+}

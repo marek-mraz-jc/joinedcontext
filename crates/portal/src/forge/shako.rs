@@ -1942,16 +1942,24 @@ impl ShakoClient {
     /// merge (409) when the branch has moved past it, so nothing is merged that nobody reviewed
     /// (PF-57, T-1683). `None` only where there is nothing to review — a proposal this Portal
     /// wrote and merges in the same call.
+    ///
+    /// `author` (name, e-mail) is the person who merged: the forge writes them as the merge
+    /// commit's author and this Portal's account as its committer, so the forge history names the
+    /// person (P-24). `None` when the platform itself merges.
     pub async fn merge(
         &self,
         number: u64,
         style: MergeStyle,
         message: &str,
         head_commit_id: Option<&str>,
+        author: Option<(&str, &str)>,
     ) -> Result<(), GitError> {
         let mut params = json!({ "Style": style, "Message": message });
         if let Some(sha) = head_commit_id.filter(|sha| !sha.is_empty()) {
             params["HeadCommitId"] = json!(sha);
+        }
+        if let Some((name, email)) = author {
+            params["Author"] = json!({ "Name": name, "Email": email });
         }
         self.act(self.pull_url_api(number, &["Shako.Merge"])?, &params)
             .await?;
