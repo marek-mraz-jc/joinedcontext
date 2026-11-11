@@ -12,6 +12,7 @@ pub mod address;
 #[cfg(feature = "auth")]
 pub mod auth;
 pub mod classification;
+pub mod conversions;
 pub mod cron;
 pub mod datacube;
 pub mod display_order;
