@@ -2129,7 +2129,7 @@
       },
       "filterField": {
         "label": "Dotaz predvoľby (nepovinné)",
-        "hint": "Dotaz NGSI-LD, ktorý túto predvoľbu zúži a nikdy nerozšíri: q, scopeQ a geodotaz, napríklad q=eventCategory==\"šport\"&georel=near;maxDistance==5000&geometry=Point&coordinates=[19.15,48.73]. Znaky % & + # v hodnote píšte ako %25 %26 %2B %23."
+        "hint": "q, scopeQ a geodotaz ako jeden reťazec dotazu; predvoľbu zúži, nikdy nerozšíri. Napríklad q=category==\"šport\"&georel=near;maxDistance==5000&geometry=Point&coordinates=[19.15,48.73]. V hodnote píšte & ako %26 a % ako %25."
       },
       "sourceAdd": {
         "label": "Pridať ďalší typ",

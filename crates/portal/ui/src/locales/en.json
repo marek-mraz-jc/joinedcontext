@@ -2129,7 +2129,7 @@
       },
       "filterField": {
         "label": "Preset query (optional)",
-        "hint": "An NGSI-LD query string that narrows this preset and never widens it: q, scopeQ and a geo-query, for example q=eventCategory==\"sport\"&georel=near;maxDistance==5000&geometry=Point&coordinates=[19.15,48.73]. Write % & + # in a value as %25 %26 %2B %23."
+        "hint": "q, scopeQ and a geo-query as one query string; it narrows this preset, never widens it. For example q=category==\"sport\"&georel=near;maxDistance==5000&geometry=Point&coordinates=[19.15,48.73]. Inside a value write & as %26 and % as %25."
       },
       "sourceAdd": {
         "label": "Add another type",

@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, queryKeys, unwrap, reasonOf } from "../../../api/client";
 import { asManifests, refName } from "../../../api/manifest";
-import { Button, Card, EmptyState, Field, InlineError, Input } from "../../ui";
+import { Button, Card, EmptyState, Field, InlineError, Input, Textarea } from "../../ui";
 import { LIST_BODY, LIST_FIELDSET, ListLegend } from "../theme";
 import { FormDataContext } from "./EntitySelectorField";
 import { ListFailed } from "./ListFailed";
@@ -228,8 +228,10 @@ function OutputCard({ id, format, output, duplicate, onChange, onRemove, renderS
       </div>
       {/* The widget's defaults narrow nothing: a reader's map shows what the table queries. */}
       {format === "widget" ? null : <Field id={`${id}-q`} label={t("endpoints.outputs.filterField.label")} help={t("endpoints.outputs.filterField.hint")}>
-        <Input
+        <Textarea
           id={`${id}-q`}
+          rows={3}
+          placeholder='q=category=="sport"'
           value={query}
           readOnly={frozen}
           autoComplete="off"
