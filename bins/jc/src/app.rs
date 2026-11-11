@@ -1471,6 +1471,30 @@ mod tests {
         assert!(modules::portal::apps_vars(&none).is_empty());
     }
 
+    /// LIM-01, T-6716: `[portal.limits]` reaches the Portal as its inline bounds, the Portal
+    /// checks them at start, and a key the section does not know refuses the file.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn the_deployments_limits_in_jc_toml_reach_the_portal() {
+        let cfg = dev_config(
+            "portal",
+            "[portal.limits]\n\"spec.projects.quota.apps\" = { max = 250 }\n",
+        );
+        let vars = modules::portal::limits_vars(&cfg);
+        let inline = vars.get("JC_PORTAL_ORGANIZATION_BOUNDS").expect("handed over");
+        let bounds = joinedcontext_portal::config::organization_bounds(&|key: &str| {
+            (key == "JC_PORTAL_ORGANIZATION_BOUNDS").then(|| inline.clone())
+        })
+        .expect("the Portal accepts them");
+        assert_eq!(bounds.quota_ceiling().apps, Some(250));
+        assert!(modules::portal::limits_vars(&dev_config("portal", "")).is_empty());
+        let typo = Config::parse_file(
+            std::path::Path::new("jc.toml"),
+            "[portal.limits]\n\"spec.projects.quota.apps\" = { maximum = 5 }\n",
+        );
+        assert!(typo.is_err());
+    }
+
     #[test]
     fn bad_mount_entries_refuse_to_start() {
         let host_mode = "mode = \"host\"\nbase_host = \"city.test\"\n";

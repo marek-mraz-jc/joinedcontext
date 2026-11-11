@@ -304,8 +304,8 @@ pub const EDGE_BODY: &str = "spec.limits.edge.maxRequestBodyMegabytes";
 
 /// Every numeric entry of ADR-N-035 §3.7 with its default and built-in bound, in the catalog's
 /// order. The quota dimensions of `spec.projects.quota` default to, and are capped at, what every
-/// deployment ran with when the ceiling moved to the deployment (the seed Organizations' quota,
-/// T-6716): a project is never unlimited. The operator's bounds file moves the ceiling (PF-73,
+/// deployment ran with when the ceiling moved to the deployment (the largest quota any seed
+/// Organization or Project set, T-6716): a project is never unlimited. The operator's bounds file moves the ceiling (PF-73,
 /// PF-97, LIM-01).
 pub const CATALOG: &[Entry] = &[
     entry(
@@ -327,9 +327,9 @@ pub const CATALOG: &[Entry] = &[
     entry(
         "spec.projects.quota.publicEndpoints",
         Section::Projects,
-        Some(100),
+        Some(450),
         1,
-        Some(100),
+        Some(450),
         BoundKind::Number,
     ),
     entry(
@@ -907,7 +907,7 @@ mod tests {
     #[test]
     fn the_quota_ceiling_is_todays_values_and_a_project_only_narrows_it() {
         let ceiling = OrganizationBounds::default().quota_ceiling();
-        let today = [100, 100, 100, 500, 100, 2_000, 1_000_000, 6_000];
+        let today = [100, 100, 450, 500, 100, 2_000, 1_000_000, 6_000];
         for ((name, limit), expected) in ceiling.dimensions().into_iter().zip(today) {
             assert_eq!(limit, Some(expected), "{name}");
         }
