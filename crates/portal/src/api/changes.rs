@@ -2386,10 +2386,12 @@ pub(crate) fn is_access_kind(kind: &str) -> bool {
     matches!(kind, "Role" | "RoleBinding" | "Group" | "ServiceAccount")
 }
 
-/// Kinds a second person approves: the access kinds, and a DataModel, whose new version every
-/// space, Endpoint and pipeline of it validates against (PF-58, T-4830).
+/// Kinds a second person approves: the access kinds, a Policy or DelegationPolicy, which opens
+/// data to whoever it names, and a DataModel, whose new version every space, Endpoint and
+/// pipeline of it validates against (PF-58, T-4830). An administrator's own change of any other
+/// kind may still be approved by its author (P-10, T-6714).
 pub(crate) fn needs_second_person(kind: &str) -> bool {
-    is_access_kind(kind) || kind == "DataModel"
+    is_access_kind(kind) || matches!(kind, "Policy" | "DelegationPolicy" | "DataModel")
 }
 
 /// Whether `envelope` hands `identity` access: a Policy whose grant names them, a Group they are
