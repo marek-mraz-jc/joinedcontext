@@ -337,10 +337,10 @@ impl JcRouter {
             .join(", ");
         let headers = req.headers_mut();
         headers.remove("x-forwarded-for");
-        if let Ok(value) = axum::http::HeaderValue::from_str(&chain) {
-            if !chain.is_empty() {
-                headers.insert("x-forwarded-for", value);
-            }
+        if !chain.is_empty()
+            && let Ok(value) = axum::http::HeaderValue::from_str(&chain)
+        {
+            headers.insert("x-forwarded-for", value);
         }
         hops.get(at).copied().or(Some(peer))
     }
@@ -614,7 +614,10 @@ mod tests {
         // A floods through the edge's hops; a forged leftmost entry buys it no new bucket.
         for forged in ["1.1.1.1", "2.2.2.2", "3.3.3.3"] {
             let chain = format!("{forged}, 198.51.100.1, 10.42.0.7, 10.42.0.2");
-            assert_eq!(body(ask(&chain).await).await, (StatusCode::OK, "198.51.100.1".into()));
+            assert_eq!(
+                body(ask(&chain).await).await,
+                (StatusCode::OK, "198.51.100.1".into())
+            );
         }
         assert_eq!(
             body(ask("9.9.9.9, 198.51.100.1, 10.42.0.7, 10.42.0.2").await).await,
@@ -638,7 +641,10 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         let spoofed = router.dispatch(req, Some("198.51.100.200".parse().unwrap()));
-        assert_eq!(body(spoofed.await).await, (StatusCode::OK, "unknown".into()));
+        assert_eq!(
+            body(spoofed.await).await,
+            (StatusCode::OK, "unknown".into())
+        );
     }
 
     /// In a mesh every caller reaches jc from its own proxy's address, so the edge is named by its
