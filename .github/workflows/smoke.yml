@@ -54,7 +54,16 @@ jobs:
         with: { python-version: "3.13" }
       # rehearsal.py reads the bundle's YAML; the ui suite and the charts-apps shots drive Chromium.
       - run: python -m pip install pyyaml==6.0.2 pytest==8.4.2 playwright==1.63.0
-      - run: python -m playwright install --with-deps chromium
+      # Three tries: the runner's apt mirrors (security.ubuntu.com, azure.archive.ubuntu.com) failed
+      # DNS in three runs in a row (43031791849, 43037195781, 43044556087), each with no verdict.
+      # The step still fails when all three do.
+      - run: |
+          for i in 1 2 3; do
+            python -m playwright install --with-deps chromium && exit 0
+            echo "playwright install try $i failed"
+            [ "$i" = 3 ] || sleep 30
+          done
+          exit 1
       - name: the smoke runner's own tests
         run: |
           for t in bins/jc/smoke/*/tests bins/jc/smoke/ci; do python -m pytest -q "$t"; done

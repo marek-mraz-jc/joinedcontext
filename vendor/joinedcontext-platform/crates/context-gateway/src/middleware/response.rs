@@ -356,6 +356,8 @@ fn surface_of(rest: &str) -> Option<jc_core::kinds::Representation> {
     if rest.starts_with("feeds/") {
         return Some(if rest.ends_with(".ics") {
             R::Ical
+        } else if rest.ends_with(".csv") {
+            R::Csv
         } else {
             R::Feed
         });
