@@ -60,7 +60,7 @@ Type: [ParameterDeclaration](#parameterdeclaration) or [ParameterValue](#paramet
 
 Structural resource quotas per project (PF-17).
 
-An absent field indicates unlimited quota for that resource.
+An absent field leaves the dimension to the organization's default, and both stay under the deployment's ceiling ([`crate::kinds::OrganizationBounds::quota_ceiling`]): no project is unlimited (LIM-01, T-6716).
 
 | Field | Type | Required | Description |
 |---|---|---|---|

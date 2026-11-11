@@ -393,6 +393,7 @@ spec:
 async fn complete_as_steward(payload: Value) -> (StatusCode, Value) {
     let config = Config::for_tests();
     let state = AppState::new(config.clone(), None);
+    with_organization(&state.mirror);
     let app = server::app(state);
     let cookie = session_cookie(
         &config,
@@ -422,6 +423,18 @@ async fn complete_as_steward(payload: Value) -> (StatusCode, Value) {
     )
 }
 
+/// The installation's Organization, whose domain the drafted Endpoint's policyRefs are minted
+/// under (EP-117, P-18).
+fn with_organization(mirror: &Mirror) {
+    mirror.upsert(joinedcontext_portal::resource::ResourceEnvelope {
+        api_version: API_VERSION.to_owned(),
+        kind: "Organization".to_owned(),
+        metadata: joinedcontext_portal::resource::ObjectMeta::new("hel", "org"),
+        spec: json!({ "domain": "hel.fi", "locales": ["en"], "defaultLocale": "en" }),
+        status: None,
+    });
+}
+
 /// The same call against a mirror that already holds the Context Spaces `held`, as
 /// `(project, space)` pairs.
 /// `held` is `(project, space, pin)`: the spaces the organization already has (PF-84).
@@ -431,6 +444,7 @@ async fn complete_against(
 ) -> (StatusCode, Value) {
     let config = Config::for_tests();
     let mirror = std::sync::Arc::new(Mirror::new());
+    with_organization(&mirror);
     for (project, space, pin) in held {
         mirror.upsert(joinedcontext_portal::resource::ResourceEnvelope {
             api_version: API_VERSION.to_owned(),
@@ -875,6 +889,31 @@ async fn a_drafted_space_carries_the_write_and_the_read_its_endpoint_needs() {
         .filter(|d| d["kind"] == "Policy")
         .collect();
     assert_eq!(policies.len(), 3, "one write, the two reads: {body}");
+    // P-18 (T-6736): the Endpoint names exactly the grants drafted with it, so a Policy added to
+    // the space later opens it only when someone lists it.
+    let endpoint = body["drafts"]
+        .as_array()
+        .expect("drafts")
+        .iter()
+        .find(|d| d["kind"] == "Endpoint")
+        .expect("an Endpoint draft");
+    let listed: Vec<&str> = endpoint["manifest"]["spec"]["policyRefs"]
+        .as_array()
+        .expect("policyRefs")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    let drafted: Vec<String> = policies
+        .iter()
+        .map(|p| format!(":{}", p["name"].as_str().expect("a name")))
+        .collect();
+    assert_eq!(listed.len(), drafted.len(), "{listed:?}");
+    for (urn, name) in listed.iter().zip(&drafted) {
+        assert!(
+            urn.starts_with("urn:ngsi-ld:Policy:") && urn.ends_with(name.as_str()),
+            "{urn} {name}"
+        );
+    }
 
     let write = policies
         .iter()
@@ -937,6 +976,7 @@ async fn space_complete_endpoint_has_all_classes_projected() {
     let mut config = Config::for_tests();
     config.model_tools_url = Some(model_tools_mock.uri());
     let state = AppState::new(config.clone(), None);
+    with_organization(&state.mirror);
     let app = server::app(state);
     let steward_cookie = session_cookie(
         &config,
@@ -1096,6 +1136,7 @@ async fn a_project_that_has_the_account_keeps_it_and_drafts_no_second_one() {
 async fn complete_with_account(payload: Value) -> (StatusCode, Value) {
     let config = Config::for_tests();
     let mirror = std::sync::Arc::new(Mirror::new());
+    with_organization(&mirror);
     mirror.upsert(joinedcontext_portal::resource::ResourceEnvelope {
         api_version: API_VERSION.to_owned(),
         kind: "ServiceAccount".to_owned(),
@@ -1160,8 +1201,27 @@ async fn a_linkml_file_alone_drafts_the_model_the_space_and_its_grants() {
         .iter()
         .filter_map(|d| d["kind"].as_str())
         .collect();
-    assert_eq!(kinds, ["DataModel", "ContextSpace", "Endpoint"], "{body}");
-    let endpoint = &body["drafts"][2]["manifest"]["spec"];
+    assert_eq!(
+        kinds,
+        ["DataModel", "ContextSpace", "Policy", "Endpoint"],
+        "{body}"
+    );
+    // P-18 (T-6736): the project's read of the type is the one grant the Endpoint names.
+    let read = &body["drafts"][2]["manifest"];
+    assert_eq!(read["metadata"]["name"], "room-bookings-all-read");
+    assert_eq!(
+        read["spec"]["assignee"],
+        json!({ "kind": "group", "id": "helsinki" })
+    );
+    let endpoint = &body["drafts"][3]["manifest"]["spec"];
+    let refs = endpoint["policyRefs"].as_array().expect("policyRefs");
+    assert!(
+        refs.len() == 1
+            && refs[0]
+                .as_str()
+                .is_some_and(|urn| urn.ends_with(":room-bookings-all-read")),
+        "{endpoint}"
+    );
     assert_eq!(endpoint["audience"], "project-list", "{endpoint}");
     assert_eq!(
         endpoint["allowedProjects"],
@@ -1203,6 +1263,15 @@ async fn an_uploaded_csv_drafts_the_endpoint_and_the_persons_write_grant() {
     };
     let endpoint = &named("room-bookings-all")["manifest"]["spec"];
     assert_eq!(endpoint["audience"], "organization", "{endpoint}");
+    // P-18 (T-6736): the person's upload grant is among the Policies the Endpoint names.
+    assert!(
+        endpoint["policyRefs"]
+            .as_array()
+            .is_some_and(|refs| refs.iter().any(|urn| urn
+                .as_str()
+                .is_some_and(|urn| urn.ends_with(":room-bookings-upload")))),
+        "{endpoint}"
+    );
     assert_eq!(endpoint.get("projection"), None, "{endpoint}");
     assert_eq!(
         named("room-bookings-all-read")["manifest"]["spec"]["information"],
@@ -1374,6 +1443,7 @@ async fn a_proposed_space_commits_its_model_with_the_compiled_artifacts() {
     )
     .expect("client");
     let state = AppState::new(config.clone(), None).with_shako(std::sync::Arc::new(client));
+    with_organization(&state.mirror);
     let cookie = session_cookie(
         &config,
         "steward.user",
@@ -1510,6 +1580,7 @@ async fn proposed_again(
     )
     .expect("client");
     let mirror = std::sync::Arc::new(Mirror::new());
+    with_organization(&mirror);
     if served {
         for (kind, name) in [
             ("ContextSpace", "room-bookings"),

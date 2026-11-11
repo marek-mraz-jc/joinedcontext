@@ -2172,8 +2172,28 @@ async fn an_app_needing_a_type_nobody_publishes_drafts_its_model_space_and_endpo
         .collect();
     assert_eq!(
         kinds,
-        ["DataModel", "ContextSpace", "Endpoint"],
+        ["DataModel", "ContextSpace", "Policy", "Endpoint"],
         "{completed}"
+    );
+    // P-18 (T-6736): the project's read Policy is drafted with the Endpoint, which names it.
+    let drafts = completed["output"]["drafts"].as_array().expect("drafts");
+    let policy = drafts
+        .iter()
+        .find(|d| d["kind"] == "Policy")
+        .and_then(|d| d["name"].as_str())
+        .expect("a Policy draft");
+    let refs: Vec<&str> = drafts
+        .iter()
+        .find(|d| d["kind"] == "Endpoint")
+        .and_then(|d| d["manifest"]["spec"]["policyRefs"].as_array())
+        .expect("the Endpoint's policyRefs")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(refs.len(), 1, "{refs:?}");
+    assert!(
+        refs[0].starts_with("urn:ngsi-ld:Policy:") && refs[0].ends_with(&format!(":{policy}")),
+        "{refs:?} {policy}"
     );
     assert_eq!(
         completed["output"]["change"],

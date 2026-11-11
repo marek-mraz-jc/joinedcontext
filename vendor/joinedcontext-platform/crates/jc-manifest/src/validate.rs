@@ -1292,12 +1292,15 @@ impl<'a> WriteBindings<'a> {
         spec: &jc_core::kinds::EndpointSpec,
         name: &str,
         policy: &jc_core::kinds::PolicySpec,
+        door: bool,
     ) -> Option<String> {
         let space = spec.context_space_ref.name();
         if space != policy.context_space_ref.name() {
             return Some(format!("serves the space {space}"));
         }
-        if let Some(refs) = spec.policy_refs() {
+        // A Pipeline's grant binds the Endpoint its manifest names whatever policyRefs it lists
+        // (P-18, T-6736): `door` is that grant on that Endpoint.
+        if let Some(refs) = spec.policy_refs().filter(|_| !door) {
             let segment = self.repo.space_segment(project, space);
             let ours = |reference: &jc_core::Urn| {
                 self.org_domain
@@ -1346,7 +1349,7 @@ impl<'a> WriteBindings<'a> {
                 let mut reasons = Vec::new();
                 let mut bound = false;
                 for (key, spec) in self.endpoints.iter().filter(|((p, _), _)| *p == project) {
-                    match self.refusal(key, spec, &id.name, &policy) {
+                    match self.refusal(key, spec, &id.name, &policy, false) {
                         None => bound = true,
                         Some(why) if spec.context_space_ref.name() == space => {
                             reasons.push(format!("{} {why}", key.1))
@@ -1416,7 +1419,9 @@ impl<'a> WriteBindings<'a> {
                             .policies
                             .iter()
                             .find(|(policy, _)| *policy == name)
-                            .and_then(|(name, policy)| self.refusal(&key, endpoint, name, policy))
+                            .and_then(|(name, policy)| {
+                                self.refusal(&key, endpoint, name, policy, true)
+                            })
                             .map(|why| format!("{target} {why}"))
                     }
                 };
@@ -1427,7 +1432,7 @@ impl<'a> WriteBindings<'a> {
                         message: format!(
                             "Pipeline {} output {} writes as {account}, but its targetEndpoint grants \
                              that account no write ({why}), so every write answers 404: aim it at an \
-                             Endpoint of the space without policyRef (PL-20, ADR-N-057)",
+                             Endpoint of the space it writes (PL-20, ADR-N-057)",
                             id.name,
                             index + 1
                         ),

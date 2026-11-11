@@ -1459,6 +1459,7 @@ mod tests {
         assert!(modules::portal::reconciler_vars(&dev_config("portal", "")).is_empty());
     }
 
+    #[cfg(feature = "portal")]
     #[test]
     fn the_app_hosts_wildcard_is_a_portal_entry_and_names_the_apps_apex() {
         let cfg = dev_config(

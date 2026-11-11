@@ -11178,7 +11178,7 @@
       "anonymousRefused": "{surface} wies einen anonymen Leser ab ({status}), obwohl der Endpoint öffentlich ist",
       "notServed": "{surface} antwortete {status}",
       "noAnswer": "{surface} antwortete nicht: {reason}",
-      "policyWrite": "Der Broker lehnte das Schreiben ab: die Policy des Ziel-Endpoints muss pl-{name} create und update erlauben, oder spec.outputs[].targetEndpoint muss einen Endpoint ohne policyRef nennen.",
+      "policyWrite": "Der Broker lehnte das Schreiben ab: spec.outputs[].targetEndpoint muss einen Endpoint des Raums nennen, in den die Ausgabe schreibt, keinen Endpoint einer App, und kein Verbot dieses Raums darf create und update für pl-{name} abdecken.",
       "policy": "Eine Policy lehnt diese Operation ab: prüfen Sie die policyRef des Endpoints und die Regeln der Policy auf der Seite Policies.",
       "token": "Das Token des Kontos wurde abgelehnt: prüfen Sie das Dienstkonto und sein secretRef, dann erneut synchronisieren.",
       "robots": "Die robots.txt der Quelle verbietet den Leser: richten Sie spec.source.url auf eine erlaubte Adresse oder fragen Sie den Herausgeber.",

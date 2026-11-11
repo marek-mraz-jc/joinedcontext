@@ -61,7 +61,7 @@
         <form class="d-flex site-search" action="{{ chrome.lang_prefix }}/dataset/" method="get">
           <label class="d-none" for="field-sitewide-search">{{ labels.search_datasets_placeholder }}</label>
           <input id="field-sitewide-search" class="form-control me-2" type="text" name="q" value="{{ query }}" placeholder="{{ labels.search_button }}" aria-label="{{ labels.search_datasets_placeholder }}"/>
-          <button class="btn" type="submit" aria-label="Submit"><i class="fa fa-search"></i></button>
+          <button class="btn" type="submit" aria-label="Submit">{% include "jc/icons/search.svg" %}</button>
         </form>
       </div>
     </nav>
