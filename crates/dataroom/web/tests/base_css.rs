@@ -113,6 +113,20 @@ fn the_base_layout_comes_before_the_theme_so_the_theme_wins() {
 }
 
 #[test]
+fn a_publisher_cards_dataset_count_sits_on_its_bottom_edge() {
+    // The grid stretches a row's cards to one height; the count pushed down lines the counts up
+    // whatever the description's length (owner, T-6745; e2e/catalogue.spec.ts measures it live).
+    let css = dataroom_web::JC_THEME_CSS;
+    for rule in [
+        ".media-item { display: flex; flex-direction: column; }",
+        ".media-item > .count { margin-top: auto;",
+        "> .count { grid-column: 2; grid-row: 3; align-self: end; }",
+    ] {
+        assert!(css.contains(rule), "{rule}");
+    }
+}
+
+#[test]
 fn the_default_logo_draws_its_words_as_paths_so_nothing_is_cut() {
     // The parity shots showed the drawn stand-in's "joinedconte" cut; the lockup old prod served
     // (public__jc-logo.svg, 266x56) draws its words as paths, so no font can widen them.

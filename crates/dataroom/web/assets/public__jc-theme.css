@@ -219,12 +219,17 @@ CKAN's fixed 178 px floats with `word-break: break-all`. */
 .media-item { float: none; width: auto; margin: 0; background: var(--jc-surface); border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg); box-shadow: var(--jc-shadow-1); }
 .media-heading, .media-description { word-break: normal; overflow-wrap: break-word; hyphens: auto; }
 .media-heading { font-size: 1.0625rem; }
+/* The grid stretches every card of a row to one height; as a column with the count pushed down, each
+   card's "N datasets" line sits on the same bottom line whatever its description (owner, T-6745). */
+.media-item { display: flex; flex-direction: column; }
+.media-item > br { display: none; }
+.media-item > .count { margin-top: auto; }
 /* On a phone a publisher card is one row: its badge beside its name and words, not a 360 px banner
 (UI judge, jc-dataroom-brand: two publishers per screen). */
 @media (max-width: 575.98px) {
-.media-item:has(> .media-image) { display: grid; grid-template-columns: 6rem 1fr; column-gap: .875rem; align-items: start; }
+.media-item:has(> .media-image) { display: grid; grid-template-columns: 6rem 1fr; grid-template-rows: auto auto 1fr; column-gap: .875rem; align-items: start; }
 .media-item > .media-image { grid-row: 1 / span 3; }
-.media-item > br { display: none; }
+.media-item:has(> .media-image) > .count { grid-column: 2; grid-row: 3; align-self: end; }
 }
 /* The publisher box: CKAN nests a `.module.context-info` inside a `.module`, so without this the
 card drew twice, the inner one adding its margin and padding below "read more" (owner,
