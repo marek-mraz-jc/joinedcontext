@@ -37,6 +37,13 @@ interface OrganizationSpec {
   contacts?: Contact[];
   projects?: ProjectsPolicy;
   policies?: { apps?: { public?: string; services?: string[] }; agents?: { models?: string[] } };
+  /** What its Portal, open data portal and sign-in page show (UIX-16). */
+  appearance?: {
+    instanceName?: string;
+    shortName?: string;
+    colours?: Partial<Record<"primary" | "secondary" | "accent" | "background" | "text", string>>;
+    logoSvg?: string;
+  };
 }
 
 /** What the form edits: the spec without `gitRepositoryUrl`, which is the installation's. */
@@ -73,6 +80,29 @@ export function toOrganization(form: Record<string, unknown>, stored: unknown): 
     next.policies = { ...next.policies, agents: { ...next.policies.agents, models } };
   }
   return { ...manifest, spec: next };
+}
+
+/** `spec.appearance` in words: the name, a swatch per colour set, whether a logo is (UIX-16). */
+function AppearanceSummary({ appearance }: { appearance?: OrganizationSpec["appearance"] }): JSX.Element {
+  const { t } = useTranslation();
+  const colours = Object.entries(appearance?.colours ?? {}).filter(([, value]) => value);
+  if (!appearance?.instanceName && !appearance?.shortName && colours.length === 0 && !appearance?.logoSvg) {
+    return <>{t("organization.settings.appearanceInstallation")}</>;
+  }
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      {appearance.instanceName ?? appearance.shortName ? <span>{appearance.instanceName ?? appearance.shortName}</span> : null}
+      {colours.map(([name, value]) => (
+        <span key={name} className="inline-flex items-center gap-1 text-caption text-fg-muted">
+          <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4 rounded border border-border">
+            <rect width="16" height="16" fill={value} />
+          </svg>
+          {t(`organization.field.appearance.colour.${name}`)} {value}
+        </span>
+      ))}
+      {appearance.logoSvg ? <span className="text-caption text-fg-muted">{t("organization.settings.appearanceLogo")}</span> : null}
+    </span>
+  );
 }
 
 /** `projects.creation` in words (PF-65). */
@@ -184,6 +214,10 @@ export function OrganizationSettings(): JSX.Element {
                   ))}
                 </ul>
               )}
+            </dd>
+            <dt className="font-medium text-fg">{t("organization.field.appearance.title")}</dt>
+            <dd className="text-fg">
+              <AppearanceSummary appearance={spec.appearance} />
             </dd>
             <dt className="font-medium text-fg">{t("organization.field.creation")}</dt>
             <dd className="text-fg">{creationOf(t, policy.creation)}</dd>

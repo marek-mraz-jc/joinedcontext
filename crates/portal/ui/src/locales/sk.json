@@ -7648,7 +7648,9 @@
       "creationGroup": "Projekty otvárajú členovia skupiny {group}.",
       "creationAdmin": "Projekty otvára iba administrátor organizácie.",
       "cooldown": "{days} dní",
-      "noQuota": "Pre nový projekt nie je stanovený žiadny limit."
+      "noQuota": "Pre nový projekt nie je stanovený žiadny limit.",
+      "appearanceInstallation": "Názov, farby a logo inštalácie",
+      "appearanceLogo": "s vlastným logom"
     },
     "members": {
       "title": "Členovia",

@@ -7648,7 +7648,9 @@
       "creationGroup": "The members of the group {group} open projects.",
       "creationAdmin": "Only an organization administrator opens projects.",
       "cooldown": "{days} days",
-      "noQuota": "No limit is set for a new project."
+      "noQuota": "No limit is set for a new project.",
+      "appearanceInstallation": "The installation's name, colours and logo",
+      "appearanceLogo": "with its own logo"
     },
     "members": {
       "title": "Members",

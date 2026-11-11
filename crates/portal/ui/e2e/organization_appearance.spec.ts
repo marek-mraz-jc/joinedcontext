@@ -16,7 +16,7 @@ const ZILINA = {
   apiVersion: API,
   kind: "Organization",
   metadata: { name: "zilina", namespace: "org" },
-  spec: { domain: "zilina.sk", locales: ["sk", "en"], defaultLocale: "sk" },
+  spec: { domain: "zilina.sk", locales: ["sk", "en"], defaultLocale: "sk", appearance: { shortName: "Žilina", colours: { primary: "#0b5394" } } },
 };
 const PERMISSIONS = {
   project: "org",
@@ -99,7 +99,7 @@ test.describe("an Organization's appearance", () => {
       const primary = page.getByRole("textbox", { name: /^Primary/ });
       await primary.fill("red;}body{background:url(//x)}");
       await page.getByRole("button", { name: "Propose change" }).click();
-      await expect(page.getByText("Value does not match pattern").first()).toBeVisible();
+      await expect(page.getByText("A colour as # and six hexadecimal digits, such as #0b5394.").first()).toBeVisible();
       expect(proposed).toHaveLength(0);
       await shot(page, `appearance-refused-${width}`);
 

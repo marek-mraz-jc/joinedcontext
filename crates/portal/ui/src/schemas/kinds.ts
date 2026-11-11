@@ -3114,8 +3114,9 @@ export function organizationSchema(t: (key: string) => string, entries: readonly
   return withCatalog(schema, entries, t);
 }
 
-/** `#rgb` or `#rrggbb`, the one colour syntax jc-core takes (UIX-16). */
-const HEX_COLOUR = "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$";
+/** `#rrggbb`, within what jc-core takes (UIX-16); the same pattern as `knowledge.HEX_COLOR`, so a
+ * refusal reads "a colour as # and six hexadecimal digits". */
+const HEX_COLOUR = "^#[0-9a-fA-F]{6}$";
 /** One line without `<` or `>`, as jc-core checks a name (UIX-16). */
 const PLAIN_LINE = "^[^<>\\u0000-\\u001f]+$";
 const APPEARANCE_COLOURS = ["primary", "secondary", "accent", "background", "text"] as const;
