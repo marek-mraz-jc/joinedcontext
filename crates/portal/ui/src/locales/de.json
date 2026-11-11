@@ -3782,7 +3782,10 @@
         "grid": "Tabelle"
       },
       "inserted": "Widget auf der letzten Seite eingefügt. Geben Sie dem Dashboard einen Namen und einen Titel und dann Prüfen.",
-      "refusedHint": "Korrigieren Sie das Feld an jedem Pfad im Manifest und prüfen Sie erneut."
+      "refusedHint": "Korrigieren Sie das Feld an jedem Pfad im Manifest und prüfen Sie erneut.",
+      "fixJson": "Prüfen und Vorschlagen warten, bis sich das JSON lesen lässt.",
+      "nextStep": "Das JSON lässt sich lesen, die Vorschau ist live. Prüfen fragt den Server, ob er das Dashboard annimmt; gespeichert wird erst, wenn Sie es vorschlagen.",
+      "previewRefused": "Der Server hat dieses Manifest abgelehnt: die Vorschau zeichnet es, vorgeschlagen werden kann es erst, wenn jedes neben dem Editor genannte Feld korrigiert ist."
     }
   },
   "access": {

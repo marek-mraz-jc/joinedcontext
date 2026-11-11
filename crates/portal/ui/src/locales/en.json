@@ -3782,7 +3782,10 @@
         "grid": "Table"
       },
       "inserted": "Widget added to the last page. Give the dashboard a name and a title, then Check.",
-      "refusedHint": "Fix the field at each path in the manifest, then Check again."
+      "refusedHint": "Fix the field at each path in the manifest, then Check again.",
+      "fixJson": "Check and Propose wait until the JSON reads.",
+      "nextStep": "The JSON reads and the preview is live. Check asks the server whether it accepts the dashboard; nothing is saved until you propose.",
+      "previewRefused": "The server refused this manifest: the preview draws it, but it cannot be proposed until each field listed beside the editor is fixed."
     }
   },
   "access": {

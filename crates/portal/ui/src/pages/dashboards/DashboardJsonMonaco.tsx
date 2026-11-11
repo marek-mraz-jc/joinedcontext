@@ -75,7 +75,8 @@ export default function DashboardJsonMonaco({
         fontSize: 13,
         tabSize: 2,
         scrollBeyondLastLine: false,
-        wordWrap: "off",
+        wordWrap: "on",
+        wrappingIndent: "indent",
         fixedOverflowWidgets: true,
         quickSuggestions: { strings: true, other: true, comments: false },
       }}

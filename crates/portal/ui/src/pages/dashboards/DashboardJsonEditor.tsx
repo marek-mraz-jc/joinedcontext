@@ -255,10 +255,41 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
                   }}
                   schema={editorSchema}
                   ariaLabel={t("dashboards.json.source")}
-                  height="min(60vh, 36rem)"
+                  height="min(50vh, 36rem)"
                 />
               </Suspense>
             </Card>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                disabled={!parsed.manifest || check.isPending}
+                aria-describedby={`${ids.editor}-next ${ids.editor}-state`}
+                onClick={() => {
+                  const body = asProposal();
+                  if (body) check.mutate(body);
+                }}
+              >
+                {t("dashboards.json.check")}
+              </Button>
+              <Button
+                variant="primary"
+                disabled={!parsed.manifest || proposal.mutation.isPending}
+                aria-describedby={`${ids.editor}-next ${ids.editor}-state`}
+                onClick={() => {
+                  const body = asProposal();
+                  if (body) proposal.mutation.mutate({ body, create: !existing });
+                }}
+              >
+                {t("dashboards.propose")}
+              </Button>
+              <span id={`${ids.editor}-next`} className="text-caption text-fg-muted">
+                {!parsed.manifest
+                  ? t("dashboards.json.fixJson")
+                  : refusals.length === 0 && !checkedGreen
+                    ? t("dashboards.json.nextStep")
+                    : null}
+              </span>
+            </div>
             <div id={`${ids.editor}-state`} className="flex flex-col gap-3 empty:hidden">
               {parsed.error ? (
                 <Alert tone="danger" title={t("dashboards.json.invalid")}>
@@ -287,35 +318,14 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
               ) : null}
               {proposal.error ? <Alert tone="danger">{proposal.error}</Alert> : null}
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="secondary"
-                disabled={!parsed.manifest || check.isPending}
-                aria-describedby={`${ids.editor}-state`}
-                onClick={() => {
-                  const body = asProposal();
-                  if (body) check.mutate(body);
-                }}
-              >
-                {t("dashboards.json.check")}
-              </Button>
-              <Button
-                variant="primary"
-                disabled={!parsed.manifest || proposal.mutation.isPending}
-                aria-describedby={`${ids.editor}-state`}
-                onClick={() => {
-                  const body = asProposal();
-                  if (body) proposal.mutation.mutate({ body, create: !existing });
-                }}
-              >
-                {t("dashboards.propose")}
-              </Button>
-            </div>
           </section>
           <section aria-labelledby={`${ids.editor}-preview`} aria-live="polite" className="flex min-w-0 flex-col gap-3">
             <h2 id={`${ids.editor}-preview`} className="text-title">
               {t("dashboards.json.preview")}
             </h2>
+            {parsed.manifest && refusals.length > 0 ? (
+              <Alert tone="warning">{t("dashboards.json.previewRefused")}</Alert>
+            ) : null}
             {!parsed.manifest ? (
               <Card padding="sm">
                 <p role="status" className="text-body text-fg-muted">

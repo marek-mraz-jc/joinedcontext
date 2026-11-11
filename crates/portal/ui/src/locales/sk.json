@@ -3782,7 +3782,10 @@
         "grid": "Tabuľka"
       },
       "inserted": "Widget je pridaný na poslednú stranu. Dajte dashboardu meno a názov a stlačte Skontrolovať.",
-      "refusedHint": "Opravte pole na každej ceste v manifeste a skontrolujte znova."
+      "refusedHint": "Opravte pole na každej ceste v manifeste a skontrolujte znova.",
+      "fixJson": "Skontrolovať a Navrhnúť čakajú, kým sa JSON dá prečítať.",
+      "nextStep": "JSON sa dá prečítať a náhľad je živý. Skontrolovať sa opýta servera, či dashboard prijme; nič sa neuloží, kým ho nenavrhnete.",
+      "previewRefused": "Server tento manifest odmietol: náhľad ho kreslí, ale navrhnúť sa dá až po oprave každého poľa vypísaného pri editore."
     }
   },
   "access": {
