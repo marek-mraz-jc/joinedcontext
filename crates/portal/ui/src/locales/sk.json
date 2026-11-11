@@ -3752,10 +3752,10 @@
       "newTitle": "Nový dashboard v JSON",
       "editTitle": "{name} v JSON",
       "lead": "Napíšte dashboard ako jeho manifest. Náhľad kreslí každý widget z aktuálnych údajov počas písania; Skontrolovať sa opýta servera, Navrhnúť ho pošle ako zmenu.",
-      "source": "Manifest (JSON)",
+      "source": "Manifest v JSON",
       "preview": "Náhľad",
       "editorHint": "Ctrl+Medzerník ponúkne polia, ktoré miesto berie; endpointRef ponúkne endpointy, ktoré smiete čítať. Príklad: \"endpointRef\": \"bikes\".",
-      "widgetType": "Widget",
+      "widgetType": "Typ widgetu",
       "widgetTypeHint": "Pridá sa na poslednú stranu, napr. stĺpcový graf jedného typu entít.",
       "endpoint": "Endpoint",
       "endpointHint": "Endpointy tohto projektu, ktoré smiete čítať, napr. bikes.",
@@ -3765,7 +3765,7 @@
       "insert": "Vložiť widget",
       "fixFirst": "Najprv opravte JSON: widget sa pridá len do platného manifestu.",
       "invalid": "JSON sa nedá prečítať",
-      "invalidAt": "Riadok {line}, stĺpec {column}: {message}",
+      "invalidAt": "Riadok {line}, stĺpec {column}: tu sa JSON prestáva dať čítať. Hľadajte chýbajúcu alebo nadbytočnú čiarku, úvodzovku či zátvorku. ({message})",
       "refused": "Server ho odmietol",
       "checked": "Server tento dashboard prijíma",
       "check": "Skontrolovať",
@@ -3780,7 +3780,9 @@
       "type": {
         "vega-lite": "Graf (Vega-Lite)",
         "grid": "Tabuľka"
-      }
+      },
+      "inserted": "Widget je pridaný na poslednú stranu. Dajte dashboardu meno a názov a stlačte Skontrolovať.",
+      "refusedHint": "Opravte pole na každej ceste v manifeste a skontrolujte znova."
     }
   },
   "access": {

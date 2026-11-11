@@ -47,7 +47,7 @@ function useList(project: string, plural: string) {
 
 export function DashboardJsonEditor({ project, name }: { project: string; name?: string }): JSX.Element {
   const { t } = useTranslation();
-  const ids = { type: useId(), endpoint: useId(), entity: useId(), editor: useId() };
+  const ids = { type: useId(), endpoint: useId(), entity: useId(), editor: useId(), why: useId() };
   const dashboards = useList(project, "dashboards");
   const endpoints = useList(project, "endpoints");
   const spaces = useList(project, "spaces");
@@ -87,6 +87,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
 
   // The picker: a widget type, an Endpoint the person may read, a type of the Endpoint's model.
   const [pickedType, setPickedType] = useState<PickedWidget>("vega-lite");
+  const [inserted, setInserted] = useState(false);
   const [pickedEndpoint, setPickedEndpoint] = useState("");
   const [pickedEntity, setPickedEntity] = useState("");
   const endpoint = pickedEndpoint || endpointNames[0] || "";
@@ -179,7 +180,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
           <section aria-labelledby={`${ids.editor}-title`} className="flex min-w-0 flex-col gap-3">
-            <h2 id={`${ids.editor}-title`} className="text-heading-sm">
+            <h2 id={`${ids.editor}-title`} className="text-title">
               {t("dashboards.json.source")}
             </h2>
             <Card padding="sm" className="flex flex-col gap-3">
@@ -207,7 +208,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
                   label={t("dashboards.json.entityType")}
                   help={entityTypes.length > 0 ? t("dashboards.json.entityTypeHint") : t("dashboards.json.noTypes")}
                 >
-                  <Select id={ids.entity} value={entityType} disabled={entityTypes.length === 0} onChange={(e) => setPickedEntity(e.target.value)}>
+                  <Select id={ids.entity} value={entityType} disabled={entityTypes.length === 0} aria-describedby={`${ids.entity}__help`} onChange={(e) => setPickedEntity(e.target.value)}>
                     {entityTypes.map((type) => (
                       <option key={type} value={type}>
                         {type}
@@ -220,27 +221,36 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
                 <Button
                   variant="secondary"
                   disabled={!canInsert}
+                  aria-describedby={ids.why}
                   onClick={() => {
                     const next = insertWidget(text, widgetSnippet(pickedType, endpoint, entityType));
-                    if (next) setTyped(next);
+                    if (next) {
+                      setTyped(next);
+                      setInserted(true);
+                    }
                   }}
                 >
                   {t("dashboards.json.insert")}
                 </Button>
                 {!parsed.manifest ? (
-                  <span className="text-body-sm text-fg-muted">{t("dashboards.json.fixFirst")}</span>
+                  <span id={ids.why} className="text-caption text-fg-muted">{t("dashboards.json.fixFirst")}</span>
+                ) : inserted ? (
+                  <span role="status" className="text-caption text-fg-muted">
+                    {t("dashboards.json.inserted")}
+                  </span>
                 ) : null}
               </div>
             </Card>
-            <p id={`${ids.editor}-hint`} className="text-body-sm text-fg-muted">
+            <p id={`${ids.editor}-hint`} className="text-caption text-fg-muted">
               {t("dashboards.json.editorHint")}
             </p>
             <Card flush className="overflow-hidden">
-              <Suspense fallback={<Skeleton className="h-[28rem]" />}>
+              <Suspense fallback={<Skeleton className="h-112" />}>
                 <DashboardJsonMonaco
                   value={text}
                   onChange={(next) => {
                     setTyped(next);
+                    setInserted(false);
                     check.reset();
                   }}
                   schema={editorSchema}
@@ -249,35 +259,39 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
                 />
               </Suspense>
             </Card>
-            {parsed.error ? (
-              <Alert tone="danger" title={t("dashboards.json.invalid")}>
-                {parsed.error.line
-                  ? t("dashboards.json.invalidAt", { line: parsed.error.line, column: parsed.error.column, message: parsed.error.message })
-                  : parsed.error.message}
-              </Alert>
-            ) : null}
-            {refusals.length > 0 ? (
-              <Alert tone="danger" title={t("dashboards.json.refused")}>
-                <ul className="list-disc pl-5">
-                  {refusals.map((finding, index) => (
-                    <li key={`${finding.path ?? ""}-${index}`}>
-                      {finding.path ? <code>{finding.path}</code> : null}
-                      {finding.path ? ": " : null}
-                      {finding.message}
-                    </li>
-                  ))}
-                </ul>
-              </Alert>
-            ) : checkedGreen ? (
-              <Alert tone="success" title={t("dashboards.json.checked")}>
-                {t("dashboards.addHint")}
-              </Alert>
-            ) : null}
-            {proposal.error ? <Alert tone="danger">{proposal.error}</Alert> : null}
+            <div id={`${ids.editor}-state`} className="flex flex-col gap-3 empty:hidden">
+              {parsed.error ? (
+                <Alert tone="danger" title={t("dashboards.json.invalid")}>
+                  {parsed.error.line
+                    ? t("dashboards.json.invalidAt", { line: parsed.error.line, column: parsed.error.column, message: parsed.error.message })
+                    : parsed.error.message}
+                </Alert>
+              ) : null}
+              {refusals.length > 0 ? (
+                <Alert tone="danger" title={t("dashboards.json.refused")}>
+                  <p>{t("dashboards.json.refusedHint")}</p>
+                  <ul className="list-disc pl-5">
+                    {refusals.map((finding, index) => (
+                      <li key={`${finding.path ?? ""}-${index}`}>
+                        {finding.path ? <code>{finding.path}</code> : null}
+                        {finding.path ? ": " : null}
+                        {finding.message}
+                      </li>
+                    ))}
+                  </ul>
+                </Alert>
+              ) : checkedGreen ? (
+                <Alert tone="success" title={t("dashboards.json.checked")}>
+                  {t("dashboards.addHint")}
+                </Alert>
+              ) : null}
+              {proposal.error ? <Alert tone="danger">{proposal.error}</Alert> : null}
+            </div>
             <div className="flex flex-wrap gap-2">
               <Button
                 variant="secondary"
                 disabled={!parsed.manifest || check.isPending}
+                aria-describedby={`${ids.editor}-state`}
                 onClick={() => {
                   const body = asProposal();
                   if (body) check.mutate(body);
@@ -288,6 +302,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
               <Button
                 variant="primary"
                 disabled={!parsed.manifest || proposal.mutation.isPending}
+                aria-describedby={`${ids.editor}-state`}
                 onClick={() => {
                   const body = asProposal();
                   if (body) proposal.mutation.mutate({ body, create: !existing });
@@ -298,7 +313,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
             </div>
           </section>
           <section aria-labelledby={`${ids.editor}-preview`} aria-live="polite" className="flex min-w-0 flex-col gap-3">
-            <h2 id={`${ids.editor}-preview`} className="text-heading-sm">
+            <h2 id={`${ids.editor}-preview`} className="text-title">
               {t("dashboards.json.preview")}
             </h2>
             {!parsed.manifest ? (
@@ -316,7 +331,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
             ) : (
               pages.map((page) => (
                 <div key={page.key} className="flex flex-col gap-3">
-                  {page.title ? <h3 className="text-heading-xs">{page.title}</h3> : null}
+                  {page.title ? <h3 className="text-body font-medium">{page.title}</h3> : null}
                   {page.refused.length > 0 ? (
                     <Alert tone="warning">{t("dashboards.json.notPublic", { endpoints: page.refused.join(", ") })}</Alert>
                   ) : null}

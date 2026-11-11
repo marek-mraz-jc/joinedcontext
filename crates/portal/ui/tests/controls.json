@@ -1316,6 +1316,14 @@
         "connect_page.test.tsx"
       ]
     },
+    "src/pages/dashboards/DashboardJsonEditor.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "dashboard_json_editor.test.tsx"
+      ]
+    },
     "src/pages/datasources/ConnectionTest.tsx": {
       "controls": {
         "Button": 1

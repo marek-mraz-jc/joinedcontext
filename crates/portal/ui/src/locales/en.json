@@ -3765,7 +3765,7 @@
       "insert": "Insert widget",
       "fixFirst": "Fix the JSON first: a widget is added to a valid manifest only.",
       "invalid": "The JSON does not read",
-      "invalidAt": "Line {line}, column {column}: {message}",
+      "invalidAt": "Line {line}, column {column}: the JSON stops reading here. Look for a missing or extra comma, quote or bracket. ({message})",
       "refused": "The server refused it",
       "checked": "The server accepts this dashboard",
       "check": "Check",
@@ -3780,7 +3780,9 @@
       "type": {
         "vega-lite": "Chart (Vega-Lite)",
         "grid": "Table"
-      }
+      },
+      "inserted": "Widget added to the last page. Give the dashboard a name and a title, then Check.",
+      "refusedHint": "Fix the field at each path in the manifest, then Check again."
     }
   },
   "access": {

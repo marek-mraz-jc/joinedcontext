@@ -56,7 +56,7 @@ export function widgetSnippet(type: PickedWidget, endpoint: string, entityType: 
       data: { name: "source" },
       mark: "bar",
       encoding: {
-        x: { field: "type", type: "nominal", title: "Type" },
+        x: { field: "type", type: "nominal", title: "Type", axis: { labelAngle: 0 } },
         y: { aggregate: "count", type: "quantitative", title: "Entities" },
       },
     },

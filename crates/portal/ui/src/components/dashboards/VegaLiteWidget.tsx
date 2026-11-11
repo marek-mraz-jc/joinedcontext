@@ -70,7 +70,7 @@ export function VegaLiteWidget({
       const got = await readSource(slug, source);
       if (got.csv === undefined) return got;
       const [vega] = await loadVega();
-      return { ...got, rows: vega.read(csvRecords(got.csv), { type: "json", parse: "auto" }) as Record<string, unknown>[] };
+      return { ...got, rows: vega.read(JSON.stringify(csvRecords(got.csv)), { type: "json", parse: "auto" }) as Record<string, unknown>[] };
     },
   });
   const drawn = useMemo(() => (read.data ? withRows(spec, read.data.rows) : null), [spec, read.data]);

@@ -4,10 +4,11 @@
  * insert a chart over an Endpoint the person may read, break the JSON and read where, have the
  * server refuse a widget and read its JSON path, then propose it as a Change.
  */
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
@@ -19,6 +20,9 @@ import {
   toText,
   widgetSnippet,
 } from "../src/pages/dashboards/dashboardJson";
+import { DashboardWidgets } from "../src/components/dashboards/DashboardWidgets";
+import { DashboardJsonEditor } from "../src/pages/dashboards/DashboardJsonEditor";
+import DashboardJsonMonaco from "../src/pages/dashboards/DashboardJsonMonaco";
 
 const diagnostics = vi.hoisted(() => [] as unknown[]);
 
@@ -140,7 +144,7 @@ describe("the dashboard JSON editor page", () => {
     vi.unstubAllGlobals();
   });
 
-  function renderEditor(endpoints: unknown[] = [ENDPOINT]) {
+  function stubServer(endpoints: unknown[] = [ENDPOINT], dashboards: unknown[] = []) {
     const sent: { method: string; url: URL; body: string }[] = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const request = input as Request;
@@ -174,6 +178,7 @@ describe("the dashboard JSON editor page", () => {
       if (url.pathname.endsWith("/endpoints")) return json(list(endpoints));
       if (url.pathname.endsWith("/spaces")) return json(list([SPACE]));
       if (url.pathname.endsWith("/datamodels")) return json(list([MODEL]));
+      if (url.pathname.endsWith("/dashboards")) return json(list(dashboards));
       if (url.pathname.includes("/api/endpoint/")) {
         return new Response("id,type\nurn:ngsi-ld:BikeHireDockingStation:1,BikeHireDockingStation\n", {
           headers: { "Content-Type": "text/csv" },
@@ -182,6 +187,11 @@ describe("the dashboard JSON editor page", () => {
       return json(list([]));
     });
     vi.stubGlobal("fetch", fetchMock);
+    return sent;
+  }
+
+  function renderEditor(endpoints: unknown[] = [ENDPOINT]) {
+    const sent = stubServer(endpoints);
     window.history.pushState({}, "", "/projects/bbsk/dashboard-editor");
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
@@ -246,5 +256,74 @@ describe("the dashboard JSON editor page", () => {
     renderEditor([]);
     expect(await screen.findByText("No endpoint to read yet")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Go to endpoints" })).toBeInTheDocument();
+  });
+
+  it("opens an existing dashboard by name, with its manifest in the editor", async () => {
+    const DASHBOARD = {
+      apiVersion: "joinedcontext.com/v1alpha1",
+      kind: "Dashboard",
+      metadata: { name: "ukazovatele", namespace: "bbsk" },
+      spec: { title: "Ukazovatele", pages: [{ title: "Overview", widgets: [] }] },
+    };
+    stubServer([ENDPOINT], [DASHBOARD]);
+    window.history.pushState({}, "", "/");
+    const root = createRootRoute({ component: Outlet });
+    const page = createRoute({
+      getParentRoute: () => root,
+      path: "/",
+      component: () => <DashboardJsonEditor project="bbsk" name="ukazovatele" />,
+    });
+    const endpoints = createRoute({ getParentRoute: () => root, path: "/projects/$project/$plural", component: () => null });
+    const router = createRouter({ routeTree: root.addChildren([page, endpoints]) });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <I18nextProvider i18n={i18n}>
+          <RouterProvider router={router} />
+        </I18nextProvider>
+      </QueryClientProvider>,
+    );
+    const editor = (await screen.findByRole("textbox", { name: "Manifest (JSON)" })) as HTMLTextAreaElement;
+    await waitFor(() => expect(editor.value).toContain("\"name\": \"ukazovatele\""));
+  });
+});
+
+describe("the dashboard JSON editor's parts", () => {
+  it("binds the schema to its own model and keeps typed text it only echoes", async () => {
+    const changes: string[] = [];
+    const schema = { type: "object" };
+    const view = render(
+      <DashboardJsonMonaco value="{}" onChange={(next) => changes.push(next)} schema={schema} ariaLabel="Manifest" height="10rem" />,
+    );
+    const options = diagnostics.at(-1) as { schemas: { fileMatch: string[]; schema: unknown }[] };
+    expect(options.schemas).toEqual([
+      expect.objectContaining({ fileMatch: ["inmemory://dashboard/manifest.json"], schema }),
+    ]);
+    const area = screen.getByRole("textbox", { name: "Manifest" }) as HTMLTextAreaElement;
+    fireEvent.change(area, { target: { value: "{\"a\": 1}" } });
+    expect(changes).toEqual(["{\"a\": 1}"]);
+    // A value from outside, the picker's, replaces the text.
+    await act(async () => {
+      view.rerender(
+        <DashboardJsonMonaco value={JSON.stringify({ b: 2 })} onChange={(next) => changes.push(next)} schema={null} ariaLabel="Manifest" height="10rem" />,
+      );
+    });
+    expect(area.value).toBe(JSON.stringify({ b: 2 }));
+    expect((diagnostics.at(-1) as { schemas: unknown[] }).schemas).toEqual([]);
+  });
+
+  it("draws nothing for a page without widgets and says which widget it cannot draw", () => {
+    const { container } = render(
+      <I18nextProvider i18n={i18n}>
+        <DashboardWidgets project="bbsk" widgets={[]} />
+      </I18nextProvider>,
+    );
+    expect(container).toBeEmptyDOMElement();
+    render(
+      <I18nextProvider i18n={i18n}>
+        <DashboardWidgets project="bbsk" widgets={[{ widget: { widgetType: "map", endpointRef: "bikes" } }]} />
+      </I18nextProvider>,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("This page has a map widget the Portal does not draw yet.");
   });
 });

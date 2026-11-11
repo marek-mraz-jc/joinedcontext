@@ -3750,12 +3750,12 @@
     "stackedHere": "An dieser Stelle: {n}, davon {shown} aufgelistet",
     "json": {
       "newTitle": "Neues Dashboard in JSON",
-      "editTitle": "{name} in JSON",
+      "editTitle": "{name} als JSON",
       "lead": "Schreiben Sie das Dashboard als sein Manifest. Die Vorschau zeichnet jedes Widget beim Tippen aus aktuellen Daten; Prüfen fragt den Server, Vorschlagen sendet es als Änderung.",
-      "source": "Manifest (JSON)",
+      "source": "Manifest als JSON",
       "preview": "Vorschau",
       "editorHint": "Strg+Leertaste zeigt die Felder, die eine Stelle nimmt; endpointRef zeigt die Endpoints, die Sie lesen dürfen. Beispiel: \"endpointRef\": \"bikes\".",
-      "widgetType": "Widget",
+      "widgetType": "Widget-Typ",
       "widgetTypeHint": "Wird auf der letzten Seite angefügt, z. B. ein Balkendiagramm eines Entitätstyps.",
       "endpoint": "Endpoint",
       "endpointHint": "Endpoints dieses Projekts, die Sie lesen dürfen, z. B. bikes.",
@@ -3765,7 +3765,7 @@
       "insert": "Widget einfügen",
       "fixFirst": "Korrigieren Sie zuerst das JSON: ein Widget wird nur einem gültigen Manifest hinzugefügt.",
       "invalid": "Das JSON lässt sich nicht lesen",
-      "invalidAt": "Zeile {line}, Spalte {column}: {message}",
+      "invalidAt": "Zeile {line}, Spalte {column}: hier lässt sich das JSON nicht mehr lesen. Suchen Sie ein fehlendes oder überzähliges Komma, Anführungszeichen oder eine Klammer. ({message})",
       "refused": "Der Server hat es abgelehnt",
       "checked": "Der Server nimmt dieses Dashboard an",
       "check": "Prüfen",
@@ -3780,7 +3780,9 @@
       "type": {
         "vega-lite": "Diagramm (Vega-Lite)",
         "grid": "Tabelle"
-      }
+      },
+      "inserted": "Widget auf der letzten Seite eingefügt. Geben Sie dem Dashboard einen Namen und einen Titel und dann Prüfen.",
+      "refusedHint": "Korrigieren Sie das Feld an jedem Pfad im Manifest und prüfen Sie erneut."
     }
   },
   "access": {

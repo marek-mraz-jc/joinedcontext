@@ -88,12 +88,14 @@ for (const width of [1440, 400]) {
     const editor = page.locator(".monaco-editor").first();
     await expect(editor).toBeVisible();
     await expect(page.getByText(/No widget yet/)).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: `test-results/T-6791/editor-empty-${width}.png`, fullPage: true });
     expect(await axeViolations(page)).toEqual([]);
 
     await page.getByRole("button", { name: "Insert widget" }).click();
     const figure = page.getByRole("figure").filter({ hasText: "BikeHireDockingStation by type" });
     await expect(figure.locator("canvas")).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: `test-results/T-6791/editor-valid-${width}.png`, fullPage: true });
 
     // Break the JSON: the alert names the line, the preview waits.
@@ -102,6 +104,7 @@ for (const width of [1440, 400]) {
     await page.keyboard.type(",");
     await expect(page.getByText("The JSON does not read")).toBeVisible();
     await expect(page.getByText(/^Line \d+, column \d+/)).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: `test-results/T-6791/editor-invalid-${width}.png`, fullPage: true });
     expect(await axeViolations(page)).toEqual([]);
   });
@@ -113,6 +116,7 @@ for (const width of [1440, 400]) {
     await page.getByRole("button", { name: "Insert widget" }).click();
     await page.getByRole("button", { name: "Check" }).click();
     await expect(page.getByText("/spec/pages/0/widgets/0/endpointRef", { exact: false })).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: `test-results/T-6791/editor-refused-${width}.png`, fullPage: true });
   });
 }

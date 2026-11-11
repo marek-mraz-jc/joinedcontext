@@ -159,6 +159,18 @@
       ],
       "reason": "the OGC standard's own name"
     },
+    "dashboards.json.editorHint": {
+      "rules": [
+        "json"
+      ],
+      "reason": "T-6791: the hint of a JSON editor shows the line a person types into it"
+    },
+    "dashboards.json.entityTypeHint": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "T-6791: the example is an entity type exactly as the dropdown lists it and the manifest takes it"
+    },
     "datasources.type.websocket": {
       "rules": [
         "kind"
