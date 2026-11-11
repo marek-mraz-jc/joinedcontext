@@ -65,3 +65,16 @@
 }
 .jc-explorer [data-testid="grid-toolbar"] details select,
 .jc-explorer [data-testid="grid-toolbar"] details input { font-size: 14px; }
+/* T-6781: the same for the access panel a column's menu opens on a phone: the Portal's bottom sheet
+   would sit at the frame's foot, so here it opens over the top of the grid, beside the header the
+   reader just used. */
+@media (max-width: 1023px) {
+  .jc-explorer .jc-grid { position: relative; }
+  /* At the top, so the edge and shadow face down, onto the rows it covers. */
+  .jc-explorer .jc-grid-inspector {
+    position: absolute; top: 0; bottom: auto; max-height: none;
+    border-top: 0; border-bottom: 1px solid var(--jc-color-line, #d0d7de);
+    border-radius: 0 0 var(--jc-radius-md, 0.5rem) var(--jc-radius-md, 0.5rem);
+    box-shadow: 0 6px 16px rgb(0 0 0 / 0.18);
+  }
+}

@@ -4,7 +4,8 @@
 //! forced RLS), else on its in-memory store. When the Portal runs beside it, first-start setup
 //! holds a password for the Portal's Grafana client, which daiya accepts as its server
 //! administrator (HTTP Basic, `DaiyaState::with_server_admin`), the role Grafana's admin user
-//! holds for the Portal.
+//! holds for the Portal. A browser signed in to the Portal beside it reads the dashboard page of
+//! the projects it may read (`page_reader`).
 
 use crate::config::DaiyaSection;
 use crate::module::Module;
@@ -52,6 +53,21 @@ pub(crate) async fn state(cfg: &DaiyaSection, setup: &Setup) -> Result<DaiyaStat
         .map_err(|e| e.to_string())
 }
 
+/// The person a browser's Portal cookie names, when the Portal in this process lets them read
+/// the project whose organization daiya numbers `num` and names `name` (the Portal names each
+/// project's organization after the project; number 1 is the installation's, the `org`
+/// namespace). `None` while no Portal runs here: daiya keeps no sessions (PORTAL-CALLS.md G-5).
+#[cfg(feature = "portal")]
+fn page_reader(headers: &axum::http::HeaderMap, num: i64, name: &str) -> Option<String> {
+    let portal = super::PORTAL_STATE.get()?;
+    let project = if num == 1 {
+        joinedcontext_portal::permissions::ORG_NAMESPACE
+    } else {
+        name
+    };
+    joinedcontext_portal::api::grafana_dashboards::page_reader(portal, headers, project)
+}
+
 /// The gateway's Endpoints on `jc`'s own listener, as the Portal names them in the datasources
 /// it makes (`{JC_PORTAL_GATEWAY_URL}/api/endpoint/{slug}`, `crate::siblings`): `None` when the
 /// gateway is not in this container or answers on a host of its own.
@@ -78,6 +94,10 @@ pub async fn build(
     mount: Mount,
 ) -> Result<Router, String> {
     let mut state = state(cfg, setup).await?;
+    #[cfg(feature = "portal")]
+    {
+        state = state.with_page_reader(page_reader);
+    }
     declare_organizations(&state, &cfg.organizations).map_err(|e| e.to_string())?;
     state.own_reach = gateway_reach(siblings).into_iter().collect();
     if let Some(raw) = &cfg.prometheus_reach {
