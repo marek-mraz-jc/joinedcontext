@@ -568,6 +568,95 @@ async fn the_dashboard_page_escapes_what_a_dashboard_holds() {
     );
 }
 
+/// PORTAL-CALLS.md G-5: a browser carries the host's session, no credential. The host's page
+/// reader names the person for the organizations they may read, and the page opens for them
+/// there, read-only and for the page alone; another organization, an unknown session and the
+/// rest of the API stay 404 or 401 as before (T-6784).
+#[tokio::test]
+async fn the_host_page_reader_opens_the_page_for_a_signed_in_member_only() {
+    let mut grafana = Grafana::new(Arc::new(FlakyStore::default()), None);
+    let helsinki = grafana.provision("helsinki").await;
+    let bbsk = grafana.provision("bbsk").await;
+    let state = grafana.state.clone().with_page_reader(|headers, _num, name| {
+        let cookie = headers.get("cookie")?.to_str().ok()?;
+        (cookie == "session=member-of-helsinki" && name == "helsinki").then(|| "f:1:anna".into())
+    });
+    grafana.app = api_router(
+        state,
+        Mount::new("dashboards", "https", "x.example", "").expect("mount"),
+    );
+    let page = |uri: String, cookie: Option<&'static str>| {
+        let app = grafana.app.clone();
+        async move {
+            let mut req = Request::builder().uri(uri);
+            if let Some(cookie) = cookie {
+                req = req.header("cookie", cookie);
+            }
+            let res = app
+                .oneshot(req.body(Body::empty()).expect("request"))
+                .await
+                .expect("answer");
+            let status = res.status();
+            let bytes = res.into_body().collect().await.expect("body").to_bytes();
+            (status, String::from_utf8_lossy(&bytes).into_owned())
+        }
+    };
+    let member = Some("session=member-of-helsinki");
+
+    let (status, body) = page(format!("/d/project-helsinki?orgId={helsinki}"), member).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("<h1>helsinki live</h1>"), "{body}");
+    // The slugged link Grafana writes opens the same page.
+    let (status, _) = page(
+        format!("/d/project-helsinki/helsinki-live?orgId={helsinki}"),
+        member,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Another organization, no session, someone else's session: the refusal of a missing board.
+    for (uri, cookie) in [
+        (format!("/d/project-bbsk?orgId={bbsk}"), member),
+        (format!("/d/project-helsinki?orgId={helsinki}"), None),
+        (
+            format!("/d/project-helsinki?orgId={helsinki}"),
+            Some("session=someone-else"),
+        ),
+        (format!("/d/project-helsinki?orgId={bbsk}"), member),
+        // Without orgId the page looks in the main organization, which the reader does not name.
+        ("/d/project-helsinki".to_owned(), member),
+    ] {
+        let (status, body) = page(uri.clone(), cookie).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri} {cookie:?}");
+        assert!(!body.contains("helsinki live"), "{body}");
+    }
+
+    // A credential beside the session is judged as a credential: the viewer token reads nothing
+    // in helsinki's organization, the session does not lift it.
+    let req = Request::builder()
+        .uri(format!("/d/project-helsinki?orgId={helsinki}"))
+        .header("cookie", "session=member-of-helsinki")
+        .header("authorization", "Bearer viewer-token")
+        .body(Body::empty())
+        .expect("request");
+    let res = grafana.app.clone().oneshot(req).await.expect("answer");
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    // The reader opens the page only: the API stays closed to the session.
+    let req = Request::builder()
+        .uri("/api/dashboards/uid/project-helsinki")
+        .header("cookie", "session=member-of-helsinki")
+        .header("x-grafana-org-id", helsinki.to_string())
+        .body(Body::empty())
+        .expect("request");
+    let res = grafana.app.clone().oneshot(req).await.expect("answer");
+    assert!(
+        matches!(res.status(), StatusCode::NOT_FOUND | StatusCode::UNAUTHORIZED),
+        "{}",
+        res.status()
+    );
+}
+
 /// PORTAL-CALLS.md §5: a host that verifies a kaisatsu token (here: a stand-in check on the
 /// bearer) makes its caller the server administrator; any other bearer stays anonymous.
 #[tokio::test]

@@ -28,7 +28,7 @@ pub use render::{
 };
 pub use state::{
     DaiyaState, MIN_SERVER_ADMIN_PASSWORD, PERSON_TOKEN_HEADER, PersonTokenExchanger,
-    ServerAdminCheck, SubjectResolver, TokenBinding, resolve_request_ctx, token_sub,
+    PageReader, ServerAdminCheck, SubjectResolver, TokenBinding, resolve_request_ctx, token_sub,
 };
 
 use axum::Router;

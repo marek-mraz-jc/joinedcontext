@@ -29,6 +29,12 @@ pub type BuiltDriverMap = BTreeMap<(OrgId, String), (String, Arc<dyn Datasource>
 /// in-process and has already verified the session or bearer token). `None` means "not mine".
 pub type SubjectResolver = Arc<dyn Fn(&HeaderMap) -> Option<Subject> + Send + Sync>;
 
+/// Host-supplied reader of the dashboard page (`/d/{uid}`) for a browser that carries no
+/// credential: given the request's headers and the organization's number and name, the person
+/// the host's own session names, when that person may read the organization's dashboards
+/// (PORTAL-CALLS.md G-5). daiya keeps no sessions; `None` leaves the browser anonymous.
+pub type PageReader = Arc<dyn Fn(&HeaderMap, i64, &str) -> Option<String> + Send + Sync>;
+
 /// One API credential: the SHA-256 of the token (never the token) and the subject it stands for.
 #[derive(Debug, Clone)]
 pub struct TokenBinding {
@@ -70,6 +76,8 @@ pub struct DaiyaState {
     pub tokens: Arc<Vec<TokenBinding>>,
     /// Verified subject from the host that mounts daiya (checked before `tokens`).
     pub subject_resolver: Option<SubjectResolver>,
+    /// Reads the dashboard page for a signed-in browser ([`DaiyaState::with_page_reader`]).
+    pub page_reader: Option<PageReader>,
     /// Operator outbound settings for drivers built from stored datasource records.
     pub outbound_policy: OutboundPolicy,
     /// Drivers built from stored datasource records (see [`DaiyaState::driver_for`]).
@@ -148,6 +156,7 @@ impl DaiyaState {
             registry: Arc::new(daiya_registry()),
             tokens: Arc::new(Vec::new()),
             subject_resolver: None,
+            page_reader: None,
             outbound_policy: OutboundPolicy::default(),
             built_drivers: Arc::new(RwLock::new(BTreeMap::new())),
             server_admin: Vec::new(),
@@ -236,6 +245,17 @@ impl DaiyaState {
         F: Fn(&HeaderMap) -> Option<Subject> + Send + Sync + 'static,
     {
         self.subject_resolver = Some(Arc::new(resolver));
+        self
+    }
+
+    /// Lets the person `reader` names read the dashboard page of an organization, and only that
+    /// page: its dashboard and the saved panels on it, as the Portal draws them for a member.
+    #[must_use]
+    pub fn with_page_reader<F>(mut self, reader: F) -> Self
+    where
+        F: Fn(&HeaderMap, i64, &str) -> Option<String> + Send + Sync + 'static,
+    {
+        self.page_reader = Some(Arc::new(reader));
         self
     }
 
