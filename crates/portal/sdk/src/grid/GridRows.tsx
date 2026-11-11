@@ -168,7 +168,8 @@ function GridCell({ view, row, rowIndex, col, colIndex, tone }: { view: GridView
     {colIndex === 0 && tone ? (
       <span className={`jc-grid-tone jc-grid-tone--${tone.tone}`} role="img" aria-label={tone.label} title={tone.label} />
     ) : null}
-    {inspects(col) ? (
+    {/* A phone's label is the row's way in alone (T-6748): its width goes to the name. */}
+    {inspects(col) && !(props.compact && col.pinned) ? (
       <button
         type="button"
         className="jc-grid-info"
@@ -183,7 +184,7 @@ function GridCell({ view, row, rowIndex, col, colIndex, tone }: { view: GridView
     ) : null}
     {/* At most three lines at the column's widest (T-5192): a dragged width replaces
         the cap, the full value stays in the row's detail. */}
-    <div className="jc-grid-cell" data-format={col.attr ? formatOf.get(col.attr) : undefined} style={col.width ? { maxWidth: "none" } : undefined}>
+    <div className="jc-grid-cell" data-format={col.attr ? formatOf.get(col.attr) : undefined} style={col.width || (props.compact && col.pinned) ? { maxWidth: "none" } : undefined}>
       {renderCellContent(row, col)}
     </div>
   </td>

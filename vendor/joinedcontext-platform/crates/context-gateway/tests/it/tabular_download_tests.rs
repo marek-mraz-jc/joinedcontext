@@ -334,6 +334,168 @@ async fn a_download_carries_an_etag_and_answers_304() {
     assert_eq!(stale.status(), StatusCode::OK);
 }
 
+/// API/02 §4a: `entities.csv` is `file.csv` by the format alias's name, the same bytes and ETag.
+#[tokio::test]
+async fn entities_csv_is_file_csv() {
+    let broker = BrokerStub::start(vec![json!([reading(1)]), json!([reading(1)])]).await;
+    let app = gateway(&broker.url, endpoint(vec![Representation::Csv], None));
+    let mut answers = Vec::new();
+    for file in ["file.csv", "entities.csv"] {
+        let path = format!("/api/endpoint/{SLUG}/{file}?type=AirQualityObserved");
+        let answer = download_with(app.clone(), &path, None).await;
+        assert_eq!(answer.status(), StatusCode::OK, "{file}");
+        let tag = answer.headers().get(axum::http::header::ETAG).cloned();
+        let body = axum::body::to_bytes(answer.into_body(), 1 << 20)
+            .await
+            .expect("a body");
+        answers.push((tag, body));
+    }
+    assert_eq!(answers[0], answers[1]);
+}
+
+/// The CSV Endpoint with the calendar output `events` over AirQualityObserved, its `q` and
+/// geo-query fixed (T-6760).
+fn preset(file_limits: Option<FileLimits>) -> Endpoint {
+    let mut endpoint = endpoint(vec![Representation::Csv], file_limits);
+    endpoint.calendars = vec![serde_norway::from_str(
+        "name: events\nsources: [{ type: AirQualityObserved }]\nfilter: { q: 'pm10>0', georel: 'near;maxDistance==5000', geometry: Point, coordinates: '[19.15,48.73]' }\n",
+    )
+    .expect("the output parses")];
+    endpoint
+}
+
+/// API/02 §4a (T-6760): `feeds/{filter}/{output}.csv` and `feeds/{output}.csv?{filter}` are the
+/// output's query narrowed by the filter, never widened: the broker reads the output's type,
+/// its `q` AND-ed with the caller's and its own geo-query, and both forms are one file.
+#[tokio::test]
+async fn a_feeds_csv_is_the_outputs_query_narrowed_by_the_filter() {
+    let broker = BrokerStub::start(vec![json!([reading(1)]), json!([reading(1)])]).await;
+    let app = gateway(&broker.url, preset(None));
+    let mut answers = Vec::new();
+    for path in [
+        format!("/api/endpoint/{SLUG}/feeds/q=pm10%3C5/events.csv"),
+        format!("/api/endpoint/{SLUG}/feeds/events.csv?q=pm10%3C5"),
+    ] {
+        let answer = download_with(app.clone(), &path, None).await;
+        assert_eq!(answer.status(), StatusCode::OK, "{path}");
+        assert_eq!(
+            answer.headers()[axum::http::header::CONTENT_DISPOSITION],
+            "attachment; filename=\"events.csv\""
+        );
+        let tag = answer.headers().get(axum::http::header::ETAG).cloned();
+        let body = axum::body::to_bytes(answer.into_body(), 1 << 20)
+            .await
+            .expect("a body");
+        answers.push((tag, body));
+    }
+    assert_eq!(answers[0], answers[1]);
+    for hop in broker.hops() {
+        let asked = context_gateway::query::parse(&hop.query);
+        let value = |name: &str| context_gateway::query::first(&asked, name).map(str::to_owned);
+        assert_eq!(value("type").as_deref(), Some("AirQualityObserved"));
+        assert_eq!(value("q").as_deref(), Some("(pm10>0);(pm10<5)"));
+        assert_eq!(value("georel").as_deref(), Some("near;maxDistance==5000"));
+        assert_eq!(value("coordinates").as_deref(), Some("[19.15,48.73]"));
+    }
+}
+
+/// T-6760: a feeds CSV cannot leave its output: another type, a geo-query of the caller's, a
+/// `q` that closes the output's group or a parameter the table does not read is 400, an
+/// unknown output 404, and none reaches the broker.
+#[tokio::test]
+async fn a_feeds_csv_refuses_what_would_widen_its_output() {
+    let broker = BrokerStub::start(vec![json!([reading(1)])]).await;
+    let app = gateway(&broker.url, preset(None));
+    for (rest, status, why) in [
+        (
+            "type=Building/events.csv",
+            StatusCode::BAD_REQUEST,
+            "Building",
+        ),
+        (
+            "georel=near%3BmaxDistance==1/events.csv",
+            StatusCode::BAD_REQUEST,
+            "geo-query",
+        ),
+        (
+            "q=a==1)%7C(b==2/events.csv",
+            StatusCode::BAD_REQUEST,
+            "parentheses",
+        ),
+        (
+            "from=2026-01-01/events.csv",
+            StatusCode::BAD_REQUEST,
+            r#"\"from\""#,
+        ),
+        (
+            "q=a==1/events.csv?q=b==2",
+            StatusCode::BAD_REQUEST,
+            "query string",
+        ),
+        ("news.csv", StatusCode::NOT_FOUND, ""),
+        ("a=1/b=2/events.csv", StatusCode::NOT_FOUND, ""),
+    ] {
+        let (status_got, _, body) =
+            download(app.clone(), &format!("/api/endpoint/{SLUG}/feeds/{rest}")).await;
+        assert_eq!(status_got, status, "{rest}: {body}");
+        assert!(body.contains(why), "{rest}: {body}");
+    }
+    assert!(broker.hops().is_empty(), "a refusal reached the broker");
+    let (status, _, _) = download(
+        gateway(&broker.url, endpoint(vec![Representation::NgsiLd], None)),
+        &format!("/api/endpoint/{SLUG}/feeds/events.csv"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// T-6760: the output's table keeps `file.csv`'s rules: the row ceiling answers 413, a strong
+/// ETag answers 304, an attribute the view hides is no column and a formula cell is inert.
+#[tokio::test]
+async fn a_feeds_csv_keeps_the_file_rules() {
+    let full: Vec<Value> = (0..1000).map(reading).collect();
+    let broker = BrokerStub::start(vec![json!(full)]).await;
+    let limits = FileLimits {
+        max_file_rows: Some(10),
+        max_file_bytes: None,
+    };
+    let (status, _, _) = download(
+        gateway(&broker.url, preset(Some(limits))),
+        &format!("/api/endpoint/{SLUG}/feeds/events.csv"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+
+    let mut formula = reading(1);
+    formula["pm10"]["value"] = json!("=HYPERLINK(\"x\")");
+    let broker = BrokerStub::narrowing(
+        vec![json!([formula.clone()]), json!([formula])],
+        View::of(
+            SLUG,
+            "public",
+            &["AirQualityObserved"],
+            Some(&["pm10", "location"]),
+        ),
+    )
+    .await;
+    let app = gateway(&broker.url, preset(None));
+    let path = format!("/api/endpoint/{SLUG}/feeds/events.csv");
+    let first = download_with(app.clone(), &path, None).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let tag = first.headers()[axum::http::header::ETAG].clone();
+    let body = axum::body::to_bytes(first.into_body(), 1 << 20)
+        .await
+        .expect("a body");
+    let body = String::from_utf8_lossy(&body);
+    assert!(
+        !body.contains("operatorNote") && !body.contains("internal only"),
+        "{body}"
+    );
+    assert!(body.contains("'=HYPERLINK"), "{body}");
+    let again = download_with(app, &path, tag.to_str().ok()).await;
+    assert_eq!(again.status(), StatusCode::NOT_MODIFIED);
+}
+
 /// T-5209: a dialect the download does not know is a 400 naming the parameter.
 #[tokio::test]
 async fn an_unknown_delimiter_is_refused_by_name() {
