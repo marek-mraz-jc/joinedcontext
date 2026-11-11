@@ -2935,6 +2935,10 @@ a.jc-cell--link:focus-visible {
   overflow: visible;
 }
 
+.jc-data-grid-end {
+  text-align: right;
+}
+
 .jc-data-grid-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -3009,6 +3013,8 @@ a.jc-cell--link:focus-visible {
   .jc-data-grid--stack .jc-grid-scroll { overflow: visible; background: none; }
   .jc-data-grid--stack tbody tr { padding-inline: var(--jc-space-3, 12px); }
   .jc-data-grid--stack tbody :is(td, th) { display: block; border: 0; padding-inline: 0; }
+  /* A card reads top to bottom: a number column's right alignment would make the eye jump. */
+  .jc-data-grid--stack tbody td.jc-data-grid-end { text-align: start; }
   .jc-data-grid--stack tbody td:empty { display: none; }
   .jc-data-grid--stack tbody td:not(.jc-grid-empty)[data-label]::before {
     content: attr(data-label);

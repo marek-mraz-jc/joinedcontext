@@ -272,17 +272,15 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
     );
   }
 
-  const toolbar = (
-    <GridToolbar
-      caption={caption}
-      rows={rows}
-      all={all}
-      columns={columns}
-      ownSearch={props.search === undefined ? { value: ownSearch, set: typeSearch, label: searchLabel } : undefined}
-      filters={filters}
-      setFilters={setFilters}
-    />
-  );
+  // The search sits with the page's title (owner 2026-10-31); Filter and its chips sit in the
+  // table's own toolbar beside Arrange columns, over the rows they narrow.
+  const toolbar =
+    props.search === undefined ? (
+      <div className="w-full sm:w-96">
+        <Input type="search" aria-label={searchLabel} placeholder={searchLabel} value={ownSearch} onChange={(event) => typeSearch(event.target.value)} />
+      </div>
+    ) : null;
+  const tools = <GridToolbar caption={caption} rows={rows} all={all} columns={columns} filters={filters} setFilters={setFilters} />;
   return (
     <div className="flex flex-col gap-3" data-manifest-grid={storageKey}>
       {props.header ? props.header(toolbar) : toolbar}
@@ -312,6 +310,7 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
           stack
           noSearch
           // A click on a plain cell opens the row's record link, as on every list (T-2875).
+          tools={tools}
           tableProps={{ "data-records": "" }}
           rowProps={() => recordCard}
         />
@@ -385,7 +384,7 @@ export function GridToolbar<T>({
         </div>
       ) : null}
       {filterable.length > 0 ? (
-        <ToolbarPopover label={t("grid.filter")} count={chips.length} anchored>
+        <ToolbarPopover label={t("grid.filter")} count={chips.length} anchored outlined>
           <div className="flex flex-col gap-3">
             {filterable.map((column) => {
               const values = valueCounts(rows, column);

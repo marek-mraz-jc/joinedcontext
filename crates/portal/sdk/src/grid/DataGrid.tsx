@@ -72,6 +72,8 @@ export interface DataGridProps<T> {
   total?: number;
   /** Hides the search box, for a list the page searches itself. */
   noSearch?: boolean;
+  /** The host's own controls at the start of the grid's toolbar, such as a filter of its own. */
+  tools?: React.ReactNode;
   /** Attributes of the table, such as the host's marker for a table whose rows open a record. */
   tableProps?: React.TableHTMLAttributes<HTMLTableElement> & Record<`data-${string}`, string>;
   /** Attributes of a row, such as the host's click that opens the row's record. */
@@ -117,6 +119,7 @@ export function DataGrid<T>({
   onQueryChange,
   total: remoteTotal,
   noSearch,
+  tools,
   tableProps,
   rowProps,
 }: DataGridProps<T>): React.JSX.Element {
@@ -296,9 +299,8 @@ export function DataGrid<T>({
             <Cell
               key={col.key}
               scope={at === 0 ? "row" : undefined}
-              className="jc-grid-td"
+              className={col.align === "right" ? "jc-grid-td jc-data-grid-end" : "jc-grid-td"}
               data-label={at === 0 || col.actions ? undefined : labelOf(col)}
-              style={col.align === "right" ? { textAlign: "right" } : undefined}
             >
               {col.cell ? col.cell(row) : col.text(row)}
             </Cell>
@@ -311,6 +313,7 @@ export function DataGrid<T>({
   return (
     <div className={`jc-grid jc-data-grid${stack ? " jc-data-grid--stack" : ""}`} data-density="comfortable">
       <div className="jc-grid-toolbar jc-data-grid-toolbar">
+        {tools}
         {!noSearch && (
           <div className="jc-data-grid-search">
             <label htmlFor={`${id}-search`} className="jc-data-grid-search-label">{labels.searchRows}</label>
