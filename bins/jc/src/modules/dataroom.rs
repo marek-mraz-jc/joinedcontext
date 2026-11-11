@@ -9,9 +9,9 @@
 //! (`dataroom_api::portal_publisher`).
 
 use crate::app::StartError;
-use crate::config::{DataroomSection, Given, HarvestSeed, OrganizationSection};
+use crate::config::{DataroomSection, HarvestSeed, OrganizationSection};
 use crate::module::Module;
-use crate::setup::{Secret, Setup};
+use crate::setup::Secret;
 use crate::siblings::Siblings;
 use axum::Router;
 use dataroom_api::DataroomState;

@@ -6,7 +6,7 @@
 //! [`super::PORTAL_INTERNAL`]); a dataroom or kaisatsu in a container without the Portal keeps
 //! jc's config. Upgrade path: the Portal answers the appearance on its internal listener.
 
-use jc_core::kinds::{OrganizationAppearance, OrganizationSpec};
+use jc_core::kinds::OrganizationAppearance;
 use joinedcontext_portal::store::Mirror;
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -29,9 +29,17 @@ pub(crate) fn in_mirror(mirror: &Mirror, name: &str) -> Option<OrganizationAppea
         "Organization",
         name,
     )?;
-    let spec: OrganizationSpec = serde_json::from_value(envelope.spec).ok()?;
-    match spec.appearance.validate() {
-        Ok(()) => Some(spec.appearance).filter(|a| !a.is_unset()),
+    let look: OrganizationAppearance = match serde_json::from_value(
+        envelope.spec.get("appearance")?.clone(),
+    ) {
+        Ok(look) => look,
+        Err(e) => {
+            tracing::warn!(organization = name, error = %e, "appearance unreadable; jc's config shows");
+            return None;
+        }
+    };
+    match look.validate() {
+        Ok(()) => Some(look).filter(|a| !a.is_unset()),
         Err(e) => {
             tracing::warn!(organization = name, error = %e, "appearance refused; jc's config shows");
             None
