@@ -3785,7 +3785,9 @@
       "refusedHint": "Opravte pole na každej ceste v manifeste a skontrolujte znova.",
       "fixJson": "Skontrolovať a Navrhnúť čakajú, kým sa JSON dá prečítať.",
       "nextStep": "JSON sa dá prečítať a náhľad je živý. Skontrolovať sa opýta servera, či dashboard prijme; nič sa neuloží, kým ho nenavrhnete.",
-      "previewRefused": "Server tento manifest odmietol: náhľad ho kreslí, ale navrhnúť sa dá až po oprave každého poľa vypísaného pri editore."
+      "previewRefused": "Server tento manifest odmietol: náhľad ho kreslí, ale navrhnúť sa dá až po oprave každého odmietnutého poľa.",
+      "fixRefused": "Navrhnúť čaká, kým kontrola prejde: opravte každé odmietnuté pole a skontrolujte znova.",
+      "nextStepEmpty": "JSON sa dá prečítať, ale zatiaľ nič nekreslí: vložte widget alebo ho napíšte a skontrolujte."
     }
   },
   "access": {

@@ -273,7 +273,7 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
               </Button>
               <Button
                 variant="primary"
-                disabled={!parsed.manifest || proposal.mutation.isPending}
+                disabled={!parsed.manifest || refusals.length > 0 || proposal.mutation.isPending}
                 aria-describedby={`${ids.editor}-next ${ids.editor}-state`}
                 onClick={() => {
                   const body = asProposal();
@@ -285,9 +285,13 @@ export function DashboardJsonEditor({ project, name }: { project: string; name?:
               <span id={`${ids.editor}-next`} className="text-caption text-fg-muted">
                 {!parsed.manifest
                   ? t("dashboards.json.fixJson")
-                  : refusals.length === 0 && !checkedGreen
-                    ? t("dashboards.json.nextStep")
-                    : null}
+                  : refusals.length > 0
+                    ? t("dashboards.json.fixRefused")
+                    : checkedGreen
+                      ? null
+                      : pages.every((page) => page.widgets.length === 0 && page.refused.length === 0)
+                        ? t("dashboards.json.nextStepEmpty")
+                        : t("dashboards.json.nextStep")}
               </span>
             </div>
             <div id={`${ids.editor}-state`} className="flex flex-col gap-3 empty:hidden">
