@@ -22,6 +22,7 @@ import {
   Icon,
   PageHeader,
   RadioGroup,
+  Term,
 } from "../components/ui";
 import { PermissionGuard } from "../components/ui/PermissionGuard";
 import { SPACE_LABEL } from "../schemas/modelprojection";
@@ -276,6 +277,7 @@ export function RegistrationsPage({ project, edit }: { project: string; edit?: s
     {
       key: "space",
       label: t("registrations.field.space"),
+      heading: <Term name="contextSpace">{t("registrations.field.space")}</Term>,
       text: (registration) => fromRegistrationEnvelope(registration).contextSpaceRef ?? "",
       cell: (registration) => (
         <span className="font-mono text-caption">{fromRegistrationEnvelope(registration).contextSpaceRef || "—"}</span>

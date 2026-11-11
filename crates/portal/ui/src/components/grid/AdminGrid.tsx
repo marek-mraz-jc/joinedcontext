@@ -2,7 +2,7 @@
  * An admin list on the shared data grid (T-6739, owner 2026-11-11: one grid across the open-data
  * explorer, the Portal and Apps): the SDK's `DataGrid` with the Portal's words and its one failure
  * panel. The rows are what the list's own read returned, the server's permission check included;
- * the grid only searches, filters, sorts and pages them.
+ * the grid only searches, filters, sorts and pages them. A click on a row opens its `data-row-link`.
  */
 import { useMemo } from "react";
 import type { JSX, ReactNode } from "react";
@@ -11,6 +11,7 @@ import { DataGrid } from "@joinedcontext/sdk/grid";
 import type { DataColumn, DataGridLabels } from "@joinedcontext/sdk/grid";
 import { gridLabels } from "../entities/PortalEntityGrid";
 import { PageFailed } from "../ui/PageState";
+import { recordCard } from "../ui";
 
 export type { DataColumn };
 
@@ -72,6 +73,8 @@ export function AdminGrid<T>({
       storageKey={`portal:${storageKey}`}
       stack={stack}
       noSearch={noSearch}
+      // A click on a plain cell opens the row's record link, as on every list (T-2875).
+      rowProps={() => recordCard}
     />
   );
 }

@@ -72,6 +72,8 @@ export interface DataGridProps<T> {
   total?: number;
   /** Hides the search box, for a list the page searches itself. */
   noSearch?: boolean;
+  /** Attributes of a row, such as the host's click that opens the row's record. */
+  rowProps?: (row: T) => React.HTMLAttributes<HTMLTableRowElement>;
 }
 
 const COLUMN_KIND: Record<DataKind, ColumnKind> = { text: "text", number: "number", date: "datetime", boolean: "boolean" };
@@ -113,6 +115,7 @@ export function DataGrid<T>({
   onQueryChange,
   total: remoteTotal,
   noSearch,
+  rowProps,
 }: DataGridProps<T>): React.JSX.Element {
   const labels = useMemo(() => ({ ...DEFAULT_DATA_LABELS, ...partial }), [partial]);
   const id = useId();
@@ -158,7 +161,8 @@ export function DataGrid<T>({
 
   const items: ArrangeItem[] = order.map((key, at) => {
     const col = byKey.get(key)!;
-    const fixed = key === primary;
+    // The row's name and its actions are always shown: without them a row cannot be opened.
+    const fixed = key === primary || col.actions === true;
     return { key, label: labelOf(col), model: col.label, shown: isShown(col), fixed, canUp: !fixed && at > 1, canDown: !fixed && at < order.length - 1 };
   });
 
@@ -188,7 +192,12 @@ export function DataGrid<T>({
           if (dragged && dragged !== col.key && dragged !== primary) setLayout({ ...layout, order: moveTo(order, dragged, order.indexOf(col.key)) });
         }}
       >
-        {sortable ? (
+        {col.heading !== undefined ? (
+          <span className="jc-data-grid-heading">
+            {col.heading}
+            {sorted ? (sorted === "asc" ? " ↑" : " ↓") : ""}
+          </span>
+        ) : sortable ? (
           <button
             type="button"
             className="jc-grid-sort-btn"
@@ -274,7 +283,7 @@ export function DataGrid<T>({
     </tr>
   ) : (
     page.rows.map((row) => (
-      <tr key={rowKey(row)}>
+      <tr key={rowKey(row)} {...rowProps?.(row)}>
         {visible.map((col, at) => {
           const Cell = at === 0 ? "th" : "td";
           return (
@@ -333,7 +342,7 @@ export function DataGrid<T>({
       </div>
       {loading ? (
         <p role="status" className="jc-grid-sr-only">{labels.loading}</p>
-      ) : (
+      ) : page.total === 0 ? null : (
         <div className="jc-grid-pager">
           <button type="button" className="jc-grid-pager-step" disabled={current <= 1} onClick={() => setQuery({ ...query, offset: (current - 2) * query.pageSize })}>
             <span aria-hidden="true">‹</span> <span className="jc-grid-pager-word">{labels.previous}</span>

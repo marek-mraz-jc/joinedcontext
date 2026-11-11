@@ -21,6 +21,7 @@ import {
   Tabs,
   buttonClass,
   tabPanelProps,
+  Term,
 } from "../components/ui";
 import { useUrlParam } from "../navigation/urlState";
 
@@ -113,6 +114,7 @@ export function ApprovalsPage({ project }: { project: string }): JSX.Element {
     {
       key: "lane",
       label: t("approvals.lane"),
+      heading: <Term name="lane">{t("approvals.lane")}</Term>,
       text: (proposal) => proposal.status.lane ?? "",
       cell: (proposal) => <LifecycleBadge kind="lane" value={proposal.status.lane} />,
     },

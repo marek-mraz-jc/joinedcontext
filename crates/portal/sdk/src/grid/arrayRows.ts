@@ -19,6 +19,8 @@ export interface DataColumn<T> {
   text: (row: T) => string;
   /** What the cell draws; the text when absent. */
   cell?: (row: T) => ReactNode;
+  /** What the header draws instead of the label, such as a glossary term: its sort is then in the column menu. */
+  heading?: ReactNode;
   kind?: DataKind;
   /** Off for a column whose text says nothing to filter by (an actions column). */
   filter?: boolean;

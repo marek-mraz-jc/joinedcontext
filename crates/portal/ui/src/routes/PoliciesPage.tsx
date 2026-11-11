@@ -29,6 +29,7 @@ import {
   Icon,
   Input,
   PageHeader,
+  Term,
 } from "../components/ui";
 import { policyRules } from "../components/endpoints/policyBinding";
 import { PermissionGuard } from "../components/ui/PermissionGuard";
@@ -286,6 +287,7 @@ export function PoliciesPage({ project, edit }: { project: string; edit?: string
     {
       key: "space",
       label: t("policies.field.space"),
+      heading: <Term name="contextSpace">{t("policies.field.space")}</Term>,
       text: (policy) => fromPolicyEnvelope(policy).contextSpaceRef ?? "",
       cell: (policy) => <span className="font-mono text-caption">{fromPolicyEnvelope(policy).contextSpaceRef || "—"}</span>,
     },

@@ -67,6 +67,8 @@ describe("DataGrid", () => {
   it("says what to do when the list is empty, and shows a skeleton while it loads", () => {
     const { rerender } = grid({ rows: [] });
     expect(screen.getByText("No policies yet. Add one.")).toBeTruthy();
+    // Nothing to page through: no pager.
+    expect(screen.queryByRole("button", { name: /Next/ })).toBeNull();
     rerender(<DataGrid caption="Policies" rows={[]} columns={columns} rowKey={(p) => p.name} empty={<p>none</p>} loading />);
     expect(screen.getByRole("table").getAttribute("aria-busy")).toBe("true");
     expect(screen.getByRole("status").textContent).toBe("Loading…");
@@ -115,6 +117,16 @@ describe("DataGrid", () => {
     expect(screen.getByRole("button", { name: "Column options: Changed" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Column options: Space" })).toBeNull();
     expect(screen.getByRole("button", { name: "Column options: Rules" })).toBeTruthy();
+  });
+
+  it("keeps a row's actions column always shown", () => {
+    const withActions: DataColumn<Policy>[] = [...columns, { key: "actions", label: "Actions", text: () => "", actions: true, cell: (p) => <button type="button">Open {p.name}</button> }];
+    grid({ columns: withActions });
+    expect(screen.queryByRole("button", { name: "Column options: Actions" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Arrange columns" }));
+    expect((within(screen.getByRole("dialog", { name: "Arrange columns" })).getByRole("checkbox", { name: "Show field: Actions" }) as HTMLInputElement).disabled).toBe(true);
+    // Its empty text is no search target and no phone-card label.
+    expect(document.querySelector('td[data-label="Actions"]')).toBeNull();
   });
 
   it("pages through a long list", () => {

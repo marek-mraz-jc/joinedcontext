@@ -2883,7 +2883,12 @@ a.jc-cell--link:focus-visible {
 .jc-dashboard-bar dd { display: flex; gap: 0.5rem; align-items: center; margin: 0; font-variant-numeric: tabular-nums; }
 .jc-dashboard-bar dd span { block-size: 0.75rem; min-inline-size: 2px; border-radius: 2px; background: var(--jc-color-primary, #2563eb); }
 
-/* The array grid (DataGrid, T-6739): an admin list in the data grid's look. */
+/* The array grid (DataGrid, T-6739): an admin list in the data grid's look. Its Arrange columns
+   panel opens below the toolbar and may be taller than a short list, so the frame does not clip. */
+.jc-data-grid {
+  overflow: visible;
+}
+
 .jc-data-grid-toolbar {
   display: flex;
   flex-wrap: wrap;
