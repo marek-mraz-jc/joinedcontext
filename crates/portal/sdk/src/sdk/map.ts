@@ -5,6 +5,75 @@ export const NO_BASEMAP = "No basemap is configured";
 /** What a map says when its rows carry no location; the run's check reads it as a map left empty. */
 export const NO_LOCATIONS = "No locations in this data.";
 
+/** Why a map could not start (T-6737): its box says so instead of staying empty. */
+export type MapFailure = "webgl" | "start" | "lost";
+/** What the box says per failure; never the library's own text, which can carry a URL or a token. */
+export const MAP_FAILED: Record<MapFailure, string> = {
+  webgl:
+    "This browser cannot draw the map: it needs WebGL 2, which is switched off or not supported here (often by a setting such as hardware acceleration). The table lists the same rows.",
+  start: "The map could not load. The table lists the same rows.",
+  lost: "The map stopped drawing because the browser took back its graphics memory. The table lists the same rows.",
+};
+export const MAP_RETRY = "Try the map again";
+/** How long a lost graphics context may take to come back before the map counts as stopped. */
+const CONTEXT_BACK_MS = 5000;
+
+interface Startable {
+  on(type: string, listener: (event: { sourceId?: string }) => void): unknown;
+  remove(): void;
+}
+
+/**
+ * Builds a map and watches its start (T-6737): a constructor that throws (MapLibre does when it
+ * gets no WebGL 2 context), a failure without a source before the first view (the style, the
+ * sprite, the glyphs), or a lost graphics context not back within CONTEXT_BACK_MS ends it and calls
+ * `fail` once with the kind. One source's tile failing is a gap, not a failure. Register this
+ * before the caller's own `load` listener. `dispose` removes the map and stops the watch.
+ */
+export function startMap<M extends Startable>(create: () => M, fail: (kind: MapFailure) => void): { map: M; dispose: () => void } | null {
+  let map: M;
+  try {
+    map = create();
+  } catch {
+    fail(hasWebgl2() ? "start" : "webgl");
+    return null;
+  }
+  let loaded = false;
+  let done = false;
+  let lost: ReturnType<typeof setTimeout> | undefined;
+  const dispose = (): void => {
+    if (done) return;
+    done = true;
+    clearTimeout(lost);
+    map.remove();
+  };
+  const stop = (kind: MapFailure): void => {
+    if (done) return;
+    dispose();
+    fail(kind);
+  };
+  map.on("load", () => {
+    loaded = true;
+  });
+  map.on("error", (event) => {
+    if (!loaded && !event?.sourceId) stop("start");
+  });
+  map.on("webglcontextlost", () => {
+    clearTimeout(lost);
+    lost = setTimeout(() => stop("lost"), CONTEXT_BACK_MS);
+  });
+  map.on("webglcontextrestored", () => clearTimeout(lost));
+  return { map, dispose };
+}
+
+function hasWebgl2(): boolean {
+  try {
+    return Boolean(document.createElement("canvas").getContext("webgl2"));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Resolves the basemap style: the provided URL if non-empty, or a plain background layer.
  */

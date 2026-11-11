@@ -4,7 +4,9 @@ import type { GeoJSONSource } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Row } from "../ngsi";
 import { columnKind, extent, format, pointOf } from "../ngsi";
-import { mapWorkerReady, NO_BASEMAP, styleFor } from "../sdk/map";
+import { mapWorkerReady, NO_BASEMAP, startMap, styleFor } from "../sdk/map";
+import type { MapFailure } from "../sdk/map";
+import { MapFailed } from "../sdk/MapFailed";
 import type { TileSource } from "../geo/GeoView";
 import { TILED_NOTE } from "../geo/GeoView";
 import { registerTileProtocol, tileUrl } from "../geo/tiles";
@@ -80,6 +82,9 @@ export function MapView({
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
   const [ready, setReady] = useState(false);
+  const [failed, setFailed] = useState<MapFailure | null>(null);
+  // A retry builds the map again: the effect below runs once per attempt.
+  const [attempt, setAttempt] = useState(0);
   const select = useRef(onSelect);
   select.current = onSelect;
   const collection = useMemo(() => featureCollection(rows, location, label, color, accent), [rows, location, label, color, accent]);
@@ -87,16 +92,21 @@ export function MapView({
 
   useEffect(() => {
     let gone = false;
-    let instance: MapLibreMap | null = null;
+    let started: { map: MapLibreMap; dispose: () => void } | null = null;
     void workerReady.then(() => {
-      if (gone || !container.current || map.current) return;
-      instance = new MapLibreMap({
-        container: container.current,
-        style,
-        center: [0, 0],
-        zoom: 1,
-        canvasContextAttributes: { preserveDrawingBuffer: true },
-      });
+      const box = container.current;
+      if (gone || !box || map.current) return;
+      started = startMap(
+        () => new MapLibreMap({ container: box, style, center: [0, 0], zoom: 1, canvasContextAttributes: { preserveDrawingBuffer: true } }),
+        (kind) => {
+          if (gone) return;
+          map.current = null;
+          setReady(false);
+          setFailed(kind);
+        },
+      );
+      if (!started) return;
+      const instance = started.map;
       map.current = instance;
       // For a person debugging a screenshot: the map instance, reachable from the console.
       (window as unknown as { kitMap?: MapLibreMap }).kitMap = instance;
@@ -129,10 +139,12 @@ export function MapView({
     };
     return () => {
       gone = true;
-      instance?.remove();
+      started?.dispose();
       map.current = null;
     };
-  }, []);
+    // The map is built once per attempt; every later value reaches it through `setData`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attempt]);
 
   // The tiles go under the rows, so a row keeps its colour and a tile's shape is told apart by its
   // `id` tag, the entity's URN.
@@ -174,6 +186,20 @@ export function MapView({
   }, [collection, ready]);
 
   const chosen = collection.features.find((f) => f.id === selected);
+  if (failed) {
+    return (
+      <div className="map-wrap">
+        <MapFailed
+          failure={failed}
+          onRetry={() => {
+            fitted.current = false;
+            setFailed(null);
+            setAttempt((n) => n + 1);
+          }}
+        />
+      </div>
+    );
+  }
   return (
     <div className="map-wrap">
       <div className="map" ref={container} data-testid="map" role="application" aria-label="Map" />

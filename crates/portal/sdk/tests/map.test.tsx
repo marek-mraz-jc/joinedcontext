@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Row } from "../src/ngsi";
 import mapViewSource from "../src/views/MapView.tsx?raw";
@@ -12,6 +12,11 @@ interface MapOptions {
 
 const mapInstances: Array<{ options: MapOptions; setData: ReturnType<typeof vi.fn>; fitBounds: ReturnType<typeof vi.fn> }> = [];
 let loadHandler: (() => void) | undefined;
+// Every `error` listener: startMap's and the view's own console line.
+const errorHandlers: Array<(event: { sourceId?: string; error?: Error }) => void> = [];
+const fireError = (event: { sourceId?: string; error?: Error }) => errorHandlers.forEach((f) => f(event));
+// The next Map constructor throws, as MapLibre does without a WebGL 2 context.
+let throwNext = false;
 let clickHandler: ((event: { features?: Array<{ properties?: { id?: string } }> }) => void) | undefined;
 
 vi.mock("maplibre-gl", () => {
@@ -19,11 +24,17 @@ vi.mock("maplibre-gl", () => {
     setData = vi.fn();
     fitBounds = vi.fn();
     constructor(public options: MapOptions) {
+      if (throwNext) {
+        throwNext = false;
+        throw new Error("WebGL2 is required to display this map https://tiles.example/style.json?token=s3cret");
+      }
       mapInstances.push({ options, setData: this.setData, fitBounds: this.fitBounds });
     }
     on(event: string, ...args: unknown[]) {
       if (event === "load" && typeof args[0] === "function") {
         loadHandler = args[0] as () => void;
+      } else if (event === "error" && typeof args[0] === "function") {
+        errorHandlers.push(args[0] as (e: { sourceId?: string; error?: Error }) => void);
       } else if (event === "click" && typeof args[1] === "function") {
         clickHandler = args[1] as (e: { features?: Array<{ properties?: { id?: string } }> }) => void;
       }
@@ -38,6 +49,7 @@ vi.mock("maplibre-gl", () => {
 vi.mock("maplibre-gl/dist/maplibre-gl.css", () => ({}));
 
 import { MapView, NO_BASEMAP, styleFor } from "../src/views/MapView";
+import { MAP_FAILED, MAP_RETRY, startMap } from "../src/sdk/map";
 
 const STATIONS: Row[] = [
   {
@@ -95,7 +107,46 @@ describe("MapView component", () => {
   beforeEach(() => {
     mapInstances.length = 0;
     loadHandler = undefined;
+    errorHandlers.length = 0;
+    throwNext = false;
     clickHandler = undefined;
+  });
+
+  const view = () => (
+    <MapView rows={STATIONS} location="location" label="name" accent="#0f766e" selected={null} onSelect={() => {}} basemap="https://x.example/style.json" />
+  );
+
+  it("says the browser cannot draw the map when MapLibre throws for want of WebGL 2, and offers no retry (T-6737)", async () => {
+    throwNext = true;
+    render(view());
+    const box = await screen.findByTestId("map-failed");
+    // jsdom has no WebGL 2 context, as the owner's browser with acceleration off.
+    expect(box).toHaveTextContent(MAP_FAILED.webgl);
+    expect(box.textContent).not.toMatch(/https?:|token|Error/);
+    expect(screen.queryByRole("button", { name: MAP_RETRY })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("map")).not.toBeInTheDocument();
+  });
+
+  it("ends a map whose style does not load, and its retry builds the map again (T-6737)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    render(view());
+    await waitFor(() => expect(mapInstances.length).toBe(1));
+    fireError({ error: new Error("HTTP 503") });
+    expect(await screen.findByTestId("map-failed")).toHaveTextContent(MAP_FAILED.start);
+    fireEvent.click(screen.getByRole("button", { name: MAP_RETRY }));
+    await waitFor(() => expect(mapInstances.length).toBe(2));
+    loadHandler?.();
+    expect(await screen.findByText("2 on the map")).toBeInTheDocument();
+    expect(screen.queryByTestId("map-failed")).not.toBeInTheDocument();
+  });
+
+  it("keeps a drawn map when one source's tiles fail (T-6737)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    render(view());
+    await waitFor(() => expect(mapInstances.length).toBe(1));
+    fireError({ sourceId: "tiles", error: new Error("HTTP 500") });
+    expect(screen.queryByTestId("map-failed")).not.toBeInTheDocument();
+    expect(screen.getByTestId("map")).toBeInTheDocument();
   });
 
   afterEach(() => {
@@ -191,5 +242,47 @@ describe("MapView source code host isolation (AP-49, AP-67)", () => {
     expect(lower).not.toContain("openfreemap");
     expect(lower).not.toContain("tile.openstreetmap.org");
     expect(lower).not.toContain("tiles.openfreemap.org");
+  });
+});
+
+describe("startMap (T-6737)", () => {
+  class Fake {
+    handlers: Record<string, Array<(e: { sourceId?: string }) => void>> = {};
+    removed = 0;
+    on(name: string, f: (e: { sourceId?: string }) => void) {
+      (this.handlers[name] ||= []).push(f);
+    }
+    fire(name: string, e: { sourceId?: string } = {}) {
+      (this.handlers[name] || []).forEach((f) => f(e));
+    }
+    remove() {
+      this.removed++;
+    }
+  }
+
+  it("ends a map whose graphics context does not come back, keeps one that does, and stops watching once disposed", () => {
+    vi.useFakeTimers();
+    try {
+      const kinds: string[] = [];
+      const back = startMap(() => new Fake(), (k) => kinds.push(k))!;
+      back.map.fire("load");
+      back.map.fire("webglcontextlost");
+      back.map.fire("webglcontextrestored");
+      vi.advanceTimersByTime(10_000);
+      expect(kinds).toEqual([]);
+      const gone = startMap(() => new Fake(), (k) => kinds.push(k))!;
+      gone.map.fire("webglcontextlost");
+      vi.advanceTimersByTime(10_000);
+      expect(kinds).toEqual(["lost"]);
+      expect(gone.map.removed).toBe(1);
+      const left = startMap(() => new Fake(), (k) => kinds.push(k))!;
+      left.map.fire("webglcontextlost");
+      left.dispose();
+      vi.advanceTimersByTime(10_000);
+      expect(kinds).toEqual(["lost"]);
+      expect(left.map.removed).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

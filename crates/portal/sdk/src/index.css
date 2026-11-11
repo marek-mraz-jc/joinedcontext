@@ -51,6 +51,9 @@ main { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 2
 .export-btn:hover { border-color: var(--accent); color: var(--accent); }
 .map-wrap { position: relative; }
 .map { height: 22rem; border-radius: 8px; overflow: hidden; background: #cbd5e1; }
+.map-failed { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.75rem; padding: 1rem; background: var(--surface); border: 1px solid var(--line); color: var(--ink); text-align: center; }
+.map-failed p { margin: 0; max-width: 60ch; line-height: 1.5; }
+.map-failed .map-retry { font: inherit; min-height: 2.75rem; padding: 0.25rem 0.9rem; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); cursor: pointer; }
 .map-count { position: absolute; left: 0.5rem; bottom: 0.5rem; padding: 0.2rem 0.5rem; border-radius: 6px; background: var(--surface); color: var(--muted); font-size: 0.75rem; }
 .map-notice { position: absolute; top: 0.5rem; left: 0.5rem; padding: 0.2rem 0.5rem; border-radius: 6px; background: var(--surface); color: var(--muted); font-size: 0.75rem; border: 1px solid var(--line); z-index: 1; }
 .table-wrap { overflow-x: auto; }
