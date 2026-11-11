@@ -1683,6 +1683,8 @@ impl AnyStore {
                         "outbox",
                         "snapshots",
                         "entity_map_docs",
+                        // the old -> new id map of a remint (0033)
+                        "entity_id_remap",
                         "dist_subs",
                         "dead_letters",
                         "views",
