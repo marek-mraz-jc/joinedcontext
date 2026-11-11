@@ -1,11 +1,11 @@
-import React from "react";
+import React, { useLayoutEffect, useRef, useState } from "react";
 import { HeaderFilter } from "./AutoFilter";
 import { ColumnMenu, WIDTH_STEP } from "./ColumnMenu";
 import { complete } from "./filters";
 import { GridFilterRow } from "./GridFilterRow";
 import { KIND_ICON, KIND_LABEL } from "./gridKinds";
 import { cellText } from "./model";
-import { NAME_COLUMN } from "./useEntityGrid";
+import { MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH, NAME_COLUMN } from "./useEntityGrid";
 import type { VisibleColumn } from "./useEntityGrid";
 import type { GridView } from "./useGridView";
 
@@ -65,8 +65,15 @@ function ColumnHeader({ view, col, index: i }: { view: GridView; col: VisibleCol
   const movable = own !== null && !col.pinned && !fixed;
   // The Type filter lives in the filter row alone: its values are the grid's own types.
   const headerFilter = !asText && filterable.get(col.key)?.kind !== "type" ? filterable.get(col.key) : undefined;
+  // A focusable separator states its value: the set width, else the width the browser gave the column.
+  const th = useRef<HTMLTableCellElement>(null);
+  const [laidOut, setLaidOut] = useState(MIN_COLUMN_WIDTH);
+  useLayoutEffect(() => {
+    if (!col.width && th.current) setLaidOut(Math.max(MIN_COLUMN_WIDTH, th.current.offsetWidth));
+  }, [col.width]);
   return (
   <th
+    ref={th}
       className={`jc-grid-th${col.pinned ? " jc-grid-pinned" : ""}${dragOver === col.key ? " jc-grid-th--drop" : ""}${complete(state.filters[col.key]) ? " jc-grid-th--filtered" : ""}`}
     // No header is squeezed below its first word (T-6328): a set width is the person's own.
     style={col.width ? { width: col.width, minWidth: col.width, maxWidth: col.width } : { minWidth: firstWordWidth(col.label) }}
@@ -150,8 +157,13 @@ function ColumnHeader({ view, col, index: i }: { view: GridView; col: VisibleCol
         role="separator"
         aria-orientation="vertical"
         aria-label={`${labels.columnWidth}: ${col.label}`}
-        aria-valuenow={col.width}
+        aria-valuenow={col.width ?? laidOut}
+        aria-valuemin={MIN_COLUMN_WIDTH}
+        aria-valuemax={MAX_COLUMN_WIDTH}
         tabIndex={0}
+        onFocus={() => {
+          if (!col.width && th.current) setLaidOut(Math.max(MIN_COLUMN_WIDTH, th.current.offsetWidth));
+        }}
         onPointerDown={(e) => startResize(e, own)}
         onKeyDown={(e) => {
           if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;

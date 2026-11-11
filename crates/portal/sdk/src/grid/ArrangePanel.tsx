@@ -112,50 +112,54 @@ export function ArrangePanel({ labels, items, onShow, onRename, onMove, onReset,
             <button type="button" className="jc-grid-arrange-done" onClick={close}>{labels.arrangeDone}</button>
           </div>
           <p id={`${id}-hint`} className="jc-grid-arrange-hint">{labels.arrangeHint}</p>
-          <ul className="jc-grid-arrange-list" aria-label={labels.arrangeColumns}>
-            {items.map((item) => (
-              <li key={item.key} data-hidden={item.shown ? undefined : ""}>
-                <label className="jc-grid-arrange-show" title={item.fixed ? labels.alwaysShown : undefined}>
-                  <input
-                    type="checkbox"
-                    checked={item.shown}
-                    disabled={item.fixed}
-                    aria-label={`${labels.showColumn}: ${item.label}`}
-                    aria-description={item.fixed ? labels.alwaysShown : undefined}
-                    onChange={() => onShow(item.key, !item.shown)}
-                  />
-                </label>
-                <LabelField
-                  value={item.label}
-                  model={item.model}
-                  name={`${labels.renameColumn}: ${item.model}`}
-                  onCommit={(text) => onRename(item.key, text)}
-                />
-                <button
-                  type="button"
-                  className="jc-grid-arrange-move"
-                  aria-label={`${labels.moveUp}: ${item.label}`}
-                  title={labels.moveUp}
-                  disabled={!item.canUp}
-                  onClick={() => onMove(item.key, -1)}
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  className="jc-grid-arrange-move"
-                  aria-label={`${labels.moveDown}: ${item.label}`}
-                  title={labels.moveDown}
-                  disabled={!item.canDown}
-                  onClick={() => onMove(item.key, 1)}
-                >
-                  ↓
-                </button>
-              </li>
-            ))}
-          </ul>
-          <p className="jc-grid-arrange-hint">{labels.renameHint}</p>
-          {children}
+          <div className="jc-grid-arrange-body">
+            <div className="jc-grid-arrange-cols">
+              <ul className="jc-grid-arrange-list" aria-label={labels.arrangeColumns}>
+                {items.map((item) => (
+                  <li key={item.key} data-hidden={item.shown ? undefined : ""}>
+                    <label className="jc-grid-arrange-show" title={item.fixed ? labels.alwaysShown : undefined}>
+                      <input
+                        type="checkbox"
+                        checked={item.shown}
+                        disabled={item.fixed}
+                        aria-label={`${labels.showColumn}: ${item.label}`}
+                        aria-description={item.fixed ? labels.alwaysShown : undefined}
+                        onChange={() => onShow(item.key, !item.shown)}
+                      />
+                    </label>
+                    <LabelField
+                      value={item.label}
+                      model={item.model}
+                      name={`${labels.renameColumn}: ${item.model}`}
+                      onCommit={(text) => onRename(item.key, text)}
+                    />
+                    <button
+                      type="button"
+                      className="jc-grid-arrange-move"
+                      aria-label={`${labels.moveUp}: ${item.label}`}
+                      title={labels.moveUp}
+                      disabled={!item.canUp}
+                      onClick={() => onMove(item.key, -1)}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      className="jc-grid-arrange-move"
+                      aria-label={`${labels.moveDown}: ${item.label}`}
+                      title={labels.moveDown}
+                      disabled={!item.canDown}
+                      onClick={() => onMove(item.key, 1)}
+                    >
+                      ↓
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <p className="jc-grid-arrange-hint">{labels.renameHint}</p>
+            </div>
+            {children}
+          </div>
           <div className="jc-grid-arrange-foot">
             <button type="button" className="jc-grid-arrange-btn" onClick={onReset}>{labels.resetColumns}</button>
             <p className="jc-grid-arrange-hint">{labels.resetHint}</p>

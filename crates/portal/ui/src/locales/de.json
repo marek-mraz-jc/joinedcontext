@@ -5935,7 +5935,7 @@
     "sortDesc": "Z bis A",
     "filterColumn": "Filtern…",
     "hideColumn": "Spalte ausblenden",
-    "hiddenFields": "Ausgeblendete Felder",
+    "hiddenFields": "Ausgeblendete Spalten",
     "showColumn": "Feld einblenden",
     "showAllColumns": "Alle einblenden",
     "renameColumn": "Bezeichnung in dieser Ansicht",

@@ -444,7 +444,7 @@ export const DEFAULT_LABELS: GridLabels = {
   sortDescBoolean: "Yes first",
   filterColumn: "Filter…",
   hideColumn: "Hide column",
-  hiddenFields: "Hidden fields",
+  hiddenFields: "Hidden columns",
   showColumn: "Show field",
   showAllColumns: "Show all",
   arrangeColumns: "Arrange columns",

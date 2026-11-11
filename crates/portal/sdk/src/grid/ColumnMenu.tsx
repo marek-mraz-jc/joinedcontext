@@ -111,7 +111,8 @@ export const ColumnMenu = React.forwardRef<HTMLDivElement, ColumnMenuProps>(func
       onClick={onClick}
     >
       <span className="jc-grid-menu-icon" aria-hidden="true">{icon}</span>
-      {text}
+      <span className="jc-grid-menu-text">{text}</span>
+      {checked && <span className="jc-grid-menu-check" aria-hidden="true">✓</span>}
     </button>
   );
   return (

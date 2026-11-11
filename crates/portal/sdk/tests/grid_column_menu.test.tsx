@@ -80,6 +80,9 @@ describe("the column header menu (T-4827)", () => {
     await waitFor(() => expect(names()).toEqual(["b", "c", "a"]));
     openMenu("Count");
     expect(screen.getByRole("menuitemradio", { name: "Largest first" })).toHaveAttribute("aria-checked", "true");
+    // The current sort shows to the eye as well: a check on its row and on no other.
+    expect(screen.getByRole("menuitemradio", { name: "Largest first" }).querySelector(".jc-grid-menu-check")).not.toBeNull();
+    expect(screen.getByRole("menuitemradio", { name: "Smallest first" }).querySelector(".jc-grid-menu-check")).toBeNull();
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Smallest first" }));
     await waitFor(() => expect(names()).toEqual(["a", "c", "b"]));
   });
@@ -182,23 +185,23 @@ describe("the column header menu (T-4827)", () => {
   it("names the fields it hid by count, and one click brings each back (T-5620)", async () => {
     render(<EntityGrid config={config} source={fixtureSource(entities)} />);
     await screen.findByText("Alpha");
-    expect(screen.queryByRole("button", { name: /^Hidden fields/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Hidden columns/ })).toBeNull();
     openMenu("Count");
     fireEvent.click(screen.getByRole("menuitem", { name: "Hide column" }));
     openMenu("status");
     fireEvent.click(screen.getByRole("menuitem", { name: "Hide column" }));
-    const toggle = await screen.findByRole("button", { name: "Hidden fields (2)" });
+    const toggle = await screen.findByRole("button", { name: "Hidden columns (2)" });
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    const list = screen.getByRole("list", { name: "Hidden fields" });
+    const list = screen.getByRole("list", { name: "Hidden columns" });
     fireEvent.click(within(list).getByRole("button", { name: "Show field: Count" }));
     await screen.findByRole("button", { name: "Column options: Count" });
-    expect(screen.getByRole("button", { name: "Hidden fields (1)" })).toBe(document.activeElement);
+    expect(screen.getByRole("button", { name: "Hidden columns (1)" })).toBe(document.activeElement);
     expect(screen.queryByRole("button", { name: "Show all" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Show field: status" }));
     const status = await screen.findByRole("button", { name: "Column options: status" });
-    expect(screen.queryByRole("button", { name: /^Hidden fields/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Hidden columns/ })).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(status));
   });
 
@@ -209,7 +212,7 @@ describe("the column header menu (T-4827)", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Hide column" }));
     openMenu("status");
     fireEvent.click(screen.getByRole("menuitem", { name: "Hide column" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Hidden fields (2)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Hidden columns (2)" }));
     fireEvent.click(screen.getByRole("button", { name: "Show all" }));
     await screen.findByRole("button", { name: "Column options: Count" });
     expect(screen.getByRole("button", { name: "Column options: status" })).toBeTruthy();
@@ -217,7 +220,7 @@ describe("the column header menu (T-4827)", () => {
     // An Endpoint's projection hides `count` for everyone: that is not the person's to undo here.
     render(<EntityGrid config={config} source={fixtureSource(entities)} hidden={["count"]} />);
     await screen.findByText("Alpha");
-    expect(screen.queryByRole("button", { name: /^Hidden fields/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Hidden columns/ })).toBeNull();
   });
 
   it("widens and narrows a column by its edge's arrow keys, within the store's bounds", async () => {
@@ -225,6 +228,8 @@ describe("the column header menu (T-4827)", () => {
     render(<Kept onLayout={onLayout} initial={{ width: { count: 60 } }} />);
     await screen.findByText("Alpha");
     const edge = screen.getByRole("separator", { name: "Column width: Count" });
+    expect(edge).toHaveAttribute("aria-valuenow", "60");
+    expect(edge).toHaveAttribute("aria-valuemin", "40");
     fireEvent.keyDown(edge, { key: "ArrowRight" });
     expect(onLayout).toHaveBeenLastCalledWith({ width: { count: 100 } });
     fireEvent.keyDown(screen.getByRole("separator", { name: "Column width: Count" }), { key: "ArrowLeft" });
