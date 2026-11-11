@@ -4723,6 +4723,47 @@ output:
         assert!(outcomes_empty.is_empty());
     }
 
+    /// T-6708: while removals are held a stream whose manifest is gone keeps running; the run
+    /// that releases the hold retires it.
+    #[tokio::test]
+    async fn a_held_run_retires_no_gone_stream_and_the_released_run_does() {
+        let server = runner().await;
+        wiremock::Mock::given(wiremock::matchers::method("PUT"))
+            .and(wiremock::matchers::path("/streams/helsinki.citybikes-free"))
+            .respond_with(wiremock::ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        let deployer = StreamDeployer::new(server.uri());
+        let mirror = helsinki_test_mirror();
+        deployer
+            .converge(&mirror, &Bentos::new(), &Default::default())
+            .await;
+
+        let held = Mirror::new();
+        held.hold_removals(true);
+        deployer
+            .converge(&held, &Bentos::new(), &Default::default())
+            .await;
+        let deletes = server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.method == wiremock::http::Method::DELETE)
+            .count();
+        assert_eq!(deletes, 0, "a held run retired a stream");
+
+        wiremock::Mock::given(wiremock::matchers::method("DELETE"))
+            .and(wiremock::matchers::path("/streams/helsinki.citybikes-free"))
+            .respond_with(wiremock::ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        deployer
+            .converge(&Mirror::new(), &Bentos::new(), &Default::default())
+            .await;
+    }
+
     /// T-3002: one runner serves every project, and helsinki/air-quality and praha/air-quality
     /// shared the stream `air-quality`: the last PUT won and the other read Live without running.
     /// Each project's pipeline is its own stream now, and the stream an older Portal left under
