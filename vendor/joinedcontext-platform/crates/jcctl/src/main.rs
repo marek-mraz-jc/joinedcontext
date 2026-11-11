@@ -825,6 +825,19 @@ fn assembled(mut args: Vec<String>) -> Result<(Vec<String>, Option<Scratch>), Ex
                     entry.error.as_deref().unwrap_or_default()
                 );
             }
+            // A refused project would be planned, applied or compared at its last render, or
+            // as absent: the command stops instead (T-6709).
+            let refused: Vec<_> = assembly
+                .entries
+                .iter()
+                .filter_map(|entry| Some((&entry.slug, entry.refused.as_ref()?)))
+                .collect();
+            for (slug, refusal) in &refused {
+                eprintln!("project {slug} is refused: {}", refusal.reason);
+            }
+            if !refused.is_empty() {
+                return Err(ExitCode::FAILURE);
+            }
             args[2] = render.to_string_lossy().into_owned();
             Ok((args, Some(scratch)))
         }

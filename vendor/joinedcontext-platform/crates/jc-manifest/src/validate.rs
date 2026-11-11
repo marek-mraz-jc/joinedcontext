@@ -240,7 +240,21 @@ fn assembly_findings(assembly: &Assembly, path: impl Fn(&Path) -> PathBuf) -> Ve
         line: 1,
         message: format!("project `{}`: {}", finding.slug, finding.message),
     });
-    unfetched.chain(found).collect()
+    // A project refused at assembly is left at its last render, which a check never accepts:
+    // its reason is a finding (T-6709).
+    let refused = assembly.entries.iter().filter_map(|entry| {
+        let refusal = entry.refused.as_ref()?;
+        Some(Finding {
+            path: refusal.path.as_ref().map_or_else(
+                || PathBuf::from(format!("projects/{}.yaml", entry.slug)),
+                |file| Path::new("projects").join(&entry.slug).join(file),
+            ),
+            document: 1,
+            line: 1,
+            message: refusal.reason.clone(),
+        })
+    });
+    unfetched.chain(refused).chain(found).collect()
 }
 
 fn refused(err: AssembleError) -> Report {

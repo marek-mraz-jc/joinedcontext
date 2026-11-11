@@ -6915,7 +6915,8 @@
       "config": {
         "planned": "Change planned",
         "applied": "Configuration applied",
-        "drifted": "Drift from the repository"
+        "drifted": "Drift from the repository",
+        "refused": "Change refused"
       },
       "change": {
         "merged": "Change merged",
@@ -9737,7 +9738,8 @@
     "mentioned": "{name} mentioned you in {space}",
     "changeOpened": "{name} opened change {change} in {project} through connector {connector}: approve or reject it",
     "connectorPending": "{name} asks for connector {connector} above the organization ceiling: approve or refuse it",
-    "connectorExpiring": "Your connector {connector} ends within 7 days: extend it or create a new one"
+    "connectorExpiring": "Your connector {connector} ends within 7 days: extend it or create a new one",
+    "configRefused": "Your change {change} in {project} was refused and is not live. Fix it in a new change; the last version that loaded keeps serving."
   },
   "problem": {
     "bad-request": "Correct the request as the detail says and send it again.",
