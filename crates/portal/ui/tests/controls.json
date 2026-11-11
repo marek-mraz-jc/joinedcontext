@@ -422,6 +422,7 @@
         "Button": 1
       },
       "tests": [
+        "binds_endpoints_note.test.tsx",
         "form_dialog_parts.test.tsx"
       ]
     },

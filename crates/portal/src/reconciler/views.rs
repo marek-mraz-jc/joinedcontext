@@ -941,13 +941,33 @@ fn view_of(
     // the broker serves a calendar only for the outputs listed here (EP-159, T-5208), and the feed
     // outputs as the Endpoint lists them, the broker's `antares-feed` contract (EP-150); a view
     // without a member serves no such format.
+    // A stored preset's `query` (API/02 §4a) reaches the broker as the `filter` it stands for,
+    // so a preset and the output it replaced render the same bytes.
     let mut representations = serde_json::Map::new();
-    let ical = e.spec.ical_outputs();
+    let ical: Vec<_> = e
+        .spec
+        .ical_outputs()
+        .iter()
+        .map(|output| jc_core::kinds::IcalOutput {
+            filter: output.effective_filter(),
+            query: None,
+            ..output.clone()
+        })
+        .collect();
     if !ical.is_empty() {
         let outputs = serde_json::to_value(ical).map_err(|err| err.to_string())?;
         representations.insert("ical".into(), outputs);
     }
-    let feeds = e.spec.feed_outputs();
+    let feeds: Vec<_> = e
+        .spec
+        .feed_outputs()
+        .iter()
+        .map(|output| jc_core::kinds::FeedOutput {
+            filter: output.effective_filter(),
+            query: None,
+            ..output.clone()
+        })
+        .collect();
     if !feeds.is_empty() {
         representations.insert("feed".into(), json!(feeds));
     }
@@ -1591,15 +1611,23 @@ impl ViewSync {
     /// Writes only what `repo` asks of the broker beyond the last read, and removes nothing: a
     /// merged change reaches the broker without a whole run (CC-65, T-6455). What is gone from
     /// `repo` stays for the whole run behind it, except a rule document: it is one object, so a
-    /// revoked Policy leaves here. Compiled by the same [`desired`] as a whole run.
+    /// revoked Policy leaves here. Compiled by the same [`desired`] as a whole run. With no last
+    /// read (a Portal whose first run holds removals, T-6708) it writes all `repo` asks for:
+    /// otherwise a Portal held from its start never wrote a view or document (T-6764).
     pub async fn converge_merged(&self, repo: &Repository) -> Vec<(Owner, ViewOutcome)> {
         let before = lock(&self.last).clone();
         let sources = self.remember(repo);
-        let Some(before) = before else {
-            return Vec::new();
+        let asked = match before {
+            Some(before) => desired(&sources).beyond(&desired(&before)),
+            None => {
+                // An empty rule set removes its document: no removal without a whole run.
+                let mut all = desired(&sources);
+                all.retention.retain(|_, (_, rules)| !rules.is_empty());
+                all.quality.retain(|_, (_, rules)| !rules.is_empty());
+                all
+            }
         };
-        self.apply(desired(&sources).beyond(&desired(&before)), Pass::Merged)
-            .await
+        self.apply(asked, Pass::Merged).await
     }
 
     /// Reads `repo` as the one a draft compiles against, and writes nothing: a replica that does
@@ -3877,6 +3905,15 @@ mod tests {
         };
         let view = with(json!(["ngsi-ld", "ical"]), Some(&outputs));
         assert_eq!(view["representations"], json!({ "ical": outputs }));
+        // T-6756: the same output stored as a preset `query` hands the broker the same bytes.
+        let mut preset = outputs.clone();
+        preset[0].as_object_mut().map(|o| o.remove("filter"));
+        preset[0]["query"] = json!("type=Event&q=eventCategory==%22sport%22");
+        let as_preset = with(json!(["ngsi-ld", "ical"]), Some(&preset));
+        assert_eq!(
+            serde_json::to_vec(&as_preset["representations"]).ok(),
+            serde_json::to_vec(&view["representations"]).ok()
+        );
         assert!(with(json!(["ngsi-ld", "ical"]), None)
             .get("representations")
             .is_none());
@@ -4175,6 +4212,99 @@ mod tests {
 
     async fn broker() -> MockServer {
         MockServer::start().await
+    }
+
+    /// T-6764: a Portal whose first run after a start holds removals (T-6708) writes every view
+    /// and rule document the repository asks for and removes nothing; a later held run over the
+    /// same repository writes only what changed since, here nothing.
+    #[tokio::test]
+    async fn a_first_held_run_writes_every_view_and_document_and_removes_nothing() {
+        let dir = std::env::temp_dir().join(format!(
+            "portal-views-first-held-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+        ));
+        let write = |rel: &str, body: &str| {
+            let path = dir.join(rel);
+            std::fs::create_dir_all(path.parent().expect("a parent")).expect("mkdir");
+            std::fs::write(path, body).expect("write");
+        };
+        let head = |kind: &str, name: &str| {
+            format!("apiVersion: joinedcontext.com/v1alpha1\nkind: {kind}\nmetadata:\n  name: {name}\n  namespace: city\nspec:\n")
+        };
+        write(
+            "projects/city/spaces/air/space.yaml",
+            &format!("{}  isSandbox: false\n", head("ContextSpace", "air")),
+        );
+        write(
+            "projects/city/spaces/air/endpoints/air-public.yaml",
+            &format!("{}  contextSpaceRef: air\n  slug: {SLUG}\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n", head("Endpoint", "air-public")),
+        );
+        write(
+            "projects/city/spaces/air/policies/cars.yaml",
+            &format!("{}  contextSpaceRef: air\n  assigner: did:web:city.example\n  assignee: {{ kind: role, id: public }}\n  operations: [retrieveOps]\n  information:\n    - entities: [{{ type: Car }}]\n      propertyNames: [speed]\n", head("Policy", "cars")),
+        );
+        let repo = Repository::load(&dir).expect("the repository loads");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let server = broker().await;
+        // The broker holds a view and a document this Portal owns that the repository lacks: a
+        // held run leaves both.
+        let gone = "zzzzzzzzzzzzzzzzzzzzzzzzzz";
+        json_at("/q/views", 200, json!({gone: {"state": "loaded"}}))
+            .mount(&server)
+            .await;
+        json_at(
+            "/q/policy",
+            200,
+            json!({"loaded": ["old-space"], "refused": []}),
+        )
+        .mount(&server)
+        .await;
+        for at in [format!("/q/views/{SLUG}"), "/q/views/cs-city-air".into()] {
+            json_at(&at, 404, json!({})).mount(&server).await;
+            Mock::given(method("PUT"))
+                .and(path(at))
+                .and(header("authorization", format!("Bearer {TOKEN}").as_str()))
+                .respond_with(ResponseTemplate::new(201))
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+        json_at("/q/policy/city-air", 404, json!({}))
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/q/policy/city-air"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let file = token_file();
+        let sync = ViewSync::new(server.uri(), &file);
+        let first: BTreeMap<String, ViewOutcome> = sync
+            .converge_merged(&repo)
+            .await
+            .into_iter()
+            .map(|(owner, outcome)| (owner.name, outcome))
+            .collect();
+        let again = sync.converge_merged(&repo).await;
+        let _ = std::fs::remove_file(&file);
+
+        assert_eq!(
+            first.get("air-public"),
+            Some(&ViewOutcome::Written),
+            "{first:?}"
+        );
+        assert_eq!(first.get("air"), Some(&ViewOutcome::Written), "{first:?}");
+        assert!(sync.written().contains_key("city-air"));
+        assert!(again.is_empty(), "nothing changed since: {again:?}");
     }
 
     /// A document the broker was seen holding is not read again on the next run; a changed

@@ -85,6 +85,25 @@ describe("the calendar and feed outputs", () => {
     expect(screen.getByText(o.feed.emptyHint)).toBeInTheDocument();
   });
 
+  it("shows an older output's filter as its preset query and stores the edit as query (T-6756)", async () => {
+    const kultura = {
+      name: "kultura",
+      filter: { q: 'eventCategory~="(?i)kult|koncert"', georel: "near;maxDistance==5000", geometry: "Point", coordinates: "[19.15,48.73]" },
+      sources: [{ type: "Event", preset: "sdm-event" }],
+    };
+    const seen = show({ ical: [kultura] });
+    const field = screen.getByLabelText(o.filterField.label);
+    expect(field).toHaveValue('q=eventCategory~="(?i)kult|koncert"&georel=near;maxDistance==5000&geometry=Point&coordinates=[19.15,48.73]');
+    expect(screen.getByText(o.filterField.hint)).toBeInTheDocument();
+    await userEvent.type(field, ";a==1");
+    const { filter: _gone, ...kept } = kultura;
+    expect(seen.at(-1)).toEqual({
+      ical: [{ ...kept, query: 'q=eventCategory~="(?i)kult|koncert"&georel=near;maxDistance==5000&geometry=Point&coordinates=[19.15,48.73];a==1' }],
+    });
+    await userEvent.clear(field);
+    expect(seen.at(-1)).toEqual({ ical: [kept] });
+  });
+
   it("says how to turn calendars on when the Endpoint does not serve iCal, and still offers feeds", () => {
     show(undefined, { contextSpaceRef: "events", enabledRepresentations: ["ngsi-ld"] });
     expect(screen.getByText(o.icalOff)).toBeInTheDocument();
@@ -100,11 +119,18 @@ describe("the calendar and feed outputs", () => {
     await userEvent.clear(name);
     await userEvent.type(name, "sport");
     await userEvent.type(screen.getByLabelText(o.title.sk), "Šport");
-    await userEvent.type(screen.getByLabelText(o.filterField.label), 'eventCategory=="sport"');
+    await userEvent.type(screen.getByLabelText(o.filterField.label), 'q=eventCategory=="sport"&georel=near;maxDistance==5000');
     expect(seen.at(-1)).toEqual({
-      ical: [{ name: "sport", title: { sk: "Šport" }, filter: { q: 'eventCategory=="sport"' }, sources: [{ type: "Event", preset: "sdm-event" }] }],
+      ical: [
+        {
+          name: "sport",
+          title: { sk: "Šport" },
+          query: 'q=eventCategory=="sport"&georel=near;maxDistance==5000',
+          sources: [{ type: "Event", preset: "sdm-event" }],
+        },
+      ],
     });
-    expect(screen.getByText(o.nameField.hint.replace("{address}", "ical/v1/sport.ics"))).toBeInTheDocument();
+    expect(screen.getByText(o.nameField.hint.replace("{address}", "feeds/sport.ics"))).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: o.removeNamed.replace("{name}", "Šport") }));
     expect(seen.at(-1)).toBeUndefined();
     expect(screen.getByText(o.ical.emptyTitle)).toBeInTheDocument();
