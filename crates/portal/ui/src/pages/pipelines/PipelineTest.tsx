@@ -213,8 +213,8 @@ export function draftFromRecord(
   };
   const lines = [
     `# drafted from ${name}: ${columns.length} columns, id from ${idColumn} (PL-44)`,
-    `let domain = env("JC_ORG_DOMAIN")`,
-    `root.id = "urn:ngsi-ld:%v:%v:%v:%v".format(${JSON.stringify(type)}, $domain, ${JSON.stringify(space)}, ${path(idColumn)}.string())`,
+    `let owner = env("JC_ORG_ID")`,
+    `root.id = "urn:ngsi-ld:%v:%v:%v:%v".format(${JSON.stringify(type)}, $owner, ${JSON.stringify(space)}, ${path(idColumn)}.string())`,
     `root.type = ${JSON.stringify(type)}`,
     ...columns
       .filter((column) => column !== idColumn && column !== "type")

@@ -150,7 +150,11 @@ async fn call(app: &Router, method: &str, uri: &str) -> Result<(StatusCode, Valu
     let request = Request::builder()
         .method(method)
         .uri(uri)
-        .body(Body::empty())
+        .body(if method == "PATCH" {
+            Body::from(r#"{"size": 4}"#)
+        } else {
+            Body::empty()
+        })
         .map_err(|e| e.to_string())?;
     let response = app
         .clone()

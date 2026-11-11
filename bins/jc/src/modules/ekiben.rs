@@ -11,7 +11,7 @@
 //!   Kubernetes Secret the Portal writes for a runner in a cluster;
 //! - the runner variables dev's Deployment sets come from `jc`'s own mounts and files
 //!   ([`runner_defaults`]): `JC_GATEWAY_URL`, `JC_GATEWAY_HOST`, `JC_TOKEN_URL`, `JC_ORG_DOMAIN`,
-//!   `JC_CLIENT_ID`, and each `JC_CLIENT_SECRET_<PROJECT>` of `[ekiben] client_secrets_dir`
+//!   `JC_ORG_ID` (the owner segment of a minted id, ADR-N-068), `JC_CLIENT_ID`, and each `JC_CLIENT_SECRET_<PROJECT>` of `[ekiben] client_secrets_dir`
 //!   (project mode: the Portal's default, as on the local and production profiles);
 //! - private and loopback HTTP targets stay refused (ekiben's default quotas), so a stream cannot
 //!   call the other modules' listeners from inside the process; the one exception is `jc`'s own
@@ -388,6 +388,7 @@ fn runner_defaults(
         .filter(|d| !d.trim().is_empty())
         .unwrap_or_else(|| crate::provision::domain(siblings.portal_base().as_deref()));
     out.insert("JC_MQTT_NAMESPACE".to_owned(), dns_label(&org_domain));
+    out.insert("JC_ORG_ID".to_owned(), jc_core::names::org_id(&org_domain));
     out.insert("JC_ORG_DOMAIN".to_owned(), org_domain);
     if let Some(client) = harness_client {
         out.insert("JC_CLIENT_ID".to_owned(), client.to_owned());
@@ -834,6 +835,8 @@ mod tests {
             Some("hel.fi".into()),
         );
         assert_eq!(named["JC_ORG_DOMAIN"], "hel.fi");
+        // T-6769: a mapping mints the owner segment of its ids from the Organization's id.
+        assert_eq!(named["JC_ORG_ID"], "fi_hel");
         assert_eq!(named["JC_MQTT_NAMESPACE"], "hel-fi");
         assert!(!named.contains_key("JC_CLIENT_ID"));
         // Without the gateway and kaisatsu nothing points at them.
@@ -845,7 +848,7 @@ mod tests {
         );
         assert_eq!(
             alone.keys().collect::<Vec<_>>(),
-            ["JC_MQTT_NAMESPACE", "JC_ORG_DOMAIN"]
+            ["JC_MQTT_NAMESPACE", "JC_ORG_DOMAIN", "JC_ORG_ID"]
         );
     }
 

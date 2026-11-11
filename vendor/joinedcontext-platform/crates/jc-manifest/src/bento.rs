@@ -125,6 +125,11 @@ meta range = deleted()
 /// mints its ids under the new one without an edit (Architecture/03 §3).
 pub const ORG_DOMAIN_VAR: &str = "JC_ORG_DOMAIN";
 
+/// The variable a mapping mints the owner segment of an id from, the owning Organization's id
+/// (`sk_bbsk` for `bbsk.sk`): `urn:ngsi-ld:{Type}:{orgId}:...` (ADR-N-068). The runner sets it
+/// beside [`ORG_DOMAIN_VAR`], from the same domain.
+pub const ORG_ID_VAR: &str = "JC_ORG_ID";
+
 /// The variable a mapping mints the `{space}` segment of an id from (PL-57, PF-84).
 ///
 /// One runner serves every pipeline of a project, so unlike [`ORG_DOMAIN_VAR`] the space
@@ -536,13 +541,13 @@ pub fn id_processor(mint: &IdMint, entity_type: &str) -> Result<Value, RenderErr
     let field = |path: &str| format!("this.{path}.string()");
     let id = match mint.mint {
         Mint::Prefixed => format!(
-            "\"urn:ngsi-ld:{entity_type}:%s:%s:%s\".format(env(\"{ORG_DOMAIN_VAR}\"), env(\"{SPACE_VAR}\"), {}.re_replace_all(\"[^A-Za-z0-9._~-]\", \"-\"))",
+            "\"urn:ngsi-ld:{entity_type}:%s:%s:%s\".format(env(\"{ORG_ID_VAR}\"), env(\"{SPACE_VAR}\"), {}.re_replace_all(\"[^A-Za-z0-9._~-]\", \"-\"))",
             field(mint.from.as_deref().unwrap_or_default())
         ),
         Mint::Keep => {
             let from = field(mint.from.as_deref().unwrap_or_default());
             format!(
-                "if {from}.has_prefix(\"urn:ngsi-ld:\") {{ {from} }} else {{ \"urn:ngsi-ld:{entity_type}:\" + {from} }}"
+                "if {from}.has_prefix(\"urn:ngsi-ld:\") {{ {from} }} else {{ \"urn:ngsi-ld:{entity_type}:\" + env(\"{ORG_ID_VAR}\") + \":\" + {from} }}"
             )
         }
         Mint::Template => mint

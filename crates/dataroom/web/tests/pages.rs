@@ -786,13 +786,19 @@ fn d3_dataset_page_shows_every_block_for_a_platform_dataset() {
 }
 
 #[test]
-fn d3_dataset_page_offers_a_calendar_of_the_tables_rows_for_an_antares_calendar_output() {
+fn d3_dataset_page_builds_a_calendar_from_choices_on_its_own_endpoints_output() {
     let mut c = cat();
     c.branding = Some(json!({ "domain": DOMAIN }));
-    let feed = ep("ical/v1/vsetky.ics");
+    let feed = ep("feeds/vsetky.ics");
+    // A publisher's title with markup and q syntax stays text in the label and the head link.
+    let title = "Kultúra \"<b>\";|() & viac";
     let ds = with_dists(
         dataset("events", json!({ "endpointUrl": ep("") })),
-        vec![dist("cal", &feed, json!({ "mediaType": "text/calendar" }))],
+        vec![dist(
+            "cal",
+            &feed,
+            json!({ "mediaType": "text/calendar", "title": {"sk": title} }),
+        )],
     );
     let html = render_dataset_page_full(
         &c,
@@ -807,28 +813,80 @@ fn d3_dataset_page_offers_a_calendar_of_the_tables_rows_for_an_antares_calendar_
         "/m",
         NONCE,
     );
-    assert_safe_page("dataset-calendar-query", &html, "sk");
+    assert_safe_page("dataset-calendar-builder", &html, "sk");
+    // e2e/subscribe_builder.spec.ts drives this page through the real jc-viz.js.
+    std::fs::write(concat!(env!("CARGO_TARGET_TMPDIR"), "/builder.html"), &html)
+        .expect("the page written");
+    assert!(!html.contains("<b>\";|()"), "the title is escaped");
+    let escaped = "Kultúra &quot;&lt;b&gt;&quot;;|() &amp; viac";
+    assert!(
+        html.contains(&format!(
+            "<link rel=\"alternate\" type=\"text/calendar\" title=\"{escaped}\" href=\"{feed}\">"
+        )),
+        "the head names the calendar for feed readers"
+    );
+    let webcal = feed.replace("https://", "webcal://");
+    let cid: String = url::form_urlencoded::byte_serialize(webcal.as_bytes()).collect();
+    assert!(html.contains(&format!(
+        "href=\"https://calendar.google.com/calendar/r?cid={cid}\""
+    )));
+    assert!(html.contains(&esc_t("subscribe_refresh", "sk")));
     let at = html
         .find("class=\"jc-subscribe-query\"")
-        .expect("the query calendar");
+        .expect("the calendar builder");
     let section = &html[at..at + html[at..].find("</section>").expect("end")];
-    // Hidden without script (jc-viz.js shows it); the feed's address is the page's own.
-    assert!(
-        section.contains(&format!("data-jc-feed=\"{feed}\"")),
-        "{section}"
-    );
-    assert!(html[..at].ends_with("<section ") || html[at - 200..at].contains("<section"));
-    assert!(section.contains(" hidden>"), "{section}");
-    assert!(section.contains("<input id=\"jc-subscribe-q\""));
-    assert!(
-        section.contains("aria-describedby=\"jc-subscribe-q-hint jc-subscribe-preview-status\"")
-    );
-    assert!(section.contains("data-jc-copy=\"jc-subscribe-mine-url\""));
-    assert!(section.contains(&esc_t("subscribe_query_hint", "sk")));
+    let base = ep("");
+    let base = base.trim_end_matches('/');
+    // Hidden without script (jc-viz.js shows it); the builder narrows the dataset's own output.
     assert!(section.contains(&format!(
-        "href=\"{}\"",
-        feed.replace("https://", "webcal://")
+        "data-jc-base=\"{base}\" data-jc-output=\"vsetky\""
     )));
+    assert!(section.contains(" hidden>"), "{section}");
+    assert!(!section.contains("data-jc-feeds"), "no feed, no RSS ending");
+    assert!(!section.contains("jc-subscribe-mine-rss"));
+    for id in [
+        "jc-subscribe-from",
+        "jc-subscribe-to",
+        "jc-subscribe-mine-csv",
+        "jc-subscribe-mine-google",
+    ] {
+        assert!(section.contains(&format!("id=\"{id}\"")), "{id}");
+    }
+    assert!(section.contains("aria-describedby=\"jc-subscribe-dates-hint\""));
+    assert!(section.contains(&esc_t("subscribe_dates_hint", "sk")));
+    assert!(section.contains(&esc_t("subscribe_no_facets", "sk")));
+    assert!(section.contains(&format!("{base}/feeds/vsetky.ics</textarea>")));
+}
+
+#[test]
+fn d3_dataset_page_builds_no_calendar_for_another_servers_feed() {
+    let mut c = cat();
+    c.branding = Some(json!({ "domain": DOMAIN }));
+    for feed in [
+        "https://elsewhere.example/api/endpoint/abc/feeds/vsetky.ics".to_owned(),
+        ep("feeds/a%2Fb.ics"),
+        ep("feeds/q=a/vsetky.ics"),
+        ep("file.ics"),
+    ] {
+        let ds = with_dists(
+            dataset("events", json!({ "endpointUrl": ep("") })),
+            vec![dist("cal", &feed, json!({ "mediaType": "text/calendar" }))],
+        );
+        let html = render_dataset_page_full(
+            &c,
+            None,
+            &ds,
+            None,
+            &[],
+            &[],
+            false,
+            "sk",
+            true,
+            "/m",
+            NONCE,
+        );
+        assert!(!html.contains("class=\"jc-subscribe-query\""), "{feed}");
+    }
 }
 
 #[test]

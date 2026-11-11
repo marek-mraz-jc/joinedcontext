@@ -63,8 +63,8 @@ impl Table for Tagged {
         self.inner.fetch(plan, scope)
     }
 
-    fn etag(&self) -> Option<&str> {
-        Some("0123abcd")
+    fn etag(&self) -> Option<String> {
+        Some("0123abcd".into())
     }
 }
 

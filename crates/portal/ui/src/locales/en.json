@@ -5172,7 +5172,8 @@
       "noOthers": "No other group holds this role.",
       "give": "Give this role to a group",
       "groupsUnreadable": "Your role does not list the organization's groups.",
-      "personHint": "Search by name or e-mail, e.g. Jana Nováková. The group records the person's id, not the address."
+      "personHint": "Search by name or e-mail, e.g. Jana Nováková. The group records the person's id, not the address.",
+      "groupHint": "One of the organization's groups. Giving it the role proposes a change to the application for an approver."
     },
     "check": {
       "green": "Working",

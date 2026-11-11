@@ -91,6 +91,7 @@ pub async fn build(
     if let Some(addr) = listener.as_ref().and_then(|l| l.local_addr().ok()) {
         let _ = super::PORTAL_INTERNAL.set(addr);
     }
+    let _ = super::PORTAL_STATE.set(state.clone());
     server::spawn_background(&state);
     let token = shutdown.clone();
     let internal = listener
@@ -101,9 +102,6 @@ pub async fn build(
     server::spawn_build_listener(&state, async move { token.cancelled().await })
         .await
         .map_err(|e| err(format!("build listener: {e}")))?;
-    // Set once this attempt is the one that serves: a failed attempt's state stays out of it.
-    #[cfg(feature = "daiya")]
-    let _ = super::PORTAL_STATE.set(state.clone());
     Ok((server::app(state), internal))
 }
 

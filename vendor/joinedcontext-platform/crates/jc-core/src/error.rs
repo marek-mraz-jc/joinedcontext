@@ -151,6 +151,7 @@ pub const PROBLEM_TYPES: &[ProblemType] = &[
     ProblemType { slug: "precondition-failed", status: 412, title: "Precondition Failed", hint: "Read the entity again and send its current version in If-Match." },
     ProblemType { slug: "payload-too-large", status: 413, title: "Payload Too Large", hint: "Send less at once: split the request or the file." },
     ProblemType { slug: "unsupported-media-type", status: 415, title: "Unsupported Media Type", hint: "Send the body as application/json or application/ld+json." },
+    ProblemType { slug: "urn-owner", status: 422, title: "Entity Identifier Names Another Owner", hint: "Write the id as urn:ngsi-ld:{Type}:{orgId}:{id}, with the id of the Organization that owns the space (sk_bbsk for bbsk.sk)." },
     ProblemType { slug: "upgrade-required", status: 426, title: "Upgrade Required", hint: "This address is a WebSocket: open it with the subprotocol ngsi-ld-ws and send an x-subscribe message; the answer names an example and the guide." },
     ProblemType { slug: "too-many-requests", status: 429, title: "Too Many Requests", hint: "Wait the seconds Retry-After names, then try again." },
     ProblemType { slug: "daily-budget", status: 429, title: "Daily Budget Spent", hint: "Today's allowance is used up; try again tomorrow or ask an administrator to raise it." },
@@ -296,6 +297,12 @@ impl ProblemDetails {
             "urn-scheme",
             "Entity Identifier Violates the URN Scheme",
         )
+    }
+
+    /// 422 Unprocessable Content for an entity id whose owner segment is not the id of the
+    /// Organization owning the space written to (`urn-owner`, ADR-N-068).
+    pub fn urn_owner() -> Self {
+        Self::new(422, "urn-owner", "Entity Identifier Names Another Owner").with_field("id")
     }
 
     /// 401 Unauthorized (`unauthorized`, PF-46).
