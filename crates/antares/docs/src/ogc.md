@@ -218,10 +218,21 @@ the first page and the broker holds one page, never the file. A Parquet
 writes a row group per page and its footer last; a ZIP writes each member
 with a data descriptor, and reads a collection once for its CSV and once
 for its Parquet. A file may hold `ANTARES_EXPORT_FILE_BYTES` (default
-512 MiB) and take `ANTARES_EXPORT_FILE_SECONDS` (default 120): past either
+512 MiB) and take `ANTARES_EXPORT_FILE_SECONDS` (default 240): past either
 it is `413` or `503` before its first byte, and cut after it, its transfer
 ended broken (a CSV ends with a `#` row naming why), never sent as a
-whole file. The answer ceiling bounds each page it reads.
+whole file. The broker logs every cut once at `WARN` with its reason, the
+rows and bytes written and the seconds taken, under the request's span.
+The answer ceiling bounds each page it reads.
+
+The time is a wall clock over the whole file, time blocked on a slow
+reader included. Its default fits the largest collection of the frozen
+prod export (praha-mesto Garden, 255,283 rows) as a ZIP on a loaded host:
+two reads (CSV, Parquet) of 256 pages at the measured 0.31 s a page are
+159 s, times 1.5 is 240 s. At 120 s that ZIP was cut at 119.9 s in its
+Parquet member. A slow reader holds a place for at most that time, so
+six (the default `ANTARES_EXPORT_FILES`) can refuse other files for up to
+240 s; pages of Features are not held to it.
 
 The surface writes at most `ANTARES_EXPORT_FILES` files at once (default
 6, [Configuration](configuration.md)), Parquet, CSV and ZIP together; a
