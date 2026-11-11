@@ -110,7 +110,7 @@ export function passes(text: string, kind: DataKind, filter: ColumnFilter): bool
 }
 
 /** The rows a query keeps, before paging: search over every shown column, then each filter. */
-export function filterRows<T>(rows: readonly T[], columns: readonly DataColumn<T>[], query: Pick<DataQuery, "search" | "filters">): T[] {
+export function filterDataRows<T>(rows: readonly T[], columns: readonly DataColumn<T>[], query: Pick<DataQuery, "search" | "filters">): T[] {
   const needle = query.search.trim().toLocaleLowerCase();
   const read = columns.filter((col) => !col.actions);
   const active = read.filter((col) => complete(query.filters[col.key]));
@@ -122,7 +122,7 @@ export function filterRows<T>(rows: readonly T[], columns: readonly DataColumn<T
 }
 
 /** A stable sort by one column; empty values last in either direction, as a spreadsheet keeps them. */
-export function sortRows<T>(rows: readonly T[], columns: readonly DataColumn<T>[], sort: DataSort | null): T[] {
+export function sortDataRows<T>(rows: readonly T[], columns: readonly DataColumn<T>[], sort: DataSort | null): T[] {
   const col = sort ? columns.find((each) => each.key === sort.key) : undefined;
   if (!sort || !col) return [...rows];
   const kind = col.kind ?? "text";
@@ -139,7 +139,7 @@ export function sortRows<T>(rows: readonly T[], columns: readonly DataColumn<T>[
 
 /** One page of the rows the query keeps, and how many it keeps in all. */
 export function arrangeRows<T>(rows: readonly T[], columns: readonly DataColumn<T>[], query: DataQuery): { rows: T[]; total: number } {
-  const kept = sortRows(filterRows(rows, columns, query), columns, query.sort);
+  const kept = sortDataRows(filterDataRows(rows, columns, query), columns, query.sort);
   const offset = Math.min(query.offset, Math.max(0, Math.floor((kept.length - 1) / query.pageSize) * query.pageSize));
   return { rows: kept.slice(offset, offset + query.pageSize), total: kept.length };
 }
