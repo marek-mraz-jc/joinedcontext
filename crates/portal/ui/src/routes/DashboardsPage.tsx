@@ -19,6 +19,8 @@ import { GridWidget } from "../components/dashboards/GridWidget";
 import { TypeLink } from "../pages/models/ModelLinks";
 import { TemporalChart } from "../components/dashboards/TemporalChart";
 import { TypeChart } from "../components/dashboards/TypeChart";
+import { VegaLiteWidget } from "../components/dashboards/VegaLiteWidget";
+import type { WidgetSource } from "../components/dashboards/vegaLiteSource";
 import {
   DashboardEditor,
   dashboardFromManifest,
@@ -87,6 +89,9 @@ interface WidgetSpec {
   entityType?: string;
   grid?: Record<string, unknown>;
   q?: string;
+  /** A `vega-lite` widget's source of its Endpoint and its spec (T-6786). */
+  data?: WidgetSource;
+  spec?: Record<string, unknown>;
 }
 
 interface DashboardSpec {
@@ -630,6 +635,16 @@ export function DashboardsPage({ project }: { project: string }): JSX.Element {
                 title={t(`dashboards.widget.${widget.widgetType === "bar-chart" ? "barTitle" : "histogramTitle"}`, {
                   property: widget.property,
                   type: widget.entityType,
+                })}
+              />
+            ) : widget.widgetType === "vega-lite" && slug && widget.data && widget.spec ? (
+              <VegaLiteWidget
+                key={`vega-lite-${widget.endpointRef}-${index}`}
+                slug={slug}
+                source={widget.data}
+                spec={widget.spec}
+                fallbackTitle={t("dashboards.widget.vegaTitle", {
+                  type: "type" in widget.data ? widget.data.type : "collection" in widget.data ? widget.data.collection : widget.data.entitySet,
                 })}
               />
             ) : (

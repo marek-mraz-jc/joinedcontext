@@ -3722,6 +3722,9 @@
     "widget": {
       "temporalChart": "{property} im Zeitverlauf",
       "unsupported": "Diese Seite hat ein {type}-Widget, das das Portal noch nicht zeichnet.",
+      "vegaNoRows": "Die Quelle dieses Diagramms enthält keine Zeilen. Ändern Sie den Filter der Quelle oder prüfen Sie, ob der Endpunkt diesen Typ veröffentlicht.",
+      "vegaCut": "Das Diagramm zeigt nur die ersten {count} Zeilen.",
+      "vegaTitle": "Diagramm von {type}",
       "noHistory": "Keine Historie zum Zeichnen.",
       "latest": "Letzter Wert {property}: {value} ({count} Messungen)",
       "chartLabel": "{property} von {entity} im Zeitverlauf",
@@ -8683,7 +8686,8 @@
       "temporal-chart": "Diagramm über die Zeit",
       "bar-chart": "Balken nach Wert",
       "histogram": "Histogramm",
-      "grid": "Tabelle"
+      "grid": "Tabelle",
+      "vega-lite": "Vega-Lite-Diagramm"
     },
     "columnFormat": {
       "text": "Text",

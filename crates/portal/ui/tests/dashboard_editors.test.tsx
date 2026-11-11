@@ -452,7 +452,7 @@ describe("the grid widget of a dashboard", () => {
     const pages = schema.properties?.pages as { items?: { properties?: Record<string, JsonSchema> } };
     const widget = pages.items?.properties?.widgets as { items?: { properties?: Record<string, JsonSchema> } };
     const properties = widget.items?.properties ?? {};
-    expect((properties.widgetType as { oneOf?: { const: string }[] }).oneOf?.map((option) => option.const)).toEqual(["temporal-chart", "bar-chart", "histogram", "grid"]);
+    expect((properties.widgetType as { oneOf?: { const: string }[] }).oneOf?.map((option) => option.const)).toEqual(["temporal-chart", "bar-chart", "histogram", "grid", "vega-lite"]);
     expect(properties.entityType).toBeDefined();
     const grid = properties.grid as { properties?: Record<string, unknown> };
     // The grid's own configuration, and never the two fields the widget decides for it.

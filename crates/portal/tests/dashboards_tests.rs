@@ -285,6 +285,53 @@ async fn a_widget_of_a_public_dashboard_reads_only_a_public_endpoint() {
     assert!(findings(&body).contains("widget /spec/pages/0/widgets/0 of the public dashboard air"), "{body}");
 }
 
+/// `jc_resource_propose`, the registry operation MCP serves as a tool (T-6787: a dashboard made
+/// over MCP is a Change like any other), at `project`.
+async fn propose_op(config: &Config, envelopes: Vec<ResourceEnvelope>, project: &str, manifest: &Value) -> (StatusCode, String) {
+    let state = AppState::new(config.clone(), None);
+    for env in envelopes {
+        state.mirror.upsert(env);
+    }
+    let response = server::app(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/projects/{project}/ops/jc_resource_propose"))
+                .header(header::COOKIE, cookies(config))
+                .header(CSRF_HEADER, CSRF)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&json!({ "manifest": manifest })).expect("json")))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status = response.status();
+    let bytes = response.into_body().collect().await.expect("body").to_bytes();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// T-6787: the registry door (REST `ops/`, MCP) refuses what the PUT door refuses: a public
+/// dashboard over a private Endpoint names the widget, a spec with a URL names its member, and a
+/// dashboard written into a project the caller is not in is refused before anything is read.
+#[tokio::test]
+async fn the_operation_door_refuses_a_private_widget_a_url_spec_and_another_project() {
+    let config = Config::for_tests();
+    let (status, body) = propose_op(&config, vec![endpoint("internal", "organization")], PROJECT, &chart_dashboard("public", "internal")).await;
+    assert!(status.is_client_error(), "{status} {body}");
+    assert!(body.contains("widget /spec/pages/0/widgets/0 reads internal"), "{body}");
+
+    let mut fetching = chart_dashboard("project", "internal");
+    fetching["spec"]["pages"][0]["widgets"][0]["spec"]["data"] = json!({ "url": "https://evil.example/rows.json" });
+    let (status, body) = propose_op(&config, vec![endpoint("internal", "organization")], PROJECT, &fetching).await;
+    assert!(status.is_client_error(), "{status} {body}");
+    assert!(body.contains("/spec/pages/0/widgets/0/spec/data/url"), "{body}");
+
+    let mut elsewhere = chart_dashboard("project", "internal");
+    elsewhere["metadata"]["namespace"] = json!("another-city");
+    let (status, body) = propose_op(&config, vec![], "another-city", &elsewhere).await;
+    assert!(matches!(status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND), "{status} {body}");
+}
+
 #[tokio::test]
 async fn a_layer_of_a_public_dashboard_cannot_move_to_a_private_endpoint() {
     let config = Config::for_tests();

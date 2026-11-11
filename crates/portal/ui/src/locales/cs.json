@@ -3722,6 +3722,9 @@
     "widget": {
       "temporalChart": "{property} v čase",
       "unsupported": "Tato stránka má prvek {type}, který Portál zatím nekreslí.",
+      "vegaNoRows": "Zdroj tohoto grafu nemá žádné řádky. Změňte filtr zdroje nebo ověřte, že koncový bod tento typ zveřejňuje.",
+      "vegaCut": "Graf kreslí jen prvních {count} řádků.",
+      "vegaTitle": "Graf typu {type}",
       "noHistory": "Není historie k vykreslení.",
       "latest": "Poslední hodnota {property}: {value} ({count} měření)",
       "chartLabel": "{property} entity {entity} v čase",
@@ -8683,7 +8686,8 @@
       "temporal-chart": "Graf v čase",
       "bar-chart": "Sloupce podle hodnoty",
       "histogram": "Histogram",
-      "grid": "Tabulka"
+      "grid": "Tabulka",
+      "vega-lite": "Graf Vega-Lite"
     },
     "columnFormat": {
       "text": "Text",

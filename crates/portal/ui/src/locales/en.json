@@ -3722,6 +3722,9 @@
     "widget": {
       "temporalChart": "{property} over time",
       "unsupported": "This page has a {type} widget the Portal does not draw yet.",
+      "vegaNoRows": "This chart's source holds no rows. Change the source's filter, or check that the Endpoint publishes this type.",
+      "vegaCut": "The chart draws the first {count} rows only.",
+      "vegaTitle": "Chart of {type}",
       "noHistory": "No history to draw.",
       "latest": "Latest {property}: {value} ({count} readings)",
       "chartLabel": "{property} of {entity} over time",
@@ -8683,7 +8686,8 @@
       "temporal-chart": "Chart over time",
       "bar-chart": "Bars by value",
       "histogram": "Histogram",
-      "grid": "Table"
+      "grid": "Table",
+      "vega-lite": "Vega-Lite chart"
     },
     "columnFormat": {
       "text": "Text",
