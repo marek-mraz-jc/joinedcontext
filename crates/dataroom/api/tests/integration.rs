@@ -1531,6 +1531,199 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
 
 /// The pack's live pages escape `'` as `&#39;` (Jinja), askama as `&#x27;`: the same character.
 /// Snapshot comparisons read both in the pack's form.
+/// T-6790: the packages of `type: dashboard` the Portal publishes are listed at `/dashboards`, drawn
+/// at `/dashboards/{name}` (chart frames of their views, the explorer of a grid's Endpoint), left
+/// out of the dataset search and the sitemap, and linked from the page of a dataset they read. A
+/// layout entry whose slug or type breaks its rule is dropped.
+#[tokio::test]
+async fn t6790_dashboards_are_listed_drawn_kept_out_of_dataset_search_and_linked_from_their_data() {
+    let org_id = OrgId::from_uuid(Uuid::from_u128(6790));
+    let cat_id = CatalogueId::from_uuid(Uuid::from_u128(67900));
+    let host = "opendata.dev.joinedcontext.com";
+    let store = Arc::new(MemoryStore::new());
+    let mut cat = make_catalogue(org_id, cat_id, "dev", host);
+    cat.branding = Some(json!({ "domain": "dev.joinedcontext.com" }));
+    store.upsert_catalogue(cat).await.unwrap();
+    let authz = Arc::new(PolicyAuthorizer::new(vec![GrantRule {
+        org_id,
+        catalogue_id: Some(cat_id),
+        principal: "jcctl-publisher".into(),
+        actions: vec![
+            Action::Read,
+            Action::Propose,
+            Action::Approve,
+            Action::Delete,
+            Action::Admin,
+        ],
+        publisher_id: None,
+    }]));
+    let branding = dataroom_core::BrandingBlock::from_yaml_lossy(include_str!(
+        "../../core/tests/fixtures/branding/dev-branding.yaml"
+    ));
+    let state = DataroomState::new(store.clone(), authz, org_id, cat_id)
+        .with_tokens(vec![TokenBinding {
+            token: "secret-jcctl-token".into(),
+            subject: Subject::authenticated("jcctl-publisher", vec![org_id], Vec::new()),
+        }])
+        .with_installation_branding(branding);
+    let app = router(state);
+    let tok = Some("secret-jcctl-token");
+    let slug = "scsd2eehkx42n53z2zyd6vshfh7s7irf";
+    let endpoint = format!("https://api.dev.joinedcontext.com/api/endpoint/{slug}");
+    let call = |action: &'static str, body: Value| {
+        let app = app.clone();
+        async move {
+            let (st, _, text) = send_json(
+                &app,
+                Method::POST,
+                &format!("/api/3/action/{action}"),
+                host,
+                tok,
+                None,
+                Some(body),
+            )
+            .await;
+            assert_eq!(st, StatusCode::OK, "{action}: {text}");
+            serde_json::from_str::<Value>(&text).unwrap()["result"].clone()
+        }
+    };
+    call(
+        "organization_create",
+        json!({ "name": "bbsk", "title": "BBSK" }),
+    )
+    .await;
+    call(
+        "package_create",
+        json!({ "name": "bikes", "title": "Bike docks", "notes": "Bike docks of the region.", "owner_org": "bbsk",
+                "extras": [{ "key": "endpoint", "value": endpoint }],
+                "resources": [{ "name": "NGSI-LD", "url": endpoint, "format": "NGSI-LD" }] }),
+    )
+    .await;
+    let layout = json!({ "pages": [{ "title": "Overview", "widgets": [
+        { "view": "p0w0" },
+        { "grid": slug, "type": "BikeHireDockingStation" },
+        { "grid": "x\"><script>alert(1)</script>", "type": "BikeHireDockingStation" },
+        { "grid": slug, "type": "Bike&inline=1" }
+    ]}]});
+    let dashboard = call(
+        "package_create",
+        json!({ "name": "bbsk-ukazovatele", "title": "Ukazovatele", "type": "dashboard",
+                "notes": "Charts and tables over the live data of bikes.",
+                "owner_org": "bbsk",
+                "extras": [
+                    { "key": "generated_by", "value": "jcctl/ckan-publisher" },
+                    { "key": "jc_endpoints", "value": endpoint },
+                    { "key": "jc_dashboard", "value": layout.to_string() }
+                ],
+                "resources": [{ "name": "bikes", "url": endpoint, "format": "NGSI-LD" }] }),
+    )
+    .await;
+    let resource = dashboard["resources"][0]["id"].as_str().unwrap().to_owned();
+    let view = call(
+        "resource_view_create",
+        json!({ "resource_id": resource, "view_type": "jc_visualization",
+                "title": "Docks per district", "description": "",
+                "jc_name": "p0w0", "spec": "{\"mark\":\"bar\"}",
+                "source": "{\"source\":\"csv\",\"type\":\"BikeHireDockingStation\"}",
+                "endpoint": slug }),
+    )
+    .await;
+    let view_id = view["id"].as_str().unwrap().to_owned();
+
+    // The catalogue API still finds the dashboard (the Portal's sweep reads it there).
+    let (_, _, found) = send_json(
+        &app,
+        Method::GET,
+        "/api/3/action/package_search?fq=organization:bbsk",
+        host,
+        tok,
+        None,
+        None,
+    )
+    .await;
+    assert!(found.contains("bbsk-ukazovatele"), "{found}");
+
+    let get = |path: &'static str| {
+        let app = app.clone();
+        async move {
+            let (st, _, html) = send_json(&app, Method::GET, path, host, None, None, None).await;
+            (st, normalise_entities(&html))
+        }
+    };
+    let (st, list) = get("/dashboards").await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        list.contains("href=\"/dashboards/bbsk-ukazovatele\""),
+        "{list}"
+    );
+    assert!(
+        list.contains(">Ukazovatele<") && list.contains("BBSK"),
+        "{list}"
+    );
+
+    let (st, page) = get("/dashboards/bbsk-ukazovatele").await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(page.contains(&format!("#{view_id}&amp;inline")), "{page}");
+    assert!(page.contains("Docks per district"));
+    assert!(
+        page.contains("href=\"/dataset/bikes#jc-preview-title\""),
+        "{page}"
+    );
+    assert!(
+        page.contains(&format!("explore.html#{slug}&amp;inline&amp;lang=sk&amp;theme=light&amp;type=BikeHireDockingStation&amp;dataset=bikes")),
+        "{page}"
+    );
+    assert_eq!(
+        page.matches("explore.html#").count(),
+        1,
+        "the two broken grids are dropped"
+    );
+    assert!(!page.contains("<script>alert") && !page.contains("Bike&amp;inline=1"));
+    assert!(
+        page.contains("href=\"/dataset/bikes\""),
+        "the data it reads is linked"
+    );
+
+    // A dataset is not a dashboard, and an unknown name is a 404.
+    assert_eq!(get("/dashboards/bikes").await.0, StatusCode::NOT_FOUND);
+    assert_eq!(
+        get("/dashboards/nothing-here").await.0,
+        StatusCode::NOT_FOUND
+    );
+
+    let (_, search) = get("/dataset/").await;
+    assert!(
+        search.contains("Bike docks") && !search.contains("Ukazovatele"),
+        "{search}"
+    );
+    let (_, sitemap) = get("/sitemap.xml").await;
+    assert!(
+        sitemap.contains("/dataset/bikes") && !sitemap.contains("bbsk-ukazovatele"),
+        "{sitemap}"
+    );
+
+    let (_, dataset) = get("/dataset/bikes").await;
+    assert!(dataset.contains("id=\"jc-dashboards-title\""), "{dataset}");
+    assert!(
+        dataset.contains("href=\"/dashboards/bbsk-ukazovatele\""),
+        "{dataset}"
+    );
+
+    // Withdrawn by the sweep: gone from the list, the page and the dataset's links.
+    call("package_delete", json!({ "id": "bbsk-ukazovatele" })).await;
+    let (_, list) = get("/dashboards").await;
+    assert!(
+        !list.contains("bbsk-ukazovatele") && list.contains("jc-dashboards-empty"),
+        "{list}"
+    );
+    assert_eq!(
+        get("/dashboards/bbsk-ukazovatele").await.0,
+        StatusCode::NOT_FOUND
+    );
+    let (_, dataset) = get("/dataset/bikes").await;
+    assert!(!dataset.contains("jc-dashboards-title"));
+}
+
 fn normalise_entities(html: &str) -> String {
     html.replace("&#x27;", "&#39;")
         .replace("&#x22;", "&quot;")

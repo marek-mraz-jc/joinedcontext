@@ -274,7 +274,7 @@ pub fn render_dashboard_list_page(
             publisher: publisher_title(d, publishers, &chrome.lang, default),
         })
         .collect();
-    cards.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+    cards.sort_by_key(|c| c.title.to_lowercase());
     let tpl = DashboardListTemplate {
         labels: UiLabels::for_lang(&chrome.lang),
         heading: jc_t("dashboards", &chrome.lang),

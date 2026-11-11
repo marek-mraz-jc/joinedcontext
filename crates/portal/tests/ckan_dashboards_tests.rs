@@ -113,6 +113,10 @@ fn a_public_dashboard_is_a_dashboard_package_with_a_chart_view_per_vega_lite_wid
     assert_eq!(package["name"], "bbsk-ukazovatele");
     assert_eq!(package["type"], DASHBOARD_TYPE);
     assert_eq!(package["owner_org"], "bbsk");
+    assert_eq!(
+        package["notes"],
+        "Ukazovatele: charts and tables over the live data of bikes."
+    );
     assert_eq!(extra(package, "generated_by"), GENERATOR);
     let url = format!("https://api.example.sk/api/endpoint/{SLUG}");
     assert_eq!(extra(package, ENDPOINTS_EXTRA), url);

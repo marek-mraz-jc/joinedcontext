@@ -197,9 +197,16 @@ pub fn desired(
             json!({ "name": endpoint, "url": settings.endpoint_url(slug), "format": "NGSI-LD" })
         })
         .collect();
+    // DCAT-AP asks every dataset for a description; the catalogue refuses one without (SHACL).
+    let read: Vec<&str> = dashboard.endpoints.keys().map(String::as_str).collect();
+    let notes = format!(
+        "{title}: charts and tables over the live data of {}.",
+        read.join(", ")
+    );
     let package = json!({
         "name": name,
         "title": title,
+        "notes": notes,
         "type": DASHBOARD_TYPE,
         "owner_org": organization,
         "extras": [
@@ -349,7 +356,7 @@ fn same(live: &Value, desired: &Value) -> bool {
             .or_else(|| p["owner_org"].as_str())
             .map(str::to_owned)
     };
-    ["name", "title", "type"]
+    ["name", "title", "notes", "type"]
         .iter()
         .all(|f| live[*f] == desired[*f])
         && owner(live) == owner(desired)
