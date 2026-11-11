@@ -82,7 +82,8 @@ async function shot(page: Page, name: string, fullPage = true): Promise<void> {
   const dir = process.env.JC_EVIDENCE_DIR;
   if (!dir) return;
   mkdirSync(dir, { recursive: true });
-  await page.screenshot({ path: join(dir, `${name}.png`), fullPage });
+  // A border still fading from the refused red would read as an error in the picture.
+  await page.screenshot({ path: join(dir, `${name}.png`), fullPage, animations: "disabled" });
 }
 
 test.describe("an Organization's appearance", () => {

@@ -5,7 +5,7 @@ import validator from "./validator";
 import { TranslatableString, deepEquals, englishStringTranslator, retrieveSchema } from "@rjsf/utils";
 import type { ErrorSchema, RJSFSchema, RJSFValidationError } from "@rjsf/utils";
 import { useTranslation } from "react-i18next";
-import { Button } from "../ui";
+import { Button, Icon } from "../ui";
 import { requiredProgress } from "./uischema";
 import type { JsonSchema, UiSchema } from "./types";
 import {
@@ -184,7 +184,8 @@ export function SchemaForm<T>(props: SchemaFormProps<T>): React.JSX.Element {
         actions || progress.total > 0 ? (
           <>
             {checked && refused > 0 ? (
-              <span role="alert" className="mr-auto flex flex-wrap items-center gap-2 text-caption text-danger">
+              <span role="alert" className="mr-auto flex flex-wrap items-center gap-2 text-body font-medium text-danger">
+                <Icon name="error" className="size-4" />
                 {t("form.fixCount", { count: refused })}
                 <Button type="button" variant="secondary" size="sm" onClick={showFirstRefused}>
                   {t("form.fixFirst")}
