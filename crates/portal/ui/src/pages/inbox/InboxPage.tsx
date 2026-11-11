@@ -215,6 +215,9 @@ export function InboxPage({ project }: { project: string }): JSX.Element {
                 >
                   {notificationText(item, t)}
                 </a>
+                {item.kind === "config.refused" ? (
+                  <p className="text-caption text-fg-muted [overflow-wrap:anywhere]">{item.excerpt}</p>
+                ) : null}
               </li>
             ))}
           </ul>

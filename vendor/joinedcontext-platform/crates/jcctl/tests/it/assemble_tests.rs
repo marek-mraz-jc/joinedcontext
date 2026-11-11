@@ -4,7 +4,7 @@
 use crate::common;
 
 use common::{temp_dir, write, ENDPOINT, ORG, PROJECT, SPACE};
-use jcctl::assemble::{assemble, assemble_reusing, AssembleError, Assembly, Directories, Renders};
+use jcctl::assemble::{assemble, assemble_reusing, Assembly, Directories, EntryStatus, Renders};
 use jcctl::loader::Repository;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -127,8 +127,9 @@ fn two_projects_on_one_repository_and_a_slug_they_both_claim() {
     let org = organization("two-slugs", &[("air", &air), ("air-staging", &staging)]);
     let resolver = checkouts(&[("air", &shared), ("air-staging", &shared)]);
 
-    let assembly = assemble(&org, &resolver, &temp_dir("two-slugs-into").join("r"), None)
-        .expect("two projects on one repository assemble");
+    let into = temp_dir("two-slugs-into").join("r");
+    let assembly =
+        assemble(&org, &resolver, &into, None).expect("two projects on one repository assemble");
     let namespaces: Vec<String> = assembly
         .repository
         .iter()
@@ -137,27 +138,65 @@ fn two_projects_on_one_repository_and_a_slug_they_both_claim() {
         .collect();
     assert_eq!(namespaces, ["air", "air-staging"]);
 
+    // T-6709: air-staging claims the slug air serves. Only the project that changed is refused,
+    // it keeps its last render, and air keeps serving the slug.
     let clash = entry("air-staging", "zt4qm7ge2xdv6ksb3ncf5arw2y", "air-staging");
-    let org = organization("slug-clash", &[("air", &air), ("air-staging", &clash)]);
-    let refused = assemble(
-        &org,
+    let clashing = organization("slug-clash", &[("air", &air), ("air-staging", &clash)]);
+    let assembly = assemble(&clashing, &resolver, &into, None)
+        .expect("a slug claimed twice refuses the project that claimed it, not the organization");
+    let slugs: Vec<(String, String)> = assembly
+        .repository
+        .iter()
+        .filter(|(id, _)| id.kind == "Endpoint")
+        .map(|(id, loaded)| {
+            (
+                id.namespace.clone().unwrap_or_default(),
+                loaded.manifest.spec["slug"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        slugs,
+        [
+            ("air".to_owned(), "zt4qm7ge2xdv6ksb3ncf5arw2y".to_owned()),
+            (
+                "air-staging".to_owned(),
+                "q7w6e5r4t3y2uaiopazsxdcfgh".to_owned()
+            ),
+        ]
+    );
+    assert_eq!(assembly.entries[0].refused, None, "air changed nothing");
+    let refusal = assembly.entries[1]
+        .refused
+        .as_ref()
+        .expect("air-staging is refused");
+    assert!(
+        refusal.reason.contains("zt4qm7ge2xdv6ksb3ncf5arw2y")
+            && refusal.reason.contains("air-staging"),
+        "{refusal:?}"
+    );
+    assert!(assembly.entries[1].rendered, "its last render serves");
+
+    // With no last render (a first assembly) neither project can be told apart: both are
+    // refused, and neither serves the slug.
+    let first = assemble(
+        &clashing,
         &resolver,
         &temp_dir("slug-clash-into").join("r"),
         None,
     )
-    .expect_err("one slug claimed twice is refused");
-    match refused {
-        AssembleError::Conflict {
-            value,
-            first,
-            second,
-            ..
-        } => {
-            assert_eq!(value, "zt4qm7ge2xdv6ksb3ncf5arw2y");
-            assert_eq!((first.as_str(), second.as_str()), ("air", "air-staging"));
-        }
-        other => panic!("expected a conflict, got {other}"),
-    }
+    .expect("the organization assembles");
+    assert!(first
+        .entries
+        .iter()
+        .all(|entry| entry.refused.is_some() && !entry.rendered));
+    assert!(first
+        .repository
+        .iter()
+        .all(|(id, _)| id.kind == "Organization"));
 }
 
 /// CC-86: a ref that cannot be fetched renders the project as the last assembly left it and
@@ -196,6 +235,122 @@ fn an_unfetchable_ref_keeps_the_last_checkout_and_reports_it() {
         .repository
         .iter()
         .all(|(id, _)| id.kind == "Organization"));
+}
+
+/// T-6709 (P-3): a project whose manifests do not load is refused alone, with the file and the
+/// reason on its entry, and keeps its last render; the other project's new Endpoint is served
+/// in the same assembly. Without a last render the broken project is left out.
+#[test]
+fn a_broken_project_keeps_its_last_render_and_the_others_converge() {
+    let doprava_entry = ENTRY.replace("ovzdusie", "doprava");
+    let org = organization(
+        "isolated",
+        &[("doprava", &doprava_entry), ("ovzdusie", ENTRY)],
+    );
+    let ovzdusie = project_repository("isolated-ovzdusie");
+    let doprava = temp_dir("isolated-doprava");
+    write(&doprava, ".jc/layout", "2\n");
+    write(
+        &doprava,
+        "project.yaml",
+        &PROJECT.replace("ovzdusie", "doprava"),
+    );
+    write(
+        &doprava,
+        "spaces/doprava/space.yaml",
+        &SPACE.replace("ovzdusie", "doprava"),
+    );
+    let endpoint = |name: &str, slug: &str| {
+        ENDPOINT
+            .replace("ovzdusie", "doprava")
+            .replace("public-air", name)
+            .replace("zt4qm7ge2xdv6ksb3ncf5arw2y", slug)
+    };
+    let resolver = checkouts(&[("doprava", &doprava), ("ovzdusie", &ovzdusie)]);
+    let into = temp_dir("isolated-into").join("r");
+    assemble(&org, &resolver, &into, None).expect("both projects assemble");
+    let endpoints = |assembly: &Assembly| -> Vec<String> {
+        assembly
+            .repository
+            .iter()
+            .filter(|(id, _)| id.kind == "Endpoint")
+            .map(|(id, _)| id.to_string())
+            .collect()
+    };
+
+    // A file that does not parse.
+    write(
+        &ovzdusie,
+        "spaces/ovzdusie/endpoints/broken.yaml",
+        "kind: [\n",
+    );
+    write(
+        &doprava,
+        "spaces/doprava/endpoints/buses.yaml",
+        &endpoint("buses", "b2c3d4e5f6g7h2i3j4k5l6m7n2"),
+    );
+    let assembly = assemble(&org, &resolver, &into, None).expect("one broken project");
+    assert_eq!(
+        endpoints(&assembly),
+        ["Endpoint/doprava/buses", "Endpoint/ovzdusie/public-air"]
+    );
+    let entry = &assembly.entries[1];
+    assert!(entry.rendered && entry.error.is_none());
+    let refusal = entry.refused.as_ref().expect("ovzdusie is refused");
+    assert_eq!(
+        refusal.path.as_deref(),
+        Some(Path::new("spaces/ovzdusie/endpoints/broken.yaml"))
+    );
+    assert!(
+        refusal.reason.contains("did not find expected node"),
+        "{refusal:?}"
+    );
+    assert_eq!(assembly.entries[0].refused, None);
+
+    // A duplicate id: the same Endpoint declared in a second file.
+    std::fs::remove_file(ovzdusie.join("spaces/ovzdusie/endpoints/broken.yaml")).expect("fix");
+    write(&ovzdusie, "spaces/ovzdusie/endpoints/twice.yaml", ENDPOINT);
+    write(
+        &doprava,
+        "spaces/doprava/endpoints/trams.yaml",
+        &endpoint("trams", "c3d4e5f6g7h2i3j4k5l6m7n2o3"),
+    );
+    let assembly = assemble(&org, &resolver, &into, None).expect("a duplicate in one project");
+    assert_eq!(
+        endpoints(&assembly),
+        [
+            "Endpoint/doprava/buses",
+            "Endpoint/doprava/trams",
+            "Endpoint/ovzdusie/public-air"
+        ]
+    );
+    let refusal = assembly.entries[1].refused.as_ref().expect("refused");
+    assert!(
+        refusal.reason.contains("duplicate resource identity"),
+        "{refusal:?}"
+    );
+    assert_eq!(
+        refusal.path.as_deref(),
+        Some(Path::new("spaces/ovzdusie/endpoints/twice.yaml"))
+    );
+    assert_eq!(
+        assembly.repository,
+        Repository::load_for(&into, None).expect("the written tree loads")
+    );
+
+    // After a restart there is no last render: the broken project is left out, doprava serves.
+    let restarted =
+        assemble(&org, &resolver, &temp_dir("isolated-fresh").join("r"), None).expect("assembles");
+    assert!(!restarted.entries[1].rendered && restarted.entries[1].refused.is_some());
+    assert_eq!(
+        endpoints(&restarted),
+        ["Endpoint/doprava/buses", "Endpoint/doprava/trams"]
+    );
+
+    // Fixed, it converges and the refusal clears.
+    std::fs::remove_file(ovzdusie.join("spaces/ovzdusie/endpoints/twice.yaml")).expect("fix");
+    let fixed = assemble(&org, &resolver, &into, None).expect("assembles");
+    assert!(fixed.entries.iter().all(|entry| entry.refused.is_none()));
 }
 
 /// CC-88: the entry's parameter values are rendered into the project's manifests, a literal
@@ -276,8 +431,11 @@ fn a_misplaced_project_is_refused_and_the_last_render_stays() {
 
     std::fs::remove_file(project.join(".jc/layout")).expect("remove the layout");
     let refused = assemble(&org, &checkouts(&[("ovzdusie", &project)]), &into, None)
-        .expect_err("a project repository without .jc/layout");
-    assert!(refused.to_string().contains(".jc/layout"), "{refused}");
+        .expect("a project repository without .jc/layout refuses the project alone (T-6709)");
+    let refusal = refused.entries[0].refused.as_ref().expect("refused");
+    assert!(refusal.reason.contains(".jc/layout"), "{refusal:?}");
+    assert_eq!(refusal.path.as_deref(), Some(Path::new(".jc/layout")));
+    assert!(refused.entries[0].rendered, "the last render stays");
     Repository::load(&into).expect("the last render still loads");
 
     let with_directory = organization("with-directory", &[("ovzdusie", ENTRY)]);
@@ -344,10 +502,18 @@ fn a_checkout_that_links_out_is_refused_and_one_that_links_inside_is_copied() {
     )
     .expect("a link");
     let refused = assemble(&org, &checkouts(&[("ovzdusie", &out)]), &into, None)
-        .expect_err("a link out is refused");
+        .expect("a link out is refused with its project (T-6709)");
+    let refusal = refused.entries[0].refused.as_ref().expect("refused");
     assert!(
-        refused.to_string().contains("links out of the repository"),
-        "{refused}"
+        refusal.reason.contains("links out of the repository"),
+        "{refusal:?}"
+    );
+    assert!(!into
+        .join("projects/ovzdusie/spaces/ovzdusie/leak.yaml")
+        .exists());
+    assert!(
+        into.join("projects/ovzdusie/notes/README.md").is_file(),
+        "the last render serves"
     );
 
     let nested = project_repository("links-nested");
@@ -355,10 +521,18 @@ fn a_checkout_that_links_out_is_refused_and_one_that_links_inside_is_copied() {
     symlink(outside.join("secret.yaml"), nested.join("extra/leak.yaml")).expect("a link");
     symlink(nested.join("extra"), nested.join("spaces/more")).expect("a link");
     let refused = assemble(&org, &checkouts(&[("ovzdusie", &nested)]), &into, None)
-        .expect_err("a link out behind a linked directory is refused");
+        .expect("a link out behind a linked directory is refused with its project (T-6709)");
+    let refusal = refused.entries[0].refused.as_ref().expect("refused");
     assert!(
-        refused.to_string().contains("links out of the repository"),
-        "{refused}"
+        refusal.reason.contains("links out of the repository"),
+        "{refusal:?}"
+    );
+    assert!(!into
+        .join("projects/ovzdusie/spaces/more/leak.yaml")
+        .exists());
+    assert!(
+        into.join("projects/ovzdusie/notes/README.md").is_file(),
+        "the last render serves"
     );
 }
 
@@ -572,19 +746,27 @@ fn a_refused_assembly_puts_the_reused_renders_back() {
     );
     let mut both = linked.0.clone();
     both.insert("doprava".to_owned(), clash);
-    let refused = assemble_reusing(&org, &Directories(both), &into, None, &mut renders)
-        .expect_err("one slug, two projects");
-    assert!(
-        matches!(refused, AssembleError::Conflict { .. }),
-        "{refused}"
-    );
+    // T-6709: the claim refuses doprava alone; ovzdusie's reused render serves on.
+    let claimed = assemble_reusing(&org, &Directories(both), &into, None, &mut renders)
+        .expect("one slug, two projects: the claimant is refused");
+    assert!(claimed.entries[1].reused && claimed.entries[1].refused.is_none());
+    assert!(matches!(
+        &claimed.entries[0],
+        EntryStatus { slug, rendered: false, refused: Some(_), .. } if slug == "doprava"
+    ));
+    std::fs::remove_file(org.join("projects/doprava.yaml")).expect("unregister");
+
+    // A broken organization file refuses the whole assembly after the reuse.
+    write(&org, "broken.yaml", "kind: [\n");
+    let refused = assemble_reusing(&org, &linked, &into, None, &mut renders)
+        .expect_err("the organization's own file does not parse");
+    assert!(refused.to_string().contains("broken.yaml"), "{refused}");
     assert!(
         into.join("projects/ovzdusie/spaces/ovzdusie/endpoints/public-air.yaml")
             .is_file(),
         "the reused render is back in the last tree"
     );
-
-    std::fs::remove_file(org.join("projects/doprava.yaml")).expect("unregister");
+    std::fs::remove_file(org.join("broken.yaml")).expect("fix");
     let next = assemble_reusing(&org, &linked, &into, None, &mut renders).expect("assembles");
     assert!(next.entries[0].reused, "the renders it had are kept");
     let fallback = assemble(&org, &Directories::default(), &into, None).expect("assembles");
@@ -637,14 +819,24 @@ fn two_projects_deriving_one_client_id_are_refused() {
     let refused = assemble(
         &org,
         &checkouts(&[("ovzdusie", &first), ("ovzdusie-vendorx", &second)]),
-        &temp_dir("derived-client-into-2").join("r"),
+        &into,
         None,
     )
-    .expect_err("one client id derived twice is refused");
-    match refused {
-        AssembleError::Derived { value, .. } => {
-            assert_eq!(value, "ovzdusie-vendorx-parking-push");
-        }
-        other => panic!("expected a derived-identity conflict, got {other}"),
-    }
+    .expect("one client id derived twice refuses the project that changed (T-6709)");
+    assert_eq!(refused.entries[0].refused, None);
+    let refusal = refused.entries[1]
+        .refused
+        .as_ref()
+        .expect("ovzdusie-vendorx is refused");
+    assert!(
+        refusal.reason.contains("ovzdusie-vendorx-parking-push"),
+        "{refusal:?}"
+    );
+    let accounts: Vec<String> = refused
+        .repository
+        .iter()
+        .filter(|(id, _)| id.kind == "ServiceAccount")
+        .map(|(id, _)| id.to_string())
+        .collect();
+    assert_eq!(accounts, ["ServiceAccount/ovzdusie/vendorx-parking-push"]);
 }

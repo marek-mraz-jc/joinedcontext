@@ -172,6 +172,56 @@ test.describe("activity", () => {
     await expect(page.getByTestId("activity-announce")).toHaveText("");
   });
 
+  // T-6709: a project whose commit did not load is refused alone; its feed carries the refusal
+  // with the file and the reason, and the proposer's bell names the change and opens the feed.
+  test("a refused change shows in the project's feed and in its proposer's notifications", async ({ page }, testInfo) => {
+    const refused = {
+      time: "2026-11-11T08:00:00Z",
+      project: "helsinki",
+      kind: "config.refused",
+      source: "reconciler",
+      summary:
+        "Commit badc0de was refused: duplicate resource identity ContextSpace/helsinki/mobility: first declared in projects/helsinki/spaces/mobility/space.yaml, duplicate in projects/helsinki/spaces/mobility/twice.yaml. The last version that loaded keeps serving.",
+      severity: "error",
+      correlationId: "badc0de1234",
+      details: { revision: "badc0de1234", path: "spaces/mobility/twice.yaml", proposer: "jana.kovacova@banskabystrica.sk" },
+    };
+    const notice = {
+      id: 7,
+      kind: "config.refused",
+      project: "helsinki",
+      space: "",
+      urn: "badc0de1234",
+      commentId: null,
+      author: "jana.kovacova@banskabystrica.sk",
+      authorName: "jana.kovacova@banskabystrica.sk",
+      excerpt: "spaces/mobility/twice.yaml: duplicate resource identity ContextSpace/helsinki/mobility",
+      link: "/projects/helsinki/activity?kind=config.refused",
+      createdAt: "2026-11-11T08:00:00Z",
+      read: false,
+    };
+    await stubApi(page, { items: [refused, LOADED] });
+    // Registered last, so it answers before the catch-all of stubApi.
+    await page.route("**/api/v1/notifications", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [notice], unread: 1 }) }),
+    );
+    for (const [width, height] of [[1440, 900], [400, 860]] as const) {
+      await page.setViewportSize({ width, height });
+      await page.goto("/projects/helsinki/activity?lang=en");
+      await expect(page.getByText("Change refused", { exact: true }).filter({ visible: true }).first()).toBeVisible();
+      await expect(page.getByText(/twice\.yaml\. The last version that loaded keeps serving/).first()).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath(`feed-${width}.png`), fullPage: false });
+      await page.getByRole("button", { name: "Notifications, 1 unread" }).first().click();
+      const item = page.getByRole("menuitem", { name: /Your change badc0de in helsinki was refused and is not live/ });
+      await expect(item).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath(`bell-${width}.png`), fullPage: false });
+      await page.keyboard.press("Escape");
+    }
+    await page.getByRole("button", { name: "Notifications, 1 unread" }).first().click();
+    await page.getByRole("menuitem", { name: /Your change badc0de/ }).click();
+    await expect(page).toHaveURL(/\/projects\/helsinki\/activity\?kind=config\.refused$/);
+  });
+
   test("a filter narrows what the page asks for", async ({ page }) => {
     const asked: string[] = [];
     await stubApi(page);
