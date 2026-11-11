@@ -1382,6 +1382,31 @@ impl OperationRegistry {
                     return_type: Some("Edm.Untyped"),
                 },
             },
+            OperationDef {
+                name: "Me",
+                mcp_tool: "jc_forge_me",
+                cli_command: "me",
+                connector_segment: "forge",
+                title: "Current Account",
+                description: "The account the caller's credential signs in as: the login a branch rule's allow-lists name (T-6706).",
+                entity_set: None,
+                action: Action::Read,
+                permission: "forge:read",
+                audit_kind: "ME_READ",
+                rest_method: "GET",
+                rest_path: "/api/v1/user",
+                compat_path: Some("/api/v1/user"),
+                input_schema: json!({"type":"object","properties":{}}),
+                output_schema: json!({"type":"object","properties":{"Login":{"type":"string"}}}),
+                odata: ODataOperation {
+                    kind: F,
+                    name: "Me",
+                    binding: None,
+                    binding_collection: false,
+                    params: vec![],
+                    return_type: Some("Edm.Untyped"),
+                },
+            },
         ];
 
         ops.extend(decls);

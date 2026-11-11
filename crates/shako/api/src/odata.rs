@@ -851,6 +851,11 @@ async fn odata_single_get(
     let (name, parens) = split_paren_segment(&segment);
     let short_name = name.strip_prefix("Shako.").unwrap_or(name);
 
+    // Unbound function `Me()`: the caller's own account (T-6706).
+    if short_name == "Me" {
+        return (StatusCode::OK, Json(me_row(&ctx))).into_response();
+    }
+
     // Unbound function `Allowed(Operation='...',Object='...')`
     if short_name == "Allowed" {
         let args = parse_func_args(parens, raw_q.as_deref());
@@ -1412,6 +1417,12 @@ async fn odata_metadata(State(state): State<ShakoState>, headers: HeaderMap) -> 
 // =========================================================================
 // Shared Operation Executor (used by OData, MCP, and CLI, Contract S8, S9, S19)
 // =========================================================================
+
+/// What `Me()` answers: the login the caller signs in as, the name a branch rule's allow-lists
+/// take, so a client names itself without guessing (T-6706).
+fn me_row(ctx: &RequestCtx) -> Value {
+    json!({ "Login": ctx.subject.username })
+}
 
 pub async fn evaluate_allowed_query(
     state: &ShakoState,
@@ -2056,6 +2067,7 @@ pub async fn exec_odata_operation(
                 _ => exec_bound_repo_compare(state, ctx, &repo_key, &args).await,
             }
         }
+        "Me" | "jc_forge_me" | "me" => Ok(me_row(ctx)),
         "Allowed" | "jc_forge_allowed" | "allowed" => {
             let op = text(&body, "Operation").unwrap_or_else(|| "Read".into());
             let obj = text(&body, "Object");

@@ -687,6 +687,8 @@ async fn only_the_portal_merges_into_main_and_writes_change_branches() {
     let w = World::start().await;
     let forge = w.client("config");
     assert!(forge.ensure_repository("Configuration").await.unwrap());
+    let (st, me) = w.raw("GET", "odata/Me()", None).await;
+    assert_eq!((st, &me["Login"]), (200, &json!("jc-portal")), "{me}");
     forge.protect_branch("main").await.unwrap();
     let writer = ShakoClient::new(
         reqwest::Url::parse(&w.base).unwrap(),
