@@ -924,6 +924,24 @@ def test_people_stay_in_a_private_dir_and_a_private_file(tmp_path):
     assert json.loads((out.parent / "realm-dev-people.json").read_text())["people"] == 1
 
 
+def test_the_realms_step_hands_the_new_proxy_clients_secret_to_jcs_state_file(tmp_path):
+    """jc-prod 2026-11-11: the deployer's files name the proxy's fresh realm secret, so the start
+    copies it into proxy-client-secret, and the realm file reads it from the secrets mount."""
+    export = tmp_path / "export"
+    (export / "keycloak").mkdir(parents=True)
+    (export / "keycloak" / "realm-smartcity.json").write_text(json.dumps(prod_shaped_assistant_realm()))
+    out = tmp_path / "state" / "realms"
+    rh.main(["realms", "--export", str(export), "--out", str(out), "--secrets-dir", "/run/jc/realm-secrets"])
+    state = out.parent
+    assert "KC_AGENT_PROXY_SECRET" in (state / "realm-vars.txt").read_text().split()
+    assert "proxy-client-secret KC_AGENT_PROXY_SECRET" in (state / "realm-state-secrets.txt").read_text().splitlines()
+    realm = json.loads((out / "smartcity.json").read_text())
+    (proxy,) = [c for c in realm["clients"] if c["clientId"] == "agent-proxy"]
+    assert proxy["secret"] == "$(file:KC_AGENT_PROXY_SECRET)"
+    (assistant,) = [c for c in realm["clients"] if c["clientId"] == "jc-assistant"]
+    assert "agent-proxy" in [m["config"]["included.custom.audience"] for m in assistant["protocolMappers"]]
+
+
 
 def test_datasources_are_provisioned_on_the_exact_own_address_in_org_1(tmp_path):
     src = tmp_path / "dash"
