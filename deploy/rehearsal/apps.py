@@ -36,6 +36,9 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import rehearsal  # noqa: E402  (merge_change: the kit's one way onto a protected main)
+
 PERSON = "rehearsal-app-roles"
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 APPS_OWNER = "jc-apps"
@@ -319,11 +322,17 @@ def cmd_grant(a) -> int:
         if new == text:
             print(f"apps.py: {name}: {PERSON} already a member")
             continue
-        st, _ = call(a.base, "PUT", url, auth, body={
-            "content": base64.b64encode(new.encode()).decode(), "sha": held["sha"],
-            "message": f"rehearsal: {PERSON} in {name} (apps.py grant)"})
-        failed += st not in (200, 201)
-        print(f"apps.py: {name}: {PERSON} added ({st})")
+        # Through a pull request: the imported main takes no direct push (rehearsal.protect_main).
+        try:
+            rehearsal.merge_change(lambda m, p, b: call(a.base, m, f"/git/api/v1{p}", auth, body=b), owner, repo,
+                                   [{"operation": "update", "path": path, "sha": held["sha"],
+                                     "content": base64.b64encode(new.encode()).decode()}],
+                                   f"rehearsal: {PERSON} in {name} (apps.py grant)")
+        except RuntimeError as e:
+            print(f"apps.py: {name}: {e}", file=sys.stderr)
+            failed += 1
+            continue
+        print(f"apps.py: {name}: {PERSON} added")
     return 1 if failed else 0
 
 

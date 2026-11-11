@@ -14,6 +14,7 @@ import html
 import json
 import re
 import secrets
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -25,6 +26,9 @@ from pathlib import Path
 import yaml
 
 from common import Http, realm_of
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "deploy" / "rehearsal"))
+import rehearsal as R  # noqa: E402  (merge_change: the kit's one way onto a protected main)
 ADMIN_CLIENT = "portal-reconciler"
 MCP_CLIENT = "mcp-local"
 REDIRECT = "http://localhost/callback"
@@ -221,10 +225,14 @@ class Fixture:
         return None
 
     def _commit(self, ops: list, message: str) -> None:
-        st, _, raw = self._shako("POST", f"/projects/{self.owner}/repositories/{self.repo}/contents",
-                                 body={"branch": "main", "files": ops, "message": message})
-        if st not in (200, 201):
-            raise RuntimeError(f"shako commit to {self.owner}/{self.repo}: {st} {raw[:200]!r}")
+        """Through a pull request (rehearsal.merge_change): the imported main takes no direct push."""
+        def send(method, path, body):
+            st, _, raw = self._shako(method, path, body)
+            try:
+                return st, json.loads(raw) if raw else None
+            except ValueError:
+                return st, raw[:200]
+        R.merge_change(send, self.owner, self.repo, ops, message)
 
     def bind(self) -> None:
         ops = []

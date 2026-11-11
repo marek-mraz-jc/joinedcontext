@@ -18,6 +18,18 @@ home=$REHEARSAL_HOME/gate
 export_dir=$REHEARSAL_HOME/gate-export
 
 rm -rf "$export_dir"; mkdir -p "$export_dir"
+# A fresh stack every run: the import only creates (rehearsal.py import_shako refuses a main that
+# holds files the export would change or delete), and the last run's suites edited main. The gate
+# env holds synthetic data only. pgdata belongs to the container's postgres user: emptied from
+# inside a container, as the restore suite does.
+[ -s "$home/jc.pid" ] && "$repo/deploy/rehearsal/stop-jc.sh" "$(cat "$home/jc.pid")"
+docker rm -f rh-pg-gate >/dev/null 2>&1 || true
+if [ -d "$home/pgdata" ]; then
+  # shellcheck disable=SC2016 # the sed pattern reads up.sh's line, it expands nothing
+  pg_image=${REHEARSAL_PG_IMAGE:-$(sed -n 's/^pg_image=\${REHEARSAL_PG_IMAGE:-\(.*\)}$/\1/p' "$repo/deploy/rehearsal/up.sh")}
+  docker run --rm -v "$home":/h --entrypoint rm "$pg_image" -rf /h/pgdata
+fi
+rm -rf "${home:?}"
 # Every 30 s into the step log (a runner that is lost uploads no artifact): free memory, jc's RSS,
 # the three largest processes and the disk under REHEARSAL_HOME, so a cut-off run tells an
 # out-of-memory or full runner from a signal (smoke runs 42873989236, 42907019912: no verdict).

@@ -12,6 +12,8 @@ window.addEventListener("message", function (event) {
   document.querySelectorAll("iframe[data-jc-viz]").forEach(function (frame) {
     if (frame.contentWindow === event.source && frame.getAttribute("data-jc-viz") === event.origin) {
       frame.style.height = Math.min(Math.max(Math.round(data.height), 120), JC_VIZ_MAX) + "px";
+      // Where the frame's map starts (explore.js), for jc-viz-near below.
+      frame.jcVizMap = typeof data.map === "number" && isFinite(data.map) ? data.map : null;
     }
   });
 });
@@ -22,9 +24,16 @@ function jcVizViewport() {
     var rect = frame.getBoundingClientRect();
     var top = Math.max(0, -rect.top);
     var height = Math.min(window.innerHeight, rect.bottom) - Math.max(0, rect.top);
-    if (frame.contentWindow && height > 0) {
-      // An opaque origin cannot be named as a target: the message (two numbers) goes to "*".
-      var target = frame.getAttribute("data-jc-viz");
+    // An opaque origin cannot be named as a target: the messages (numbers, a word) go to "*".
+    var target = frame.getAttribute("data-jc-viz");
+    if (!frame.contentWindow) return;
+    // Brief 132: a frame's map loads once it comes within one viewport below the reader's window.
+    // Inside the frame no observer can tell (its rootMargin counts for nothing across origins).
+    if (frame.jcVizMap !== null && frame.jcVizMap !== undefined && !frame.jcVizNear && rect.top + frame.jcVizMap < 2 * window.innerHeight) {
+      frame.jcVizNear = true;
+      frame.contentWindow.postMessage({ type: "jc-viz-near" }, target === "null" ? "*" : target);
+    }
+    if (height > 0) {
       frame.contentWindow.postMessage({ type: "jc-viz-viewport", top: Math.round(top), height: Math.round(height) }, target === "null" ? "*" : target);
     }
   });
