@@ -9,6 +9,7 @@ export const ACTIVITY_KINDS = [
   "config.planned",
   "config.applied",
   "config.drifted",
+  "config.refused",
   "change.merged",
   "change.rejected",
   "pipeline.throughput",
