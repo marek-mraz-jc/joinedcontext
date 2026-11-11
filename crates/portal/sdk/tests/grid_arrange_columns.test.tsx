@@ -60,6 +60,7 @@ describe("the toolbar's Arrange columns panel (T-6738)", () => {
     await screen.findByText("Alpha");
     const panel = openPanel();
     expect(within(panel).getByRole("checkbox", { name: "Show field: Name" })).toBeDisabled();
+    expect(within(panel).getByRole("checkbox", { name: "Show field: Name" })).toHaveAccessibleDescription("Always shown");
     fireEvent.click(within(panel).getByRole("checkbox", { name: "Show field: Count" }));
     await waitFor(() => expect(headers()).toEqual(["Name", "status"]));
     const back = within(screen.getByRole("dialog", { name: "Arrange columns" })).getByRole("checkbox", { name: "Show field: Count" });

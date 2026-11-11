@@ -120,12 +120,13 @@ export function ArrangeColumns({ view }: { view: GridView }): React.JSX.Element 
               const label = shownLabel(attr);
               return (
                 <li key={attr} data-hidden={shown ? undefined : ""}>
-                  <label className="jc-grid-arrange-show">
+                  <label className="jc-grid-arrange-show" title={fixed(attr) ? labels.alwaysShown : undefined}>
                     <input
                       type="checkbox"
                       checked={shown}
                       disabled={fixed(attr)}
                       aria-label={`${labels.showColumn}: ${label}`}
+                      aria-description={fixed(attr) ? labels.alwaysShown : undefined}
                       onChange={() => (shown ? hideColumn(attr) : showColumns([attr]))}
                     />
                   </label>

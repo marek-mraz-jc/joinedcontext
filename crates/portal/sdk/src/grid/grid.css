@@ -2072,6 +2072,7 @@ a.jc-cell--link:focus-visible {
   display: inline-flex;
   justify-content: center;
   width: 1.25rem;
+  font-size: 1rem;
   color: var(--jc-color-muted, #666);
 }
 
@@ -2158,6 +2159,23 @@ a.jc-cell--link:focus-visible {
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.16);
   font-size: var(--jc-font-size-md, 14px);
   text-align: left;
+}
+/* Done stays at the top and Reset at the bottom while the list scrolls between them. */
+.jc-grid-arrange-head,
+.jc-grid-arrange-foot {
+  position: sticky;
+  z-index: 1;
+  background: var(--jc-color-surface, #fff);
+}
+.jc-grid-arrange-head {
+  top: calc(-1 * var(--jc-space-3, 12px));
+  margin-top: calc(-1 * var(--jc-space-3, 12px));
+  padding-top: var(--jc-space-3, 12px);
+}
+.jc-grid-arrange-foot {
+  bottom: calc(-1 * var(--jc-space-3, 12px));
+  margin-bottom: calc(-1 * var(--jc-space-3, 12px));
+  padding-bottom: var(--jc-space-3, 12px);
 }
 .jc-grid-arrange-head {
   display: flex;
@@ -2290,7 +2308,7 @@ a.jc-cell--link:focus-visible {
     border-radius: 12px 12px 0 0;
     border-bottom: 0;
     /* A scrim over the page behind the sheet; a tap on it closes the sheet (ArrangeColumns). */
-    box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.35);
+    box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.5);
   }
   .jc-grid-arrange-show { width: 2.75rem; height: 2.75rem; }
   .jc-grid-arrange-input,

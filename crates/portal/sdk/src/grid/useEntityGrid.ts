@@ -227,6 +227,8 @@ export interface GridLabels {
   arrangeColumns: string;
   arrangeHint: string;
   arrangeDone: string;
+  /** Why the name and a pinned column have no hide in the panel. */
+  alwaysShown: string;
   renameColumn: string;
   renameHint: string;
   /** A header edge's keyboard name: the arrow keys widen and narrow it. */
@@ -448,8 +450,9 @@ export const DEFAULT_LABELS: GridLabels = {
   arrangeColumns: "Arrange columns",
   arrangeHint: "Tick the columns to show, put them in order and rename them. Only your view changes, never the data.",
   arrangeDone: "Done",
+  alwaysShown: "Always shown",
   renameColumn: "Label in this view",
-  renameHint: "Type over a name to rename the column for you, e.g. Starts at. Empty it to use the model's name again.",
+  renameHint: "Type over a name to rename the column for you, such as Station for Station name. Empty it to use the model's name again.",
   columnWidth: "Column width",
   moveUp: "Move up",
   moveDown: "Move down",

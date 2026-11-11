@@ -317,6 +317,7 @@ export function gridLabels(t: (key: string, values?: Record<string, string>) => 
     arrangeColumns: t("entityGrid.arrangeColumns"),
     arrangeHint: t("entityGrid.arrangeHint"),
     arrangeDone: t("entityGrid.arrangeDone"),
+    alwaysShown: t("entityGrid.alwaysShown"),
     renameHint: t("entityGrid.renameHint"),
     moveUp: t("entityGrid.moveUp"),
     moveDown: t("entityGrid.moveDown"),

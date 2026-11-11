@@ -696,6 +696,7 @@ describe("EntityGrid", () => {
       arrangeColumns: "Usporiadať stĺpce",
       arrangeHint: "Zaškrtnite stĺpce, ktoré chcete vidieť, zoraďte ich a premenujte.",
       arrangeDone: "Hotovo",
+      alwaysShown: "Vždy zobrazený",
       renameHint: "Prepíšte názov, napr. Začiatok.",
       moveUp: "Posunúť vyššie",
       moveDown: "Posunúť nižšie",
