@@ -2665,6 +2665,16 @@ pub async fn approve_change_for(
         }
         _ => merge_msg,
     };
+    // A red-lane Change was confirmed by name above: its merge releases removals the
+    // reconciler holds for a mass deletion or a ContextSpace (T-6708, P-6).
+    let merge_msg = if lane == Lane::Red {
+        format!(
+            "{merge_msg}\n{}",
+            crate::reconciler::removal_hold::DESTRUCTIVE_TRAILER
+        )
+    } else {
+        merge_msg
+    };
     let (merger_name, merger_email) = crate::api::mutate::author_credentials(identity, project);
     merge_when_ready(
         shako,
