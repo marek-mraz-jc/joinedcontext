@@ -152,8 +152,36 @@ pub struct View {
 
 /// The surfaces a view's `representations` may name.
 pub const REPRESENTATIONS: &[&str] = &[
-    "ical", "feed", "ogc", "geojson", "csv", "gbfs", "sta", "odata",
+    "ical", "feed", "ogc", "geojson", "csv", "gbfs", "sta", "odata", "facets",
 ];
+
+/// The most attributes a view's `representations.facets` lists (T-6757): each is one bounded
+/// read of the view's answer, so the list stays short.
+pub const MAX_FACETS: usize = 10;
+
+/// Whether `path` is a facet a view may list: an Attribute's short name, or that name and one
+/// member of its value object (`address.addressLocality`), each `[A-Za-z][A-Za-z0-9_]*`. A
+/// facet is a closed name, never spliced into a query.
+///
+/// ```
+/// use antares_ops::views::facet_path;
+/// assert_eq!(facet_path("category"), Some(("category", None)));
+/// assert_eq!(facet_path("address.addressLocality"), Some(("address", Some("addressLocality"))));
+/// assert_eq!(facet_path("a.b.c"), None);
+/// assert_eq!(facet_path("name;x"), None);
+/// ```
+#[must_use]
+pub fn facet_path(path: &str) -> Option<(&str, Option<&str>)> {
+    let word = |w: &str| {
+        let mut chars = w.chars();
+        chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    };
+    match path.split_once('.') {
+        None => word(path).then_some((path, None)),
+        Some((name, member)) => (word(name) && word(member)).then_some((name, Some(member))),
+    }
+}
 
 pub use crate::outputs::MAX_OUTPUTS;
 
@@ -235,6 +263,41 @@ impl View {
     /// attributes ["*"]}` with no condition of its own. `*` anywhere else is
     /// an error, before any name is expanded, so no `@context` turns it into
     /// a name.
+    /// `representations.facets` (T-6757): at most [`MAX_FACETS`] distinct [`facet_path`]s, each
+    /// naming an Attribute a rule shows, so a facet never reads what the view hides.
+    fn facets_hold(&self, facets: &[Value], ctx: &Context) -> Result<(), String> {
+        if facets.len() > MAX_FACETS {
+            return Err(format!(
+                "representations.facets lists at most {MAX_FACETS} attributes"
+            ));
+        }
+        let every = self.is_every()?;
+        let shown: std::collections::BTreeSet<String> = self
+            .rules
+            .iter()
+            .flat_map(|r| &r.attributes)
+            .map(|a| ctx.expand_key(a))
+            .collect();
+        let mut seen = std::collections::BTreeSet::new();
+        for facet in facets {
+            let path = facet.as_str().unwrap_or_default();
+            let Some((name, _)) = facet_path(path) else {
+                return Err(format!(
+                    "representations.facets: {facet} is not an attribute name or name.member"
+                ));
+            };
+            if !seen.insert(path) {
+                return Err(format!("representations.facets: {path:?} is listed twice"));
+            }
+            if !every && !shown.contains(&ctx.expand_key(name)) {
+                return Err(format!(
+                    "representations.facets: {path:?} names an attribute no rule shows"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn is_every(&self) -> Result<bool, String> {
         let star = |names: &[String]| names.iter().any(|n| n == EVERY);
         let only = |names: &[String]| names.len() == 1 && star(names);
@@ -339,6 +402,9 @@ impl View {
                 return Err(format!(
                     "representations: {name:?} is not one of {REPRESENTATIONS:?} with a list of outputs (ical: at most {MAX_OUTPUTS})"
                 ));
+            }
+            if let Some(facets) = named.get("facets").and_then(Value::as_array) {
+                self.facets_hold(facets, &ctx)?;
             }
         }
         let view = view.named(&self.id);
@@ -1486,6 +1552,26 @@ mod tests {
                 load(&with("representations", bad.clone())).is_err(),
                 "{bad}"
             );
+        }
+    }
+
+    #[test]
+    fn facets_name_shown_attributes_alone_and_at_most_max_facets() {
+        let facets = |list: Value| load(&with("representations", json!({"facets": list})));
+        assert!(facets(json!(["speed"])).is_ok());
+        assert!(facets(json!(["speed.unit"])).is_ok());
+        let many: Vec<Value> = (0..=MAX_FACETS)
+            .map(|i| json!(format!("speed.m{i}")))
+            .collect();
+        for bad in [
+            json!(["colour"]),
+            json!(["speed", "speed"]),
+            json!(["speed;x"]),
+            json!([1]),
+            json!(["speed.a.b"]),
+            Value::Array(many),
+        ] {
+            assert!(facets(bad.clone()).is_err(), "{bad}");
         }
     }
 

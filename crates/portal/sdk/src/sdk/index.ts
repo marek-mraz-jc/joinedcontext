@@ -44,6 +44,13 @@ export type { Agg, Group } from "./helpers";
 export { EntityGrid } from "../grid/EntityGrid";
 export * from "../grid/parts";
 export type { EntityGridProps } from "../grid/EntityGrid";
+// A list that is not NGSI-LD (an admin list) on the same grid: typed rows and columns (T-6739).
+export { DataGrid, DEFAULT_DATA_LABELS } from "../grid/DataGrid";
+export type { DataGridLabels, DataGridProps } from "../grid/DataGrid";
+export { arrangeRows, EMPTY_QUERY, filterDataRows, passes, sortDataRows, valuesOf } from "../grid/arrayRows";
+export type { DataColumn, DataKind, DataQuery, DataSort } from "../grid/arrayRows";
+export { ArrangePanel } from "../grid/ArrangePanel";
+export type { ArrangeItem, ArrangeLabels, ArrangePanelProps } from "../grid/ArrangePanel";
 export { DEFAULT_LABELS, readableName, useEntityGrid } from "../grid/useEntityGrid";
 export type { ColumnLayout, GridLabels, GridLabelsInput, GridState, MetaKey, UseEntityGridOptions, VisibleColumn } from "../grid/useEntityGrid";
 export { targetName } from "../grid/cells";

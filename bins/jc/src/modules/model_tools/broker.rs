@@ -285,8 +285,16 @@ pub(super) fn broker_schema(view: &View) -> Result<Value, String> {
     out.insert("id".to_owned(), Value::String(schema.id.clone()));
     out.insert("name".to_owned(), Value::String(schema.name.clone()));
     out.insert("prefixes".to_owned(), Value::Object(prefixes));
-    if let Some(v) = schema.version.as_ref().filter(|v| !v.is_empty()) {
-        out.insert("version".to_owned(), Value::String(v.clone()));
+    // what the author says the model is, for the views' published LinkML (T-6747)
+    for (key, value) in [
+        ("version", &schema.version),
+        ("title", &schema.title),
+        ("description", &schema.description),
+        ("license", &schema.license),
+    ] {
+        if let Some(v) = value.as_ref().filter(|v| !v.is_empty()) {
+            out.insert(key.to_owned(), Value::String(v.clone()));
+        }
     }
     if let Some(p) = schema.default_prefix.as_ref().filter(|v| !v.is_empty()) {
         out.insert("default_prefix".to_owned(), Value::String(p.clone()));

@@ -3,7 +3,8 @@
 # dropped, /tmp and the state dir writable) with `--role all` in the config shape of deployment
 # components/jc (slug mode, the Portal at the root), then checks that the admin listener answers
 # /healthz, refuses /metrics without its token, and that a health or discovery route of every
-# module answers on the public listener. base_host is an address jc reaches itself on: the
+# module answers on the public listener. The profile is production, as deployment sets it (jc
+# refuses to start without one, P-29). base_host is an address jc reaches itself on: the
 # Portal reads kaisatsu's discovery at the public issuer before it serves (the cluster sends that
 # read through the edge, deployment components/jc/apisix-routes.yaml jc-identity).
 #   sh image-smoke.sh <image>
@@ -13,6 +14,7 @@ dir=$(mktemp -d)
 head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$dir/admin-token"
 chmod 0644 "$dir/admin-token"
 cat > "$dir/jc.toml" <<'TOML'
+profile = "production"
 role = "all"
 listen = "0.0.0.0:8080"
 admin_listen = "0.0.0.0:9091"

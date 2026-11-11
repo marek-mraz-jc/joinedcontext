@@ -28,5 +28,11 @@ for f in explorer.js explorer.css; do
   grep -q "^$s  $f$" "$vendor/explorer/SHA256SUMS" || { echo "explorer-bundle: vendor/viz/explorer/SHA256SUMS does not hold $f's sum" >&2; bad=1; }
   grep -q "^$s  explorer/$f$" "$vendor/SHA256SUMS" || { echo "explorer-bundle: vendor/viz/SHA256SUMS does not hold explorer/$f's sum" >&2; bad=1; }
 done
+# Every other line of the top SUMS must still name its file's sum: a merge that took a whole
+# SUMS file from one side carries stale site lines, and viz.rs serves those sums as ETags.
+grep -v '^#' "$vendor/SHA256SUMS" | while read -r s p; do
+  f="$vendor/$p"; [ -f "$f" ] || f="$vendor/site/$p"
+  [ -f "$f" ] && [ "$(sum "$f")" = "$s" ] || { echo "explorer-bundle: vendor/viz/SHA256SUMS line for $p does not match the file" >&2; exit 1; }
+done || bad=1
 [ "$bad" = 0 ] && echo "explorer-bundle: the committed bundle is this tree's build"
 exit "$bad"

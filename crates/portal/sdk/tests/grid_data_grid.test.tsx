@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { DataGrid } from "../src/grid/DataGrid";
-import { arrangeRows, EMPTY_QUERY, passes, sortRows, valuesOf } from "../src/grid/arrayRows";
+import { arrangeRows, EMPTY_QUERY, passes, sortDataRows, valuesOf } from "../src/grid/arrayRows";
 import type { DataColumn } from "../src/grid/arrayRows";
 
 interface Policy {
@@ -26,11 +26,11 @@ const names = (list: Policy[]) => list.map((p) => p.name);
 
 describe("array row source", () => {
   it("sorts text case-blind, numbers as numbers, empty values last both ways", () => {
-    expect(names(sortRows(rows, columns, { key: "name", dir: "asc" }))).toEqual(["Admins", "buses", "Readers"]);
-    expect(names(sortRows(rows, columns, { key: "grants", dir: "desc" }))).toEqual(["Admins", "Readers", "buses"]);
-    expect(names(sortRows(rows, columns, { key: "space", dir: "asc" }))).toEqual(["Readers", "buses", "Admins"]);
-    expect(names(sortRows(rows, columns, { key: "space", dir: "desc" }))).toEqual(["buses", "Readers", "Admins"]);
-    expect(names(sortRows(rows, columns, { key: "changed", dir: "asc" }))).toEqual(["Readers", "Admins", "buses"]);
+    expect(names(sortDataRows(rows, columns, { key: "name", dir: "asc" }))).toEqual(["Admins", "buses", "Readers"]);
+    expect(names(sortDataRows(rows, columns, { key: "grants", dir: "desc" }))).toEqual(["Admins", "Readers", "buses"]);
+    expect(names(sortDataRows(rows, columns, { key: "space", dir: "asc" }))).toEqual(["Readers", "buses", "Admins"]);
+    expect(names(sortDataRows(rows, columns, { key: "space", dir: "desc" }))).toEqual(["buses", "Readers", "Admins"]);
+    expect(names(sortDataRows(rows, columns, { key: "changed", dir: "asc" }))).toEqual(["Readers", "Admins", "buses"]);
   });
 
   it("filters by condition and by picked values, and searches every column", () => {

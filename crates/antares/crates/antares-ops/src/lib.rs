@@ -293,6 +293,16 @@ impl Caller {
             })
             .collect()
     }
+
+    /// Whether the caller sent no credential: no policy subject header, no `Authorization`
+    /// and no `Cookie`. Only such an answer may enter a shared cache (T-6757); every other
+    /// one may differ per person.
+    #[must_use]
+    pub fn is_anonymous(&self) -> bool {
+        self.subject().is_empty()
+            && !self.0.contains_key(axum::http::header::AUTHORIZATION)
+            && !self.0.contains_key(axum::http::header::COOKIE)
+    }
 }
 
 impl<S: Send + Sync> FromRequestParts<S> for Caller {

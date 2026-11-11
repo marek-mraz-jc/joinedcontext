@@ -120,6 +120,29 @@ async fn a_model_compiles_to_a_broker_schema_the_broker_reads_and_a_context() {
     );
 }
 
+/// T-6747: the broker schema keeps what the author says the model is, so a view's published
+/// LinkML carries it.
+#[tokio::test]
+async fn the_broker_schema_keeps_the_title_description_and_license() {
+    let source = MODEL.replacen(
+        "name: parking\n",
+        "name: parking\ntitle: Parking\ndescription: Where to park.\nlicense: https://e.org/cc-by\n",
+        1,
+    );
+    let (status, out) = call("POST", "/generate", json!({"source": source}).to_string()).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(errors_of(&out), vec![unrendered()]);
+    let schema = &out["brokerSchema"];
+    assert_eq!(
+        (&schema["title"], &schema["description"], &schema["license"]),
+        (
+            &json!("Parking"),
+            &json!("Where to park."),
+            &json!("https://e.org/cc-by")
+        )
+    );
+}
+
 #[tokio::test]
 async fn a_body_past_the_cap_is_refused_before_it_is_read_whole() {
     let big = json!({"source": format!("{MODEL}\n# {}", "x".repeat(MAX_BODY_BYTES))}).to_string();

@@ -771,7 +771,10 @@ fn non_semantic_metaslots_are_ignored_and_semantic_ones_refused() {
         "/enums/E/permissible_values/a",
     ] {
         for key in linkml_model::NON_SEMANTIC {
-            if pointer == "/slots/size" && matches!(key, "rank" | "title") {
+            // a slot reads rank and title, a schema its title (T-6747)
+            if (pointer == "/slots/size" && matches!(key, "rank" | "title"))
+                || (pointer.is_empty() && key == "title")
+            {
                 continue;
             }
             if let Some(o) = doc.pointer_mut(pointer).and_then(Value::as_object_mut) {
