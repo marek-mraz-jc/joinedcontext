@@ -5173,7 +5173,7 @@
       "give": "Prideliť rolu skupine",
       "groupsUnreadable": "Vaša rola nezobrazuje skupiny organizácie.",
       "personHint": "Hľadajte podľa mena alebo e-mailu, napr. Jana Nováková. Skupina si zapíše identifikátor osoby, nie adresu.",
-      "groupHint": "Skupina organizácie, ktorá má dostať túto rolu, napr. air-quality-viewer. Udelenie roly navrhne zmenu aplikácie."
+      "groupHint": "Jedna zo skupín organizácie. Udelenie roly navrhne schvaľovateľovi zmenu aplikácie."
     },
     "check": {
       "green": "Funguje",

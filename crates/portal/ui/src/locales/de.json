@@ -5173,7 +5173,7 @@
       "give": "Rolle einer Gruppe geben",
       "groupsUnreadable": "Ihre Rolle zeigt die Gruppen der Organisation nicht an.",
       "personHint": "Suchen Sie nach Name oder E-Mail, z. B. Jana Nováková. Die Gruppe speichert die Kennung der Person, nicht die Adresse.",
-      "groupHint": "Eine Gruppe der Organisation, die diese Rolle erhalten soll, z. B. air-quality-viewer. Das Vergeben der Rolle schlägt eine Änderung der Anwendung vor."
+      "groupHint": "Eine der Gruppen der Organisation. Die Rolle zu vergeben schlägt einer prüfenden Person eine Änderung der Anwendung vor."
     },
     "check": {
       "green": "Funktioniert",
