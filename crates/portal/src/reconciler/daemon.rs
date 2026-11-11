@@ -1203,10 +1203,9 @@ impl Syncer {
             .source_loaded
             .fetch_or(past_seed, std::sync::atomic::Ordering::Relaxed)
             || past_seed;
-        let shrinks = self
-            .held_shrinks(&fresh_mirror, &scratch, &revision)
-            .await;
-        fresh_mirror.hold_removals(!loaded_once || !scratch.unloaded.is_empty() || !shrinks.is_empty());
+        let shrinks = self.held_shrinks(&fresh_mirror, &scratch, &revision).await;
+        fresh_mirror
+            .hold_removals(!loaded_once || !scratch.unloaded.is_empty() || !shrinks.is_empty());
         steps.mark("mirror");
 
         // 5a. What the sync webhook route authorises a run against (MF-44, T-2297). Before the
@@ -1726,9 +1725,10 @@ impl Syncer {
                 held.push(shrink);
             }
         }
-        let change = self.warned_held.cycle(held.iter().map(|shrink| {
-            format!("{}: {}", shrink.project, shrink.message(percent))
-        }));
+        let change = self.warned_held.cycle(
+            held.iter()
+                .map(|shrink| format!("{}: {}", shrink.project, shrink.message(percent))),
+        );
         for warning in &change.new {
             tracing::warn!(%warning, standing = change.standing, "removals held for a confirm (HeldRemoval)");
         }
@@ -1748,8 +1748,7 @@ impl Syncer {
     /// confirmed destructive Change. A head that cannot be read confirms nothing.
     async fn removal_confirmed(&self, scratch: &Render, revision: &str, project: &str) -> bool {
         use super::removal_hold::confirmed;
-        if matches!(self.shako.commit_message(revision).await, Ok(message) if confirmed(&message))
-        {
+        if matches!(self.shako.commit_message(revision).await, Ok(message) if confirmed(&message)) {
             return true;
         }
         let Some((client, git_ref)) = scratch.projects.get(project) else {
@@ -1763,7 +1762,9 @@ impl Syncer {
             branch => branch.to_owned(),
         };
         match client.branch_head(&branch).await {
-            Ok(sha) => matches!(client.commit_message(&sha).await, Ok(message) if confirmed(&message)),
+            Ok(sha) => {
+                matches!(client.commit_message(&sha).await, Ok(message) if confirmed(&message))
+            }
             Err(_) => false,
         }
     }
@@ -1804,7 +1805,12 @@ impl Syncer {
         }
     }
 
-    async fn converge_subscriptions(&self, fresh_mirror: &Mirror, scratch: &Render, previous: &Mirror) {
+    async fn converge_subscriptions(
+        &self,
+        fresh_mirror: &Mirror,
+        scratch: &Render,
+        previous: &Mirror,
+    ) {
         if let Some(subscriptions) = self.subscriptions.as_ref() {
             let outcomes = subscriptions
                 .converge(
@@ -4498,14 +4504,17 @@ output_error{stream="kpi"} 6
         project_repository(&forge, "c-repo", project_files("c"), down).await;
         let dir = state_dir("never");
         let mirror = Arc::new(Mirror::new());
-        let syncer = Syncer::new(Arc::new(shako), Arc::clone(&mirror))
-            .with_state_dir(Some(dir.clone()));
+        let syncer =
+            Syncer::new(Arc::new(shako), Arc::clone(&mirror)).with_state_dir(Some(dir.clone()));
         syncer.sync_once().await.expect("the first run loads");
         assert!(!mirror.removals_held(), "b loaded");
 
         next_revision(&shared, &org, &[("projects/c.yaml", registry_entry("c"))]);
         syncer.sync_once().await.expect("the run loads b");
-        assert!(mirror.removals_held(), "c never loaded, yet removals went on");
+        assert!(
+            mirror.removals_held(),
+            "c never loaded, yet removals went on"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

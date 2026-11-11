@@ -2939,7 +2939,10 @@ mod tests {
             assert!(
                 matches!(
                     with(percent, refused),
-                    Err(ConfigError::Invalid { var: "JC_PORTAL_REMOVAL_HOLD_PERCENT", .. })
+                    Err(ConfigError::Invalid {
+                        var: "JC_PORTAL_REMOVAL_HOLD_PERCENT",
+                        ..
+                    })
                 ),
                 "{refused}"
             );

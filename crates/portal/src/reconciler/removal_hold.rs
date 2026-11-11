@@ -65,7 +65,12 @@ impl Shrink {
 
 /// The projects of `applied` whose objects `current` lacks beyond `percent`, or lacks a
 /// ContextSpace of. A project in `unloaded` did not load this run and is not judged here.
-pub fn shrinks(applied: &Objects, current: &Objects, percent: u8, unloaded: &[String]) -> Vec<Shrink> {
+pub fn shrinks(
+    applied: &Objects,
+    current: &Objects,
+    percent: u8,
+    unloaded: &[String],
+) -> Vec<Shrink> {
     let empty = BTreeSet::new();
     applied
         .iter()
@@ -90,7 +95,9 @@ pub fn shrinks(applied: &Objects, current: &Objects, percent: u8, unloaded: &[St
 
 /// Whether a commit message is a confirmed destructive Change's merge.
 pub fn confirmed(message: &str) -> bool {
-    message.lines().any(|line| line.trim() == DESTRUCTIVE_TRAILER)
+    message
+        .lines()
+        .any(|line| line.trim() == DESTRUCTIVE_TRAILER)
 }
 
 /// The next applied set: `current`, but a project in `keep` keeps what `applied` held of it.

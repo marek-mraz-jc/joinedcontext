@@ -1450,7 +1450,8 @@ mod tests {
         let cfg = dev_config("portal", "[portal]\nremoval_hold_percent = 40\n");
         let vars = modules::portal::reconciler_vars(&cfg);
         assert_eq!(
-            vars.get("JC_PORTAL_REMOVAL_HOLD_PERCENT").map(String::as_str),
+            vars.get("JC_PORTAL_REMOVAL_HOLD_PERCENT")
+                .map(String::as_str),
             Some("40")
         );
         assert!(modules::portal::reconciler_vars(&dev_config("portal", "")).is_empty());
