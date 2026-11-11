@@ -277,8 +277,12 @@ async fn a_request_is_approved_in_the_owning_project_and_revoked_there() {
             .expect("there");
     let endpoint =
         json!({ "spec": { "audience": "project-list", "allowedProjects": ["traffic"] } });
-    let policy =
-        joinedcontext_portal::access_requests::grant_bundle(&request, &endpoint)[1].clone();
+    let policy = joinedcontext_portal::access_requests::grant_bundle(
+        &request,
+        &endpoint,
+        &["urn:ngsi-ld:Policy:x.org:y:z".to_owned()],
+    )[1]
+    .clone();
     state
         .mirror
         .upsert(serde_json::from_value(policy).expect("an envelope"));
@@ -478,8 +482,12 @@ async fn two_revokes_at_once_open_one_change() {
             .expect("there");
     let endpoint =
         json!({ "spec": { "audience": "project-list", "allowedProjects": ["traffic"] } });
-    let policy =
-        joinedcontext_portal::access_requests::grant_bundle(&request, &endpoint)[1].clone();
+    let policy = joinedcontext_portal::access_requests::grant_bundle(
+        &request,
+        &endpoint,
+        &["urn:ngsi-ld:Policy:x.org:y:z".to_owned()],
+    )[1]
+    .clone();
     state
         .mirror
         .upsert(serde_json::from_value(policy).expect("an envelope"));
