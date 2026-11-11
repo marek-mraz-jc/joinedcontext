@@ -858,7 +858,12 @@ fn d3_dataset_page_builds_a_calendar_from_choices_on_its_own_endpoints_output() 
     // from the labels, and 5 km is the radius a person starts from.
     assert!(section.contains("<div id=\"jc-subscribe-near\" class=\"jc-subscribe-fields\" hidden>"));
     assert!(section.contains("<option value=\"5\" selected>5 km</option>"));
-    for key in ["subscribe_near", "subscribe_radius", "subscribe_near_hint", "subscribe_near_unknown"] {
+    for key in [
+        "subscribe_near",
+        "subscribe_radius",
+        "subscribe_near_hint",
+        "subscribe_near_unknown",
+    ] {
         assert!(section.contains(&esc_t(key, "sk")), "{key}");
     }
     assert!(section.contains("aria-describedby=\"jc-subscribe-dates-hint\""));

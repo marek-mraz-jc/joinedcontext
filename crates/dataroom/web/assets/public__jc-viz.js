@@ -259,8 +259,8 @@ window.jcFeedLink = (function () {
         if (values.length && !near && nearBox && /locality|town|city|municipality/i.test(pair[0].split(".").pop())) {
           var options = document.getElementById("jc-subscribe-near-places");
           values.forEach(function (v) { var o = document.createElement("option"); o.value = v.value; options.appendChild(o); });
-          near = { attr: pair[0], input: nearPlace, hint: nearHint, values: values.map(function (v) { return v.value; }), example: values[0].value, key: "data-jc-near-hint" };
-          nearBox.hidden = false; nearHint.hidden = false;
+          near = { attr: pair[0], input: nearPlace, hint: nearHint, values: values.map(function (v) { return v.value; }), example: values[Math.min(1, values.length - 1)].value, key: "data-jc-near-hint" };
+          nearBox.hidden = false;
         }
       });
       if (near) { nearPlace.addEventListener("input", update); nearPlace.addEventListener("change", update); nearKm.addEventListener("change", update); }

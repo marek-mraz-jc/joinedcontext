@@ -126,10 +126,10 @@ for (const viewport of VIEWPORTS) {
     const asked = await serve(page, { facets: true });
     await page.goto(`${ORIGIN}/sk/dataset/events`);
     await page.locator(".jc-subscribe > summary").click();
-    const place = page.getByLabel("Blízko miesta", { exact: true });
+    const place = page.getByLabel("V okolí obce", { exact: true });
     await expect(place).toBeVisible();
     await expect(page.getByLabel("Vzdialenosť", { exact: true })).toHaveValue("5");
-    await expect(page.locator("#jc-subscribe-near-hint")).toContainText("Napríklad Banská Bystrica");
+    await expect(page.locator("#jc-subscribe-near-hint")).toContainText("Napríklad Zvolen");
     await page.getByLabel("Žáner", { exact: true }).fill("Hudba");
     await place.fill("sliač");
     const base = "https://api.dev.joinedcontext.com/api/endpoint/esbxdrr7snorjsp7uus2luihr6vl5vv6";

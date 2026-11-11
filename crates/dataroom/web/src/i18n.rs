@@ -1312,8 +1312,22 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
         "„{value}“ steht nicht in der Liste; wählen Sie einen ihrer Werte oder leeren Sie das Feld.",
         "„{value}” nincs a listában; válasszon egy értéket belőle, vagy törölje a mezőt.",
     );
-    add("subscribe_near", "Near a place", "Blízko miesta", "Blízko místa", "In der Nähe von", "Hely közelében");
-    add("subscribe_radius", "Distance", "Vzdialenosť", "Vzdálenost", "Entfernung", "Távolság");
+    add(
+        "subscribe_near",
+        "Around a town",
+        "V okolí obce",
+        "V okolí obce",
+        "Im Umkreis von",
+        "Település környékén",
+    );
+    add(
+        "subscribe_radius",
+        "Distance",
+        "Vzdialenosť",
+        "Vzdálenost",
+        "Entfernung",
+        "Távolság",
+    );
     add(
         "subscribe_near_hint",
         "For example {example}: events within the chosen distance of this place; your device's location is not used.",
