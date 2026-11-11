@@ -758,14 +758,38 @@ body.jc-corner-compact .jc-assistant:not([open]) > summary > .jc-assistant-icon 
 .jc-about-sources ul { margin: .25rem 0 0; padding-inline-start: 1.25rem; columns: 2 16rem; }
 .jc-about-sources li { min-block-size: 2rem; break-inside: avoid; }
 /* "Odoberať" on a dataset page (T-5203): a menu under its button, inside the page at 400 px. */
-.jc-subscribe { margin: 0 0 1rem; }
-.jc-subscribe > summary { display: inline-block; cursor: pointer; list-style: none; }
+/* The dataset's title row: the h1 and its actions (Subscribe) on one line, the actions under it when narrow. */
+.jc-dataset-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: .5rem 1rem; margin-bottom: .75rem; }
+.jc-dataset-head > h1 { flex: 1 1 20rem; min-width: 0; margin: 0; }
+.jc-dataset-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.jc-subscribe { position: relative; }
+.jc-subscribe > summary { display: inline-flex; align-items: center; gap: .375rem; cursor: pointer; list-style: none; min-height: 2.75rem; }
 .jc-subscribe > summary::-webkit-details-marker { display: none; }
-.jc-subscribe-menu { margin-top: .5rem; max-width: min(32rem, 100%); padding: .75rem 1rem; border: 1px solid var(--jc-border); border-radius: var(--jc-radius); background: var(--jc-surface); }
-.jc-subscribe-menu ul { list-style: none; margin: 0 0 .5rem; padding: 0; }
-.jc-subscribe-menu li { padding: .25rem 0; overflow-wrap: anywhere; }
-.jc-subscribe-group { margin: .25rem 0; font-size: .8125rem; font-weight: 600; color: var(--jc-muted); }
-.jc-subscribe-hint { margin: .5rem 0 0; font-size: .8125rem; color: var(--jc-muted); }
+.jc-subscribe > summary::after { content: ""; width: .45em; height: .45em; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: translateY(-.15em) rotate(45deg); }
+.jc-subscribe[open] > summary { background: rgba(var(--jc-primary-rgb), .08); border-color: var(--jc-primary); }
+.jc-subscribe[open] > summary::after { transform: translateY(.1em) rotate(-135deg); }
+.jc-subscribe-menu { position: absolute; right: 0; top: calc(100% + .375rem); z-index: 20; width: min(42rem, calc(100vw - 2rem)); padding: 1rem 1.25rem; border: 1px solid var(--jc-n300); border-radius: var(--jc-radius-lg); background: var(--jc-surface); box-shadow: 0 .75rem 2rem rgba(15, 23, 42, .18); }
+.jc-subscribe-menu ul { list-style: none; margin: 0 0 .75rem; padding: 0; }
+.jc-subscribe-menu ul:last-child { margin-bottom: 0; }
+.jc-subscribe-feed { padding: .5rem 0; }
+.jc-subscribe-feed + .jc-subscribe-feed { border-top: 1px solid var(--jc-border); }
+.jc-subscribe-feed > label { display: block; font-weight: 600; margin-bottom: .25rem; overflow-wrap: anywhere; }
+.jc-subscribe-copy { display: flex; align-items: flex-start; gap: .5rem; }
+/* The whole address in sight, broken anywhere: a person checks which feed it is before pasting. */
+.jc-subscribe-copy > .form-control { flex: 1 1 auto; min-width: 0; resize: none; overflow: hidden; word-break: break-all; field-sizing: content; font-family: var(--bs-font-monospace, monospace); font-size: .8125rem; line-height: 1.4; }
+.jc-subscribe-copy > .btn { flex: none; min-width: 7.5rem; min-height: 2.75rem; }
+.jc-subscribe-links { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; margin: .5rem 0 0; font-size: .875rem; }
+.jc-subscribe-links a { display: inline-flex; align-items: center; min-height: 2rem; }
+.jc-subscribe-group { margin: .25rem 0 0; font-size: .8125rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--jc-ink); }
+.jc-subscribe-lead { margin: 0 0 .5rem; font-size: .9375rem; color: var(--jc-ink); }
+@media (max-width: 40rem) {
+  .jc-dataset-actions, .jc-subscribe, .jc-subscribe > summary { width: 100%; }
+  .jc-subscribe > summary { justify-content: center; }
+  .jc-subscribe-menu { position: static; width: 100%; margin-top: .5rem; padding: 1rem; box-shadow: none; }
+  .jc-subscribe-copy { flex-direction: column; align-items: stretch; }
+  .jc-subscribe-links { flex-direction: column; gap: 0; }
+  .jc-subscribe-links a { min-height: 2.75rem; }
+}
 /* A short table's frame (T-4333): its row count as an attribute, as the CSP refuses a style attribute (T-5147). */
 .jc-grid[data-jc-rows="1"] { --jc-rows: 1; } .jc-grid[data-jc-rows="2"] { --jc-rows: 2; } .jc-grid[data-jc-rows="3"] { --jc-rows: 3; }
 .jc-grid[data-jc-rows="4"] { --jc-rows: 4; } .jc-grid[data-jc-rows="5"] { --jc-rows: 5; } .jc-grid[data-jc-rows="6"] { --jc-rows: 6; }

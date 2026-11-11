@@ -1215,11 +1215,35 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
     );
     add(
         "subscribe_hint",
-        "Copy an address into a feed reader or a calendar, for example Feedly or Google Calendar; new items appear by themselves.",
-        "Skopírujte adresu do čítačky noviniek alebo kalendára, napríklad Feedly alebo Google Kalendár; nové položky sa objavia samy.",
-        "Zkopírujte adresu do čtečky novinek nebo kalendáře, například Feedly nebo Google Kalendář; nové položky se objeví samy.",
-        "Kopieren Sie eine Adresse in einen Feedreader oder Kalender, zum Beispiel Feedly oder Google Kalender; neue Einträge erscheinen von selbst.",
-        "Másolja a címet egy hírolvasóba vagy naptárba, például a Feedlybe vagy a Google Naptárba; az új elemek maguktól megjelennek.",
+        "Copy an address and paste it into Google Calendar, Outlook or a feed reader; new items appear by themselves.",
+        "Skopírujte adresu a vložte ju do Google Kalendára, Outlooku alebo čítačky noviniek; nové položky sa objavia samy.",
+        "Zkopírujte adresu a vložte ji do Google Kalendáře, Outlooku nebo čtečky novinek; nové položky se objeví samy.",
+        "Kopieren Sie eine Adresse und fügen Sie sie in Google Kalender, Outlook oder einen Feedreader ein; neue Einträge erscheinen von selbst.",
+        "Másolja ki a címet, és illessze be a Google Naptárba, az Outlookba vagy egy hírolvasóba; az új elemek maguktól megjelennek.",
+    );
+    add(
+        "subscribe_open_app",
+        "Open in calendar app",
+        "Otvoriť v aplikácii kalendára",
+        "Otevřít v aplikaci kalendáře",
+        "In der Kalender-App öffnen",
+        "Megnyitás naptáralkalmazásban",
+    );
+    add(
+        "subscribe_download",
+        "Download .ics",
+        "Stiahnuť .ics",
+        "Stáhnout .ics",
+        ".ics herunterladen",
+        ".ics letöltése",
+    );
+    add(
+        "subscribe_open_feed",
+        "Open the feed",
+        "Otvoriť kanál",
+        "Otevřít kanál",
+        "Feed öffnen",
+        "Hírcsatorna megnyitása",
     );
     add(
         "search_publishers",
