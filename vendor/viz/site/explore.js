@@ -449,6 +449,16 @@
     return { points: points, shapes: shapes };
   }
 
+  // Rows at one position draw as one dot: each point carries how many share its position, so the
+  // dot can say so (29 events at 2 venues read as 2 dots otherwise).
+  function stacks(points) {
+    var n = {};
+    var key = function (p) { return p.geometry.coordinates.join(","); };
+    points.forEach(function (p) { n[key(p)] = (n[key(p)] || 0) + 1; });
+    points.forEach(function (p) { p.properties = Object.assign({}, p.properties, { jcStack: n[key(p)] }); });
+    return points;
+  }
+
   // Every position of a feature's geometry, [lon, lat] each; none for a feature without one.
   function positions(f) {
     var out = [];
@@ -817,7 +827,9 @@
           map.addLayer({ id: "jc-cluster", type: "circle", source: "jc-pts", filter: ["has", "point_count"], paint: { "circle-color": COLOUR, "circle-opacity": 0.85, "circle-radius": ["step", ["get", "point_count"], 14, 50, 18, 200, 24], "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
           // The count on a cluster needs the style's glyphs; the basemap styles have them.
           if (map.getStyle().glyphs) map.addLayer({ id: "jc-cluster-count", type: "symbol", source: "jc-pts", filter: ["has", "point_count"], layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 12 }, paint: { "text-color": "#fff" } });
-          map.addLayer({ id: "jc-point", type: "circle", source: "jc-pts", filter: ["!", ["has", "point_count"]], paint: { "circle-color": colour, "circle-radius": 7, "circle-stroke-color": "#fff", "circle-stroke-width": 2.5 } });
+          var stacked = [">", ["coalesce", ["get", "jcStack"], 1], 1];
+          map.addLayer({ id: "jc-point", type: "circle", source: "jc-pts", filter: ["!", ["has", "point_count"]], paint: { "circle-color": colour, "circle-radius": ["case", stacked, 13, 9], "circle-stroke-color": "#fff", "circle-stroke-width": 2.5 } });
+          if (map.getStyle().glyphs) map.addLayer({ id: "jc-stack", type: "symbol", source: "jc-pts", filter: ["all", ["!", ["has", "point_count"]], stacked], layout: { "text-field": ["to-string", ["get", "jcStack"]], "text-size": 12, "text-allow-overlap": true }, paint: { "text-color": "#fff" } });
           // On a narrow map the attribution starts folded to its (i) button, off the data.
           if (map.getContainer().clientWidth < 640) Array.prototype.forEach.call(map.getContainer().querySelectorAll(".maplibregl-compact-show"), function (n) { n.classList.remove("maplibregl-compact-show"); });
           ["jc-point", "jc-line", "jc-fill"].forEach(function (layer) {
@@ -968,6 +980,7 @@
       var m = state.mapping, map = state.map;
       var c = colourClasses(features, m.choice.color, m.card, t);
       var parts = splitPoints(features.map(function (f, i) { return { type: "Feature", geometry: f.geometry, properties: { jcId: f.id, jcColour: c.colours[i] } }; }));
+      stacks(parts.points);
       var fc = function (list) { return { type: "FeatureCollection", features: list }; };
       map.getSource("jc").setData(fc(parts.shapes));
       var pts = map.getSource("jc-pts");
@@ -1283,7 +1296,7 @@
     height();
   }
 
-  root.jcExplore = { parseHash: parseHash, hashOf: hashOf, base: base, hosts: hosts, styleOf: styleOf, entitiesUrl: entitiesUrl, bboxQuery: bboxQuery, links: links, templateOf: templateOf, tilesetUrl: tilesetUrl, geoProps: geoProps, mapOptions: mapOptions, mapChoice: mapChoice, colourClasses: colourClasses, splitPoints: splitPoints, boundsOf: boundsOf, inBox: inBox, viewPlan: viewPlan, countLine: countLine, show: show, cardValue: cardValue, namedLink: namedLink, cardOf: cardOf, hostOf: hostOf, humanise: humanise, TEXT: TEXT };
+  root.jcExplore = { parseHash: parseHash, hashOf: hashOf, base: base, hosts: hosts, styleOf: styleOf, entitiesUrl: entitiesUrl, bboxQuery: bboxQuery, links: links, templateOf: templateOf, tilesetUrl: tilesetUrl, geoProps: geoProps, mapOptions: mapOptions, mapChoice: mapChoice, colourClasses: colourClasses, splitPoints: splitPoints, boundsOf: boundsOf, stacks: stacks, inBox: inBox, viewPlan: viewPlan, countLine: countLine, show: show, cardValue: cardValue, namedLink: namedLink, cardOf: cardOf, hostOf: hostOf, humanise: humanise, TEXT: TEXT };
   if (typeof module === "object" && module.exports) module.exports = root.jcExplore;
   else if (typeof document !== "undefined") main();
 })(typeof self !== "undefined" ? self : this);
