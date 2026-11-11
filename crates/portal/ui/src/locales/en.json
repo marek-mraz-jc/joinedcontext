@@ -1578,6 +1578,7 @@
     },
     "publicNotice": "An endpoint with a public audience answers anonymous callers, and an anonymous caller may only read. Writes and subscriptions still need a login, whichever representations are enabled.",
     "publicMcpHint": "MCP for AI assistants stays off on a public endpoint until you check MCP under representations. Example: check MCP so Claude or ChatGPT can read this endpoint through the project's public MCP connector.",
+    "publicMcpOn": "MCP is on: AI assistants such as Claude or ChatGPT read this endpoint through the project's public MCP connector, under its public Policy. Uncheck MCP to turn it off.",
     "data": {
       "title": "What this endpoint answers",
       "type": "Entity type",

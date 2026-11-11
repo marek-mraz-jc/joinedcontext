@@ -1555,6 +1555,7 @@
     },
     "publicNotice": "Ein Endpunkt mit öffentlichem Publikum antwortet anonymen Aufrufern, und ein anonymer Aufrufer darf nur lesen. Schreibzugriffe und Abonnements verlangen weiterhin eine Anmeldung, welche Repräsentationen auch aktiviert sind.",
     "publicMcpHint": "MCP für KI-Assistenten bleibt an einem öffentlichen Endpunkt aus, bis Sie MCP unter den Repräsentationen ankreuzen. Beispiel: Kreuzen Sie MCP an, damit Claude oder ChatGPT diesen Endpunkt über den öffentlichen MCP-Konnektor des Projekts lesen.",
+    "publicMcpOn": "MCP ist an: KI-Assistenten wie Claude oder ChatGPT lesen diesen Endpunkt über den öffentlichen MCP-Konnektor des Projekts, unter seiner öffentlichen Policy. Entfernen Sie das Häkchen bei MCP, um es auszuschalten.",
     "data": {
       "title": "Was dieser Endpunkt antwortet",
       "type": "Entitätstyp",

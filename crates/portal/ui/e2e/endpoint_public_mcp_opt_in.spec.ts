@@ -73,26 +73,31 @@ for (const width of [1440, 400]) {
     const mcp = page.getByRole("checkbox", { name: "MCP for AI assistants", exact: true });
     await expect(mcp).toBeChecked();
     await expect(mcp).toBeDisabled();
-    await expect(page.getByTestId("public-mcp-hint")).toHaveCount(0);
+    const line = page.getByTestId("public-mcp-hint");
+    const hint = line.filter({ hasText: "stays off on a public endpoint until you check MCP" });
+    const on = line.filter({ hasText: "MCP is on: AI assistants" });
+    await expect(line).toHaveCount(0);
 
     // Turning it public turns MCP off until the person checks it, and the hint appears.
     await page.getByRole("combobox", { name: "Audience", exact: true }).selectOption({ label: "Public: anyone with the address" });
     await expect(mcp).not.toBeChecked();
     await expect(mcp).toBeEnabled();
-    await expect(page.getByTestId("public-mcp-hint")).toBeVisible();
+    await expect(hint).toBeVisible();
 
     // Public, not opted in: unchecked, choosable, and the hint says how to turn it on.
     await page.goto("/projects/helsinki/endpoints/air-open/edit?lang=en");
     await expect(mcp).not.toBeChecked();
     await expect(mcp).toBeEnabled();
-    const hint = page.getByTestId("public-mcp-hint");
-    await expect(hint).toContainText("stays off on a public endpoint until you check MCP");
     await expect(hint).toContainText("Example:");
+    await expect(on).toHaveCount(0);
     await hint.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(dir, `public-mcp-off-${width}.png`) });
 
+    // Checked, the line beside it says what is on and how to turn it off.
     await mcp.check();
     await expect(mcp).toBeChecked();
+    await expect(on).toBeVisible();
+    await expect(hint).toHaveCount(0);
     await mcp.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(dir, `public-mcp-on-${width}.png`) });
   });

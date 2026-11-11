@@ -1300,9 +1300,8 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
     ...endpointUiSchema,
     enabledRepresentations: {
       ...endpointUiSchema.enabledRepresentations,
-      // MCP on a public Endpoint is the person's switch, off until checked (T-6761).
       "ui:enumDisabled": disabledRepresentations(
-        editing?.audience === "public" ? ["ngsi-ld"] : ALWAYS_ON_REPRESENTATIONS,
+        ALWAYS_ON_REPRESENTATIONS,
         editedSpace ? fitQuery.data : undefined,
         editing?.enabledRepresentations,
       ),
@@ -1680,8 +1679,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
 
             {editing?.audience === "public" ? (
               <Alert role="note" tone="warning">
-                <p>{t("endpoints.publicNotice")}</p>
-                <p data-testid="public-mcp-hint">{t("endpoints.publicMcpHint")}</p>
+                {t("endpoints.publicNotice")}
               </Alert>
             ) : null}
 

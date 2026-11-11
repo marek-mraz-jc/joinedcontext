@@ -11,6 +11,7 @@ export const PORTAL_WIDGET_NAMES = [
   "entityPicker",
   "operations",
   "personPicker",
+  "representationCheckboxes",
   "resourcePicker",
   "secretRef",
   "typePicker",
