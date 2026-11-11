@@ -38,6 +38,7 @@ LD = "application/ld+json"
 GEO = "application/geo+json"
 OUTSIDE = "SmokeOutsidePolicy"
 FILE_TRIES = 5
+BUSY_TRIES, BUSY_WAIT = 3, 5.0  # the gateway's busy 503 (Suite.get)
 # A file's cell holds a whole geometry: a NoiseZone polygon passes csv's default 128 KiB field.
 csv.field_size_limit(64 * 1024 * 1024)
 # One iCal feed reads at most RESIDUAL_SCAN entities (antares-ops/src/scan.rs, 10_000 in jc and in
@@ -121,6 +122,7 @@ class Suite:
         self.a, self.index, self.person = a, index, person
         self.http = Http(a.base_url, timeout=a.timeout)
         self.r = Results("endpoints", a.base_url)
+        self.busy: dict[str, int] = {}  # path -> busy answers before the one judged (get)
         now = dt.datetime.now(dt.timezone.utc)
         # The rehearsal keeps 24 h of history and sweeps hourly: an instance may be up to
         # 24 h + the sweep interval old; anything before that is a leak of older history.
@@ -130,14 +132,28 @@ class Suite:
     # ---------------------------------------------------------------- helpers
 
     def get(self, path, token=None, accept=LD):
+        """GET once, and again after a busy answer: past its slow-read budget the gateway sheds a
+        read with 503 and Retry-After, and a resend after it is safe (context-gateway
+        middleware/in_flight.rs). BUSY_TRIES tries, each wait at most BUSY_WAIT s; the count of
+        busy answers goes on the row (`busy`), so a run under load stays visible. A busy restore
+        copy failed its OGC collections in one run and passed them in the next (smoke 42952387007,
+        42953298821)."""
+        self.busy.pop(path, None)
+        for n in range(1, BUSY_TRIES):
+            st, h, raw = self.http.call("GET", path, token=token, headers={"Accept": accept})
+            if st != 503 or not h.get("retry-after"):
+                return st, h, raw
+            self.busy[path] = n
+            time.sleep(min(float(h["retry-after"]), BUSY_WAIT))
         return self.http.call("GET", path, token=token, headers={"Accept": accept})
 
     def ok_json(self, id, target, path, token=None, accept=LD, expect=200):
         st, h, raw = self.get(path, token, accept)
         body = as_json(raw)
         good = st == expect and body is not None
-        self.r.check(id, target, f"GET {path}", f"{expect} JSON", f"{st} {h.get('content-type', '')} {short(raw, 100)}"
-                     if not good else f"{st}", good)
+        busy = f" after {self.busy[path]} busy 503" if path in self.busy else ""
+        self.r.check(id, target, f"GET {path}", f"{expect} JSON", f"{st} {h.get('content-type', '')} {short(raw, 100)}{busy}"
+                     if not good else f"{st}{busy}", good)
         return body if good else None
 
     # ---------------------------------------------------------------- per Endpoint

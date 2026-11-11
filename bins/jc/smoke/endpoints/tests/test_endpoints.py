@@ -438,3 +438,29 @@ def test_the_person_realm_and_its_token_call_name_the_state_realm(tmp_path, monk
                            out=str(tmp_path / "tok"))
     assert person.cmd_token(a) == 1
     assert seen == ["/id/realms/smartcity/protocol/openid-connect/token"]
+
+
+def test_a_busy_gateway_answer_is_sent_again_a_bounded_number_of_times_and_named_on_the_row(monkeypatch):
+    s = suite.Suite.__new__(suite.Suite)
+    s.busy, s.r = {}, suite.Results("endpoints", "http://127.0.0.1:1")
+    busy = (503, {"retry-after": "1"}, b'{"title":"Service Unavailable"}')
+    answers = [busy, (200, {"content-type": "application/json"}, b"[]")]
+
+    class H:
+        calls = 0
+
+        def call(self, *a, **k):
+            H.calls += 1
+            return answers.pop(0) if answers else busy
+
+    s.http = H()
+    monkeypatch.setattr(suite.time, "sleep", lambda _: None)
+    assert s.ok_json("anon.ogc.collections", "t", "/c") == []
+    assert s.r.rows[-1]["result"] == "pass" and "after 1 busy 503" in s.r.rows[-1]["actual"]
+    H.calls = 0
+    assert s.ok_json("anon.ogc.collections", "t", "/c") is None  # busy every time: fails
+    assert H.calls == suite.BUSY_TRIES and "after 2 busy 503" in s.r.rows[-1]["actual"]
+    no_hint = (503, {}, b"down")
+    answers[:] = [no_hint, (200, {}, b"[]")]
+    H.calls = 0
+    assert s.ok_json("anon.ogc.collections", "t", "/c") is None and H.calls == 1  # no Retry-After: judged at once
