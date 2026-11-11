@@ -67,7 +67,7 @@ describe("EntityGrid compact (T-6748)", () => {
     const real = fixtureSource(entities);
     const busy = {
       ...real,
-      query: (q: Parameters<typeof real.query>[0], page: Parameters<typeof real.query>[1]) =>
+      query: (_q: Parameters<typeof real.query>[0], page: Parameters<typeof real.query>[1]) =>
         page.limit > 0 ? Promise.reject(new SourceError(503, "the broker is busy")) : Promise.resolve({ rows: [], total: 161 }),
     };
     const { container } = render(<EntityGrid config={config} source={busy} compact filterRow={false} />);
