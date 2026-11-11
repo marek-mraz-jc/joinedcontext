@@ -560,6 +560,10 @@ pub struct EndpointSpec {
     /// key attributes, reordering and narrowing the model's display order (EP-135, DM-98).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub display: BTreeMap<String, crate::display_order::Display>,
+    /// The attributes a reader may list distinct values of at `/facets` (EP-178), at most
+    /// [`MAX_FACETS`]: an attribute name or `name.member`, e.g. `address.addressLocality`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub facets: Vec<String>,
     /// The mappings of the domain-standard representations, `ical` first (EP-125, API/02 §8b).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub representations: Option<super::ical_mapping::Representations>,
@@ -651,6 +655,37 @@ impl Kind for EndpointSpec {
     fn context_space(&self) -> Option<&str> {
         Some(self.context_space_ref.name())
     }
+}
+
+/// The most attributes `spec.facets` lists (EP-178); the broker holds a view to the same.
+pub const MAX_FACETS: usize = 10;
+
+/// Why `facets` cannot be an Endpoint's `spec.facets` (EP-178): more than [`MAX_FACETS`], a
+/// name twice, or one that is not `name` or `name.member` of `[A-Za-z][A-Za-z0-9_]*` words.
+fn facets_gap(facets: &[String]) -> Option<String> {
+    if facets.len() > MAX_FACETS {
+        return Some(format!("list at most {MAX_FACETS} attributes"));
+    }
+    let word = |w: &str| {
+        let mut chars = w.chars();
+        chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    };
+    for (i, facet) in facets.iter().enumerate() {
+        let mut parts = facet.split('.');
+        let shaped = parts.next().is_some_and(word)
+            && parts.next().is_none_or(word)
+            && parts.next().is_none();
+        if !shaped {
+            return Some(format!(
+                "{facet:?} is not an attribute name or name.member, e.g. address.addressLocality"
+            ));
+        }
+        if facets[..i].contains(facet) {
+            return Some(format!("{facet:?} is listed twice"));
+        }
+    }
+    None
 }
 
 impl EndpointSpec {
@@ -829,6 +864,13 @@ impl EndpointSpec {
                     reason: gaps.join("; "),
                 });
             }
+        }
+
+        if let Some(reason) = facets_gap(&self.facets) {
+            return Err(Error::Invalid {
+                field: "spec.facets".to_owned(),
+                reason,
+            });
         }
 
         let feed_gaps = super::feed_output::feed_gaps(self.feed_outputs(), None)
@@ -1227,5 +1269,22 @@ impl SharedSpaceReferenceSpec {
             other => other,
         })?;
         crate::kinds::validate_mirror_schedule(self.schedule.as_ref())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn facets_take_names_and_one_member_at_most_ten_once_each() {
+        let list = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+        assert_eq!(facets_gap(&list(&["eventCategory", "address.addressLocality"])), None);
+        assert_eq!(facets_gap(&[]), None);
+        for bad in [&["a.b.c"][..], &["q;x"], &["1a"], &["a."], &["a", "a"]] {
+            assert!(facets_gap(&list(bad)).is_some(), "{bad:?}");
+        }
+        let eleven: Vec<String> = (0..=MAX_FACETS).map(|i| format!("a{i}")).collect();
+        assert!(facets_gap(&eleven).is_some());
     }
 }

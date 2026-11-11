@@ -80,6 +80,14 @@ const FEED: Surface = Surface {
     name: "feed",
 };
 
+/// The facet read of the view (EP-178): an NGSI-LD read through the Endpoint's Policy, so it is
+/// admitted where `ngsi-ld` is.
+const FACETS: Surface = Surface {
+    representation: Representation::NgsiLd,
+    path: "facets",
+    name: "facets",
+};
+
 /// Every OGC API - Features request of one endpoint (EP-29, EP-39, EP-40).
 pub(crate) async fn ogc_features(
     State(gateway): State<Arc<Gateway>>,
@@ -192,6 +200,21 @@ pub(crate) async fn feeds(
         return ProblemDetails::not_found().into_response();
     };
     read_surface(&gateway, &params, request, surface, Some(forward)).await
+}
+
+/// `facets?attr=…` (EP-178): the distinct values of one of the Endpoint's `spec.facets` with
+/// their counts, or without `attr` the list itself; the broker checks every parameter.
+pub(crate) async fn facets(
+    State(gateway): State<Arc<Gateway>>,
+    Path(params): Path<HashMap<String, String>>,
+    request: Request,
+) -> Response<Body> {
+    let forward = request
+        .uri()
+        .query()
+        .filter(|q| !q.is_empty())
+        .map_or_else(String::new, |q| format!("?{q}"));
+    read_surface(&gateway, &params, request, &FACETS, Some(Ok(forward))).await
 }
 
 /// `entities.{ics,rss,atom,json}?{query}` (API/02 §4a, EP-174): the Endpoint's first calendar
@@ -1006,6 +1029,8 @@ pub(crate) fn routes() -> Router<Arc<Gateway>> {
         // A stored output by a link that ends in its format, optionally narrowed by a filter
         // segment (API/02 §4a, EP-177).
         .route("/api/endpoint/{slug}/feeds/{*rest}", any(feeds))
+        // The distinct values of a facet attribute with their counts (EP-178).
+        .route("/api/endpoint/{slug}/facets", any(facets))
         // One NGSI-LD query, then a format (API/02 §4a, EP-174).
         .route("/api/endpoint/{slug}/entities.ics", any(entities))
         .route("/api/endpoint/{slug}/entities.rss", any(entities))

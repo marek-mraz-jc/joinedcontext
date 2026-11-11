@@ -214,6 +214,35 @@ async fn each_format_is_the_views_feed_on_the_public_host() {
     assert_eq!(hops[0].2["ngsild-tenant"], SPACE);
 }
 
+/// T-6758 (EP-178): `facets` reaches the broker's view facet read with the query as sent and the
+/// Endpoint's space as tenant, and without a query the list read; a POST is refused before it.
+#[tokio::test]
+async fn facets_forward_to_the_view_as_sent() {
+    let (upstream, hops) = broker().await;
+    let query = "attr=address.addressLocality&limit=20&q=category==%22music%22";
+    for uri in [
+        format!("/api/endpoint/{SLUG}/facets?{query}"),
+        format!("/api/endpoint/{SLUG}/facets"),
+    ] {
+        let (status, _, body) = call(&upstream, endpoint(Vec::new()), Method::GET, &uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+    }
+    let (status, _, _) = call(
+        &upstream,
+        endpoint(Vec::new()),
+        Method::POST,
+        &format!("/api/endpoint/{SLUG}/facets?{query}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    let hops = hops.lock().expect("the hop log").clone();
+    let path = format!("/x/views/{SLUG}/facets");
+    assert_eq!(hops.len(), 2);
+    assert_eq!((hops[0].0.as_str(), hops[0].1.as_deref()), (path.as_str(), Some(query)));
+    assert_eq!(hops[0].2["ngsild-tenant"], SPACE);
+    assert_eq!((hops[1].0.as_str(), hops[1].1.as_deref()), (path.as_str(), None));
+}
+
 /// The owner's test link (T-6755): `feeds/{filter}/events.ics` is `ical/v1/events.ics?{filter}`
 /// at the broker, the raw segment passed unchanged, so `%2F`, `%5B`, `%22` and `%23` stay one
 /// value, and the `?` form of the same query reaches the broker the same way.

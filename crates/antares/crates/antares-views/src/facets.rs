@@ -10,7 +10,8 @@
 //! `representations.facets`, checked against the closed list and never spliced into a query;
 //! a name that is not listed, unknown, or hidden from this caller by the engine answers the
 //! same 400. The read is bounded by [`RESIDUAL_SCAN`]: past it the answer is 413, never a count
-//! of a part.
+//! of a part. Without `attr` the answer is the closed list itself, `{"facets": [...]}`, so a
+//! page builds its filters from the publisher's attributes (T-6758).
 //!
 //! Decided (worker-t6757, owner may override): counted in the broker over the scan, not by a
 //! SQL `GROUP BY`, because a Policy's row formulas are only partly pushed into SQL (a regex
@@ -123,7 +124,8 @@ fn not_found() -> Problem {
 /// A facet read's query string.
 #[derive(Debug)]
 struct Asked {
-    attr: String,
+    /// `None`: the answer lists the view's facets instead of counting one.
+    attr: Option<String>,
     limit: usize,
     types: Vec<String>,
     passed: BTreeMap<String, String>,
@@ -140,10 +142,7 @@ fn asked(uri: &axum::http::Uri) -> Result<Asked, Problem> {
             return Err(bad(format!("{key} is given more than once")));
         }
     }
-    let attr = seen
-        .get("attr")
-        .map(|a| (*a).to_owned())
-        .ok_or_else(|| bad("attr is required, e.g. attr=category"))?;
+    let attr = seen.get("attr").map(|a| (*a).to_owned());
     let limit = match seen.get("limit") {
         None => DEFAULT_LIMIT,
         Some(v) => v
@@ -193,11 +192,17 @@ async fn facets(
         .and_then(|id| ops.view(&id))
         .filter(|v| v.allows(OperationId::QueryEntities))
         .ok_or_else(not_found)?;
-    let listed = view
+    let facets = view
         .representation("facets")
         .and_then(Value::as_array)
-        .is_some_and(|l| l.iter().any(|f| f.as_str() == Some(asked.attr.as_str())));
-    let (name, member) = facet_path(&asked.attr)
+        .cloned()
+        .unwrap_or_default();
+    // without `attr` the answer names the closed list, so a page builds its filters from it
+    let Some(attr) = asked.attr.as_deref() else {
+        return Ok(json!({ "facets": facets }));
+    };
+    let listed = facets.iter().any(|f| f.as_str() == Some(attr));
+    let (name, member) = facet_path(attr)
         .filter(|_| listed)
         .ok_or_else(|| bad(NOT_FACETABLE))?;
     let attr_iri = view.expand_name(name);
@@ -262,7 +267,7 @@ async fn facets(
         member,
         asked.limit,
     );
-    Ok(json!({ "attr": asked.attr, "values": values, "truncated": truncated }))
+    Ok(json!({ "attr": attr, "values": values, "truncated": truncated }))
 }
 
 /// The expanded types a facet read counts: the caller's `type`, each one the view shows, or
@@ -424,8 +429,8 @@ mod tests {
                 .and_then(|uri| asked(&uri).ok())
         };
         assert!(read("attr=category&limit=20&type=Event&q=a%3D%3D1").is_some());
+        assert!(read("").is_some_and(|a| a.attr.is_none()), "no attr lists the facets");
         for q in [
-            "",
             "attr=a&attr=b",
             "attr=a&limit=0",
             "attr=a&limit=101",

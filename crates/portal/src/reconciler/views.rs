@@ -971,6 +971,10 @@ fn view_of(
     if !feeds.is_empty() {
         representations.insert("feed".into(), json!(feeds));
     }
+    // the closed list of attributes `/facets` counts values of is the Endpoint's (EP-178)
+    if !e.spec.facets.is_empty() {
+        representations.insert("facets".into(), json!(e.spec.facets));
+    }
     if !representations.is_empty() {
         view.insert("representations".into(), Value::Object(representations));
     }
@@ -3918,6 +3922,23 @@ mod tests {
             json!({"ical": [{"name": "events", "sources": [{"type": "Event", "preset": "schema-org"}]}]}),
             "the deprecated single object is the output `events`"
         );
+    }
+
+    /// T-6758 (EP-178): the view lists the Endpoint's `spec.facets` as written, so the broker
+    /// counts values of the publisher's attributes alone, and nothing when it lists none.
+    #[test]
+    fn the_view_carries_the_facets_the_endpoint_lists() {
+        let s = sources(vec![("cars", cars())]);
+        let with = |facets: Option<Value>| {
+            let mut spec = json!({"policyRef": "urn:ngsi-ld:Policy:city.example:city-air:cars"});
+            if let Some(facets) = facets {
+                spec["facets"] = facets;
+            }
+            endpoint_view(&s, &endpoint(spec)).unwrap_or_else(|why| panic!("a view: {why}"))
+        };
+        let listed = json!(["eventCategory", "address.addressLocality"]);
+        assert_eq!(with(Some(listed.clone()))["representations"], json!({ "facets": listed }));
+        assert!(with(None).get("representations").is_none());
     }
 
     /// T-3788: the space view is the `*` form, every type and Attribute; the engine narrows
