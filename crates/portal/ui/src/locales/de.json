@@ -12406,5 +12406,11 @@
   "hiddenSection": {
     "title": "Dashboards gehören nicht zu dieser Installation",
     "body": "Die geöffnete Adresse gehört zu den Dashboards, die dieses Portal nicht anbietet; Sie sind daher bei den Context Spaces des Projekts."
+  },
+  "dataGrid": {
+    "searchRows": "Liste durchsuchen",
+    "searchRowsHint": "Geben Sie einen Teil eines Werts ein, z. B. einen Namen oder einen Bereich.",
+    "noMatch": "Keine Zeile passt zur Suche oder zu den Filtern.",
+    "rowCount": "{{n}} Zeilen"
   }
 }
