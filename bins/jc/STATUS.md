@@ -373,9 +373,13 @@ project `e2e` (layout 1: project, space `things`, a `public` and a `project-list
 
 ### Gaps left (stage 8)
 
-- Portal UI reads of a closed Endpoint: the UI calls `GET /api/endpoint/{slug}/ngsi-ld/v1/...` with its session
-  cookie only; the gateway reads `Authorization` alone (`auth/subject.rs` `admit_on`), so in jc that call is
-  anonymous: 401 on a closed Endpoint. On dev APISIX's openid-connect plugin turns the session into a bearer.
+- Portal UI reads of a closed Endpoint (closed by T-6783): the UI calls `/api/endpoint/{slug}/...` with its session
+  cookie only and the gateway reads `Authorization` alone (`auth/subject.rs` `admit_on`). jc's gateway layer
+  `session_reads` (`modules/gateway.rs`) now asks the Portal in the same process for the person's token for that
+  Endpoint (`auth::endpoint_token`: the session's access token, kept server-side, exchanged for audience `mcp-hub`
+  and scope `endpoint:{slug}`), only on a `Sec-Fetch-Site: same-origin` request with no `Authorization`; the
+  gateway then answers 200 or 403 on the person's grants. A Portal in another container than the gateway still
+  reads anonymously. On dev APISIX's openid-connect plugin turns the session into a bearer.
 - Stale since T-6063, corrected by jc-kaisatsu-audience (2026-11-09): jc's linker (`modules/kaisatsu.rs`
   `link_pass`, every 5 s) links each Portal `endpoint:{slug}` scope to `mcp-hub`, `jcctl` and `portal-api` as
   optional, as the deployment's admin-permissions Job does. A person's `jcctl` token with that scope reads the
