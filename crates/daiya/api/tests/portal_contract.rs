@@ -577,10 +577,14 @@ async fn the_host_page_reader_opens_the_page_for_a_signed_in_member_only() {
     let mut grafana = Grafana::new(Arc::new(FlakyStore::default()), None);
     let helsinki = grafana.provision("helsinki").await;
     let bbsk = grafana.provision("bbsk").await;
-    let state = grafana.state.clone().with_page_reader(|headers, _num, name| {
-        let cookie = headers.get("cookie")?.to_str().ok()?;
-        (cookie == "session=member-of-helsinki" && name == "helsinki").then(|| "f:1:anna".into())
-    });
+    let state = grafana
+        .state
+        .clone()
+        .with_page_reader(|headers, _num, name| {
+            let cookie = headers.get("cookie")?.to_str().ok()?;
+            (cookie == "session=member-of-helsinki" && name == "helsinki")
+                .then(|| "f:1:anna".into())
+        });
     grafana.app = api_router(
         state,
         Mount::new("dashboards", "https", "x.example", "").expect("mount"),
@@ -651,7 +655,10 @@ async fn the_host_page_reader_opens_the_page_for_a_signed_in_member_only() {
         .expect("request");
     let res = grafana.app.clone().oneshot(req).await.expect("answer");
     assert!(
-        matches!(res.status(), StatusCode::NOT_FOUND | StatusCode::UNAUTHORIZED),
+        matches!(
+            res.status(),
+            StatusCode::NOT_FOUND | StatusCode::UNAUTHORIZED
+        ),
         "{}",
         res.status()
     );

@@ -967,12 +967,18 @@ mod tests {
     /// The `Cookie` header a browser sends after this Portal stored `session`.
     fn cookie_of(state: &AppState, session: &Session) -> HeaderMap {
         use axum::response::IntoResponse;
-        let jar = axum_extra::extract::cookie::PrivateCookieJar::new(state.config.cookie_key.clone());
+        let jar =
+            axum_extra::extract::cookie::PrivateCookieJar::new(state.config.cookie_key.clone());
         let jar = crate::auth::session::store(jar, session).expect("store");
         let response = (jar, axum::http::StatusCode::OK).into_response();
         let mut headers = HeaderMap::new();
         for value in response.headers().get_all(axum::http::header::SET_COOKIE) {
-            let pair = value.to_str().expect("ascii").split(';').next().unwrap_or_default();
+            let pair = value
+                .to_str()
+                .expect("ascii")
+                .split(';')
+                .next()
+                .unwrap_or_default();
             headers.append(axum::http::header::COOKIE, pair.parse().expect("cookie"));
         }
         headers
@@ -984,17 +990,38 @@ mod tests {
     fn the_page_reader_names_a_signed_in_member_only() {
         let state = world(None);
         let member = cookie_of(&state, &admin().0);
-        assert_eq!(page_reader(&state, &member, PROJECT).as_deref(), Some("sub-pia"));
-        assert_eq!(page_reader(&state, &member, "bbsk"), None, "another project");
+        assert_eq!(
+            page_reader(&state, &member, PROJECT).as_deref(),
+            Some("sub-pia")
+        );
+        assert_eq!(
+            page_reader(&state, &member, "bbsk"),
+            None,
+            "another project"
+        );
         assert_eq!(page_reader(&state, &member, "Not A Name"), None);
-        assert_eq!(page_reader(&state, &cookie_of(&state, &outsider().0), PROJECT), None);
+        assert_eq!(
+            page_reader(&state, &cookie_of(&state, &outsider().0), PROJECT),
+            None
+        );
         assert_eq!(page_reader(&state, &HeaderMap::new(), PROJECT), None);
         let mut bearer = member.clone();
-        bearer.insert(axum::http::header::AUTHORIZATION, "Bearer x".parse().expect("header"));
-        assert_eq!(page_reader(&state, &bearer, PROJECT), None, "a credential is not a cookie");
+        bearer.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer x".parse().expect("header"),
+        );
+        assert_eq!(
+            page_reader(&state, &bearer, PROJECT),
+            None,
+            "a credential is not a cookie"
+        );
         let mut spent = admin().0;
         spent.access_expires_at = crate::auth::session::now_unix() - 1;
-        assert_eq!(page_reader(&state, &cookie_of(&state, &spent), PROJECT), None, "expired");
+        assert_eq!(
+            page_reader(&state, &cookie_of(&state, &spent), PROJECT),
+            None,
+            "expired"
+        );
         let forged = HeaderMap::from_iter([(
             axum::http::header::COOKIE,
             "__Host-jc_session=forged".parse().expect("cookie"),
