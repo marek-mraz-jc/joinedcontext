@@ -1397,7 +1397,9 @@ fn installation_branding_and_mount_prefix_reach_the_chrome() {
 fn the_footer_language_switch_hides_its_go_with_script_and_the_corner_stands_before_the_footer() {
     let html = render_home_page(&cat(), &[], &[], "", "en", NONCE);
     let corner = html.find("<div class=\"jc-corner\">").expect("the corner");
-    let footer = html.find("<footer class=\"site-footer\">").expect("the footer");
+    let footer = html
+        .find("<footer class=\"site-footer\">")
+        .expect("the footer");
     // Sticky in the page's flow before the footer, so it stops above the footer's links.
     assert!(corner < footer, "the corner comes before the footer");
     let footer = &html[footer..];
