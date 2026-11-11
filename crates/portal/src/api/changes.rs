@@ -2652,15 +2652,16 @@ pub async fn approve_change_for(
         Err(GitError::NotFound) => poster(&pr),
         read => read?,
     };
-    let is_author = match (&author.email, &identity.email) {
-        (Some(pr_email), Some(user_email)) if !pr_email.trim().is_empty() => {
-            pr_email.eq_ignore_ascii_case(user_email.trim())
+    // The e-mail the Portal writes into the approver's own commits (theirs, or
+    // `{username}@{project}.local` without one) against the head commit's: never a display name,
+    // which a namesake shares and a rename changes. A head that names no e-mail cannot be told
+    // apart from the approver's own, so it counts as theirs (T-6706).
+    let (_, approver_email) = crate::api::mutate::author_credentials(identity, project);
+    let is_author = match author.email.as_deref().map(str::trim) {
+        Some(pr_email) if !pr_email.is_empty() => {
+            pr_email.eq_ignore_ascii_case(approver_email.trim())
         }
-        _ => {
-            let user_name = identity.name.as_deref().unwrap_or(&identity.username);
-            author.name.eq_ignore_ascii_case(user_name)
-                || author.name.eq_ignore_ascii_case(&identity.username)
-        }
+        _ => true,
     };
 
     // Nobody grants themselves access alone: a Policy naming its author, a Group they are in or
