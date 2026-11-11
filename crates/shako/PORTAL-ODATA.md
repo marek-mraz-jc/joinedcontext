@@ -65,7 +65,7 @@ webhooks into the Portal's real receiver.
 | 16 | `change_files` / `update_files` / `write_files` | `POST R/Shako.CommitFiles` with `Files[]` of `upload`, `create`, `update`, `delete` | `Sha`; all or nothing, one stale `sha` is 409 and the branch does not move |
 | 17 | `delete_file` | `POST R/Shako.CommitFiles` `{Files: [{operation: delete, path, sha}]}` | `Sha` |
 | 18 | `list_commits` | `GET R/Shako.History(Ref=@r,Path=@p,Top={n})?@r='{ref}'&@p='{path}'` | `value[].{Sha, Message, Author, Email, Date}` |
-| 19 | `commit_message` | `GET R/Commits('{sha}')` | `Message` (whole message) |
+| 19 | `commit_message` | `GET R/Commits('{sha}')` | `Message` (whole message), `Author`, `Email`, `Committer`, `CommitterEmail` |
 
 `CommitFiles` takes `Author` and `Committer` as `{Name, Email}`: commits are attributed to the
 signed-in person while the token only authenticates the call (CC-44). A commit emits the `push`

@@ -1260,12 +1260,19 @@ fn apply(dir: &Path, options: commands::apply::Options, live: Connection) -> Exi
         Ok(repo) => repo,
         Err(err) => return fail(&err.to_string()),
     };
+
     // Opened before anything is converged: an unreachable gateway or an unreadable token is a
     // run that cannot finish, and finding that out after half a replay helps nobody.
     let gateway = match live.open() {
         Ok(gateway) => gateway,
         Err(err) => return fail(&err),
     };
+    // A gateway makes this run write seed entities: only from the reviewed main (P-14).
+    if gateway.is_some() {
+        if let Err(err) = commands::reviewed::check(dir) {
+            return fail(&err);
+        }
+    }
     let mut platform = InMemory::new();
     let report = match commands::apply::run(&repo, &mut platform, options) {
         Ok(report) => report,
@@ -1490,6 +1497,10 @@ fn publish_ckan(options: &PublishCkanOptions) -> ExitCode {
         Ok(repo) => repo,
         Err(err) => return fail(&err.to_string()),
     };
+    // The catalogue is live state: published only from the reviewed main (P-14).
+    if let Err(err) = commands::reviewed::check(&options.repo_dir) {
+        return fail(&err);
+    }
     let (targets, unplanned) = match command::targets_with(&repo, &options.project, None) {
         Ok(found) => found,
         Err(err) => return fail(&err.to_string()),
