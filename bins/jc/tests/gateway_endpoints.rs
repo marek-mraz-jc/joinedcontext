@@ -22,6 +22,8 @@ use std::time::{Duration, Instant};
 
 const PROJECT: &str = "e2e";
 const SPACE: &str = "things";
+/// The owner segment every entity id of the default Organization (`jc.invalid`) carries (ADR-N-068).
+const OWNER: &str = "invalid_jc";
 const PUBLIC: &str = "e2epublicendpointaaaaaaaaa";
 const CLOSED: &str = "e2eclosedendpointaaaaaaaaa";
 const ELSEWHERE: &str = "e2eotherendpointaaaaaaaaaa";
@@ -677,7 +679,7 @@ async fn call(
 
 fn entity(kind: &str, local: &str) -> Value {
     json!({
-        "id": format!("urn:ngsi-ld:{kind}:{local}"),
+        "id": format!("urn:ngsi-ld:{kind}:{OWNER}:{local}"),
         "type": kind,
         "name": { "type": "Property", "value": local },
     })
@@ -1068,7 +1070,7 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
             StatusCode::FORBIDDEN,
         ),
     ] {
-        let one = format!("{root}/entities/urn:ngsi-ld:Thing:one");
+        let one = format!("{root}/entities/urn:ngsi-ld:Thing:invalid_jc:one");
         for (method, path, body) in [
             (post.clone(), format!("{root}/entities"), Some(&thing)),
             (reqwest::Method::DELETE, one.clone(), None),
@@ -1121,7 +1123,7 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
             .is_none()
     );
     let body = resp.text().await.unwrap_or_default();
-    assert!(body.contains("urn:ngsi-ld:Thing:one"), "{body}");
+    assert!(body.contains("urn:ngsi-ld:Thing:invalid_jc:one"), "{body}");
     let (status, body) = call(
         &jc,
         get.clone(),
@@ -1131,7 +1133,7 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body.contains("urn:ngsi-ld:Thing:one"), "{body}");
+    assert!(body.contains("urn:ngsi-ld:Thing:invalid_jc:one"), "{body}");
     let (status, body) = call(
         &jc,
         get.clone(),
@@ -1152,7 +1154,7 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body.contains("urn:ngsi-ld:Thing:one"), "{body}");
+    assert!(body.contains("urn:ngsi-ld:Thing:invalid_jc:one"), "{body}");
 
     // The same person's token for another Endpoint is refused on this one.
     let elsewhere = token(&jc, "e2e-elsewhere").await;
@@ -1180,7 +1182,7 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     let read = format!("{closed}/entities?type=Thing");
     let (status, body) = call(&jc, get.clone(), &read, Some(&cli), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body.contains("urn:ngsi-ld:Thing:one"), "{body}");
+    assert!(body.contains("urn:ngsi-ld:Thing:invalid_jc:one"), "{body}");
     // The same token on another Endpoint, even a public one, names a scope that is not that
     // Endpoint's: refused.
     let (status, body) = call(
@@ -1199,7 +1201,7 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
         matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN),
         "a person without a grant read the closed Endpoint: {status} {body}"
     );
-    assert!(!body.contains("urn:ngsi-ld:Thing:one"), "{body}");
+    assert!(!body.contains("urn:ngsi-ld:Thing:invalid_jc:one"), "{body}");
     // jc links every Endpoint's scope to `portal-api` too (prod does not, T-6063): the Portal's
     // own service account asking that scope and the hub audience is its own
     // `service-account-portal-api` user, whom no Policy grants, so it reads nothing and the link
@@ -1233,7 +1235,7 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
         status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN,
         "portal-api's own token read the closed Endpoint: {status} {body}"
     );
-    assert!(!body.contains("urn:ngsi-ld:Thing:one"), "{body}");
+    assert!(!body.contains("urn:ngsi-ld:Thing:invalid_jc:one"), "{body}");
 
     // `jc_data_query` through the Portal's MCP: the Portal exchanges the person's token for
     // `endpoint:{slug}` (the scope jc's kaisatsu links to portal-api, as the deployment's
@@ -1263,7 +1265,7 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
                 Some(&data_query(3)),
             )
             .await;
-            (status == StatusCode::OK && body.contains("urn:ngsi-ld:Thing:one"))
+            (status == StatusCode::OK && body.contains("urn:ngsi-ld:Thing:invalid_jc:one"))
                 .then_some(body.clone())
                 .ok_or(format!("{status} {body}"))
         },
@@ -1287,7 +1289,7 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     ));
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(
-        !body.contains("urn:ngsi-ld:Thing:one"),
+        !body.contains("urn:ngsi-ld:Thing:invalid_jc:one"),
         "a person without a grant read the closed Endpoint: {body}"
     );
     // The Portal logs the refusal before it answers; the line may still be in the pipe.
@@ -1312,7 +1314,7 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
     assert!(
-        !body.contains("urn:ngsi-ld:Thing:one"),
+        !body.contains("urn:ngsi-ld:Thing:invalid_jc:one"),
         "the broker believed a claimed identity: {status} {body}"
     );
 
@@ -1340,7 +1342,7 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     });
     let (status, body) = call(&jc, post.clone(), "/api/mcp", None, Some(&query)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body.contains("urn:ngsi-ld:Thing:one"), "{body}");
+    assert!(body.contains("urn:ngsi-ld:Thing:invalid_jc:one"), "{body}");
 
     // The gateway's revocation poll (every 10 s) is admitted by the Portal's internal listener:
     // its token names the issuer the Portal checks and the client the route belongs to. Checked
@@ -1512,7 +1514,7 @@ async fn a_loopback_self_read_is_decided_as_a_read_through_the_edge() {
     );
     assert_eq!(on_loopback, through_edge, "loopback and edge decide alike");
     assert_eq!(forged, through_edge, "a forged header changed the decision");
-    assert!(!forged.1.contains("urn:ngsi-ld:Thing:one"), "{forged:?}");
+    assert!(!forged.1.contains("urn:ngsi-ld:Thing:invalid_jc:one"), "{forged:?}");
 }
 
 const MODELLED: &str = "modelled";
@@ -1741,7 +1743,7 @@ fn pipeline() -> Value {
             "source": { "dataSourceRef": { "kind": "DataSource", "name": "clock" } },
             "compute": {
                 "kind": "bloblang",
-                "bloblang": "root = {\"id\": \"urn:ngsi-ld:Thing:fed\", \"type\": \"Thing\", \"name\": {\"type\": \"Property\", \"value\": \"fed\"}}"
+                "bloblang": "root = {\"id\": \"urn:ngsi-ld:Thing:\" + env(\"JC_ORG_ID\") + \":fed\", \"type\": \"Thing\", \"name\": {\"type\": \"Property\", \"value\": \"fed\"}}"
             },
             "targetEndpoint": format!("urn:ngsi-ld:Endpoint:jc.invalid:{SPACE}:closed"),
             "output": { "type": "Thing", "mode": "upsert" }
@@ -2045,7 +2047,7 @@ async fn the_feed_lands(jc: &Jc) -> (Option<String>, String) {
                 reqwest::Method::POST,
                 &format!("{closed}/entityOperations/upsert?options=update"),
                 Some(&tok),
-                Some(&json!([{"id": "urn:ngsi-ld:Thing:probe", "type": "Thing", "name": {"type": "Property", "value": "p"}}])),
+                Some(&json!([{"id": "urn:ngsi-ld:Thing:invalid_jc:probe", "type": "Thing", "name": {"type": "Property", "value": "p"}}])),
             )
             .await;
             let view = Client::new()
@@ -2234,7 +2236,7 @@ async fn a_stream_signs_in_as_its_pipelines_own_client_bound_to_its_endpoint_alo
             None,
         )
         .await;
-        landed |= status == StatusCode::OK && body.contains("Thing:fed");
+        landed |= status == StatusCode::OK && body.contains("Thing:invalid_jc:fed");
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
 
@@ -2271,7 +2273,7 @@ async fn a_stream_signs_in_as_its_pipelines_own_client_bound_to_its_endpoint_alo
     aud.sort();
     assert_eq!(aud, [CLOSED, "portal-internal"]);
     assert!(own.len() < 8 * 1024 / 4, "{} bytes", own.len());
-    let thing = json!([{"id": "urn:ngsi-ld:Thing:ab", "type": "Thing", "name": {"type": "Property", "value": "ab"}}]);
+    let thing = json!([{"id": "urn:ngsi-ld:Thing:invalid_jc:ab", "type": "Thing", "name": {"type": "Property", "value": "ab"}}]);
     let (status, body) = call(
         &jc,
         reqwest::Method::POST,
@@ -2590,7 +2592,7 @@ async fn a_deployment_on_realm_dev_admits_its_realm_and_no_other() {
     let read = format!("{closed}/entities?type=Thing");
     let (status, body) = call(&jc, get.clone(), &read, Some(&reader), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body.contains("urn:ngsi-ld:Thing:one"), "{body}");
+    assert!(body.contains("urn:ngsi-ld:Thing:invalid_jc:one"), "{body}");
 
     // Each twin: the same client, person, password and secret, a valid token of its realm.
     // The gateway checks the issuer exactly (`devx`'s begins with dev's): 401 on the closed
