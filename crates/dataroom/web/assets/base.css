@@ -101,6 +101,13 @@ img, svg { vertical-align: middle; }
 .toolbar .home a { text-decoration: none; }
 .toolbar .home span { display: none; }
 .jc-icon { display: inline-block; width: 1em; height: 1em; vertical-align: -.125em; flex: none; }
+/* The pill's remove and the breadcrumb's home stay their drawn size; padding cancelled by a negative
+   margin gives each a tap target near 44 px without moving the line. */
+.pill a.remove { display: inline-block; padding: .75rem; margin: -.75rem -.75rem -.75rem -.5rem; }
+.pill a.remove .jc-icon { width: 1.4em; height: 1.4em; vertical-align: -.3em; }
+.toolbar .home a { display: inline-block; padding: .875rem; margin: -.875rem; }
+.toolbar .home .jc-icon { width: 1.15em; height: 1.15em; vertical-align: -.2em; }
+.masthead .site-search .btn .jc-icon { width: 1.15em; height: 1.15em; }
 .media-item { position: relative; padding: .75rem; }
 .media-heading { margin: 5px 0; line-height: 1.3; }
 .media-image { border-radius: 4px; }
