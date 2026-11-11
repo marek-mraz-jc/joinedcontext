@@ -425,7 +425,7 @@ async fn a_feeds_csv_refuses_what_would_widen_its_output() {
         (
             "from=2026-01-01/events.csv",
             StatusCode::BAD_REQUEST,
-            "\"from\"",
+            r#"\"from\""#,
         ),
         (
             "q=a==1/events.csv?q=b==2",
