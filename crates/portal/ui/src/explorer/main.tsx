@@ -72,6 +72,8 @@ export function mount(element: Element, options: MountOptions): Root {
               onCard={options.onCard}
               onOpenRow={options.onOpenRow}
               csv={options.csv ?? true}
+              // The page's frame grows to its rows, so a sheet at its bottom would be off screen (T-6748).
+              anchorMenu
               actions={options.actions?.map((action) => (
                 <Button
                   key={action.id}

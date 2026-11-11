@@ -772,6 +772,11 @@ or the legend; the legend now sits under the chart (render.js). */
 body.jc-corner-compact .jc-corner { margin-inline-end: 0; }
 body.jc-corner-compact .jc-assistant:not([open]) > summary { margin-inline: 0; transform: none; border-start-end-radius: 0; border-end-end-radius: 0; opacity: .92; }
 body.jc-corner-compact .jc-assistant:not([open]) > summary > .jc-assistant-icon { transform: none; }
+/* T-6748: over a frame it steps aside, so no row or pager of the table sits under it; a keyboard still reaches it. */
+body.jc-corner-aside .jc-corner { pointer-events: none; }
+body.jc-corner-aside .jc-corner .jc-assistants-link { display: none; }
+body.jc-corner-aside .jc-assistant:not([open]) > summary:not(:focus-visible) { opacity: 0; }
+body.jc-corner-aside .jc-assistant:not([open]) > summary:focus-visible { pointer-events: auto; }
 }
 .jc-about-sources > summary { cursor: pointer; color: var(--jc-primary); min-block-size: 2.75rem; display: flex; align-items: center; }
 .jc-about-sources > summary:focus-visible { outline: 3px solid var(--jc-accent); outline-offset: 2px; }

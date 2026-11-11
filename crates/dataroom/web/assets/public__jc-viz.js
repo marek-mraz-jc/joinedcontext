@@ -38,14 +38,33 @@ function jcVizViewport() {
     }
   });
 }
+// T-6748: on a phone the closed assistant steps aside while it sits over a frame, so a table's last
+// rows and its pager stay readable and tappable (the edge icon of T-5415 still covered them). It is
+// back once the frame scrolls past it, and on a keyboard focus (jc-theme.css).
+var jcPhone = window.matchMedia("(max-width: 40rem)");
+function jcCornerAside() {
+  var corner = document.querySelector(".jc-corner .jc-assistant:not([open]) > summary");
+  var over = false;
+  if (corner && jcPhone.matches) {
+    var c = corner.getBoundingClientRect();
+    over = Array.prototype.some.call(document.querySelectorAll("iframe[data-jc-viz]"), function (frame) {
+      var r = frame.getBoundingClientRect();
+      return r.left < c.right && c.left < r.right && r.top < c.bottom && c.top < r.bottom;
+    });
+  }
+  document.body.classList.toggle("jc-corner-aside", over);
+}
 var jcVizQueued = false;
 function jcVizSoon() {
   if (jcVizQueued) return;
   jcVizQueued = true;
-  window.requestAnimationFrame(function () { jcVizQueued = false; jcVizViewport(); });
+  window.requestAnimationFrame(function () { jcVizQueued = false; jcVizViewport(); jcCornerAside(); });
 }
 window.addEventListener("scroll", jcVizSoon, { passive: true, capture: true });
 window.addEventListener("resize", jcVizSoon);
+// The assistant closing over a frame steps aside at once; `toggle` does not bubble, so it is caught.
+document.addEventListener("toggle", jcVizSoon, true);
+document.addEventListener("DOMContentLoaded", jcVizSoon);
 window.addEventListener("message", function (event) { if ((event.data || {}).type === "jc-viz-height") jcVizSoon(); });
 // T-5192, T-5415: while the live data widget or a chart is in view, the assistant's corner shrinks
 // to its icon at the screen's edge.
