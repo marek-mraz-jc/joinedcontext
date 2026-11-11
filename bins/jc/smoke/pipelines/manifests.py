@@ -39,6 +39,7 @@ class Pipeline:
     spec: dict
     bento: bool
     source_type: str = ""        # the DataSource's spec.type
+    source_url: str = ""         # the DataSource's spec.http.url, when it has one
     slug: str = ""               # the target Endpoint's slug
     out_type: str = ""
     secret_refs: list = field(default_factory=list)
@@ -79,8 +80,9 @@ def load_pipelines(files: Path) -> list[Pipeline]:
             continue
         for d in _docs(f):
             if d.get("kind") == "DataSource":
+                spec = d.get("spec") or {}
                 sources[(d["metadata"].get("namespace") or f.parts[-3], d["metadata"]["name"])] = \
-                    (d.get("spec") or {}).get("type", "")
+                    (spec.get("type", ""), str((spec.get("http") or {}).get("url") or ""))
     out = []
     for f in sorted(files.glob("*/*/pipelines/**/*.yaml")):
         for d in _docs(f):
@@ -95,7 +97,7 @@ def load_pipelines(files: Path) -> list[Pipeline]:
             src = spec.get("source") or (spec.get("sources") or [{}])[0] or {}
             ref = src.get("dataSourceRef") or {}
             ref = ref.get("name") if isinstance(ref, dict) else ref
-            p.source_type = sources.get((project, ref), src.get("type", "")) or ""
+            p.source_type, p.source_url = sources.get((project, ref), (src.get("type", "") or "", ""))
             urn = str(spec.get("targetEndpoint") or first_out.get("targetEndpoint") or "")
             parts = urn.split(":")
             if len(parts) >= 4:

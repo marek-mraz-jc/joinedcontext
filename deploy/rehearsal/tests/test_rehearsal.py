@@ -1274,6 +1274,8 @@ def test_only_the_clients_jc_signs_in_as_trade_federated_jwt_for_their_secret():
     assert by["portal-api"]["clientAuthenticatorType"] == "client-secret"
     assert by["portal-api"]["attributes"] == {"post.logout.redirect.uris": "+"}
     assert by["portal-api"]["secret"] == "$(env:A)"
+    assert by["context-gateway"]["secret"] == "$(env:KC_CONTEXT_GATEWAY_SECRET)"
+    assert ("gateway-client-secret", "KC_CONTEXT_GATEWAY_SECRET") in rh.state_client_secrets(out)
     assert by["pl-zilina-osm"] == realm["clients"][2]
     assert by["praha-pipelines"] == realm["clients"][3]
     assert realm["clients"][0]["clientAuthenticatorType"] == "federated-jwt"

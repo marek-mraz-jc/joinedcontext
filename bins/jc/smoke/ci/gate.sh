@@ -61,8 +61,10 @@ args=(--base-url "http://127.0.0.1:$port" --out "$out" --export "$export_dir" --
       --log-file "$home/jc.log" --admin-url "http://127.0.0.1:$((pg_port + 200))"
       --admin-token-file "$home/secrets/metrics-token")
 [ "${SMOKE_E2E:-0}" = 1 ] && args+=(--e2e)
-# The logs suite also looks for every secret value of the rehearsal in the log.
-args+=(--with "logs=--secrets-dir $home/secrets")
+# The logs suite also looks for every secret value of the rehearsal in the log: the service
+# tokens, the realm's client secrets (up.sh writes them to secrets/realm) and jc's state files,
+# which the link view above hides from it (collect_secrets reads plain files only).
+args+=(--with "logs=--secrets-dir $home/secrets --secrets-dir $home/secrets/realm --secrets-dir $home/state")
 # The subscriptions probe is written by the project's ServiceAccount: its client secret is here.
 args+=(--with "subscriptions=--realm-secrets-dir $home/secrets/realm")
 # The assistant is a kept component on dev beside jc (tasks/GOAL-jc-dev.md): rows the rehearsal's
