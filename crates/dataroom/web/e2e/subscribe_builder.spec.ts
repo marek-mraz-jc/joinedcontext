@@ -199,6 +199,8 @@ for (const viewport of VIEWPORTS) {
     // The read failed: the field says so instead of waiting for ever, and there is no link.
     await expect(place).toHaveAttribute("aria-invalid", "true");
     await expect(page.locator("#jc-subscribe-near-hint")).toContainText("nepodarilo načítať");
+    // The footer names no unlisted value: the field's own hint says what went wrong.
+    await expect(page.locator("#jc-subscribe-preview-status")).not.toContainText("mimo zoznamu");
     await expect(page.locator(".jc-subscribe-query > .jc-subscribe-copy")).toBeHidden();
     await page.screenshot({ path: `${SHOTS}/builder-near-failed-${viewport.width}.png`, fullPage: true });
     // Changing the distance reads the town again; this time it answers.

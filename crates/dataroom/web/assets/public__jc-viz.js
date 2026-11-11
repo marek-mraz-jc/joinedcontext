@@ -236,11 +236,13 @@ window.jcFeedLink = (function () {
     var picked = facets.map(function (f) { return [f.attr, chosen(f)]; });
     var around = nearChoice();
     // A value outside the list leaves no link to copy: the copy row and links hide until it reads.
-    var invalid = around === "bad" || around === "wait" || facets.some(function (f) { return f.input.getAttribute("aria-invalid") === "true"; });
+    var unlisted = facets.some(function (f) { return f.input.getAttribute("aria-invalid") === "true"; });
+    var invalid = around === "bad" || around === "wait" || unlisted;
     box.toggleAttribute("data-jc-refused", invalid);
     if (invalid) {
       clearTimeout(timer); asked++; list.textContent = "";
-      status.textContent = box.getAttribute(around === "wait" ? "data-jc-loading" : "data-jc-held");
+      // The near field's own hint says why a town gives no link; the held text names an unlisted value.
+      status.textContent = around === "wait" ? box.getAttribute("data-jc-loading") : unlisted ? box.getAttribute("data-jc-held") : "";
       return;
     }
     var l = jcFeedLink.links(base, output, jcFeedLink.filter(picked, from.value, to.value, around));
