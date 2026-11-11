@@ -407,37 +407,17 @@ async fn a_realm_without_the_cimd_policy_refuses_an_https_client_id() {
     assert!(String::from_utf8_lossy(&body).contains("unknown client_id"));
 }
 
-#[tokio::test]
-async fn e2e_cimd_connector_with_parameterized_scope_and_offline_access() {
-    let (state, _store, _kek) = setup_dev_realm_state().await;
-    let cimd_url = "https://claude.ai/oauth/mcp-oauth-client-metadata";
-    state.guard().insert_mock(
-        cimd_url,
-        200,
-        serde_json::to_vec(&json!({
-            "client_id": cimd_url,
-            "client_name": "Claude",
-            "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"],
-            "grant_types": ["authorization_code", "refresh_token"],
-            "response_types": ["code"],
-            "token_endpoint_auth_method": "none"
-        }))
-        .unwrap(),
-    );
-
-    let mount = Mount::new("kaisatsu", "https", "idm.dev.example.test", "").unwrap();
-    let app = router(state, mount);
-
-    // Parameterized scope `connector:abcdefghij2345672345672345` (26 chars in `[a-z2-7]{26}`) + `offline_access`
+/// Claude's CIMD client signs `demo.analyst@hel.fi` in with `scope`, grants consent and swaps the
+/// code; returns the token response.
+async fn cimd_code_flow(app: &axum::Router, cimd_url: &str, scope: &str) -> Value {
     let verifier = "pkce-verifier-string-with-at-least-43-characters-long-999999";
     let challenge = sha256_base64url(verifier);
-    let connector_scope = "openid connector:abcdefghij2345672345672345 offline_access";
     let auth_uri = format!(
         "/realms/dev/protocol/openid-connect/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&state=cimd-st&code_challenge={challenge}&code_challenge_method=S256",
         url::form_urlencoded::byte_serialize(cimd_url.as_bytes()).collect::<String>(),
         url::form_urlencoded::byte_serialize(b"https://claude.ai/api/mcp/auth_callback")
             .collect::<String>(),
-        url::form_urlencoded::byte_serialize(connector_scope.as_bytes()).collect::<String>(),
+        url::form_urlencoded::byte_serialize(scope.as_bytes()).collect::<String>(),
     );
 
     let resp1 = app
@@ -487,7 +467,7 @@ async fn e2e_cimd_connector_with_parameterized_scope_and_offline_access() {
 
     // Submit username + password -> reaches Consent screen (since CIMD clients have `consentRequired: true`)
     let (st3, _, html3) = post_form(
-        &app,
+        app,
         &login_loc,
         &[
             ("csrf_token", &csrf_token),
@@ -503,7 +483,7 @@ async fn e2e_cimd_connector_with_parameterized_scope_and_offline_access() {
 
     // Grant consent -> redirects with code
     let (st4, hdrs4, _) = post_form(
-        &app,
+        app,
         &login_loc,
         &[("csrf_token", &csrf_token), ("session_code", &session_code)],
         Some(&auth_ck),
@@ -521,7 +501,7 @@ async fn e2e_cimd_connector_with_parameterized_scope_and_offline_access() {
 
     // Exchange code for tokens as public CIMD client
     let (st5, _, tok_body) = post_form(
-        &app,
+        app,
         "/realms/dev/protocol/openid-connect/token",
         &[
             ("grant_type", "authorization_code"),
@@ -534,7 +514,37 @@ async fn e2e_cimd_connector_with_parameterized_scope_and_offline_access() {
     )
     .await;
     assert_eq!(st5, StatusCode::OK, "cimd token body: {tok_body}");
-    let tok_resp: Value = serde_json::from_str(&tok_body).unwrap();
+    serde_json::from_str(&tok_body).unwrap()
+}
+
+#[tokio::test]
+async fn e2e_cimd_connector_with_parameterized_scope_and_offline_access() {
+    let (state, _store, _kek) = setup_dev_realm_state().await;
+    let cimd_url = "https://claude.ai/oauth/mcp-oauth-client-metadata";
+    state.guard().insert_mock(
+        cimd_url,
+        200,
+        serde_json::to_vec(&json!({
+            "client_id": cimd_url,
+            "client_name": "Claude",
+            "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"],
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none"
+        }))
+        .unwrap(),
+    );
+
+    let mount = Mount::new("kaisatsu", "https", "idm.dev.example.test", "").unwrap();
+    let app = router(state, mount);
+
+    // Parameterized scope `connector:abcdefghij2345672345672345` (26 chars in `[a-z2-7]{26}`) + `offline_access`
+    let tok_resp = cimd_code_flow(
+        &app,
+        cimd_url,
+        "openid connector:abcdefghij2345672345672345 offline_access",
+    )
+    .await;
     let access_claims = decode_jwt_payload(tok_resp["access_token"].as_str().unwrap());
 
     // Verify `connector:{id}` scope, `portal-connectors` and `portal-api` audiences, `jc_org`, `jc_groups`,
@@ -579,6 +589,95 @@ async fn e2e_cimd_connector_with_parameterized_scope_and_offline_access() {
     let intro: Value = serde_json::from_str(&intro_body).unwrap();
     assert_eq!(intro["active"], true, "{intro}");
     assert_eq!(intro["typ"], "Offline");
+}
+
+/// T-6774: claude.ai asks for the scope the Portal MCP challenge names (`mcp:portal`); its CIMD
+/// client gets it from `cimd_optional_client_scopes`, and the token's audience is the Portal API.
+#[tokio::test]
+async fn e2e_cimd_claude_client_gets_the_portal_mcp_scope_and_audience() {
+    let (state, store, _kek) = setup_dev_realm_state().await;
+    let cimd_url = "https://claude.ai/oauth/mcp-oauth-client-metadata";
+    state.guard().insert_mock(
+        cimd_url,
+        200,
+        serde_json::to_vec(&json!({
+            "client_id": cimd_url,
+            "client_name": "Claude",
+            "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"],
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none"
+        }))
+        .unwrap(),
+    );
+    // jc-dev and jc-prod stored the client before the fix, with the realm-wide list only.
+    let realm = store.get_realm("dev").await.unwrap().unwrap();
+    let doc = serde_json::from_value(json!({
+        "client_id": cimd_url,
+        "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"]
+    }))
+    .unwrap();
+    let mut stale =
+        kaisatsu_oidc::cimd::validate_and_build_cimd_client(&realm, cimd_url, doc).unwrap();
+    stale.optional_client_scopes = realm.default_optional_client_scopes.clone();
+    store.upsert_client(stale).await.unwrap();
+    let mount = Mount::new("kaisatsu", "https", "idm.dev.example.test", "").unwrap();
+    let app = router(state, mount);
+
+    let tok_resp = cimd_code_flow(&app, cimd_url, "openid mcp:portal offline_access").await;
+    let claims = decode_jwt_payload(tok_resp["access_token"].as_str().unwrap());
+    let scope = claims["scope"].as_str().unwrap();
+    assert!(scope.split(' ').any(|s| s == "mcp:portal"), "{scope}");
+    assert!(scope.split(' ').any(|s| s == "offline_access"), "{scope}");
+    assert_eq!(claims["aud"], json!("portal-api"), "{claims}");
+    assert!(claims.get("realm_access").is_none());
+    assert!(tok_resp["refresh_token"].is_string());
+}
+
+/// The CIMD-only list widens no other client: a public client (`mcp-hub`) and a confidential
+/// one (`portal-api`) without `mcp:portal` in their scopes are still refused it.
+#[tokio::test]
+async fn mcp_portal_stays_refused_for_realm_clients_without_it() {
+    let (state, _store, _kek) = setup_dev_realm_state().await;
+    let mount = Mount::new("kaisatsu", "https", "idm.dev.example.test", "").unwrap();
+    let app = router(state, mount);
+    let challenge =
+        sha256_base64url("pkce-verifier-string-with-at-least-43-characters-long-888888");
+    for (client_id, redirect) in [
+        ("mcp-hub", "https://claude.ai/api/mcp/auth_callback"),
+        (
+            "portal-api",
+            "https://portal.dev.example.test/api/v1/auth/callback",
+        ),
+    ] {
+        let auth_uri = format!(
+            "/realms/dev/protocol/openid-connect/auth?client_id={client_id}&redirect_uri={}&response_type=code&scope=openid%20mcp%3Aportal&state=s1&code_challenge={challenge}&code_challenge_method=S256",
+            url::form_urlencoded::byte_serialize(redirect.as_bytes()).collect::<String>(),
+        );
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(&auth_uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status();
+        let location = resp
+            .headers()
+            .get(header::LOCATION)
+            .map(|l| l.to_str().unwrap().to_owned())
+            .unwrap_or_default();
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let body = String::from_utf8_lossy(&body);
+        assert!(
+            body.contains("invalid_scope") || location.contains("error=invalid_scope"),
+            "{client_id}: {status} {location} {body}"
+        );
+        assert!(!location.contains("code="), "{client_id}: {location}");
+    }
 }
 
 #[tokio::test]
