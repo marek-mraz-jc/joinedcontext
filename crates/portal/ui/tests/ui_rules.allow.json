@@ -136,7 +136,7 @@
     }
   },
   "data_table_is_the_grid": {
-    "_max": 77,
+    "_max": 72,
     "src/components/ActivityFeed.tsx": {
       "lines": 2,
       "group": "grid-ops"
@@ -155,7 +155,8 @@
     },
     "src/components/endpoints/AccessMatrix.tsx": {
       "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): each cell is a toggle button that grants or revokes one action for one principal; a two-axis matrix of controls, which a sorted or filtered grid would scramble"
     },
     "src/components/endpoints/UsageSection.tsx": {
       "lines": 2,
@@ -163,11 +164,13 @@
     },
     "src/components/forms/widgets/AttributeCapabilitiesField.tsx": {
       "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): a form widget: each row is one attribute of the Policy being edited, each cell a capability control bound to the form value"
     },
     "src/components/forms/widgets/OutputSourceEditors.tsx": {
       "lines": 2,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): two form widgets: the fixed iCal fields and feed roles in their schema order, each row an attribute picker bound to the Endpoint form"
     },
     "src/components/grid/ManifestGrid.tsx": {
       "lines": 1,
@@ -235,15 +238,18 @@
     },
     "src/pages/endpoints/EndpointDocs.tsx": {
       "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "a key-value fact table (T-6753): an operation's parameters beside their meaning, two columns in the order the API declares them"
     },
     "src/pages/endpoints/FilterProof.tsx": {
       "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "a comparison, not a list (T-6753): each row puts the original entity beside what the Endpoint serves, and a phone shows one side; sorting or hiding a column would break the pairing"
     },
     "src/pages/endpoints/SchemaProjectionPanel.tsx": {
       "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): one checkbox per attribute of the type that hides it from the projection, a key-value form in the model's order"
     },
     "src/pages/explore/TypeQuality.tsx": {
       "lines": 1,
@@ -275,43 +281,33 @@
     },
     "src/pages/models/EnumValues.tsx": {
       "lines": 1,
-      "group": "grid-editors"
-    },
-    "src/pages/models/LinkmlGraphView.tsx": {
-      "lines": 1,
-      "group": "grid-editors"
-    },
-    "src/pages/models/LinkmlPreviewPanel.tsx": {
-      "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): each row is a permissible value with label inputs per language and a remove button, bound to the model draft"
     },
     "src/pages/models/LinkmlVisualEditor.tsx": {
       "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): each row opens its slot in the editor and marks the selected slot; the slot order is the model's order, which the editor writes back"
     },
     "src/pages/models/MappingsEditor.tsx": {
       "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): each row is a target slot with a source picker and a unit control bound to the mapping draft"
     },
     "src/pages/models/ModelCanvas.tsx": {
       "lines": 1,
-      "group": "grid-editors"
-    },
-    "src/pages/models/ModelFields.tsx": {
-      "lines": 1,
-      "group": "grid-editors"
-    },
-    "src/pages/models/ModelFileDrop.tsx": {
-      "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "a key-value fact table (T-6753): a class card on the canvas listing field and type, two columns highlighted from the drawing"
     },
     "src/pages/models/ModelPage.tsx": {
       "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "a key-value fact table (T-6753): a type's field beside its range, two columns in the model's order"
     },
     "src/pages/models/RelationshipEditor.tsx": {
       "lines": 1,
-      "group": "grid-editors"
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): each row is a relationship with cardinality and on-delete pickers and row actions, bound to the model draft"
     },
     "src/pages/mqttbrokers/BrokerAccess.tsx": {
       "lines": 1,
@@ -360,10 +356,6 @@
     "src/pages/organization/ValidationHealth.tsx": {
       "lines": 1,
       "group": "grid-admin"
-    },
-    "src/pages/pipelines/KpiEditor.tsx": {
-      "lines": 1,
-      "group": "grid-editors"
     },
     "src/pages/pipelines/PipelineHealth.tsx": {
       "lines": 2,

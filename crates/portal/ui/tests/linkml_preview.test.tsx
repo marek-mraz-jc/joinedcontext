@@ -1,5 +1,6 @@
 /** T-0220: what the model compiles to, while it is being written (DM-17, DM-20, DM-21). */
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import en from "../src/locales/en.json";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
@@ -164,6 +165,20 @@ describe("LinkML preview panel", () => {
       true,
     );
     expect(text.some((row) => row.includes("location") && row.includes("map layer"))).toBe(true);
+  });
+
+  it("searches and arranges the slot classification on the shared grid (T-6753)", async () => {
+    const { user } = renderPanel();
+    await screen.findByText(/AirQualityObserved/);
+    await user.click(screen.getByRole("tab", { name: "Filters and layers" }));
+    const table = await screen.findByRole("table", { name: en.models.tab.options });
+    await user.type(screen.getByRole("searchbox", { name: en.dataGrid.searchRows }), "map layer");
+    expect(within(table).getAllByRole("row").slice(1).map((row) => row.querySelector("td, th")?.textContent)).toEqual(["location"]);
+    await user.click(screen.getByRole("button", { name: en.entityGrid.arrangeColumns }));
+    const panel = screen.getByRole("dialog", { name: en.entityGrid.arrangeColumns });
+    expect(within(panel).getByRole("checkbox", { name: `${en.entityGrid.showColumn}: ${en.models.slot}` })).toBeDisabled();
+    await user.click(within(panel).getByRole("checkbox", { name: `${en.entityGrid.showColumn}: ${en.models.dimensionLabel}` }));
+    expect(within(table).queryByRole("columnheader", { name: new RegExp(en.models.dimensionLabel) })).toBeNull();
   });
 
   it("names the terms an example carries that the generated context does not define", async () => {

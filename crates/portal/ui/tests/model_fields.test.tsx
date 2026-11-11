@@ -3,7 +3,7 @@
  * beside what the model's space holds, from the daily quality run, with a link to query it. A
  * viewer reads the same facts and finds no way to edit.
  */
-import { screen, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import en from "../src/locales/en.json";
 import { jsonResponse, list, renderRoute } from "./pageHarness";
@@ -95,6 +95,29 @@ describe("the Fields tab of a model's page", () => {
     const query = within(level).getByRole("link", { name: "Open Explore on the AirQualityObserved entities that have level" });
     expect(query).toHaveAttribute("href", "/projects/helsinki/explore?space=ilma&type=AirQualityObserved&q=level");
     expect(screen.getByText(/Facts from the space ilma/)).toBeInTheDocument();
+  });
+
+  it("sorts the fields by what the space holds, searches them and hides a column (T-6753, the shared grid)", async () => {
+    await renderRoute({ path: "/projects/helsinki/models/air?tab=fields", answer: answer(jsonResponse(REPORT)) });
+    const table = await screen.findByRole("table", { name: en.models.fields.caption.replace("{type}", "AirQualityObserved") });
+    await within(table).findByText("100%");
+    const fieldNames = () => [...table.querySelectorAll("tbody tr")].map((tr) => tr.querySelector("td, th")?.textContent ?? "");
+    fireEvent.click(screen.getByRole("button", { name: `${en.entityGrid.columnMenu}: ${en.models.fields.inSpace}` }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: en.entityGrid.sortDescNumber }));
+    expect(fieldNames()).toEqual(["pm10", "level", "code"]);
+    fireEvent.click(screen.getByRole("button", { name: `${en.entityGrid.columnMenu}: ${en.models.fields.inSpace}` }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: en.entityGrid.sortAscNumber }));
+    expect(fieldNames()).toEqual(["code", "level", "pm10"]);
+
+    fireEvent.change(screen.getByRole("searchbox", { name: en.dataGrid.searchRows }), { target: { value: "Particles" } });
+    expect(fieldNames()).toEqual(["pm10"]);
+    fireEvent.change(screen.getByRole("searchbox", { name: en.dataGrid.searchRows }), { target: { value: "" } });
+
+    fireEvent.click(screen.getByRole("button", { name: en.entityGrid.arrangeColumns }));
+    const panel = screen.getByRole("dialog", { name: en.entityGrid.arrangeColumns });
+    fireEvent.click(within(panel).getByRole("checkbox", { name: `${en.entityGrid.showColumn}: ${en.models.fields.description}` }));
+    expect(screen.queryByRole("columnheader", { name: new RegExp(en.models.fields.description) })).toBeNull();
+    expect(within(table).queryByText("Particles under 10 µm.")).toBeNull();
   });
 
   it("names the rules the daily run found broken on a field", async () => {

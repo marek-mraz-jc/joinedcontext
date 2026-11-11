@@ -130,6 +130,25 @@ describe("a model from a dropped file", () => {
     expect(within(dialog).getByText(/mixed values: 1 text, 1 integer/)).toBeInTheDocument();
   });
 
+  it("searches, sorts and arranges the drafted fields on the shared grid (T-6753)", async () => {
+    renderDrop(() => new Response(JSON.stringify(ANSWER), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await userEvent.upload(screen.getByLabelText(en.models.infer.chooseFile), csv());
+    const dialog = await screen.findByRole("dialog");
+    const table = within(dialog).getByRole("table", { name: en.models.infer.title });
+    const slots = () => within(table).getAllByRole("row").slice(1).map((row) => row.querySelectorAll("td, th")[2]?.textContent);
+    expect(slots()).toEqual(["b_Temp_b", "plate", "parent", "note"]);
+    await userEvent.type(within(dialog).getByRole("searchbox", { name: en.dataGrid.searchRows }), "string");
+    expect(slots()).toEqual(["plate", "note"]);
+    await userEvent.clear(within(dialog).getByRole("searchbox", { name: en.dataGrid.searchRows }));
+    await userEvent.click(within(dialog).getByRole("button", { name: `${en.entityGrid.columnMenu}: ${en.models.infer.slot}` }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: en.entityGrid.sortDesc }));
+    expect(slots()).toEqual(["plate", "parent", "note", "b_Temp_b"]);
+    await userEvent.click(within(dialog).getByRole("button", { name: en.entityGrid.arrangeColumns }));
+    const panel = screen.getByRole("dialog", { name: en.entityGrid.arrangeColumns });
+    await userEvent.click(within(panel).getByRole("checkbox", { name: `${en.entityGrid.showColumn}: ${en.models.infer.match}` }));
+    expect(within(table).queryByText("dataModel.Environment/AirQualityObserved")).toBeNull();
+  });
+
   it("populates the editor through the operations seam", async () => {
     const { onPopulate } = renderDrop(
       () => new Response(JSON.stringify(ANSWER), { status: 200, headers: { "Content-Type": "application/json" } }),
