@@ -243,7 +243,10 @@ async fn retrieve_entity_outer(
         let tenant = tenant_from(headers)?;
         if let Some(new_id) = st.store.remapped_id(&tenant, id).await? {
             let renamed = retrieve_entity_mapped(st, &new_id, params, headers).await;
-            if !matches!(&renamed, Err(ApiError::Ngsi(NgsiError::ResourceNotFound(_)))) {
+            if !matches!(
+                &renamed,
+                Err(ApiError::Ngsi(NgsiError::ResourceNotFound(_)))
+            ) {
                 return renamed;
             }
         }

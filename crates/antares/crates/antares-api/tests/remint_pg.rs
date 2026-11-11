@@ -8,10 +8,10 @@
 #![cfg(feature = "postgres")]
 
 use antares_api::AppState;
+use antares_sql::sqlx::{self, PgPool, Row};
 use axum::body::Body;
 use axum::http::Request;
 use serde_json::{json, Value};
-use antares_sql::sqlx::{self, PgPool, Row};
 use tower::ServiceExt;
 
 const OLD_A: &str = "urn:ngsi-ld:KPI:bbsk.sk:otvorene-data:a";
@@ -30,7 +30,10 @@ async fn send(st: &AppState, req: Request<Body>) -> (u16, Value) {
     let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
         .await
         .expect("body");
-    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
 }
 
 async fn post(st: &AppState, tenant: &str, uri: &str, body: &Value) -> u16 {
@@ -167,7 +170,10 @@ async fn temporal_of(st: &AppState, tenant: &str, id: &str) -> String {
     )
     .await;
     assert_eq!(status, 200, "temporal {id}: {body}");
-    assert!(body["kpiValue"].as_array().map_or(0, Vec::len) >= 6, "{body}");
+    assert!(
+        body["kpiValue"].as_array().map_or(0, Vec::len) >= 6,
+        "{body}"
+    );
     body.to_string()
 }
 
@@ -188,11 +194,24 @@ async fn remint_renames_history_and_relationships_resolves_old_ids_and_rolls_bac
     let t = tenant.as_str();
 
     for (id, next) in [(OLD_A, OLD_B), (OLD_B, OLD_A), (OTHER, OLD_A)] {
-        assert_eq!(post(&st, t, "/ngsi-ld/v1/entities", &kpi(id, next)).await, 201, "{id}");
+        assert_eq!(
+            post(&st, t, "/ngsi-ld/v1/entities", &kpi(id, next)).await,
+            201,
+            "{id}"
+        );
     }
-    let status = post(&st, t, "/ngsi-ld/v1/temporal/entities", &temporal(OLD_A, OLD_B)).await;
+    let status = post(
+        &st,
+        t,
+        "/ngsi-ld/v1/temporal/entities",
+        &temporal(OLD_A, OLD_B),
+    )
+    .await;
     assert!(matches!(status, 201 | 204), "temporal create: {status}");
-    assert!(move_to_keyed(&pool, t, OLD_A).await >= 3, "history in attr_rows");
+    assert!(
+        move_to_keyed(&pool, t, OLD_A).await >= 3,
+        "history in attr_rows"
+    );
     let history = temporal_of(&st, t, OLD_A).await;
     let identity_before = digest(&pool, t, "bbsk.sk", "bbsk.sk").await;
     let expected = digest(&pool, t, "bbsk.sk", "sk_bbsk").await;
@@ -223,7 +242,10 @@ async fn remint_renames_history_and_relationships_resolves_old_ids_and_rolls_bac
     let (_, other) = get(&st, t, &format!("/ngsi-ld/v1/entities/{OTHER}")).await;
     assert_eq!(other["next"]["object"], NEW_A);
     let keys = "SELECT count(*) FROM entity_values WHERE tenant_id = $1 AND id LIKE '%sk_bbsk%'";
-    assert!(count(&pool, keys, t).await > 0, "the renamed Entities' q= keys");
+    assert!(
+        count(&pool, keys, t).await > 0,
+        "the renamed Entities' q= keys"
+    );
 
     // the old id resolves, read-only, to the Entity under its new id
     let (status, old) = get(&st, t, &format!("/ngsi-ld/v1/entities/{OLD_A}")).await;
@@ -249,7 +271,10 @@ async fn remint_renames_history_and_relationships_resolves_old_ids_and_rolls_bac
     // rollback from the map: back to the very rows of before
     let back = call(&pool, "rollback", t).await.expect("rollback");
     assert_eq!(back["ids"], 2, "{back}");
-    assert_eq!(digest(&pool, t, "bbsk.sk", "bbsk.sk").await, identity_before);
+    assert_eq!(
+        digest(&pool, t, "bbsk.sk", "bbsk.sk").await,
+        identity_before
+    );
     let (status, a) = get(&st, t, &format!("/ngsi-ld/v1/entities/{OLD_A}")).await;
     assert_eq!((status, a["next"]["object"].clone()), (200, json!(OLD_B)));
     let (status, _) = get(&st, t, &format!("/ngsi-ld/v1/entities/{NEW_A}")).await;
@@ -269,15 +294,28 @@ async fn remint_refuses_a_clash_a_stray_rollback_and_the_broker_role() {
         pool.clone(),
     ));
     let st = AppState::with_store("antares1".into(), std::sync::Arc::new(store), "postgres");
-    let tenant = format!("remintx{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
+    let tenant = format!(
+        "remintx{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..12]
+    );
     let t = tenant.as_str();
-    assert_eq!(post(&st, t, "/ngsi-ld/v1/entities", &kpi(OLD_A, OLD_B)).await, 201);
-    assert_eq!(post(&st, t, "/ngsi-ld/v1/entities", &kpi(NEW_A, OLD_B)).await, 201);
+    assert_eq!(
+        post(&st, t, "/ngsi-ld/v1/entities", &kpi(OLD_A, OLD_B)).await,
+        201
+    );
+    assert_eq!(
+        post(&st, t, "/ngsi-ld/v1/entities", &kpi(NEW_A, OLD_B)).await,
+        201
+    );
     let before = digest(&pool, t, "bbsk.sk", "bbsk.sk").await;
 
     let clash = call(&pool, "remint", t).await.expect_err("a clash");
     assert!(clash.contains(NEW_A), "{clash}");
-    assert_eq!(digest(&pool, t, "bbsk.sk", "bbsk.sk").await, before, "nothing renamed");
+    assert_eq!(
+        digest(&pool, t, "bbsk.sk", "bbsk.sk").await,
+        before,
+        "nothing renamed"
+    );
 
     // NEW_A was written, not reminted: the rollback would invent an id
     let stray = call(&pool, "rollback", t).await.expect_err("a stray");
