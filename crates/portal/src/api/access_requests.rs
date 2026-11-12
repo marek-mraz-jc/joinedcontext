@@ -663,6 +663,7 @@ pub(crate) async fn approve_request(
             request.endpoint
         ))
     })?;
+    let refs = served_with(&state, &project, &request, &endpoint)?;
     // The decision is claimed before the grant is proposed: a second owner deciding at the same
     // time gets the 409 before any Change of theirs is open (F-POR1-017).
     decided(&state, &user, &request, ("pending", "approved"), None, None).await?;
@@ -670,11 +671,7 @@ pub(crate) async fn approve_request(
         &state,
         &user,
         &project,
-        requests::grant_bundle(
-            &request,
-            &endpoint,
-            &served_with(&state, &project, &request, &endpoint),
-        ),
+        requests::grant_bundle(&request, &endpoint, &refs),
     )
     .await
     {
@@ -945,14 +942,15 @@ pub(crate) fn served_types(
 
 /// The policyRefs `endpoint` lists once `request`'s grant lands (P-18, T-6740): the ones it names,
 /// or, naming none, every Policy of its space it binds today, and the new grant's, on the domain
-/// the reference check binds ([`crate::api::mutate::policy_urn_beside`]). With no domain known a
-/// ref-less Endpoint stays ref-less (empty list), since it binds the grant as it is.
+/// the reference check binds ([`crate::api::mutate::policy_urn_beside`]). With no domain known the
+/// grant's URN cannot be written, so it would reach no Endpoint (P-18, T-6742): a 409 naming the
+/// field to set, before the decision is claimed.
 fn served_with(
     state: &AppState,
     project: &str,
     request: &AccessRequest,
     endpoint: &Value,
-) -> Vec<String> {
+) -> Result<Vec<String>, ApiError> {
     let ground = crate::judge::Ground::of(state);
     let spec = &endpoint["spec"];
     let named: Option<Vec<String>> = match (&spec["policyRef"], &spec["policyRefs"]) {
@@ -972,19 +970,20 @@ fn served_with(
         &request.policy_name(),
         named.as_deref().unwrap_or_default(),
     );
-    let (mut refs, grant) = match (named, grant) {
-        (Some(named), Some(grant)) => (named, grant),
-        (None, Some(grant)) => (
-            crate::api::mutate::bound_today(&ground, project, &request.space),
-            grant,
-        ),
-        (Some(named), None) => return named,
-        (None, None) => return Vec::new(),
+    let Some(grant) = grant else {
+        return Err(ApiError::Conflict(format!(
+            "the grant of access request {} cannot be named on endpoint '{project}/{}': no \
+             organization domain is known, so it would reach nothing; set spec.domain on the \
+             installation's Organization (for example 'hel.fi'), then approve again",
+            request.id, request.endpoint
+        )));
     };
+    let mut refs =
+        named.unwrap_or_else(|| crate::api::mutate::bound_today(&ground, project, &request.space));
     if !refs.contains(&grant) {
         refs.push(grant);
     }
-    refs
+    Ok(refs)
 }
 
 /// Why a new Policy on the space would not reach `endpoint`, so a request could never be granted:

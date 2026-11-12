@@ -1064,8 +1064,8 @@ impl EndpointSpec {
             (None, Some(refs)) if refs.is_empty() => {
                 return Err(Error::Invalid {
                     field: "spec.policyRefs".to_owned(),
-                    reason: "list at least one Policy, or drop policyRefs to bind every Policy of \
-                             the space (ADR-N-057)"
+                    reason: "list at least one Policy: an Endpoint naming none binds none, only \
+                             the Pipelines aimed at it (P-18, ADR-N-057)"
                         .to_owned(),
                 });
             }

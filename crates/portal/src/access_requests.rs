@@ -380,19 +380,25 @@ pub fn grant_bundle(request: &AccessRequest, endpoint: &Value, refs: &[String]) 
         spec.remove("policyRef");
         spec.insert("policyRefs".into(), json!(refs));
     }
-    if admits {
-        let mut allowed: Vec<String> = updated["spec"]["allowedProjects"]
-            .as_array()
-            .map(|list| {
-                list.iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default();
-        if !allowed.contains(&request.project) {
-            allowed.push(request.project.clone());
-        }
+    let mut allowed: Vec<String> = updated["spec"]["allowedProjects"]
+        .as_array()
+        .map(|list| {
+            list.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    if admits && !allowed.contains(&request.project) {
+        allowed.push(request.project.clone());
+    }
+    let listed = admits || audience == "project-list";
+    // A project list naming none admits the Endpoint's own project alone (the gateway's
+    // `audience_admits`); written out, it is the same audience in a form the validator takes.
+    if listed && allowed.is_empty() {
+        allowed.push(request.endpoint_project.clone());
+    }
+    if listed {
         updated["spec"]["audience"] = json!("project-list");
         updated["spec"]["allowedProjects"] = json!(allowed);
     }
@@ -1077,6 +1083,14 @@ mod tests {
         let bundle = grant_bundle(&request, &endpoint("project-list", &["traffic"]), &refs());
         assert_eq!(bundle.len(), 2, "{bundle:?}");
         assert_eq!(bundle[0]["spec"]["allowedProjects"], json!(["traffic"]));
+        // A project list naming none admits its own project alone: written out, the same audience
+        // passes the validator (T-6742).
+        let own = grant_bundle(&request, &endpoint("project-list", &[]), &refs());
+        assert_eq!(own[0]["spec"]["audience"], "project-list");
+        assert_eq!(own[0]["spec"]["allowedProjects"], json!(["helsinki"]));
+        assert_eq!(own[0]["spec"]["policyRefs"], json!(refs()));
+        let wide = grant_bundle(&request, &endpoint("organization", &[]), &refs());
+        assert_eq!(wide[0]["spec"]["allowedProjects"], json!([]), "{wide:?}");
         let policy = &bundle[1];
         assert_eq!(policy["kind"], "Policy");
         assert_eq!(policy["metadata"]["name"], "air-quality-ar-0a1b2c3d4e5f");

@@ -66,6 +66,13 @@ async fn world(pipeline: &str, pipeline_identity: bool) -> AppState {
     let mut config = Config::for_tests();
     config.pipeline_identity = pipeline_identity;
     let state = AppState::new(config, None).with_shako(Arc::new(client));
+    // The installation's domain names the grant's Policy URN on the Endpoint (P-18, T-6742).
+    state.mirror.upsert(common::envelope(
+        "Organization",
+        "hel",
+        ORG_NAMESPACE,
+        json!({ "domain": "hel.fi", "installation": true }),
+    ));
     for (project, space) in [(KPIS, "kpi"), (HELSINKI, "air")] {
         state.mirror.upsert(common::envelope(
             "Project",
@@ -442,6 +449,60 @@ async fn two_approvals_at_once_open_one_change() {
         .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.OpenPullRequest"))
         .count();
     assert_eq!(opened, 1, "one approval, one Change");
+}
+
+/// P-18 (T-6742): with no organization domain known, the grant's Policy URN cannot be written on
+/// the Endpoint, so it would reach nothing. The approval is a 409 naming the field to set, and the
+/// request stays pending with no Change opened.
+#[tokio::test]
+async fn an_approval_whose_grant_no_domain_can_name_is_refused() {
+    let _held = DATABASE.lock().await;
+    let Some(pool) = pool().await else { return };
+    let pipeline = unique("air");
+    let state = state(pool, &pipeline, true).await;
+    state
+        .mirror
+        .remove(&joinedcontext_portal::resource::ResourceKey {
+            namespace: ORG_NAMESPACE.into(),
+            kind: "Organization".into(),
+            name: "hel".into(),
+        });
+    let filed = send(
+        &state,
+        "jana",
+        "POST",
+        &format!("/api/v1/projects/{KPIS}/pipelines/{pipeline}/access-requests"),
+        Some(ask()),
+    )
+    .await;
+    assert_eq!(filed.status, StatusCode::CREATED, "{}", filed.text);
+    let id = serde_json::from_str::<Value>(&filed.text).expect("json")["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    let uri = format!("/api/v1/projects/{HELSINKI}/access-requests/{id}/approve");
+    let refused = send(&state, "olli", "POST", &uri, None).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.text);
+    assert!(refused.text.contains("spec.domain"), "{}", refused.text);
+    let stored =
+        joinedcontext_portal::access_requests::get(state.db.as_ref().expect("db"), HELSINKI, &id)
+            .await
+            .expect("read")
+            .expect("there");
+    assert_eq!(stored.state, "pending");
+    let forge = FORGES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&pipeline)
+        .expect("the world's forge");
+    let opened = forge
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.OpenPullRequest"))
+        .count();
+    assert_eq!(opened, 0, "no Change for a grant that reaches nothing");
 }
 
 /// F-R2POR1-007 (T-6225): two owners revoking at once: one revoke Change, and the other gets the
