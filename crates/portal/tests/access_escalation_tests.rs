@@ -641,7 +641,11 @@ async fn approving_a_new_project_with_its_own_binding_counts_the_project_it_crea
         NEW_PROJECT,
         "portal/create-project-e2e-city-00000305",
         own,
-        &binding("e2e-city-creator", "steward", json!({ "project": "e2e-city" })),
+        &binding(
+            "e2e-city-creator",
+            "steward",
+            json!({ "project": "e2e-city" }),
+        ),
     )
     .await;
     Mock::given(method("GET"))
@@ -682,7 +686,12 @@ async fn approving_a_new_project_with_its_own_binding_counts_the_project_it_crea
         Some(json!({ "confirm": "e2e-city" })),
     )
     .await;
-    assert!(answer.status.is_success(), "{} {}", answer.status, answer.text);
+    assert!(
+        answer.status.is_success(),
+        "{} {}",
+        answer.status,
+        answer.text
+    );
 }
 
 #[tokio::test]

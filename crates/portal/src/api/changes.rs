@@ -2335,7 +2335,8 @@ fn judge_at_approval(
                 .map_err(|e| ApiError::Conflict(crate::judge::reason(&e)))?;
             // A binding's scope names an Organization or project that is there, or one this
             // Change creates (T-6806).
-            let manifest = serde_json::to_value(e).map_err(|e| ApiError::Internal(e.to_string()))?;
+            let manifest =
+                serde_json::to_value(e).map_err(|e| ApiError::Internal(e.to_string()))?;
             crate::permissions::scopes_name_a_target(&state.mirror, &manifest, None)
         })
     })
