@@ -1253,7 +1253,7 @@ pub async fn import(
         None => {}
         Some("git") => {
             // Who may not open a project learns that and nothing else (PF-65).
-            crate::api::projects::may_open(&state, &user.0.identity)?;
+            crate::api::projects::may_open(&state, &user.0.identity, None)?;
             crate::permissions::require_organization_admin(
                 &state,
                 &user.0.identity,
