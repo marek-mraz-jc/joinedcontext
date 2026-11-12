@@ -2278,3 +2278,210 @@ async fn organization_actions_keep_to_the_organization_and_its_rights() {
         "{reader:?}"
     );
 }
+
+/// T-6827, the MCP twin of the action matrix: `jc_change_plan` (the dry run MCP proposes with)
+/// of the same patch and removal answers each caller the verdict the OData action answers: a
+/// plan where OData plans, the same refusal status where OData refuses.
+#[tokio::test]
+async fn every_organization_action_answers_as_mcp_plans_it() {
+    use joinedcontext_portal::ops::{Caller, Via};
+    let state = access_state();
+    let mut differ = Vec::new();
+    for who in ["hel-reader", "hel-admin", "root"] {
+        for (entity, _, (ns, kind, name)) in ACCESS_TARGETS {
+            let etag = state.mirror.get(ns, kind, name).expect(name).etag();
+            let patch = json!({ "metadata": { "title": "Renamed" } });
+            for (action, change, body) in [
+                (
+                    "propose_delete",
+                    json!({ "op": "delete", "kind": kind, "name": name }),
+                    json!({ "dryRun": true }),
+                ),
+                (
+                    "propose_update",
+                    json!({ "op": "patch", "kind": kind, "name": name, "patch": patch }),
+                    json!({ "patch": patch, "dryRun": true }),
+                ),
+            ] {
+                let odata = call_as(
+                    &state,
+                    who,
+                    "POST",
+                    &format!("/api/v1/{entity}/JoinedContext.Portal.{action}"),
+                    Some(&etag),
+                    "application/json",
+                    body,
+                )
+                .await;
+                let caller = Caller::new(person(who, groups_of(who)), Via::Mcp);
+                let project = if ns == ORG_NAMESPACE { "helsinki" } else { ns };
+                let mcp = organization_host::scope(
+                    host("hel"),
+                    common::doors::mcp_rpc(
+                        &caller,
+                        &state,
+                        json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+                            "name": "jc_change_plan",
+                            "arguments": { "project": project, "changes": [change] } } }),
+                    ),
+                )
+                .await;
+                let refused = mcp["result"]["isError"] == json!(true);
+                let status = &mcp["result"]["structuredContent"]["status"];
+                // A plan whose check fails is the REST dry run's `200 {"valid": false}` and
+                // MCP's 422 naming the same finding.
+                let same = match (odata.status.is_success(), odata.json()["valid"].as_bool()) {
+                    (true, Some(false)) => refused && *status == json!(422),
+                    (true, _) => !refused,
+                    (false, _) => refused && *status == json!(odata.status.as_u16()),
+                };
+                if !same {
+                    differ.push(format!(
+                        "{who} {entity} {action}: OData {} {} / MCP {}",
+                        odata.status,
+                        odata.text.chars().take(200).collect::<String>(),
+                        mcp.to_string().chars().take(400).collect::<String>()
+                    ));
+                }
+            }
+        }
+    }
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
+}
+
+/// T-6828 (ADR-N-070 §2.3, API/13 §2b): the project reads with a key are sets: `runs` keyed by
+/// id, `revisions` by sha, `repositories` by name, each a navigation of `projects` and an
+/// Organization-wide set. A run reads as `jc_run_list` answers it, with `$count`, `$filter` and
+/// its key; the functions they were answer as no function any more, and no caller's `$metadata`
+/// lists them.
+#[tokio::test]
+async fn keyed_project_reads_are_sets_not_functions() {
+    use joinedcontext_portal::ops::{Caller, Via};
+    let state = state();
+    let run: joinedcontext_portal::agents::run::AgentRun = serde_json::from_value(json!({
+        "id": "run-6828",
+        "project": "helsinki",
+        "appName": "city-bikes",
+        "title": "City bikes",
+        "endpointName": "helsinki-bikes",
+        "endpointSlug": "zt4qm7ge2xdv6ksb3ncf5arw2y",
+        "profile": "app-builder",
+        "kind": "application",
+        "unattended": false,
+        "appClass": "ui",
+        "visibility": "project",
+        "prompt": "p",
+        "promptDigest": "d",
+        "dataNeeds": [],
+        "allowsWrite": false,
+        "branch": "agent/app-city-bikes/run-6828",
+        "pathPrefix": "",
+        "status": "previewing",
+        "ticketHash": "t",
+        "steps": 0,
+        "tokensUsed": 0,
+        "createdBy": "root@hel.fi",
+        "createdAt": "2026-11-12T06:00:00Z",
+        "expiresAt": "2099-11-12T06:00:00Z"
+    }))
+    .expect("a run");
+    state.agents.create_run(&run).await.expect("stored");
+    let mode = Mode::Host("hel");
+
+    let metadata = get(&state, mode, "root", "/api/v1/$metadata").await;
+    for set in ["runs", "revisions", "repositories"] {
+        assert!(
+            metadata.text.contains(&format!("EntitySet Name=\"{set}\"")),
+            "{set} not in $metadata"
+        );
+    }
+    let caller = Caller::new(person("root", groups_of("root")), Via::Mcp);
+    let mcp = organization_host::scope(
+        host("hel"),
+        common::doors::mcp_rpc(
+            &caller,
+            &state,
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+                "name": "jc_run_list", "arguments": { "project": "helsinki" } } }),
+        ),
+    )
+    .await;
+    let listed: Vec<String> = mcp["result"]["structuredContent"]["items"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|r| r["id"].as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert_eq!(listed, ["run-6828"], "{mcp}");
+    for uri in [
+        "/api/v1/runs?$select=id,status",
+        "/api/v1/projects('helsinki')/runs?$select=id,status",
+        "/api/v1/runs?$filter=appName eq 'city-bikes'&$select=id,status",
+    ] {
+        let answer = get(&state, mode, "root", &uri.replace(' ', "%20")).await;
+        assert_eq!(answer.status, StatusCode::OK, "{uri}: {}", answer.text);
+        assert_eq!(names(&answer.json(), "id"), listed, "{uri}: {}", answer.text);
+    }
+    let none = get(
+        &state,
+        mode,
+        "root",
+        "/api/v1/runs?$filter=status%20eq%20'failed'&$count=true",
+    )
+    .await;
+    assert_eq!(none.json()["@odata.count"], json!(0), "{}", none.text);
+    let count = get(&state, mode, "root", "/api/v1/runs/$count").await;
+    assert_eq!(count.text, "1");
+    let one = get(
+        &state,
+        mode,
+        "root",
+        "/api/v1/runs(project='helsinki',id='run-6828')",
+    )
+    .await;
+    assert_eq!(one.status, StatusCode::OK, "{}", one.text);
+    assert_eq!(one.json()["appName"], "city-bikes", "{}", one.text);
+    // Another Organization's caller reads no run of hel's projects.
+    let foreign = get(&state, mode, "ba-only", "/api/v1/runs/$count").await;
+    assert!(
+        foreign.text == "0"
+            || matches!(
+                foreign.status,
+                StatusCode::FORBIDDEN | StatusCode::NOT_FOUND
+            ),
+        "{}: {}",
+        foreign.status,
+        foreign.text
+    );
+
+    for name in [
+        "jc_run_list",
+        "jc_run_get",
+        "jc_project_revisions",
+        "jc_repository_list",
+    ] {
+        assert!(
+            !metadata.text.contains(&format!("Name=\"{name}\"")),
+            "{name} still in $metadata"
+        );
+        let called = get(
+            &state,
+            mode,
+            "root",
+            &format!("/api/v1/projects('helsinki')/JoinedContext.Portal.{name}()"),
+        )
+        .await;
+        assert!(
+            matches!(
+                called.status,
+                StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST
+            ),
+            "{name} answered as a function: {} {}",
+            called.status,
+            called.text
+        );
+    }
+}

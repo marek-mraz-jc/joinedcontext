@@ -433,6 +433,28 @@ export interface Project {
   "@odata.etag"?: string;
 }
 
+export interface Repository {
+  archived?: boolean | null;
+  defaultBranch?: string | null;
+  description?: string | null;
+  name: string;
+  owner?: string | null;
+  private?: boolean | null;
+  project: string;
+  role?: string | null;
+  sizeBytes?: number | null;
+  updatedAt?: string | null;
+  "@odata.etag"?: string;
+}
+
+export interface Revision {
+  author?: string | null;
+  message?: string | null;
+  project: string;
+  sha: string;
+  "@odata.etag"?: string;
+}
+
 export interface Role {
   kind?: string | null;
   name: string;
@@ -454,6 +476,19 @@ export interface RoleBinding {
   sourceUrl?: string | null;
   space?: string | null;
   title?: string | null;
+  url?: string | null;
+  "@odata.etag"?: string;
+}
+
+export interface Run {
+  appName?: string | null;
+  createdAt?: string | null;
+  createdBy?: string | null;
+  id: string;
+  kind?: string | null;
+  previewUrl?: string | null;
+  project: string;
+  status?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
 }
@@ -583,8 +618,11 @@ export interface EntitySets {
   policies: Policy;
   projections: ModelProjection;
   projects: Project;
+  repositories: Repository;
+  revisions: Revision;
   rolebindings: RoleBinding;
   roles: Role;
+  runs: Run;
   scopedefinitions: ScopeDefinition;
   serviceaccounts: ServiceAccount;
   shared: SharedSpaceReference;
@@ -635,8 +673,11 @@ export const ENTITY_KEYS: { readonly [S in keyof EntitySets]: readonly string[] 
   policies: ["project","name"],
   projections: ["project","name"],
   projects: ["name"],
+  repositories: ["project","name"],
+  revisions: ["project","sha"],
   rolebindings: ["name"],
   roles: ["project","name"],
+  runs: ["project","id"],
   scopedefinitions: ["project","name"],
   serviceaccounts: ["project","name"],
   shared: ["project","name"],
@@ -679,19 +720,15 @@ export interface Functions {
   jc_pipeline_metrics: { name: string };
   jc_pipeline_validate: { draft?: unknown; pipeline?: unknown; records: unknown; space?: string; type?: string };
   jc_project_export: { format?: string; kinds?: string; names?: string; revision?: string };
-  jc_project_revisions: { limit?: number };
   jc_repository_commit: { repository: string; sha: string };
   jc_repository_commits: { cursor?: number; limit?: number; path?: string; ref?: string; repository: string };
   jc_repository_file: { path: string; ref?: string; repository: string };
   jc_repository_get: { repository: string };
-  jc_repository_list: { cursor?: number; filter?: string; limit?: number };
   jc_repository_pull: { number: number; repository: string };
   jc_repository_pulls: { cursor?: number; limit?: number; repository: string; state?: string };
   jc_repository_refs: { repository: string };
   jc_repository_settings: { repository: string };
   jc_repository_tree: { path?: string; ref?: string; repository: string };
-  jc_run_get: { id: string };
-  jc_run_list: { app?: string; kind?: string; limit?: number; mine?: boolean; status?: string };
   jc_schema_get: { kind: string; path?: string };
   jc_serviceaccount_access: { name: string };
   jc_space_governance: { aspect: string; pipeline?: string; space: string };
@@ -732,19 +769,15 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   jc_pipeline_metrics: ["Project"],
   jc_pipeline_validate: ["Project"],
   jc_project_export: ["Project"],
-  jc_project_revisions: ["Project"],
   jc_repository_commit: ["Project"],
   jc_repository_commits: ["Project"],
   jc_repository_file: ["Project"],
   jc_repository_get: ["Project"],
-  jc_repository_list: ["Project"],
   jc_repository_pull: ["Project"],
   jc_repository_pulls: ["Project"],
   jc_repository_refs: ["Project"],
   jc_repository_settings: ["Project"],
   jc_repository_tree: ["Project"],
-  jc_run_get: ["Project"],
-  jc_run_list: ["Project"],
   jc_schema_get: ["Project"],
   jc_serviceaccount_access: ["Project"],
   jc_space_governance: ["Project"],
@@ -850,7 +883,7 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   jc_workspace_propose: ["Project"],
   jc_workspace_update_from_main: ["Project"],
   propose_create: ["Project"],
-  propose_delete: ["App","AssistantDeployment","CkanInstance","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","Endpoint","Entity","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Pipeline","Policy","Role","ScopeDefinition","ServiceAccount","SharedSpaceReference","Subscription","SyncSource"],
-  propose_update: ["App","AssistantDeployment","CkanInstance","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","Endpoint","Entity","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Pipeline","Policy","Role","ScopeDefinition","ServiceAccount","SharedSpaceReference","Subscription","SyncSource"],
+  propose_delete: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Role","RoleBinding","ScopeDefinition","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],
+  propose_update: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Role","RoleBinding","ScopeDefinition","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],
   reject: ["Change"],
 };
