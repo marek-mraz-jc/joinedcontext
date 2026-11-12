@@ -135,7 +135,7 @@ describe("Administration → Connectors", () => {
     renderConnectors(ADMIN);
     const table = await screen.findByRole("table", { name: en.organization.connectors.caption });
     await within(table).findByText("jana-claude-code");
-    const sort = within(table).getByRole("button", { name: `Sort by ${en.organization.connectors.denialsPerDay}` });
+    const sort = within(table).getByRole("button", { name: en.organization.connectors.denialsPerDay });
     await user.click(sort);
     expect(names(table)).toEqual(["pia-chatgpt", "jana-claude-code"]);
     await user.click(sort);
