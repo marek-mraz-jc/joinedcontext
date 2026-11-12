@@ -67,7 +67,8 @@ def args(tmp_path, state=None):
     exp = tmp_path / "export"
     exp.mkdir()
     (exp / "manifest.json").write_text(json.dumps({"installation": "prod"}))
-    return argparse.Namespace(base_url="http://127.0.0.1:9", state=state, export=str(exp), jc_config=None)
+    return argparse.Namespace(base_url="http://127.0.0.1:9", state=state, export=str(exp), jc_config=None,
+                              composed=False)
 
 
 def test_an_export_without_a_multiorg_block_is_one_named_skip(tmp_path):
@@ -75,6 +76,18 @@ def test_an_export_without_a_multiorg_block_is_one_named_skip(tmp_path):
     s.run()
     assert [(r["id"], r["result"]) for r in s.rows] == [("setup", "skip")]
     assert s.rows[0]["reason"].startswith("not applicable: the export is one installation")
+
+
+def test_a_gate_bundle_that_is_not_composed_or_missing_fails_instead_of_skipping(tmp_path):
+    a = args(tmp_path)
+    a.composed = True
+    s = suite.Suite(a)
+    s.run()
+    assert [(r["id"], r["result"], r["actual"]) for r in s.rows] == [("setup", "fail", "none")]
+    a.export = str(tmp_path / "gone")
+    s = suite.Suite(a)
+    s.run()
+    assert [(r["id"], r["result"], r["actual"]) for r in s.rows] == [("setup", "fail", "no manifest.json")]
 
 
 def test_the_suite_takes_the_state_realm(tmp_path):

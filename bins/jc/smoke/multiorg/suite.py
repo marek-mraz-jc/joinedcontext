@@ -1005,9 +1005,14 @@ class Suite:
         (out / "shots.json").write_text(json.dumps(shots, indent=1))
 
     def run(self):
-        manifest = json.loads((self.export / "manifest.json").read_text())
+        file = self.export / "manifest.json"
+        manifest = json.loads(file.read_text()) if file.is_file() else {}
         if "multiorg" not in manifest:
-            self.row("setup", "all", "read manifest.json", "a multiorg block (compose.py)", "none", None,
+            # --composed (the smoke gate composed the bundle): a missing one is a failure, or the gate
+            # would go green without judging a single Organization.
+            self.row("setup", "all", f"read {file}", "a multiorg block (compose.py)",
+                     "none" if file.is_file() else "no manifest.json", False if self.a.composed else None,
+                     "" if self.a.composed else
                      "not applicable: the export is one installation, not a composed multi-organization bundle")
             return
         self.expectations()
@@ -1062,6 +1067,8 @@ def main(argv):
     ap.add_argument("--only", help="comma list of check groups: projects,hosts,project_reads,writes,people,mcp,connectors,data,catalogue,dashboards,global,ui")
     ap.add_argument("--shots", action="store_true", help="browser shots 1440/400 per persona (Playwright)")
     ap.add_argument("--sync-timeout", type=int, default=180)
+    ap.add_argument("--composed", action="store_true",
+                    help="the bundle must be composed (the smoke gate): no multiorg block is a failure, not a skip")
     ap.add_argument("--jc-config", "--hosts", dest="jc_config",
                     help="the jc.toml (or its [[organizations]] fragment): host mode, each Organization on its own hosts")
     a = ap.parse_args(argv)
