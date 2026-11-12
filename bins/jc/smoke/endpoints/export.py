@@ -86,6 +86,9 @@ class Endpoint:
     slices: list = field(default_factory=list)    # spec.catalog.datasets names
     file: str = ""
     caller_role: bool = False  # every admitted caller holds endpoint:{project}/{name} (AP-96)
+    # short types some Policy of the space grants a write to ("*" = every type): a Pipeline or
+    # workload may add rows of them while a suite reads, bound to this Endpoint or not
+    written: set = field(default_factory=set)
 
     @property
     def closed(self) -> bool:
@@ -161,6 +164,8 @@ def load_endpoints(files: Path) -> list[Endpoint]:
         for d in _load_yaml(f):
             if d.get("kind") == "App":
                 apps.add((d["metadata"].get("namespace") or f.relative_to(files).parts[1], d["metadata"]["name"]))
+    written = {k: {s.type for g in gs if g.writes() for s in g.selectors or [Selector("*", None)]}
+               for k, gs in ((k, [_grant(n, p) for n, p in v]) for k, v in policies.items())}
     out = []
     for f in sorted(files.glob("*/*/spaces/*/endpoints/*.yaml")):
         for d in _load_yaml(f):
@@ -193,7 +198,7 @@ def load_endpoints(files: Path) -> list[Endpoint]:
                 audience=str(s.get("audience")), representations=list(s.get("enabledRepresentations") or []),
                 grants=bound, ical=list(ical), ical_types=ical,
                 datasets=datasets, slices=slices, file=str(f.relative_to(files)),
-                caller_role=bool(s.get("callerRole"))))
+                caller_role=bool(s.get("callerRole")), written=written.get((project, space), set())))
     return out
 
 

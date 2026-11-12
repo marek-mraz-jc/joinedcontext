@@ -49,7 +49,8 @@ spec:
 {pattern}"""
 
 
-def bundle(tmp: Path, now: str = "2026-11-08T12:00:00Z", synthetic: bool = False, expires: bool = False) -> Path:
+def bundle(tmp: Path, now: str = "2026-11-08T12:00:00Z", synthetic: bool = False, expires: bool = False,
+           writer: bool = False) -> Path:
     files = tmp / "gitea" / "files" / "org" / "city" / "spaces" / "air"
     (files / "endpoints").mkdir(parents=True)
     (files / "policies").mkdir()
@@ -66,6 +67,11 @@ def bundle(tmp: Path, now: str = "2026-11-08T12:00:00Z", synthetic: bool = False
         + ("        - type: WaterQualityObserved\n" if synthetic else "")))
     (files / "policies" / "staff-read.yaml").write_text(POLICY.format(
         name="staff-read", assignee="{kind: group, id: staff}", pattern=""))
+    if writer:  # the rehearsal's Pipelines write the space through a Policy no Endpoint here binds
+        (files / "policies" / "pipelines-write.yaml").write_text(
+            "kind: Policy\nmetadata: {name: pipelines-write, namespace: city}\n"
+            "spec:\n  contextSpaceRef: {kind: ContextSpace, name: air}\n"
+            "  assignee: {kind: serviceAccount, id: pipelines}\n  operations: [upsertBatch, createBatch, queryBatch]\n")
     (tmp / "antares").mkdir()
     rows = []
     for i, side in enumerate(["north", "north", "south"]):
@@ -120,6 +126,11 @@ class Fake:
     def grown_rows(self, slug: str) -> int:
         """The live rows of the granted type: the bundle's 2 and 3 a Pipeline wrote; under
         "grown-more" the Pipeline writes 100 more right after the suite's first live count."""
+        if self.broken == "grown-late":
+            # smoke 43202171779: the first page landed after the suite's live count read the bundle's 2
+            first = slug not in self.live_seen
+            self.live_seen.add(slug)
+            return 2 if first else 102
         if self.broken != "grown-more" or slug not in self.live_seen:
             self.live_seen.add(slug)
             return 5
@@ -255,8 +266,8 @@ def serve():
         s.shutdown()
 
 
-def run(tmp_path, base, now, synthetic=False, expires=False):
-    b = bundle(tmp_path / "x", now, synthetic, expires)
+def run(tmp_path, base, now, synthetic=False, expires=False, writer=False):
+    b = bundle(tmp_path / "x", now, synthetic, expires, writer)
     out = tmp_path / "out"
     code = suite.main(["--base-url", base, "--export", str(b), "--out", str(out), "--workers", "1"])
     return code, json.loads((out / "results.json").read_text())
@@ -328,6 +339,24 @@ def test_a_type_a_pipeline_keeps_writing_during_the_run_counts_at_least_the_live
     assert by["anon.count.seeded"]["actual"] == "count=2"
     assert by["anon.count"]["expected"] == ">= 5 (a Pipeline writes the type)" and by["anon.count"]["actual"] == "200 count=105"
     assert "count=105" in by["anon.odata.query"]["actual"] and "rows=105" in by["anon.ogc.csv"]["actual"]
+
+
+def test_a_type_a_policy_lets_a_pipeline_write_counts_at_least_the_bundle_before_the_first_page(tmp_path, serve):
+    # smoke 43202171779 (T-6819): the live count read the bundle's 2 Events, then linked-events'
+    # first page landed and OData, OGC items and CSV read 96 on three Endpoints.
+    code, res = run(tmp_path, serve(Fake("grown-late")), now_iso(), synthetic=True, writer=True)
+    fails = [r for r in res["checks"] if r["result"] == "fail"]
+    assert code == 0 and not fails, fails
+    by = {r["id"]: r for r in res["checks"]}
+    assert by["anon.count.seeded"]["actual"] == "count=2"
+    assert by["anon.count"]["expected"] == ">= 2 (a Pipeline writes the type)"
+    assert "count=102" in by["anon.odata.query"]["actual"] and "rows=102" in by["anon.ogc.csv"]["actual"]
+
+
+def test_rows_appearing_mid_run_with_no_policy_that_writes_the_type_stay_red(tmp_path, serve):
+    code, res = run(tmp_path, serve(Fake("grown-late")), now_iso(), synthetic=True)
+    red = {r["id"] for r in res["checks"] if r["result"] == "fail"}
+    assert code == 1 and {"anon.odata.query", "anon.ogc.items", "anon.ogc.csv"} <= red, red
 
 
 @pytest.mark.parametrize("broken,synthetic,check", [
