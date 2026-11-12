@@ -1808,11 +1808,7 @@ fn bound_actions(rights: &Rights, visible: &BTreeSet<String>) -> Vec<BoundAction
         ));
         for set in kinds().filter(|set| manifest_kind(set) && visible.contains(&set.set)) {
             let ty = format!("{NAMESPACE}.{}", set.type_name);
-            out.push((
-                "propose_update",
-                ty.clone(),
-                UPDATE_PARAMETERS,
-            ));
+            out.push(("propose_update", ty.clone(), UPDATE_PARAMETERS));
             out.push(("propose_delete", ty, &[("dryRun", "Edm.Boolean")][..]));
         }
     }
@@ -2259,7 +2255,13 @@ async fn act_inner(call: Call<'_>, entity: &str, name: &str) -> Result<Response,
                 "{entity} has no action {name}; $metadata lists the actions you may call"
             ))));
         }
-        return propose(call, name, &current, (ORG_NAMESPACE.to_owned(), plural, key)).await;
+        return propose(
+            call,
+            name,
+            &current,
+            (ORG_NAMESPACE.to_owned(), plural, key),
+        )
+        .await;
     }
     let Call {
         state,

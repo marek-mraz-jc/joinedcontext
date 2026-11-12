@@ -165,7 +165,9 @@ async fn forge(author: &str, touched: &str) -> (MockServer, AppState) {
         Mock::given(method("GET"))
             .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
             .and(query_param("@p", format!("'{file}'")))
-            .respond_with(ok(json!({ "Sha": "blob-1", "Content": STANDARD.encode(&yaml) })))
+            .respond_with(ok(
+                json!({ "Sha": "blob-1", "Content": STANDARD.encode(&yaml) }),
+            ))
             .mount(&server)
             .await;
         tree.push(json!({ "Path": file, "Type": "blob", "Sha": "blob-1", "Mode": "100644" }));
@@ -245,7 +247,14 @@ async fn forge(author: &str, touched: &str) -> (MockServer, AppState) {
         json!({ "organizationRef": "bb" }),
     ));
     m.upsert(envelope("ContextSpace", PROJECT, PROJECT, json!({})));
-    let access = json!(["Project", "ContextSpace", "Endpoint", "Role", "RoleBinding", "Group"]);
+    let access = json!([
+        "Project",
+        "ContextSpace",
+        "Endpoint",
+        "Role",
+        "RoleBinding",
+        "Group"
+    ]);
     for (role, rules) in [
         (
             "access-admin",
@@ -273,7 +282,12 @@ async fn forge(author: &str, touched: &str) -> (MockServer, AppState) {
             ]),
         ),
     ] {
-        m.upsert(envelope("Role", role, ORG_NAMESPACE, json!({ "rules": rules })));
+        m.upsert(envelope(
+            "Role",
+            role,
+            ORG_NAMESPACE,
+            json!({ "rules": rules }),
+        ));
     }
     let org = json!({ "organization": "bb" });
     let project = json!({ "project": PROJECT });
@@ -285,7 +299,12 @@ async fn forge(author: &str, touched: &str) -> (MockServer, AppState) {
         ("steward", STEWARD, "project-steward", &project),
         ("developer", DEVELOPER, "endpoint-developer", &project),
     ] {
-        m.upsert(binding(&format!("{name}-binding"), who, role, scope.clone()));
+        m.upsert(binding(
+            &format!("{name}-binding"),
+            who,
+            role,
+            scope.clone(),
+        ));
     }
     for env in manifests() {
         m.upsert(env);
@@ -439,7 +458,12 @@ async fn pf52_access_changes_keep_the_role_model_through_odata() {
     let rename = json!({ "metadata": { "title": "Air readers" } });
     let (odata, rest) = both(&state, ADMIN, BINDING_DOORS, BINDING_ID, &rename, false).await;
     for (door, answer) in [("OData", &odata), ("REST", &rest)] {
-        assert_eq!(answer.status, StatusCode::ACCEPTED, "{door}: {}", answer.text);
+        assert_eq!(
+            answer.status,
+            StatusCode::ACCEPTED,
+            "{door}: {}",
+            answer.text
+        );
         let lane = &answer.body["status"]["lane"];
         assert!(
             lane.as_str().is_some_and(|l| l.eq_ignore_ascii_case("red")),
@@ -457,7 +481,12 @@ async fn pf58_the_author_of_an_access_change_never_approves_it() {
     let rename = json!({ "metadata": { "title": "Air readers" } });
     let (odata, rest) = both(&state, ADMIN, BINDING_DOORS, BINDING_ID, &rename, false).await;
     for (door, answer) in [("OData", &odata), ("REST", &rest)] {
-        assert_eq!(answer.status, StatusCode::ACCEPTED, "{door}: {}", answer.text);
+        assert_eq!(
+            answer.status,
+            StatusCode::ACCEPTED,
+            "{door}: {}",
+            answer.text
+        );
         assert_eq!(
             answer.body["status"]["phase"], "PendingApproval",
             "{door}: {}",
@@ -465,17 +494,45 @@ async fn pf58_the_author_of_an_access_change_never_approves_it() {
         );
     }
     assert!(!merged(&server).await, "proposing merged an access change");
-    assert_eq!(odata.body["metadata"]["name"], "chg-00000001", "{}", odata.text);
+    assert_eq!(
+        odata.body["metadata"]["name"], "chg-00000001",
+        "{}",
+        odata.text
+    );
     // The Organization's Changes are read by project `org`, pull request 1.
     let approve = "/api/v1/projects/org/changes/chg-org-00000001/approve";
     let confirm = json!({ "confirm": BINDING });
-    let own = send(&state, ADMIN, "POST", approve, None, "application/json", &confirm).await;
+    let own = send(
+        &state,
+        ADMIN,
+        "POST",
+        approve,
+        None,
+        "application/json",
+        &confirm,
+    )
+    .await;
     assert_eq!(own.status, StatusCode::FORBIDDEN, "{}", own.text);
     assert!(own.text.contains("self-approval"), "{}", own.text);
-    assert!(!merged(&server).await, "the author merged their own access change");
-    let second = send(&state, SECOND, "POST", approve, None, "application/json", &confirm).await;
+    assert!(
+        !merged(&server).await,
+        "the author merged their own access change"
+    );
+    let second = send(
+        &state,
+        SECOND,
+        "POST",
+        approve,
+        None,
+        "application/json",
+        &confirm,
+    )
+    .await;
     assert!(second.status.is_success(), "{}", second.text);
-    assert!(merged(&server).await, "a second administrator did not merge it");
+    assert!(
+        merged(&server).await,
+        "a second administrator did not merge it"
+    );
 }
 
 /// PF-70: a project steward approves Roles in the red lane, but their own Role change waits for
@@ -489,9 +546,22 @@ async fn pf70_a_stewards_own_role_change_waits() {
         "/api/v1/projects/ovzdusie/roles/air-steward",
     );
     let rename = json!({ "metadata": { "title": "Air stewards" } });
-    let (odata, rest) = both(&state, STEWARD, doors, (PROJECT, "Role", ROLE), &rename, false).await;
+    let (odata, rest) = both(
+        &state,
+        STEWARD,
+        doors,
+        (PROJECT, "Role", ROLE),
+        &rename,
+        false,
+    )
+    .await;
     for (door, answer) in [("OData", &odata), ("REST", &rest)] {
-        assert_eq!(answer.status, StatusCode::ACCEPTED, "{door}: {}", answer.text);
+        assert_eq!(
+            answer.status,
+            StatusCode::ACCEPTED,
+            "{door}: {}",
+            answer.text
+        );
         assert_eq!(
             answer.body["status"]["phase"], "PendingApproval",
             "{door}: {}",

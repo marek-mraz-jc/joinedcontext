@@ -2423,7 +2423,12 @@ async fn keyed_project_reads_are_sets_not_functions() {
     ] {
         let answer = get(&state, mode, "root", &uri.replace(' ', "%20")).await;
         assert_eq!(answer.status, StatusCode::OK, "{uri}: {}", answer.text);
-        assert_eq!(names(&answer.json(), "id"), listed, "{uri}: {}", answer.text);
+        assert_eq!(
+            names(&answer.json(), "id"),
+            listed,
+            "{uri}: {}",
+            answer.text
+        );
     }
     let none = get(
         &state,

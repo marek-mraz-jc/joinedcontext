@@ -131,7 +131,14 @@ fn list_sets() -> Vec<ListSet> {
     // its sha, a repository by its name. ponytail: runs and revisions hold the newest 100, the
     // REST lists' own ceiling; a cursor on those operations lifts it.
     for (set, type_name, op, input, key, cursor) in [
-        ("runs", "Run", "jc_run_list", json!({ "limit": 100 }), "id", None),
+        (
+            "runs",
+            "Run",
+            "jc_run_list",
+            json!({ "limit": 100 }),
+            "id",
+            None,
+        ),
         (
             "revisions",
             "Revision",
