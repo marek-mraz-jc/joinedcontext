@@ -21,7 +21,7 @@
 //! `OData-MaxVersion`, a `$` option, `$metadata`, the service document or a key predicate here,
 //! every other one to the REST routes, and marks both `Vary: OData-Version, OData-MaxVersion`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, LazyLock};
 
 use axum::body::Body;
@@ -88,8 +88,92 @@ const REFUSED: [&str; 7] = [
 /// model with one unique key per set.
 struct OrgServed {
     public: Arc<Model>,
+    /// The public model without [`PERSONAL`] properties: what a caller who is no people-admin
+    /// reads and has their URLs parsed against.
+    minimised: Arc<Model>,
     service: Service,
     evaluated: Arc<Model>,
+}
+
+/// The people of the Organization (ADR-N-070 section 2.3): each user its RoleBindings name,
+/// directly or through a Group, keyed by `user`, the Keycloak user id.
+const MEMBERS: &str = "members";
+const MEMBER_TYPE: &str = "Member";
+/// The evaluator's set of `members` without [`PERSONAL`]; never an address.
+const MEMBERS_MINIMISED: &str = "membersMinimised";
+/// A member's personal properties (ADR-N-061, ADR-N-070 section 2.8): a property, in `$metadata`
+/// and in rows, only for a caller holding read on Person at the Organization (`people-admin`).
+const PERSONAL: [&str; 2] = ["name", "email"];
+/// Realm lookups in flight at once for a people-admin's page of members.
+const NAMES_AT_ONCE: usize = 8;
+
+fn member_fields() -> Vec<Field> {
+    let mut user = Field::new(
+        "user",
+        FieldKind::String,
+        "The Keycloak user id a RoleBinding or Group names",
+    );
+    user.nullable = false;
+    vec![
+        user,
+        Field::new(
+            "roles",
+            FieldKind::String,
+            "The Roles the member holds here, comma-separated, e.g. editor,reader",
+        ),
+        Field::new(
+            "bindings",
+            FieldKind::String,
+            "The RoleBindings that grant them, comma-separated",
+        ),
+        Field::new(
+            "name",
+            FieldKind::String,
+            "First and last name in the realm",
+        ),
+        Field::new("email", FieldKind::String, "E-mail address in the realm"),
+    ]
+}
+
+/// Whether the caller holds read on Person at `org`: then a member's personal data is theirs to
+/// read (`people-admin`, `org-admin`).
+fn people_admin(state: &AppState, user: &CurrentUser, org: &str) -> bool {
+    crate::permissions::holds_at_organization(
+        state,
+        &user.0.identity,
+        org,
+        "Person",
+        jc_core::kinds::Verb::Read,
+        None,
+    )
+}
+
+/// Whether the caller reads `members` in `org`: read on Person, or on RoleBinding, at the
+/// Organization itself.
+fn members_readable(state: &AppState, user: &CurrentUser, org: &str) -> bool {
+    people_admin(state, user, org)
+        || crate::permissions::holds_at_organization(
+            state,
+            &user.0.identity,
+            org,
+            "RoleBinding",
+            jc_core::kinds::Verb::Read,
+            None,
+        )
+}
+
+/// Drops [`PERSONAL`] from the `Member` type of `model`.
+fn minimise(mut model: Model) -> Model {
+    for ty in model
+        .schemas
+        .iter_mut()
+        .flat_map(|schema| schema.entity_types.iter_mut())
+        .filter(|ty| ty.name == MEMBER_TYPE)
+    {
+        ty.properties
+            .retain(|p| !PERSONAL.contains(&p.name.as_str()));
+    }
+    model
 }
 
 fn project_fields() -> Vec<Field> {
@@ -225,12 +309,31 @@ static ORG: LazyLock<OrgServed> = LazyLock::new(|| {
             public_sets.push(def);
         }
     }
+    public_sets.push(EntityDef {
+        set: MEMBERS.into(),
+        type_name: MEMBER_TYPE.into(),
+        description: "The people the Organization's RoleBindings name".into(),
+        key: "user".into(),
+        fields: member_fields(),
+        rules: read(),
+    });
     let mut evaluated_sets = public_sets.clone();
     for def in evaluated_sets.iter_mut().skip(1) {
         let mut key = Field::new(ROW_KEY, FieldKind::String, "project/name");
         key.nullable = false;
         def.fields.push(key);
         def.key = ROW_KEY.into();
+    }
+    // The evaluator's members without PERSONAL, for a caller who is no people-admin: a row then
+    // carries no `name` or `email` member at all.
+    if let Some(members) = evaluated_sets.iter().find(|def| def.set == MEMBERS) {
+        let mut minimised = members.clone();
+        minimised.set = MEMBERS_MINIMISED.into();
+        minimised.type_name = format!("{MEMBER_TYPE}Minimised");
+        minimised
+            .fields
+            .retain(|f| !PERSONAL.contains(&f.name.as_str()));
+        evaluated_sets.push(minimised);
     }
     let service = Service {
         namespace: NAMESPACE.into(),
@@ -247,6 +350,7 @@ static ORG: LazyLock<OrgServed> = LazyLock::new(|| {
         .model(),
     ));
     OrgServed {
+        minimised: Arc::new(minimise((*public).clone())),
         public,
         service,
         evaluated,
@@ -315,14 +419,20 @@ fn public_model(mut model: Model) -> Model {
 }
 
 /// The public model with only the sets in `visible`: a kind the caller reads in none of their
-/// projects is no entity set, no entity type and no navigation of `Project` (API/13 §2a).
-fn visible_model(visible: &BTreeSet<String>) -> Model {
+/// projects is no entity set, no entity type and no navigation of `Project` (API/13 §2a); a
+/// member's [`PERSONAL`] properties only for a people-admin.
+fn visible_model(visible: &BTreeSet<String>, people: bool) -> Model {
     let hidden: Vec<(&str, &str)> = kinds()
         .map(|set| (set.set.as_str(), set.type_name.as_str()))
         .chain(org_kinds().map(|(set, type_name, _)| (set, type_name)))
+        .chain([(MEMBERS, MEMBER_TYPE)])
         .filter(|(set, _)| !visible.contains(*set))
         .collect();
-    let mut model = (*ORG.public).clone();
+    let mut model = if people {
+        (*ORG.public).clone()
+    } else {
+        (*ORG.minimised).clone()
+    };
     for schema in &mut model.schemas {
         schema
             .entity_types
@@ -365,6 +475,9 @@ fn visible_sets(
             .filter(|(.., set)| org_set_readable(state, user, org, set))
             .map(|(name, ..)| name.to_owned()),
     );
+    if members_readable(state, user, org) {
+        visible.insert(MEMBERS.into());
+    }
     visible.insert(PROJECTS.into());
     visible
 }
@@ -592,6 +705,11 @@ fn etag_of(
             return manifest.etag();
         }
     }
+    projection_etag(row)
+}
+
+/// The SHA-256 of what the caller reads of `row`: a property they do not read never moves it.
+fn projection_etag(row: &Map<String, Value>) -> String {
     use sha2::Digest;
     let mut visible = row.clone();
     visible.remove(ROW_KEY);
@@ -704,6 +822,8 @@ struct Read<'a> {
     caller: Caller,
     org: String,
     page: u64,
+    /// Whether the caller reads a member's [`PERSONAL`] properties.
+    people: bool,
 }
 
 impl Read<'_> {
@@ -1001,14 +1121,22 @@ async fn resource(read: &Read<'_>, target: &str) -> Response {
         Ok(t) => t,
         Err(r) => return *r,
     };
-    let parsed = match odata_url::parse(&target, &EdmModel(&ORG.public), &limits()) {
+    let model = if read.people {
+        &ORG.public
+    } else {
+        &ORG.minimised
+    };
+    let parsed = match odata_url::parse(&target, &EdmModel(model), &limits()) {
         Ok(parsed) => parsed,
         Err(e) => {
             return refused(match e.kind {
                 UrlErrorKind::NotImplemented(_) => not_implemented(&e.to_string()),
                 UrlErrorKind::Unresolved => {
                     let name = target.split(['(', '/', '?']).next().unwrap_or_default();
-                    if name != PROJECTS && kind(name).is_none() && org_set(name).is_none() {
+                    if ![PROJECTS, MEMBERS].contains(&name)
+                        && kind(name).is_none()
+                        && org_set(name).is_none()
+                    {
                         not_found(format!(
                             "no entity set {name}; $metadata lists the entity sets"
                         ))
@@ -1220,6 +1348,43 @@ async fn resource(read: &Read<'_>, target: &str) -> Response {
                 _ => refused(not_implemented("this resource path")),
             }
         }
+        [Segment::EntitySet(s), rest @ ..] if s == MEMBERS => {
+            if !sets.is_empty() {
+                return refused(bad(
+                    "$expand goes from a project; a member has no navigation",
+                ));
+            }
+            let rows = match member_rows(read).await {
+                Ok(rows) => rows,
+                Err(r) => return *r,
+            };
+            let table = if read.people {
+                MEMBERS
+            } else {
+                MEMBERS_MINIMISED
+            };
+            match rest {
+                [] => collection_answer(read, table, s, &path, &plain, rows).await,
+                [Segment::Count] => {
+                    match read
+                        .collection(table, s, &path, &counting(&plain), rows)
+                        .await
+                    {
+                        Ok((answer, _)) => count_text(answer.count.unwrap_or(0)),
+                        Err(r) => *r,
+                    }
+                }
+                [Segment::Key(key)] => match single_key(key) {
+                    Ok(Value::String(user)) => {
+                        by_key(read, table, rows, json!(user), &plain, s, MEMBER_TYPE).await
+                    }
+                    Ok(_) | Err(_) => {
+                        refused(bad("members is keyed by user, e.g. members('f3a1')"))
+                    }
+                },
+                _ => refused(not_implemented("this resource path")),
+            }
+        }
         [Segment::EntitySet(s), rest @ ..] if org_set(s).is_some() => {
             if !sets.is_empty() {
                 return refused(bad("$expand goes from a project; a kind has no navigation"));
@@ -1291,6 +1456,152 @@ fn org_rows(read: &Read<'_>, name: &str) -> Result<Vec<Value>, Refused> {
         return Err(too_many(name));
     }
     Ok(rows)
+}
+
+/// The caller's rows of `members`: each user subject of a RoleBinding of the Organization the
+/// caller reads (a constrained grant per binding), directly or through the Group it names, with
+/// the Roles and bindings that reach them. A people-admin's rows carry the realm's name and
+/// e-mail and list a subject that is an e-mail; nobody else's do (ADR-N-061: no new binding names
+/// one, PF-126, so only an old binding's subject is left out). Each row's ETag is the SHA-256 of
+/// what the caller reads of it, so a personal property never moves a minimised caller's ETag.
+async fn member_rows(read: &Read<'_>) -> Result<Vec<Value>, Refused> {
+    let (state, org) = (read.state, read.org.as_str());
+    if !members_readable(state, read.user, org) {
+        return Err(no(not_found("no members you may read")));
+    }
+    let m = &state.mirror;
+    let groups: HashMap<String, Vec<String>> = m
+        .matching(|env| {
+            env.kind == "Group" && env.metadata.namespace.as_deref() == Some(ORG_NAMESPACE)
+        })
+        .into_iter()
+        .map(|group| {
+            let users = group.spec["members"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|member| member["user"].as_str().map(str::to_owned))
+                .collect();
+            (group.metadata.name, users)
+        })
+        .collect();
+    let bindings = m.matching(|env| {
+        env.kind == "RoleBinding"
+            && env.metadata.namespace.as_deref() == Some(ORG_NAMESPACE)
+            && owned_by(state, org, "RoleBinding", &env.metadata.name)
+    });
+    let mut members: BTreeMap<String, (BTreeSet<String>, BTreeSet<String>)> = BTreeMap::new();
+    for binding in bindings {
+        if !read.people
+            && !crate::permissions::holds_at_organization(
+                state,
+                &read.caller.identity,
+                org,
+                "RoleBinding",
+                jc_core::kinds::Verb::Read,
+                serde_json::to_value(&binding).ok().as_ref(),
+            )
+        {
+            continue;
+        }
+        let role = binding.spec["role"].as_str().unwrap_or_default();
+        for subject in binding.spec["subjects"].as_array().into_iter().flatten() {
+            let users = match (subject["user"].as_str(), subject["group"].as_str()) {
+                (Some(user), _) => vec![user.to_owned()],
+                (None, Some(group)) => groups.get(group).cloned().unwrap_or_default(),
+                (None, None) => Vec::new(),
+            };
+            for user in users
+                .into_iter()
+                .filter(|u| read.people || !u.contains('@'))
+            {
+                let (roles, names) = members.entry(user).or_default();
+                roles.insert(role.to_owned());
+                names.insert(binding.metadata.name.clone());
+            }
+        }
+        if members.len() > MAX_ROWS {
+            return Err(too_many(MEMBERS));
+        }
+    }
+    let personal = if read.people {
+        personal_of(state, members.keys().cloned().collect()).await
+    } else {
+        vec![(Value::Null, Value::Null); members.len()]
+    };
+    Ok(members
+        .into_iter()
+        .zip(personal)
+        .map(|((user, (roles, names)), (name, email))| {
+            let mut row = Map::new();
+            row.insert("user".into(), Value::String(user.clone()));
+            row.insert(
+                "roles".into(),
+                json!(roles.into_iter().collect::<Vec<_>>().join(",")),
+            );
+            row.insert(
+                "bindings".into(),
+                json!(names.into_iter().collect::<Vec<_>>().join(",")),
+            );
+            if read.people {
+                row.insert("name".into(), name);
+                row.insert("email".into(), email);
+            }
+            let etag = projection_etag(&row);
+            row.insert(ROW_KEY.into(), Value::String(user));
+            row.insert(ETAG.into(), Value::String(etag));
+            Value::Object(row)
+        })
+        .collect())
+}
+
+/// The realm's name and e-mail of each user id, `null` where the realm has none, cannot answer
+/// or the subject is an e-mail already (then it is its own e-mail).
+async fn personal_of(state: &AppState, users: Vec<String>) -> Vec<(Value, Value)> {
+    use futures_util::StreamExt;
+    let admin = match state.people.as_deref() {
+        Some(people) => people.admin().await.ok(),
+        None => None,
+    };
+    let Some(admin) = admin else {
+        return users.iter().map(|u| (Value::Null, json_email(u))).collect();
+    };
+    let lookups: Vec<_> = users.iter().map(|user| personal(&admin, user)).collect();
+    futures_util::stream::iter(lookups)
+        .buffered(NAMES_AT_ONCE)
+        .collect()
+        .await
+}
+
+async fn personal(admin: &crate::people::Admin<'_>, user: &str) -> (Value, Value) {
+    if user.contains('@') {
+        return (Value::Null, json_email(user));
+    }
+    let Ok(found) = admin.get(user).await else {
+        return (Value::Null, Value::Null);
+    };
+    let name = [found.first_name, found.last_name]
+        .into_iter()
+        .flatten()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    (
+        if name.is_empty() {
+            Value::Null
+        } else {
+            Value::String(name)
+        },
+        found.email.map_or(Value::Null, Value::String),
+    )
+}
+
+fn json_email(user: &str) -> Value {
+    if user.contains('@') {
+        Value::String(user.to_owned())
+    } else {
+        Value::Null
+    }
 }
 
 async fn collection_answer(
@@ -1409,7 +1720,10 @@ fn service_document(state: &AppState) -> Response {
     value
         .extend(kinds().map(|set| json!({ "name": set.set, "kind": "EntitySet", "url": set.set })));
     value.extend(
-        org_kinds().map(|(set, ..)| json!({ "name": set, "kind": "EntitySet", "url": set })),
+        org_kinds()
+            .map(|(set, ..)| set)
+            .chain([MEMBERS])
+            .map(|set| json!({ "name": set, "kind": "EntitySet", "url": set })),
     );
     for singleton in [ME, ORGANIZATION] {
         value.push(json!({ "name": singleton, "kind": "Singleton", "url": singleton }));
@@ -1425,10 +1739,15 @@ fn service_document(state: &AppState) -> Response {
 struct Rights {
     propose: bool,
     approve: bool,
+    /// A member's personal properties ([`people_admin`]).
+    people: bool,
 }
 
 fn rights(state: &AppState, user: &CurrentUser, org: &str) -> Rights {
-    let mut rights = Rights::default();
+    let mut rights = Rights {
+        people: people_admin(state, user, org),
+        ..Rights::default()
+    };
     for project in state.mirror.namespaces() {
         if readable(state, user, org, &project) {
             let effective = crate::permissions::for_request(state, &user.0.identity, &project);
@@ -1570,7 +1889,7 @@ fn metadata(
         .get(header::ACCEPT)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|a| a.starts_with("application/json"));
-    let model = visible_model(visible);
+    let model = visible_model(visible, rights.people);
     let (body, content_type) = if json_asked {
         (metadata_json(&model), "application/json")
     } else {
@@ -1732,6 +2051,7 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
         state: &state,
         user: &user,
         caller: caller_of(user.clone(), front),
+        people: people_admin(&state, &user, &org),
         org,
         page,
     };

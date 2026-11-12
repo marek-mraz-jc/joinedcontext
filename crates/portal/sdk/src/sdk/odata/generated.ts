@@ -338,6 +338,15 @@ export interface McpServer {
   "@odata.etag"?: string;
 }
 
+export interface Member {
+  bindings?: string | null;
+  email?: string | null;
+  name?: string | null;
+  roles?: string | null;
+  user: string;
+  "@odata.etag"?: string;
+}
+
 export interface ModelProjection {
   kind?: string | null;
   name: string;
@@ -567,6 +576,7 @@ export interface EntitySets {
   layers: Layer;
   mappings: Mapping;
   mcpservers: McpServer;
+  members: Member;
   mqttbrokers: MqttBroker;
   organizationRoles: OrganizationRole;
   pipelines: Pipeline;
@@ -618,6 +628,7 @@ export const ENTITY_KEYS: { readonly [S in keyof EntitySets]: readonly string[] 
   layers: ["project","name"],
   mappings: ["project","name"],
   mcpservers: ["project","name"],
+  members: ["user"],
   mqttbrokers: ["project","name"],
   organizationRoles: ["name"],
   pipelines: ["project","name"],

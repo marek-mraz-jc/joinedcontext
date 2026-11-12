@@ -779,6 +779,25 @@
         "$Nullable": true
       }
     },
+    "Member": {
+      "$Key": [
+        "user"
+      ],
+      "$Kind": "EntityType",
+      "bindings": {
+        "$Nullable": true
+      },
+      "email": {
+        "$Nullable": true
+      },
+      "name": {
+        "$Nullable": true
+      },
+      "roles": {
+        "$Nullable": true
+      },
+      "user": {}
+    },
     "ModelProjection": {
       "$Key": [
         "project",
@@ -1310,6 +1329,10 @@
       },
       "me": {
         "$Type": "JoinedContext.Portal.Person"
+      },
+      "members": {
+        "$Collection": true,
+        "$Type": "JoinedContext.Portal.Member"
       },
       "mqttbrokers": {
         "$Collection": true,
