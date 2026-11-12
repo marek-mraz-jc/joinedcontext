@@ -1823,10 +1823,6 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
               </section>
             ) : null}
 
-            {!isNew && activeSlug && editing && !admitted ? (
-              <EndpointRefused project={project} name={editing.name} admission={admission} />
-            ) : null}
-
             {/* A new endpoint publishes nothing yet, so there is no schema to hide attributes of. */}
             {!isNew && activeSlug && admitted ? (
               <details className="rounded border border-border p-3">
@@ -1909,6 +1905,11 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
         }
       >
         {isNew ? null : address}
+        {/* On top, where the editor looks first: why the schema, data and proof sections are
+            missing below (T-6802). */}
+        {!isNew && editing ? (
+          <EndpointRefused project={project} name={editing.name} admission={admission} />
+        ) : null}
       </ResourceFormDialog>
       )}
 
