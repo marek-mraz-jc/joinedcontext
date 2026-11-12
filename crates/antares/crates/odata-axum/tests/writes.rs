@@ -199,11 +199,7 @@ async fn call(
         .uri(uri)
         .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
         .map_err(|e| e.to_string())?;
-    let response = app
-        .clone()
-        .oneshot(request)
-        .await
-        .map_err(|e| e.to_string())?;
+    let Ok(response) = app.clone().oneshot(request).await;
     let status = response.status();
     let bytes = response
         .into_body()
