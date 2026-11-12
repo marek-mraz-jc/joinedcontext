@@ -678,11 +678,18 @@ const mcpElicitationRoute = createRoute({
   path: "/projects/$project/mcp-elicitations/$id",
   component: function McpElicitationRoute() {
     const { project, id } = mcpElicitationRoute.useParams();
-    return (
-      <Shell project={project}>
-        <McpElicitationPage project={project} id={id} />
-      </Shell>
-    );
+    const projects = useProjects();
+    const page = <McpElicitationPage project={project} id={id} />;
+    if (projects.isPending) {
+      return <main aria-busy="true" className="min-h-screen bg-bg" />;
+    }
+    // A call that opens a project asks under the project it is about to open (T-6829): it opens
+    // in the frame the person works in, as a broker's question does; the question's own read
+    // still answers 404 to anyone but the person who asked.
+    if (!projects.data?.includes(project)) {
+      return <SignedInCatalogue>{() => page}</SignedInCatalogue>;
+    }
+    return <Shell project={project}>{page}</Shell>;
   },
 });
 
