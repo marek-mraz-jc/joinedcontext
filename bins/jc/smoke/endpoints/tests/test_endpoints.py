@@ -115,6 +115,15 @@ class Fake:
         self.broken = broken
         self.temporal = temporal  # whether the open Endpoint's view serves a temporal read
         self.busy_seen = False  # "busy-once" answers 503 to the first file only
+        self.live_seen: set = set()  # "grown-more": the Endpoints whose first live count was answered
+
+    def grown_rows(self, slug: str) -> int:
+        """The live rows of the granted type: the bundle's 2 and 3 a Pipeline wrote; under
+        "grown-more" the Pipeline writes 100 more right after the suite's first live count."""
+        if self.broken != "grown-more" or slug not in self.live_seen:
+            self.live_seen.add(slug)
+            return 5
+        return 105
 
     def answer(self, method, path, headers):
         u = urllib.parse.urlparse(path)
@@ -158,7 +167,7 @@ class Fake:
                 # a rehearsal Pipeline wrote 3 rows of the granted type and 4 of one the bundle lacks
                 seeded = "rehearsal-" in (qs.get("idPattern") or [""])[0]
                 n = 4 if qs.get("type") == ["WaterQualityObserved"] else \
-                    (1 if self.broken == "grown-lost" else 2) if seeded else 5
+                    (1 if self.broken == "grown-lost" else 2) if seeded else self.grown_rows(slug)
             return 200, {"NGSILD-Results-Count": str(n)}, []
         if rest == "ngsi-ld/v1/entities":
             return 200, {}, {"type": "FeatureCollection", "features": []}
@@ -183,7 +192,7 @@ class Fake:
         if rest.endswith("/items") and qs.get("f") == ["csv"]:
             if self.broken == "no-files":
                 return 400, {}, {"title": "unknown parameter f"}
-            rows = 3 if self.broken == "csv-rows" else 5 if self.broken.startswith("grown") else 2
+            rows = 3 if self.broken == "csv-rows" else self.grown_rows(slug) if self.broken.startswith("grown") else 2
             # A polygon of a few thousand points is one cell past csv's default 128 KiB field.
             shape = "[0,0]," * 30_000 if self.broken == "wide-cell" else ""
             body = "id,geometry\n" + "".join(f'urn:x:{i},"{{""type"":""Point"",""c"":[{shape}0]}}"\n'
@@ -197,12 +206,12 @@ class Fake:
                 return 400, {}, {"title": "unknown parameter f"}
             return 200, {"Content-Type": "application/vnd.apache.parquet"}, b"PAR1" + b"\0" * 8 + b"PAR1"
         if rest.startswith("ogc/features/collections/"):
-            n = 5 if self.broken.startswith("grown") else 2
+            n = self.grown_rows(slug) if self.broken.startswith("grown") else 2
             return 200, {}, {"type": "FeatureCollection", "numberMatched": n, "features": []}
         if rest == "odata/v4/$metadata":
             return 200, {"Content-Type": "application/xml"}, b'<EntitySet Name="AirQualityObserved"/>'
         if rest.startswith("odata/v4/"):
-            return 200, {}, {"@odata.count": 5 if self.broken.startswith("grown") else 2, "value": []}
+            return 200, {}, {"@odata.count": self.grown_rows(slug) if self.broken.startswith("grown") else 2, "value": []}
         if rest.startswith("ical/v1/") and self.broken == "feed-413":
             return 413, {"Content-Type": "application/problem+json"}, {
                 "status": 413, "title": "the query selects as many events as one feed reads or more: narrow it with q"}
@@ -307,6 +316,18 @@ def test_a_type_of_expiring_entities_a_pipeline_writes_counts_at_least_the_seede
     assert by["anon.count.seeded"]["expected"].startswith("<= 2") and by["anon.count.seeded"]["actual"] == "count=2"
     assert by["anon.count"]["expected"] == ">= 2 (a Pipeline writes the type)" and by["anon.count"]["actual"] == "200 count=5"
     assert "count=5" in by["anon.odata.query"]["actual"] and "rows=5" in by["anon.ogc.csv"]["actual"]
+
+
+def test_a_type_a_pipeline_keeps_writing_during_the_run_counts_at_least_the_live_rows(tmp_path, serve):
+    # smoke 43192355831 (T-6819): helsinki linked-events wrote 100 new Events between the suite's
+    # live count (98) and its OData and OGC reads (198) on three Endpoints; the seeded 2 held.
+    code, res = run(tmp_path, serve(Fake("grown-more")), now_iso(), synthetic=True)
+    fails = [r for r in res["checks"] if r["result"] == "fail"]
+    assert code == 0 and not fails, fails
+    by = {r["id"]: r for r in res["checks"]}
+    assert by["anon.count.seeded"]["actual"] == "count=2"
+    assert by["anon.count"]["expected"] == ">= 5 (a Pipeline writes the type)" and by["anon.count"]["actual"] == "200 count=105"
+    assert "count=105" in by["anon.odata.query"]["actual"] and "rows=105" in by["anon.ogc.csv"]["actual"]
 
 
 @pytest.mark.parametrize("broken,synthetic,check", [

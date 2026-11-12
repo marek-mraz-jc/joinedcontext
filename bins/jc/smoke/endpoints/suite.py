@@ -234,7 +234,10 @@ class Suite:
         what the bundle holds, and every surface must agree with the live count instead.
         A type of expiring entities keeps changing while the suite reads it (helsinki linked-events
         wrote 100 Events every few seconds in smoke 43161732041: 99, 393, 447 within one Endpoint):
-        its seeded rows count at most the bundle's, and each surface shows at least those."""
+        its seeded rows count at most the bundle's, and each surface shows at least those.
+        A Pipeline goes on writing while the suite reads the type (linked-events wrote 100 new
+        Events between the live count 98 and the OData and OGC reads 198 in smoke 43192355831):
+        once the seeded rows match, each surface shows at least the live count read here."""
         for t, count in want.items():
             if count is None:
                 continue
@@ -256,6 +259,7 @@ class Suite:
                          f"count={seeded}", seeded == count)
             if seeded == count:
                 want[t] = live
+                self.moving[(e.slug, t)] = live
 
     def written(self, e, token, who, grants, extra: list) -> set:
         """Of the listed types the bundle holds no row of, those a granting Policy names and the
@@ -314,7 +318,7 @@ class Suite:
         if count is None:
             self.r.add(f"{who}.count", target, f"GET {path}", "a count (not comparable: " + (narrowed or "overlapping idPatterns") + ")",
                        f"{st} count={actual}", "pass" if st == 200 and actual is not None else "fail")
-        elif slot.get("expires"):
+        elif slot.get("expires") or (e.slug, t) in self.moving:
             ok = st == 200 and actual is not None and self.agrees(e, t, int(actual), count)
             floor = self.moving.get((e.slug, t))
             self.r.check(f"{who}.count", target, f"GET {path}",
