@@ -422,6 +422,12 @@ async fn kind_rows(
     project: &str,
 ) -> Result<Vec<Value>, Refused> {
     let rows = rows_of(set, caller, state, project).await?;
+    // A kind that lives in the project or the Organization (Role): the registry answers both
+    // homes inside a project (PF-68), but a row keyed (project,name) is the project's own copy,
+    // as the REST list answers it; the Organization's are no row of any project (T-6817).
+    let own_only = !set.endpoint_list
+        && crate::resource::by_kind(&set.type_name)
+            .is_some_and(|info| matches!(info.scope, jc_core::Scope::OrganizationOrProject));
     Ok(rows
         .into_iter()
         .filter_map(|row| {
@@ -432,6 +438,9 @@ async fn kind_rows(
                 Value::String(s) => s.clone(),
                 other => other.to_string(),
             })?;
+            if own_only && state.mirror.get(project, &set.type_name, &key).is_none() {
+                return None;
+            }
             row.insert(PROJECT.into(), Value::String(project.to_owned()));
             row.insert(ROW_KEY.into(), Value::String(format!("{project}/{key}")));
             let tag = etag_of(state, set, project, &key, &row);
@@ -1965,8 +1974,11 @@ pub async fn negotiate(State(state): State<AppState>, request: Request, next: Ne
     );
     let mut response = if odata {
         let (parts, body): (_, Body) = request.into_parts();
+        let none_match = matches!(parts.method, Method::GET | Method::HEAD)
+            .then(|| parts.headers.get(header::IF_NONE_MATCH).cloned())
+            .flatten();
         match axum::body::to_bytes(body, MAX_BODY).await {
-            Ok(body) => serve(state, parts, body).await,
+            Ok(body) => not_modified(serve(state, parts, body).await, none_match.as_ref()),
             Err(_) => error(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "payload-too-large",
@@ -1980,7 +1992,37 @@ pub async fn negotiate(State(state): State<AppState>, request: Request, next: Ne
         header::VARY,
         HeaderValue::from_static("OData-Version, OData-MaxVersion"),
     );
+    if odata {
+        // An answer is the caller's own (API/13 §2a): no shared cache keeps it for another.
+        response.headers_mut().append(
+            header::VARY,
+            HeaderValue::from_static("Authorization, Cookie"),
+        );
+    }
     response
+}
+
+/// `304` for an entity whose `ETag` is the one `If-None-Match` names: decided on the answer
+/// [`serve`] built, so only after its authorization ran (a refusal keeps its status, API/13 §2a).
+fn not_modified(response: Response, none_match: Option<&HeaderValue>) -> Response {
+    let (Some(sent), Some(current)) = (
+        none_match.and_then(|v| v.to_str().ok()),
+        response.headers().get(header::ETAG).cloned(),
+    ) else {
+        return response;
+    };
+    let matches = sent
+        .split(',')
+        .map(|t| t.trim().trim_start_matches("W/"))
+        .any(|t| t == "*" || current.to_str().is_ok_and(|c| c == t));
+    if response.status() != StatusCode::OK || !matches {
+        return response;
+    }
+    let mut unchanged = StatusCode::NOT_MODIFIED.into_response();
+    let headers = unchanged.headers_mut();
+    headers.insert(header::ETAG, current);
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("private"));
+    unchanged
 }
 
 #[cfg(test)]
