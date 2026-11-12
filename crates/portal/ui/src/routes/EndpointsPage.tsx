@@ -67,6 +67,7 @@ import { useModelSource } from "../components/entities/filters";
 import { isAnyClass, parseModel } from "../pages/models/linkml";
 import type { ModelPickerState } from "../pages/endpoints/ModelPicker";
 import { EndpointDataView } from "../components/entities/EndpointDataView";
+import { EndpointRefused, useEndpointAdmission } from "../components/endpoints/EndpointAdmission";
 import { CodeBlock,
   buttonClass,
   Alert,
@@ -704,6 +705,10 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
   const [isNew, setIsNew] = useState(
     prefill?.existing !== true && (prefill !== null || urlDraftName !== undefined),
   );
+  // The schema, data and filter proof below read the gateway as the signed-in person, so they
+  // wait for the gateway's own admission: a Portal role never widens an Endpoint Policy (T-6802).
+  const admission = useEndpointAdmission(project, editing !== null && !isNew ? editing.name : undefined);
+  const admitted = admission.data?.admitted === true;
   // The classes the assistant's proposal exposes; none named means every class of the model.
   const [handedClasses] = useState(() =>
     prefill && prefill.existing !== true
@@ -1818,8 +1823,12 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
               </section>
             ) : null}
 
+            {!isNew && activeSlug && editing && !admitted ? (
+              <EndpointRefused project={project} name={editing.name} admission={admission} />
+            ) : null}
+
             {/* A new endpoint publishes nothing yet, so there is no schema to hide attributes of. */}
-            {!isNew && activeSlug ? (
+            {!isNew && activeSlug && admitted ? (
               <details className="rounded border border-border p-3">
                 <summary className="cursor-pointer text-body font-medium text-fg">
                   {t("endpoints.section.hidden")}
@@ -1844,7 +1853,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
 
             {/* Beside what it publishes, what it answers: the fastest check of a projection
                 (T-1433). A draft endpoint answers nothing yet, so it is offered only for Live. */}
-            {!isNew && activeSlug && isLive(base) ? (
+            {!isNew && activeSlug && admitted && isLive(base) ? (
               <details className="rounded border border-border p-3">
                 <summary className="cursor-pointer text-body font-medium text-fg">
                   {t("endpoints.data.title")}
@@ -1864,7 +1873,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
                 beside the space's original (T-2776, EP-86). Only a Live endpoint answers a preview,
                 and only once the projections are known: before, the proof would show the space
                 unfiltered under the endpoint's name. */}
-            {!isNew && activeSlug && isLive(base) && editing && projectionsQuery.isSuccess ? (
+            {!isNew && activeSlug && admitted && isLive(base) && editing && projectionsQuery.isSuccess ? (
               <details className="rounded border border-border p-3">
                 <summary className="cursor-pointer text-body font-medium text-fg">
                   {t("endpoints.proof.title")}
