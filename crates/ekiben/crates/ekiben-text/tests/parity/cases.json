@@ -133,7 +133,9 @@
   "input": "not json",
   "expected": {
    "text": "ERROR: invalid character 'o' in literal null (expecting 'u')\n"
-  }
+  },
+  "compare": "failure",
+  "note": "this workspace's Part::as_structured reports serde_json's parse error, not Go encoding/json's (chyby.md)"
  },
  {
   "name": "jq runtime error",
@@ -231,7 +233,9 @@
   "input": "not json",
   "expected": {
    "text": "ERROR: invalid character 'o' in literal null (expecting 'u')\n"
-  }
+  },
+  "compare": "failure",
+  "note": "this workspace's Part::as_structured reports serde_json's parse error, not Go encoding/json's (chyby.md)"
  },
  {
   "name": "jmespath runtime error",
@@ -456,6 +460,8 @@
   "input": "not json",
   "expected": {
    "text": "ERROR: failed to parse message as JSON: invalid character 'o' in literal null (expecting 'u')\n"
-  }
+  },
+  "compare": "failure",
+  "note": "this workspace's Part::as_structured reports serde_json's parse error, not Go encoding/json's (chyby.md)"
  }
 ]

@@ -2,7 +2,7 @@
 //! case's processor gives Bento 1.22.0's recorded stdout (scripts/record-text-parity.py): one line per
 //! message, its content (hex for `msgpack: from_json`) or `ERROR: ` and the error. A case marked
 //! `"compare": "failure"` only requires the message to fail, where the error text comes from the
-//! query library (gojq or go-jmespath there, jaq or jmespath.rs here).
+//! query library (gojq or go-jmespath there, jaq or jmespath.rs here) or the JSON parser (its `note`).
 
 use std::path::Path;
 use std::sync::Arc;

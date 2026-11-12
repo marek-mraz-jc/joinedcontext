@@ -15,7 +15,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use ekiben_bloblang::go_json;
 use ekiben_bloblang::Value;
 use ekiben_core::{Batch, ComponentConfig, CoreError, Part, ProcContext, Processor, Registry};
 use jaq_core::data::JustLut;
@@ -87,7 +86,7 @@ impl JqProcessor {
         for (k, v) in part.meta_all() {
             meta.insert(k.clone(), v.clone());
         }
-        let meta = to_val(&Value::Object(meta))?;
+        let meta = to_val(&Value::Object(meta.into()))?;
         let emitted = run(&self.filter, input, meta)?;
         if self.out_raw {
             let mut raw = Vec::new();
@@ -95,9 +94,10 @@ impl JqProcessor {
                 match v {
                     Value::String(s) => raw.extend_from_slice(s.as_bytes()),
                     other => raw.extend_from_slice(
-                        go_json::marshal(other, None, true)
-                            .map_err(|e| {
-                                format!("failed marshal JQ result at index {i}: {e}")
+                        other
+                            .to_go_json_with(true, None)
+                            .ok_or_else(|| {
+                                format!("failed marshal JQ result at index {i}: json: unsupported value")
                             })?
                             .as_bytes(),
                     ),
@@ -121,7 +121,7 @@ impl JqProcessor {
                 part.set_structured(emitted.remove(0));
             }
             _ => {
-                part.set_structured(Value::Array(emitted));
+                part.set_structured(Value::Array(emitted.into()));
             }
         }
         Ok(Some(()))
@@ -230,7 +230,7 @@ pub fn run(filter: &JqFilter, input: Val, meta: Val) -> Result<Vec<Value>, Strin
 /// A value as gojq receives it from Bento (`gojq.normalizeNumbers` on `json.Number`).
 pub fn to_val(v: &Value) -> Result<Val, String> {
     Ok(match v {
-        Value::Null | Value::NilArray | Value::NilBytes | Value::Delete | Value::Nothing => {
+        Value::Null | Value::Delete | Value::Nothing => {
             Val::Null
         }
         Value::Bool(b) => Val::from(*b),
@@ -238,11 +238,10 @@ pub fn to_val(v: &Value) -> Result<Val, String> {
         Value::Uint(u) => int_val(*u as i128),
         Value::Float(f) => Val::from(*f),
         Value::Number(s) => number_val(s),
-        Value::Narrow(_) => to_val(&v.clone().sanitized())?,
         Value::String(s) => Val::from(s.clone()),
         Value::Bytes(_) => return Err("invalid type: []uint8".to_string()),
         Value::Timestamp(t) => {
-            return Err(format!("invalid type: time.Time ({})", t.rfc3339_nano()))
+            return Err(format!("invalid type: time.Time ({})", t.to_rfc3339()))
         }
         Value::Array(a) => a.iter().map(to_val).collect::<Result<Val, String>>()?,
         Value::Object(m) => {
@@ -288,7 +287,12 @@ pub fn from_val(v: &Val) -> Result<Value, String> {
             Num::Dec(d) => Value::Float(d.parse::<f64>().unwrap_or(f64::NAN)),
         },
         Val::TStr(b) | Val::BStr(b) => Value::String(String::from_utf8_lossy(b).into_owned()),
-        Val::Arr(a) => Value::Array(a.iter().map(from_val).collect::<Result<_, _>>()?),
+        Val::Arr(a) => Value::Array(
+            a.iter()
+                .map(from_val)
+                .collect::<Result<Vec<_>, _>>()?
+                .into(),
+        ),
         Val::Obj(o) => {
             let mut m = BTreeMap::new();
             for (k, v) in o.iter() {
@@ -298,7 +302,7 @@ pub fn from_val(v: &Val) -> Result<Value, String> {
                 };
                 m.insert(key, from_val(v)?);
             }
-            Value::Object(m)
+            Value::Object(m.into())
         }
     })
 }

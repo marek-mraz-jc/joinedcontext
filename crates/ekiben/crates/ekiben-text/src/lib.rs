@@ -3,6 +3,8 @@
 //! `jmespath`, `grok` and `msgpack`, one module per Go file.
 
 mod fields;
+pub mod go_regex;
+mod go_unicode_names;
 mod grok_patterns;
 pub mod msgpack_processor;
 pub mod processor_grok;

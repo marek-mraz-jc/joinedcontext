@@ -58,9 +58,7 @@ impl MsgpackProcessor {
                 let v = part
                     .as_structured()
                     .map_err(|e| format!("failed to parse message as JSON: {e}"))?;
-                let b = msgpack::encode(&v)
-                    .map_err(|e| format!("failed to convert JSON to MsgPack: {e}"))?;
-                part.set_bytes(b);
+                part.set_bytes(msgpack::encode(&v));
             }
         }
         Ok(())

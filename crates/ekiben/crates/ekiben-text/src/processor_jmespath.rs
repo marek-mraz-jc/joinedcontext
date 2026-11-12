@@ -85,9 +85,14 @@ fn from_var(v: &Variable) -> Value {
         Variable::Bool(b) => Value::Bool(*b),
         Variable::Number(n) => Value::Float(n.as_f64().unwrap_or(f64::NAN)),
         Variable::String(s) => Value::String(s.clone()),
-        Variable::Array(a) => Value::Array(a.iter().map(|v| from_var(v)).collect()),
+        Variable::Array(a) => Value::Array(a.iter().map(|v| from_var(v)).collect::<Vec<_>>().into()),
         Variable::Object(o) => {
-            Value::Object(o.iter().map(|(k, v)| (k.clone(), from_var(v))).collect())
+            Value::Object(
+                o.iter()
+                    .map(|(k, v)| (k.clone(), from_var(v)))
+                    .collect::<std::collections::BTreeMap<_, _>>()
+                    .into(),
+            )
         }
     }
 }

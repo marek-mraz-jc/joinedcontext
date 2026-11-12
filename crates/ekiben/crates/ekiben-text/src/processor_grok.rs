@@ -1,7 +1,7 @@
 //! The `grok` processor (`internal/impl/pure/processor_grok.go`, Bento 1.22.0) with the pattern
 //! compiler of github.com/Jeffail/grok v1.1.0 (`grokpattern.go`, `patternmap.go`,
 //! `compiledgrok.go`): `%{NAME}`, `%{NAME:alias}` and `%{NAME:alias:int|float|string}` expand to Go
-//! regular expressions (compiled with Go's grammar by `ekiben_bloblang::go_regex`), the first
+//! regular expressions (compiled with Go's grammar by [`crate::go_regex`]), the first
 //! expression that captures anything wins, and each capture is set at its alias as a dot path.
 //!
 //! Limits Bento lacks: an expanded expression of at most [`MAX_EXPRESSION_BYTES`] and pattern
@@ -13,13 +13,12 @@ use std::path::Path;
 use std::sync::{Arc, LazyLock};
 
 use async_trait::async_trait;
-use ekiben_bloblang::go_regex::{self, GoRegex};
-use ekiben_bloblang::go_strconv;
 use ekiben_bloblang::Value;
 use ekiben_core::{Batch, ComponentConfig, CoreError, Part, ProcContext, Processor, Registry};
 use regex::Regex;
 
 use crate::fields::Fields;
+use crate::go_regex::{self, GoRegex};
 use crate::grok_patterns::DEFAULT_PATTERNS;
 
 pub const MAX_EXPRESSION_BYTES: usize = 1 << 20;
@@ -139,7 +138,7 @@ impl GrokProcessor {
         if values.is_empty() {
             return Err("no pattern matches found".to_string());
         }
-        let mut obj = Value::Object(BTreeMap::new());
+        let mut obj = Value::Object(BTreeMap::new().into());
         for (k, v) in values {
             set_path(&mut obj, &k, v);
         }
@@ -354,8 +353,8 @@ impl CompiledGrok {
     fn type_cast(&self, m: &str, key: &str) -> Result<Value, String> {
         match self.type_hints.get(key).map(String::as_str) {
             None | Some("string") => Ok(Value::String(m.to_string())),
-            Some("int") => go_strconv::atoi(m).map(Value::Int),
-            Some("float") => go_strconv::parse_float(m, 64).map(Value::Float),
+            Some("int") => atoi(m).map(Value::Int),
+            Some("float") => parse_float(m).map(Value::Float),
             Some(t) => Err(format!(
                 "ERROR the value {m} cannot be converted to {t}. Must be int, float, string or empty"
             )),
@@ -376,6 +375,32 @@ fn set_path(root: &mut Value, path: &str, v: Value) {
         }
         cur = m
             .entry((*seg).to_string())
-            .or_insert_with(|| Value::Object(BTreeMap::new()));
+            .or_insert_with(|| Value::Object(BTreeMap::new().into()));
+    }
+}
+
+/// Go's `strconv.Atoi` on a 64-bit build.
+fn atoi(s: &str) -> Result<i64, String> {
+    let digits = s.strip_prefix(['+', '-']).unwrap_or(s);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(format!("strconv.Atoi: parsing {s:?}: invalid syntax"));
+    }
+    s.parse::<i64>()
+        .map_err(|_| format!("strconv.Atoi: parsing {s:?}: value out of range"))
+}
+
+/// Go's `strconv.ParseFloat(s, 64)` for decimal text, `inf` and `nan`. ponytail: Go's hex floats
+/// (`0x1p-2`) and `_` digit separators are refused here; port go_strconv's parser if a log has them.
+fn parse_float(s: &str) -> Result<f64, String> {
+    let body = s.strip_prefix(['+', '-']).unwrap_or(s);
+    let word = body.to_ascii_lowercase();
+    let ok = matches!(word.as_str(), "inf" | "infinity" | "nan")
+        || (!body.is_empty()
+            && body
+                .bytes()
+                .all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'e' | b'E' | b'+' | b'-')));
+    match s.parse::<f64>() {
+        Ok(f) if ok => Ok(f),
+        _ => Err(format!("strconv.ParseFloat: parsing {s:?}: invalid syntax")),
     }
 }

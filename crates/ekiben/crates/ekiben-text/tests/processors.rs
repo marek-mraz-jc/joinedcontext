@@ -4,7 +4,6 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use ekiben_bloblang::value::Narrow;
 use ekiben_bloblang::{Environment, Value};
 use ekiben_core::{
     Batch, ComponentConfig, CoreError, OrgId, Part, ProcContext, Processor, Registry,
@@ -116,10 +115,10 @@ async fn test_jq() {
     let mut m = std::collections::BTreeMap::new();
     m.insert(
         "ts".to_string(),
-        Value::Timestamp(ekiben_bloblang::go_time::GoTime::unix(1000, 0)),
+        Value::Timestamp(chrono::DateTime::from_timestamp(1000, 0).unwrap().fixed_offset()),
     );
     let out = p
-        .process_batch(&c, vec![Part::from_structured(Value::Object(m))])
+        .process_batch(&c, vec![Part::from_structured(Value::Object(m.into()))])
         .await
         .unwrap();
     let err = out[0][0].error_get().expect("errored").to_string();
@@ -340,7 +339,8 @@ fn test_msg_pack_to_json() {
     p.process(&mut part).unwrap();
     let v = part.as_structured().unwrap();
     let Value::Object(m) = &v else { panic!("object") };
-    assert_eq!(m["intKey"], Value::Narrow(Narrow::Int(123, 8)));
+    // Go reads int8(123); this workspace's Value carries no integer width.
+    assert_eq!(m["intKey"], Value::Int(123));
     assert_eq!(
         bytes(&part),
         r#"{"array":["bar"],"falseKey":false,"floatKey":45.6,"intKey":123,"key":"foo","nested":{"key":"baz"},"nullKey":null,"trueKey":true}"#
@@ -353,18 +353,18 @@ fn test_msg_pack_from_json() {
         (
             "basic",
             r#"{"key":"foo","trueKey":true,"falseKey":false,"nullKey":null,"intKey":123,"floatKey":45.6,"array":["bar"],"nested":{"key":"baz"}}"#,
-            &[("intKey", Value::Narrow(Narrow::Int(123, 8))), ("floatKey", Value::Float(45.6))],
+            &[("intKey", Value::Int(123)), ("floatKey", Value::Float(45.6))],
         ),
         (
             "various ints",
             r#"{"int8": 13, "uint8": 254, "int16": -257, "uint16" : 65534, "int32" : -70123, "uint32" : 2147483648, "int64" : -9223372036854775808, "uint64": 18446744073709551615}"#,
             &[
-                ("int8", Value::Narrow(Narrow::Int(13, 8))),
-                ("uint8", Value::Narrow(Narrow::Uint(254, 8))),
-                ("int16", Value::Narrow(Narrow::Int(-257, 16))),
-                ("uint16", Value::Narrow(Narrow::Uint(65534, 16))),
-                ("int32", Value::Narrow(Narrow::Int(-70123, 32))),
-                ("uint32", Value::Narrow(Narrow::Uint(2147483648, 32))),
+                ("int8", Value::Int(13)),
+                ("uint8", Value::Int(254)),
+                ("int16", Value::Int(-257)),
+                ("uint16", Value::Int(65534)),
+                ("int32", Value::Int(-70123)),
+                ("uint32", Value::Int(2147483648)),
                 ("int64", Value::Int(i64::MIN)),
                 ("uint64", Value::Uint(u64::MAX)),
             ],

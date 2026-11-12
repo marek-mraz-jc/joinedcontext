@@ -1350,6 +1350,7 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "bytes",
+ "chrono",
  "ekiben-bloblang",
  "ekiben-core",
  "ekiben-io-file",
