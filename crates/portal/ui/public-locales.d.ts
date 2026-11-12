@@ -3,3 +3,9 @@ declare module "*.json?public" {
   const locale: import("i18next").ResourceKey;
   export default locale;
 }
+
+// The shared grid's groups alone (vite.config.ts GRID_GROUPS, T-6752).
+declare module "*.json?grid" {
+  const locale: import("i18next").ResourceKey;
+  export default locale;
+}

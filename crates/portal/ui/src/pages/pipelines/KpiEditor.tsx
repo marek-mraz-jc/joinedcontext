@@ -20,7 +20,7 @@ import { AttributePicker } from "../../components/pickers/AttributePicker";
 import { useDebounced } from "../../components/pickers/organizationModels";
 import { TypePicker } from "../../components/pickers/TypePicker";
 import { Alert, Badge, Button, Dialog, Field, Input, Select, Switch, Textarea } from "../../components/ui";
-import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "../../components/ui/Table";
+import { AdminGrid } from "../../components/grid/AdminGrid";
 import { spaceOf } from "../spaces/spaceFacts";
 import { reachableEndpoints } from "./PipelineEditor";
 import {
@@ -457,22 +457,30 @@ function PreviewPanel({ disabled, running, answer, failed, hint, onRun }: Previe
       {preview?.problem ? <Alert tone="warning">{preview.problem}</Alert> : null}
       {preview && !preview.problem && preview.values.length === 0 ? <p className="text-caption text-fg-muted">{t("pipelines.kpiEditor.noKeys")}</p> : null}
       {preview && preview.values.length > 0 ? (
-        <Table caption={t("pipelines.kpiEditor.preview")}>
-          <TableHead>
-            <TableHeaderCell>{t("pipelines.kpiEditor.key.column")}</TableHeaderCell>
-            <TableHeaderCell>{t("pipelines.kpiEditor.indicator")}</TableHeaderCell>
-            <TableHeaderCell className="text-right">{t("pipelines.kpiEditor.value")}</TableHeaderCell>
-          </TableHead>
-          <TableBody>
-            {preview.values.map((one) => (
-              <TableRow key={one.name}>
-                <TableCell>{one.key ?? t("pipelines.kpiEditor.wholeRun")}</TableCell>
-                <TableCell className="font-mono text-caption">{one.name}</TableCell>
-                <TableCell className="text-right tabular-nums">{number.format(one.value)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <AdminGrid<components["schemas"]["KpiPreview"]["values"][number]>
+          caption={t("pipelines.kpiEditor.preview")}
+          storageKey="pipelines:kpi-preview"
+          rows={preview.values}
+          rowKey={(one) => `${one.key ?? ""}/${one.name}`}
+          columns={[
+            { key: "key", label: t("pipelines.kpiEditor.key.column"), text: (one) => one.key ?? t("pipelines.kpiEditor.wholeRun") },
+            {
+              key: "indicator",
+              label: t("pipelines.kpiEditor.indicator"),
+              text: (one) => one.name,
+              cell: (one) => <span className="font-mono text-caption">{one.name}</span>,
+            },
+            {
+              key: "value",
+              label: t("pipelines.kpiEditor.value"),
+              kind: "number",
+              align: "right",
+              text: (one) => String(one.value),
+              cell: (one) => <span className="tabular-nums">{number.format(one.value)}</span>,
+            },
+          ]}
+          empty={<p className="text-caption text-fg-muted">{t("pipelines.kpiEditor.noKeys")}</p>}
+        />
       ) : null}
       {preview ? (
         <p className="text-caption text-fg-muted">

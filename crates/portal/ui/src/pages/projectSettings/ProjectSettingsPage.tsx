@@ -8,7 +8,7 @@ import { localized, ORG_NAMESPACE, plainTitle } from "../../api/manifest";
 import { useProjectOrganization, useProjectTitles } from "../../api/projects";
 import { administersOrganization, readsOnceKnown, usePermissions } from "../../api/permissions";
 import type { Rule } from "../../api/permissions";
-import { RuleInWords, granteeName } from "../../components/AccessWords";
+import { RuleInWords, granteeName, verbsInWords } from "../../components/AccessWords";
 import { DeleteProjectAction } from "../../components/DeleteProjectDialog";
 import { DuplicateProjectAction } from "../../components/DuplicateProjectDialog";
 import { EditResourceAction } from "../../components/EditResourceDialog";
@@ -21,18 +21,14 @@ import {
   Input,
   PageFailed,
   PageHeader,
-  Table,
-  TableBody,
-  TableCell,
+  EmptyState,
   safeHref,
-  TableEmpty,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-  TableSkeleton,
   tabPanelProps,
   Tabs,
 } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
+import { kindPlural } from "../../kindWords";
 import { APP_SERVICES_UI, projectSchema } from "../../schemas/kinds";
 import { AccessExplorer } from "../access/AccessExplorer";
 import { EffectivePermissions } from "../access/EffectivePermissions";
@@ -317,10 +313,41 @@ function YourAccess({
   endpoint?: string;
   onEndpoint: (name: string) => void;
 }): JSX.Element {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const permissions = usePermissions(project);
   const grants = permissions.data?.grants ?? [];
   const rules = grants.map((grant) => grant.rule as Rule);
+  const columns: DataColumn<(typeof grants)[number]>[] = [
+    {
+      key: "role",
+      label: t("projectSettings.access.role"),
+      text: (grant) => granteeName("role", grant.role, t),
+      cell: (grant) => <span title={grant.role}>{granteeName("role", grant.role, t)}</span>,
+    },
+    {
+      key: "allows",
+      label: t("projectSettings.access.allows"),
+      text: (grant) => {
+        const rule = grant.rule as Rule;
+        const kinds = (rule.kinds ?? []).map((kind) => (kind === "*" ? t("access.words.everyKind") : kindPlural(kind, t)));
+        return `${verbsInWords(rule.verbs ?? [], t, i18n.language)}: ${kinds.join(", ")}`;
+      },
+      cell: (grant) => (
+        <>
+          <RuleInWords rule={grant.rule as Rule} />
+          {/* PF-58: approve without delete approves other people's changes only. */}
+          {approvesOthersOnly(grant.rule as Rule, rules) ? (
+            <p className="mt-1 text-caption text-fg-muted">{t("projectSettings.access.approveOthers")}</p>
+          ) : null}
+        </>
+      ),
+    },
+    {
+      key: "from",
+      label: t("projectSettings.access.from"),
+      text: (grant) => t("projectSettings.access.binding", { binding: grant.binding, scope: grant.scope }),
+    },
+  ];
   return (
     <div className="space-y-8">
       <section className="space-y-4" aria-labelledby="your-access-heading">
@@ -331,44 +358,27 @@ function YourAccess({
           <p className="text-body text-fg-muted">{t("projectSettings.access.lead")}</p>
         </div>
         {permissions.data?.bootstrap ? <Alert tone="info">{t("projectSettings.access.bootstrap")}</Alert> : null}
-        <Table
-          stack
+        <AdminGrid<(typeof grants)[number]>
+          query={{
+            isPending: permissions.isLoading,
+            isError: false,
+            error: null,
+            refetch: () => undefined,
+          }}
           caption={t("projectSettings.access.caption", { project })}
-          status={permissions.isLoading ? t("app.loading") : undefined}
-        >
-          <TableHead>
-            <TableHeaderCell>{t("projectSettings.access.role")}</TableHeaderCell>
-            <TableHeaderCell>{t("projectSettings.access.allows")}</TableHeaderCell>
-            <TableHeaderCell>{t("projectSettings.access.from")}</TableHeaderCell>
-          </TableHead>
-          {permissions.isLoading ? (
-            <TableSkeleton columns={3} />
-          ) : (
-            <TableBody>
-              {grants.length === 0 ? (
-                <TableEmpty columns={3}>{t("projectSettings.access.none")}</TableEmpty>
-              ) : (
-                grants.map((grant, index) => (
-                  <TableRow key={`${grant.binding}-${grant.role}-${index}`}>
-                    <TableCell primary>
-                      <span title={grant.role}>{granteeName("role", grant.role, t)}</span>
-                    </TableCell>
-                    <TableCell data-label={t("projectSettings.access.allows")}>
-                      <RuleInWords rule={grant.rule as Rule} />
-                      {/* PF-58: approve without delete approves other people's changes only. */}
-                      {approvesOthersOnly(grant.rule as Rule, rules) ? (
-                        <p className="mt-1 text-caption text-fg-muted">{t("projectSettings.access.approveOthers")}</p>
-                      ) : null}
-                    </TableCell>
-                    <TableCell data-label={t("projectSettings.access.from")}>
-                      {t("projectSettings.access.binding", { binding: grant.binding, scope: grant.scope })}
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          )}
-        </Table>
+          storageKey={`${project}:your-access`}
+          rows={grants}
+          rowKey={(grant) => `${grant.binding}-${grant.role}-${grant.scope}-${JSON.stringify(grant.rule)}`}
+          columns={columns}
+          stack
+          empty={
+            <EmptyState
+              bare
+              title={t("projectSettings.access.none")}
+              description={t("projectSettings.access.noneHint")}
+            />
+          }
+        />
       </section>
       <EffectivePermissions project={project} endpoint={endpoint} onEndpoint={onEndpoint} />
     </div>

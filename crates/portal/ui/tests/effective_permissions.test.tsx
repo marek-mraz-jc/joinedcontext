@@ -141,7 +141,7 @@ const pathOf = (input: unknown): string => {
 };
 
 const rowOf = async (type: string) =>
-  (await screen.findByRole("rowheader", { name: new RegExp(type) })).closest(
+  (await screen.findAllByRole("rowheader", { name: new RegExp(type) }))[0].closest(
     "tr",
   ) as HTMLElement;
 
@@ -257,7 +257,7 @@ describe("effective permissions", () => {
 
   it("reads the endpoint's own access surface, never a second implementation (EP-60)", async () => {
     const fetchMock = renderMatrix();
-    await screen.findByRole("rowheader", { name: /AirQualityObserved/ });
+    await screen.findAllByRole("rowheader", { name: /AirQualityObserved/ });
 
     const asked = fetchMock.mock.calls
       .map((call) => pathOf(call[0]))
@@ -305,7 +305,7 @@ describe("effective permissions", () => {
 
   it("asks the endpoint the reader picks", async () => {
     const fetchMock = renderMatrix();
-    await screen.findByRole("rowheader", { name: /AirQualityObserved/ });
+    await screen.findAllByRole("rowheader", { name: /AirQualityObserved/ });
 
     await userEvent.selectOptions(
       screen.getByLabelText(en.access.matrix.endpoint),

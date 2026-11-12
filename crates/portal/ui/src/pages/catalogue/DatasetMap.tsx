@@ -13,13 +13,8 @@ import type { components } from "../../api/schema";
 import {
   Alert,
   Button,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
 } from "../../components/ui";
+import { LazyAdminGrid } from "../../components/grid/LazyAdminGrid";
 import { datasetKey } from "./queries";
 
 // MapLibre (about 200 KB gzipped) loads only for a dataset that has a place to draw.
@@ -165,30 +160,21 @@ export function DatasetMap({ name }: { name: string }): JSX.Element | null {
         <summary className="focus-ring w-fit cursor-pointer rounded-sm text-primary-soft-fg">
           {t("catalogue.dataset.mapList", { count: shown })}
         </summary>
-        <Table
-          caption={t("catalogue.dataset.mapLabel", { type: data.type })}
-          maxHeight="24rem"
-          className="mt-2"
-        >
-          <TableHead>
-            {fields.map((field) => (
-              <TableHeaderCell key={field.slot}>{field.label}</TableHeaderCell>
-            ))}
-          </TableHead>
-          <TableBody>
-            {data.features.map((feature) => (
-              <TableRow key={feature.id}>
-                {fields.map((field, index) => (
-                  <TableCell key={field.slot} primary={index === 0}>
-                    {field.slot === ""
-                      ? feature.id
-                      : (feature.properties[field.slot] ?? "—")}
-                  </TableCell>
-                ))}
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <div className="mt-2">
+          <LazyAdminGrid<CatalogueMap["features"][number]>
+            caption={t("catalogue.dataset.mapLabel", { type: data.type })}
+            rows={data.features}
+            rowKey={(feature) => feature.id}
+            storageKey="catalogue.dataset.map"
+            // A dataset without a feature draws no map section at all (above).
+            empty={null}
+            columns={fields.map((field) => ({
+              key: field.slot === "" ? "id" : `field:${field.slot}`,
+              label: field.label,
+              text: (feature) => (field.slot === "" ? feature.id : (feature.properties[field.slot] ?? "—")),
+            }))}
+          />
+        </div>
       </details>
     </Section>
   );

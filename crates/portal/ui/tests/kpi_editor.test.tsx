@@ -217,6 +217,29 @@ describe("the KPI editor", () => {
     expect(onPropose).toHaveBeenCalledWith(kpiManifest("helsinki", DRAFT));
   });
 
+  it("sorts and searches the preview's values per key on the shared grid (T-6753)", async () => {
+    stubFetch({
+      preview: {
+        values: [
+          { key: "Kallio", name: "parking-per-stop-kallio", value: 7.5 },
+          { key: "Töölö", name: "parking-per-stop-toolo", value: 12 },
+          { key: "Pasila", name: "parking-per-stop-pasila", value: 3 },
+        ],
+        rows: { parking: 3, stops: 2 },
+      },
+    });
+    show();
+    await waitFor(() => expect(propose()).toBeEnabled());
+    await userEvent.click(screen.getByRole("button", { name: k.runPreview }));
+    const table = await screen.findByRole("table", { name: k.preview });
+    const keys = () => within(table).getAllByRole("row").slice(1).map((row) => row.querySelector("td, th")?.textContent);
+    await userEvent.click(screen.getByRole("button", { name: `${en.entityGrid.columnMenu}: ${k.value}` }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: en.entityGrid.sortDescNumber }));
+    expect(keys()).toEqual(["Töölö", "Kallio", "Pasila"]);
+    await userEvent.type(screen.getByRole("searchbox", { name: en.dataGrid.searchRows }), "pasila");
+    expect(keys()).toEqual(["Pasila"]);
+  });
+
   it("shows a refusal in words beside its field and keeps Propose shut", async () => {
     stubFetch({ problems: [{ field: "spec.steps.kpi.unitCode", reason: "a ratio of equal units takes C62 or P1, not MIN" }] });
     show({ ...DRAFT, unitCode: "MIN" });

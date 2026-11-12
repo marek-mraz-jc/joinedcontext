@@ -9,7 +9,7 @@ import type { Manifest } from "../../api/manifest";
 import { api, queryKeys, unwrap } from "../../api/client";
 import { useModelSource } from "../../components/entities/filters";
 import { FormHeading } from "../../components/forms/FormRoute";
-import { Alert, Badge, Button, Card, Checkbox, Field, FilePicker, RadioGroup, Select, Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow, Textarea } from "../../components/ui";
+import { Alert, Badge, Button, Card, Checkbox, Field, FilePicker, RadioGroup, Select, Textarea } from "../../components/ui";
 import { classSlots, parseModel, unitCode } from "../models/linkml";
 import type { LinkmlModel, LinkmlSlot } from "../models/linkml";
 import { entityTypesOf, spaceOf } from "../spaces/spaceFacts";
@@ -23,6 +23,7 @@ import { OutputMapper } from "./OutputMapper";
 import { LifetimeChoice } from "./LifetimeChoice";
 import { timeSlotsOf } from "./history";
 import { withEntry } from "./lifetime";
+import { RecordsGrid } from "../../components/grid/RecordsGrid";
 import { RecordTable, TargetCard, grantedNames, useTargetType } from "./WorkbenchTarget";
 import type { FindingAccess } from "./WorkbenchTarget";
 import { useAccessAsk } from "./AccessRequests";
@@ -424,26 +425,15 @@ function StreamedSample({ answer, onAgain }: { answer: SampleAnswer; onAgain: ()
             </p>
             {again}
           </div>
-          <Table caption={t("pipelines.workbench.sample.caption")} maxHeight="max-h-64">
-            <TableHead>
-              {fields.map((field) => (
-                <TableHeaderCell key={field}>
-                  <span className="font-mono">{field}</span>
-                </TableHeaderCell>
-              ))}
-            </TableHead>
-            <TableBody>
-              {rows.map((record, index) => (
-                <TableRow key={index}>
-                  {fields.map((field) => (
-                    <TableCell key={field}>
-                      <span className="font-mono text-caption">{cell(record[field])}</span>
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <RecordsGrid
+            caption={t("pipelines.workbench.sample.caption")}
+            fields={fields}
+            records={rows}
+            text={(record, field) => cell(record[field])}
+            mono
+            storageKey="pipelines.workbench.stream"
+            empty={t("pipelines.workbench.sample.empty")}
+          />
         </>
       )}
     </>
@@ -916,26 +906,15 @@ export function PipelineWorkbench({
                 fields: sampled.data.fields.length,
               })}
             </p>
-            <Table caption={t("pipelines.workbench.sample.caption")} maxHeight="max-h-64">
-              <TableHead>
-                {sampled.data.fields.map((field) => (
-                  <TableHeaderCell key={field}>
-                    <span className="font-mono">{field}</span>
-                  </TableHeaderCell>
-                ))}
-              </TableHead>
-              <TableBody>
-                {sampled.data.records.map((record, index) => (
-                  <TableRow key={index}>
-                    {sampled.data.fields.map((field) => (
-                      <TableCell key={field}>
-                        <span className="font-mono text-caption">{cell(record[field])}</span>
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <RecordsGrid
+              caption={t("pipelines.workbench.sample.caption")}
+              fields={sampled.data.fields}
+              records={sampled.data.records}
+              text={(record, field) => cell(record[field])}
+              mono
+              storageKey="pipelines.workbench.sample"
+              empty={t("pipelines.workbench.sample.empty")}
+            />
           </>
         )}
       </Step>

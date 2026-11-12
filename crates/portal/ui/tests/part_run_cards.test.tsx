@@ -84,10 +84,8 @@ describe("the entity write card", () => {
       const header = within(row).getAllByRole("rowheader");
       expect(header, "every row names itself; the hand-made cells carried no scope").toHaveLength(1);
     }
-    expect(within(rows[1]).getByRole("rowheader")).toHaveAttribute(
-      "title",
-      "urn:ngsi-ld:AirQualityObserved:hel.fi:air:kamppi",
-    );
+    // The whole URN sits on the row header's name, in every row (T-6752: a sort keeps it).
+    expect(within(within(rows[1]).getByRole("rowheader")).getByTitle("urn:ngsi-ld:AirQualityObserved:hel.fi:air:kamppi")).toBeInTheDocument();
     // An attribute that had no value before says so in words rather than being blank.
     expect(within(rows[2]).getAllByRole("cell")[1]).toHaveTextContent(en.agentRun.write.empty);
   });

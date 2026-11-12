@@ -26,6 +26,15 @@ const FULL: Record<string, LocaleFile> = {
   cs: () => import("./locales/cs.json"),
 };
 
+// The shared grid's words (vite.config.ts GRID_GROUPS), loaded with the grid a public page draws
+// (LazyAdminGrid), so a dataset's resources table does not download the whole locale (T-6752).
+const GRID: Record<string, LocaleFile> = {
+  en: () => import("./locales/en.json?grid"),
+  sk: () => import("./locales/sk.json?grid"),
+  de: () => import("./locales/de.json?grid"),
+  cs: () => import("./locales/cs.json?grid"),
+};
+
 let full: Promise<void> | null = null;
 
 export const localeLoader: BackendModule = {
@@ -54,6 +63,20 @@ export function loadFullLocales(): Promise<void> {
     }),
   ).then(() => undefined);
   return full;
+}
+
+/**
+ * The grid's words of English and of the chosen language, added beside what is loaded. ponytail: a
+ * language chosen after the grid drew falls back to the whole locale (missingKeyHandler).
+ */
+export function loadGridLocales(): Promise<void> {
+  if (full) return full;
+  return Promise.all(
+    [...new Set(["en", i18n.resolvedLanguage ?? i18n.language])].map(async (language) => {
+      const load = GRID[language];
+      if (load) i18n.addResourceBundle(language, "translation", (await load()).default, true, false);
+    }),
+  ).then(() => undefined);
 }
 
 // WCAG 3.1.1: the document language has to follow the chosen locale, not stay at the

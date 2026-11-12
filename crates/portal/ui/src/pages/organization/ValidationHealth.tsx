@@ -1,4 +1,3 @@
-import { PageFailed } from "../../components/ui/PageState";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -6,19 +5,9 @@ import { api, unwrap } from "../../api/client";
 import { ORG_NAMESPACE } from "../../api/manifest";
 import { administersOrganization, usePermissions } from "../../api/permissions";
 import type { components } from "../../api/schema";
-import {
-  Alert,
-  Badge,
-  EmptyState,
-  Table,
-  TableBody,
-  TableCell,
-  TableEmpty,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-  TableSkeleton,
-} from "../../components/ui";
+import { Alert, Badge, EmptyState } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import type { BadgeTone } from "../../components/ui/Badge";
 
 type CheckHealth = components["schemas"]["CheckHealth"];
@@ -86,6 +75,85 @@ export function ValidationHealth(): JSX.Element {
   const when = (at: string) =>
     new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(at));
 
+  const failuresOf = (row: CheckHealth) => row.result?.failures ?? [];
+  const columns: DataColumn<CheckHealth>[] = [
+    {
+      key: "check",
+      label: t("organization.health.check"),
+      text: (row) => row.check,
+      cell: (row) => <span className="font-mono">{row.check}</span>,
+    },
+    {
+      key: "state",
+      label: t("organization.health.state"),
+      text: (row) => t(`organization.health.states.${row.state}`),
+      cell: (row) => <Badge tone={TONE[row.state]}>{t(`organization.health.states.${row.state}`)}</Badge>,
+    },
+    {
+      key: "lastRun",
+      label: t("organization.health.lastRun"),
+      kind: "date",
+      text: (row) => row.result?.at ?? "",
+      cell: ({ result }) =>
+        result ? (
+          <>
+            <time dateTime={result.at}>{when(result.at)}</time>
+            {result.run ? <span className="block text-caption text-fg-muted">{result.run}</span> : null}
+          </>
+        ) : (
+          t("organization.health.unreadableHint")
+        ),
+    },
+    {
+      key: "results",
+      label: t("organization.health.results"),
+      text: ({ result }) => (result ? t("organization.health.counts", { ...result.counts }) : "—"),
+    },
+    {
+      key: "trend",
+      label: t("organization.health.trend"),
+      filter: false,
+      sortable: false,
+      text: ({ result }) => String((result?.history ?? []).length),
+      cell: ({ result }) =>
+        result ? (
+          <Trend
+            history={result.history ?? []}
+            label={t("organization.health.trendLabel", {
+              runs: (result.history ?? []).length,
+              red: (result.history ?? []).filter((point) => point.fail + point.error > 0).length,
+            })}
+          />
+        ) : null,
+    },
+    {
+      key: "failures",
+      label: t("organization.health.failures"),
+      text: (row) => failuresOf(row).map((failure) => `${failure.key} ${failure.title}`).join(" "),
+      cell: ({ result }) =>
+        result && (result.failures ?? []).length > 0 ? (
+          <details>
+            <summary className="focus-ring cursor-pointer rounded-sm">
+              {t("organization.health.showFailures", { count: (result.failures ?? []).length })}
+            </summary>
+            <ul className="mt-2 space-y-1">
+              {(result.failures ?? []).map((failure) => (
+                <li key={failure.key} className="text-caption">
+                  <span className="font-mono">{failure.key}</span>
+                  {`: ${failure.title}`}
+                  {failure.task ? (
+                    <span className="ml-1 text-fg-muted">{t("organization.health.task", { task: failure.task })}</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : (
+          "—"
+        ),
+    },
+  ];
+
   return (
     <section className="space-y-4" aria-labelledby="organization-health-heading">
       <div>
@@ -96,8 +164,6 @@ export function ValidationHealth(): JSX.Element {
       </div>
       {!administers ? (
         <Alert tone="info">{t("organization.health.hidden")}</Alert>
-      ) : health.isError ? (
-        <PageFailed error={health.error} onRetry={() => void health.refetch()} />
       ) : (
         <>
           {health.isSuccess && checks.length > 0 ? (
@@ -105,91 +171,22 @@ export function ValidationHealth(): JSX.Element {
               {troubles.length === 0 ? t("organization.health.summary.green") : troubles.join(", ")}
             </Alert>
           ) : null}
-          <Table
+          <AdminGrid<CheckHealth>
+            query={health}
             caption={t("organization.health.caption")}
-            status={health.isPending ? t("app.loading") : undefined}
-          >
-            <TableHead>
-              <TableHeaderCell>{t("organization.health.check")}</TableHeaderCell>
-              <TableHeaderCell>{t("organization.health.state")}</TableHeaderCell>
-              <TableHeaderCell>{t("organization.health.lastRun")}</TableHeaderCell>
-              <TableHeaderCell>{t("organization.health.results")}</TableHeaderCell>
-              <TableHeaderCell>{t("organization.health.trend")}</TableHeaderCell>
-              <TableHeaderCell>{t("organization.health.failures")}</TableHeaderCell>
-            </TableHead>
-            {health.isPending ? (
-              <TableSkeleton columns={6} />
-            ) : (
-              <TableBody>
-                {checks.length === 0 ? (
-                  <TableEmpty columns={6}>
-                    <EmptyState
-                      bare
-                      title={t("organization.health.empty")}
-                      description={t("organization.health.emptyHint")}
-                    />
-                  </TableEmpty>
-                ) : (
-                  checks.map(({ check, state, result }) => (
-                    <TableRow key={check}>
-                      <TableCell primary>
-                        <span className="font-mono">{check}</span>
-                      </TableCell>
-                      <TableCell>
-                        <Badge tone={TONE[state]}>{t(`organization.health.states.${state}`)}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        {result ? (
-                          <>
-                            <time dateTime={result.at}>{when(result.at)}</time>
-                            {result.run ? <span className="block text-caption text-fg-muted">{result.run}</span> : null}
-                          </>
-                        ) : (
-                          t("organization.health.unreadableHint")
-                        )}
-                      </TableCell>
-                      <TableCell>{result ? t("organization.health.counts", { ...result.counts }) : "—"}</TableCell>
-                      <TableCell>
-                        {result ? (
-                          <Trend
-                            history={result.history ?? []}
-                            label={t("organization.health.trendLabel", {
-                              runs: (result.history ?? []).length,
-                              red: (result.history ?? []).filter((point) => point.fail + point.error > 0).length,
-                            })}
-                          />
-                        ) : null}
-                      </TableCell>
-                      <TableCell>
-                        {result && (result.failures ?? []).length > 0 ? (
-                          <details>
-                            <summary className="focus-ring cursor-pointer rounded-sm">
-                              {t("organization.health.showFailures", { count: (result.failures ?? []).length })}
-                            </summary>
-                            <ul className="mt-2 space-y-1">
-                              {(result.failures ?? []).map((failure) => (
-                                <li key={failure.key} className="text-caption">
-                                  <span className="font-mono">{failure.key}</span>
-                                  {`: ${failure.title}`}
-                                  {failure.task ? (
-                                    <span className="ml-1 text-fg-muted">
-                                      {t("organization.health.task", { task: failure.task })}
-                                    </span>
-                                  ) : null}
-                                </li>
-                              ))}
-                            </ul>
-                          </details>
-                        ) : (
-                          "—"
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            )}
-          </Table>
+            storageKey="organization:health"
+            rows={checks}
+            rowKey={(row) => row.check}
+            columns={columns}
+            stack
+            empty={
+              <EmptyState
+                bare
+                title={t("organization.health.empty")}
+                description={t("organization.health.emptyHint")}
+              />
+            }
+          />
         </>
       )}
     </section>

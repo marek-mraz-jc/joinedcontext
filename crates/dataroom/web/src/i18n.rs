@@ -1321,6 +1321,46 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
         "Amíg egy mező a listán kívüli értéket tartalmaz, nincs hivatkozás: javítsa vagy törölje a pirossal jelölt mezőt.",
     );
     add(
+        "subscribe_near",
+        "Around a town",
+        "V okolí obce",
+        "V okolí obce",
+        "Im Umkreis von",
+        "Település környékén",
+    );
+    add(
+        "subscribe_radius",
+        "Distance",
+        "Vzdialenosť",
+        "Vzdálenost",
+        "Entfernung",
+        "Távolság",
+    );
+    add(
+        "subscribe_near_hint",
+        "For example {example}; your device's location is not used.",
+        "Napríklad {example}; poloha zariadenia sa nepoužije.",
+        "Například {example}; poloha zařízení se nepoužije.",
+        "Zum Beispiel {example}; der Gerätestandort wird nicht verwendet.",
+        "Például {example}; az eszköz helyzetét nem használjuk.",
+    );
+    add(
+        "subscribe_near_unknown",
+        "No event in „{value}“ has a location; pick another town or clear the field.",
+        "Podujatia v obci „{value}“ nemajú polohu; vyberte inú obec alebo pole vymažte.",
+        "Akce v obci „{value}“ nemají polohu; vyberte jinou obec nebo pole vymažte.",
+        "Kein Termin in „{value}“ hat einen Standort; wählen Sie einen anderen Ort oder leeren Sie das Feld.",
+        "„{value}” eseményeinek nincs helye; válasszon másik települést, vagy törölje a mezőt.",
+    );
+    add(
+        "subscribe_near_failed",
+        "Where the events of „{value}“ are could not be read; change the distance or the town to try again.",
+        "Polohu podujatí v obci „{value}“ sa nepodarilo načítať; skúste znova zmenou vzdialenosti alebo obce.",
+        "Polohu akcí v obci „{value}“ se nepodařilo načíst; zkuste znovu změnou vzdálenosti nebo obce.",
+        "Der Ort der Termine in „{value}“ konnte nicht gelesen werden; ändern Sie Entfernung oder Ort, um es erneut zu versuchen.",
+        "„{value}” eseményeinek helyét nem sikerült beolvasni; próbálja újra a távolság vagy a település módosításával.",
+    );
+    add(
         "subscribe_no_facets",
         "This calendar offers no town or genre lists; narrow it by dates, or subscribe to it whole above.",
         "Tento kalendár neponúka zoznam obcí ani žánrov; zúžte ho dátumami alebo ho vyššie odoberajte celý.",

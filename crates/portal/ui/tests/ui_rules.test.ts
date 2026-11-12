@@ -112,6 +112,13 @@ describe("what a page may not do by hand", () => {
     expect(breaches("hand_made_control", /<(?:button|input|select|textarea|table)\b/)).toEqual([]);
   });
 
+  it("a_data_table_is_the_shared_grid", () => {
+    expect(RULE_OF.data_table_is_the_grid.test('<Table caption="Policies" stack>')).toBe(true);
+    expect(RULE_OF.data_table_is_the_grid.test("<Table\n  caption={t(\"x\")}")).toBe(true);
+    expect(RULE_OF.data_table_is_the_grid.test("Promise<Table> | <TableBody> | <TableRow>")).toBe(false);
+    expect(breaches("data_table_is_the_grid", RULE_OF.data_table_is_the_grid)).toEqual([]);
+  });
+
   it("a_panel_is_the_shared_card", () => {
     expect(breaches("panel_is_a_card", RULE_OF.panel_is_a_card)).toEqual([]);
   });
@@ -415,7 +422,8 @@ describe("the allow-list", () => {
 
   it("every_entry_names_a_file_that_exists_and_the_group_that_empties_it", () => {
     const known = new Set(pages.map((file) => file.path));
-    const groups = new Set(["ui-components", "ui-forms", "ui-pages", "ui-parts"]);
+    // The grid-* groups are the follow-ups of T-6739 that move a file's tables to the shared grid.
+    const groups = new Set(["ui-components", "ui-forms", "ui-pages", "ui-parts", "grid-admin", "grid-manifest", "grid-ops", "grid-data", "grid-editors"]);
     for (const [rule, allowance] of Object.entries(allow)) {
       for (const [path, entry] of entriesOf(allowance)) {
         expect(known, `${rule} allows ${path}, which no source file is`).toContain(path);

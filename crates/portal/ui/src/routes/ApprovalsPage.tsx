@@ -6,7 +6,8 @@ import { useTranslation } from "react-i18next";
 import { isOwn } from "../api/approval";
 import { api, queryKeys, unwrap } from "../api/client";
 import { useAuth } from "../auth/AuthProvider";
-import { ResourceList } from "../components/ResourceList";
+import { AdminGrid } from "../components/grid/AdminGrid";
+import type { DataColumn } from "../components/grid/AdminGrid";
 import { ApprovalsHistory } from "./ApprovalsHistory";
 import { LifecycleBadge } from "../components/status/LifecycleBadge";
 import {
@@ -17,18 +18,12 @@ import {
   Icon,
   PageHeader,
   Select,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
   Tabs,
   buttonClass,
   tabPanelProps,
   Term,
 } from "../components/ui";
 import { useUrlParam } from "../navigation/urlState";
-
-const COLUMNS = 6;
 
 export function ApprovalsPage({ project }: { project: string }): JSX.Element {
   const { t, i18n } = useTranslation();
@@ -58,19 +53,6 @@ export function ApprovalsPage({ project }: { project: string }): JSX.Element {
     />
   );
 
-  const head = (
-    <TableHead>
-      <TableHeaderCell>{t("approvals.summary")}</TableHeaderCell>
-      <TableHeaderCell className="hidden sm:table-cell">{t("approvals.phase")}</TableHeaderCell>
-      <TableHeaderCell>
-        <Term name="lane">{t("approvals.lane")}</Term>
-      </TableHeaderCell>
-      <TableHeaderCell className="hidden sm:table-cell">{t("approvals.author")}</TableHeaderCell>
-      <TableHeaderCell className="hidden sm:table-cell">{t("approvals.created")}</TableHeaderCell>
-      <TableHeaderCell align="right">{t("approvals.actions")}</TableHeaderCell>
-    </TableHead>
-  );
-
   const all = list.data?.items ?? [];
   // A fork's or a non-writer's merge request in the forge, which nobody can approve here; the
   // API names them to an organization administrator alone (T-3433).
@@ -83,6 +65,81 @@ export function ApprovalsPage({ project }: { project: string }): JSX.Element {
       (!mine || isOwn(identity?.email, proposal)) &&
       (phase === "" || proposal.status.phase === phase),
   );
+  const dateFormatter = new Intl.DateTimeFormat(locale, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+
+  type Proposal = (typeof all)[number];
+  const summaryOf = (proposal: Proposal) => t(proposal.summary.key, proposal.summary.params as Record<string, unknown>);
+  const columns: DataColumn<Proposal>[] = [
+    {
+      key: "summary",
+      label: t("approvals.summary"),
+      text: summaryOf,
+      cell: (proposal) => (
+        <>
+          <Link
+            data-row-link=""
+            to="/projects/$project/approvals/$id"
+            params={{ project, id: proposal.metadata.name }}
+            className="focus-ring rounded-sm text-primary-soft-fg hover:underline"
+          >
+            {summaryOf(proposal)}
+          </Link>
+          <div className="mt-0.5 font-mono text-caption text-fg-subtle">{proposal.metadata.name}</div>
+          {/* A change that waits on another merges after it (MF-48). */}
+          {(proposal.waitsOn ?? [])
+            .filter((awaited) => awaited.phase !== "Merged")
+            .map((awaited) => (
+              <div key={awaited.name} className="mt-0.5 text-caption text-fg-muted">
+                {awaited.phase === "Rejected"
+                  ? t("approvals.waitsOn.rejected", { change: awaited.name })
+                  : t("approvals.waitsOn.pending", { change: awaited.name })}
+              </div>
+            ))}
+          {/* A bundle is more than its headline, and the approval checks all of it. */}
+          {(proposal.fileCount ?? 0) > 1 ? (
+            <div className="mt-0.5 text-caption text-fg-muted">{t("approvals.fileCount", { count: proposal.fileCount })}</div>
+          ) : null}
+        </>
+      ),
+    },
+    {
+      key: "phase",
+      label: t("approvals.phase"),
+      text: (proposal) => proposal.status.phase,
+      cell: (proposal) => <LifecycleBadge kind="phase" value={proposal.status.phase} />,
+    },
+    {
+      key: "lane",
+      label: t("approvals.lane"),
+      heading: <Term name="lane">{t("approvals.lane")}</Term>,
+      text: (proposal) => proposal.status.lane ?? "",
+      cell: (proposal) => <LifecycleBadge kind="lane" value={proposal.status.lane} />,
+    },
+    { key: "author", label: t("approvals.author"), text: (proposal) => proposal.author.name },
+    {
+      key: "created",
+      label: t("approvals.created"),
+      kind: "date",
+      text: (proposal) => proposal.createdAt,
+      cell: (proposal) => <span className="whitespace-nowrap text-fg-muted">{dateFormatter.format(new Date(proposal.createdAt))}</span>,
+    },
+    {
+      key: "actions",
+      label: t("approvals.actions"),
+      text: () => "",
+      actions: true,
+      align: "right",
+      cell: (proposal) => (
+        <Link to="/projects/$project/approvals/$id" params={{ project, id: proposal.metadata.name }} className={buttonClass("secondary", "sm")}>
+          {t("approvals.view")}
+          <Icon name="chevronRight" className="size-3.5" />
+        </Link>
+      ),
+    },
+  ];
   const filters =
     all.length > 0 ? (
       <div className="flex flex-wrap items-center gap-4">
@@ -109,11 +166,6 @@ export function ApprovalsPage({ project }: { project: string }): JSX.Element {
         </label>
       </div>
     ) : null;
-
-  const dateFormatter = new Intl.DateTimeFormat(locale, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
 
   const tabs = (
     <Tabs
@@ -170,12 +222,14 @@ export function ApprovalsPage({ project }: { project: string }): JSX.Element {
             </ul>
           </Alert>
         ) : null}
-        <ResourceList
+        <AdminGrid<Proposal>
           query={list}
           caption={t("approvals.title")}
-          head={head}
-          columns={COLUMNS}
-          count={items.length}
+          storageKey={`${project}:approvals`}
+          stack
+          rows={items}
+          rowKey={(proposal) => proposal.metadata.name}
+          columns={columns}
           empty={
             all.length === 0 ? (
               // Nothing proposed yet: the way to a first change is the assistant (T-1381).
@@ -202,80 +256,7 @@ export function ApprovalsPage({ project }: { project: string }): JSX.Element {
               />
             )
           }
-        >
-          {items.map((proposal) => {
-            const summaryText = t(
-              proposal.summary.key,
-              proposal.summary.params as Record<string, unknown>,
-            );
-            const formattedDate = dateFormatter.format(
-              new Date(proposal.createdAt),
-            );
-
-            return (
-              <TableRow key={proposal.metadata.name}>
-                <TableCell primary>
-                  <Link
-                    data-row-link=""
-                    to="/projects/$project/approvals/$id"
-                    params={{ project, id: proposal.metadata.name }}
-                    className="focus-ring rounded-sm text-primary-soft-fg hover:underline"
-                  >
-                    {summaryText}
-                  </Link>
-                  <div className="mt-0.5 font-mono text-caption text-fg-subtle">
-                    {proposal.metadata.name}
-                  </div>
-                  {/* A change that waits on another merges after it (MF-48). */}
-                  {(proposal.waitsOn ?? [])
-                    .filter((awaited) => awaited.phase !== "Merged")
-                    .map((awaited) => (
-                      <div
-                        key={awaited.name}
-                        className="mt-0.5 text-caption text-fg-muted"
-                      >
-                        {awaited.phase === "Rejected"
-                          ? t("approvals.waitsOn.rejected", {
-                              change: awaited.name,
-                            })
-                          : t("approvals.waitsOn.pending", {
-                              change: awaited.name,
-                            })}
-                      </div>
-                    ))}
-                  {/* A bundle is more than its headline, and the approval checks all of it. */}
-                  {(proposal.fileCount ?? 0) > 1 ? (
-                    <div className="mt-0.5 text-caption text-fg-muted">
-                      {t("approvals.fileCount", { count: proposal.fileCount })}
-                    </div>
-                  ) : null}
-                </TableCell>
-                {/* A badge or a name broken over two lines reads as two values; a phone keeps
-                    the summary, the lane and the action, the rest is on the change's page. */}
-                <TableCell className="hidden whitespace-nowrap sm:table-cell">
-                  <LifecycleBadge kind="phase" value={proposal.status.phase} />
-                </TableCell>
-                <TableCell className="whitespace-nowrap">
-                  <LifecycleBadge kind="lane" value={proposal.status.lane} />
-                </TableCell>
-                <TableCell className="hidden whitespace-nowrap sm:table-cell">{proposal.author.name}</TableCell>
-                <TableCell className="hidden whitespace-nowrap text-fg-muted sm:table-cell">
-                  {formattedDate}
-                </TableCell>
-                <TableCell align="right">
-                  <Link
-                    to="/projects/$project/approvals/$id"
-                    params={{ project, id: proposal.metadata.name }}
-                    className={buttonClass("secondary", "sm")}
-                  >
-                    {t("approvals.view")}
-                    <Icon name="chevronRight" className="size-3.5" />
-                  </Link>
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </ResourceList>
+        />
       </div>
     </div>
   );

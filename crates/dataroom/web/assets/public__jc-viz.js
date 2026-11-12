@@ -93,12 +93,34 @@ window.jcFeedLink = (function () {
   function path(attr) { var p = attr.split("."); return p.length === 2 ? p[0] + "[" + p[1] + "]" : p[0]; }
   // Every byte but the unreserved ones percent-encoded: the whole q is one path segment value.
   function encode(v) { return encodeURIComponent(v).replace(/[!'()*]/g, function (c) { return "%" + c.charCodeAt(0).toString(16).toUpperCase(); }); }
-  // choices: [[attr, value]], from/to: YYYY-MM-DD or "". The filter query string, "" for none.
-  function filter(choices, from, to) {
+  // choices: [[attr, value]], from/to: YYYY-MM-DD or "", near: {at: [lon, lat], km} or null.
+  // The filter query string, "" for none; near is the NGSI-LD geo-query of the same request.
+  function filter(choices, from, to, near) {
     var terms = choices.filter(function (c) { return c[1] !== ""; }).map(function (c) { return path(c[0]) + "==" + quote(c[1]); });
     if (/^\d{4}-\d{2}-\d{2}$/.test(from)) terms.push("startDate>=" + from + "T00:00:00Z");
     if (/^\d{4}-\d{2}-\d{2}$/.test(to)) terms.push("startDate<=" + to + "T23:59:59Z");
-    return terms.length ? "q=" + encode(terms.join(";")) : "";
+    var parts = terms.length ? ["q=" + encode(terms.join(";"))] : [];
+    if (near) {
+      parts.push("georel=" + encode("near;maxDistance==" + Math.round(near.km * 1000)), "geometry=Point",
+        "coordinates=" + encode("[" + near.at[0] + "," + near.at[1] + "]"));
+    }
+    return parts.join("&");
+  }
+  // A place's centre from the entities found there: the median longitude and latitude of their
+  // Point locations (a stray venue moves it little), to 5 decimals; null when none has one.
+  function centre(entities) {
+    var lon = [], lat = [];
+    (Array.isArray(entities) ? entities : []).forEach(function (e) {
+      var g = e && e.location, c = g && g.type === "Point" && g.coordinates;
+      if (Array.isArray(c) && isFinite(c[0]) && isFinite(c[1]) && Math.abs(c[0]) <= 180 && Math.abs(c[1]) <= 90) { lon.push(+c[0]); lat.push(+c[1]); }
+    });
+    if (!lon.length) return null;
+    function median(v) { v.sort(function (a, b) { return a - b; }); var m = v.length >> 1; return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; }
+    return [median(lon), median(lat)].map(function (n) { return Math.round(n * 1e5) / 1e5; });
+  }
+  // The NGSI-LD query of the entities at one value of attr, located only.
+  function located(attr, value) {
+    return "q=" + encode(path(attr) + "==" + quote(value)) + "&attrs=location&format=keyValues&limit=100";
   }
   // The links of one filter: the calendar by path, the other formats by the query aliases.
   function links(base, output, f) {
@@ -111,7 +133,7 @@ window.jcFeedLink = (function () {
       rss: base + "/entities.rss" + tail, atom: base + "/entities.atom" + tail, csv: base + "/entities.csv" + tail,
     };
   }
-  return { quote: quote, filter: filter, links: links };
+  return { quote: quote, filter: filter, links: links, centre: centre, located: located };
 })();
 (function () {
   var box = document.querySelector(".jc-subscribe-query");
@@ -130,6 +152,11 @@ window.jcFeedLink = (function () {
   var menu = box.closest("details");
   var lang = box.getAttribute("data-jc-lang") || "en";
   var facets = [], timer = null, asked = 0, loaded = false;
+  // "Near a place": a town of the Endpoint's own list, its centre read from the events there, and a
+  // radius. Nothing asks for the device's location.
+  var nearBox = document.getElementById("jc-subscribe-near"), nearHint = document.getElementById("jc-subscribe-near-hint");
+  var nearPlace = document.getElementById("jc-subscribe-near-place"), nearKm = document.getElementById("jc-subscribe-near-km");
+  var near = null, centres = {};
   var copyLabel = box.querySelector(".jc-code-copy-label");
   function say(key, vars) {
     return String(box.getAttribute(key) || "").replace(/\{(\w+)\}/g, function (_, k) { return vars && vars[k] !== undefined ? vars[k] : ""; });
@@ -170,17 +197,55 @@ window.jcFeedLink = (function () {
     f.values.forEach(function (v) { if (!hit && v.toLocaleLowerCase(lang) === typed.toLocaleLowerCase(lang)) hit = v; });
     var bad = typed !== "" && !hit;
     if (bad) f.input.setAttribute("aria-invalid", "true"); else f.input.removeAttribute("aria-invalid");
-    f.hint.textContent = bad ? say("data-jc-not-listed", { value: typed }) : say("data-jc-hint", { example: f.example });
+    f.hint.textContent = bad ? say("data-jc-not-listed", { value: typed }) : say(f.key || "data-jc-hint", { example: f.example });
     f.hint.classList.toggle("jc-subscribe-error", bad);
     return hit;
   }
+  // The near choice: null for none, {at, km} for a located town, "wait" while its centre loads,
+  // "bad" for a town outside the list or without a located event (the hint says which).
+  function nearChoice() {
+    if (!near) return null;
+    var place = chosen(near), typed = near.input.value.trim();
+    if (!place) return typed === "" ? null : "bad";
+    if (!(place in centres)) {
+      centres[place] = undefined;
+      read(base + "/ngsi-ld/v1/entities?" + jcFeedLink.located(near.attr, place)).then(function (found) {
+        // read() answers null for a failed read, a list (maybe empty) for an answer.
+        centres[place] = found === null ? "failed" : jcFeedLink.centre(found);
+        update();
+      });
+    }
+    if (centres[place] === undefined) return "wait";
+    if (centres[place] === "failed") {
+      // Forget the failure, so the next change of a field reads again.
+      delete centres[place];
+      near.input.setAttribute("aria-invalid", "true");
+      near.hint.textContent = say("data-jc-near-failed", { value: place });
+      near.hint.classList.add("jc-subscribe-error");
+      return "bad";
+    }
+    if (centres[place] === null) {
+      near.input.setAttribute("aria-invalid", "true");
+      near.hint.textContent = say("data-jc-near-unknown", { value: place });
+      near.hint.classList.add("jc-subscribe-error");
+      return "bad";
+    }
+    return { at: centres[place], km: Number(nearKm.value) };
+  }
   function update() {
     var picked = facets.map(function (f) { return [f.attr, chosen(f)]; });
+    var around = nearChoice();
     // A value outside the list leaves no link to copy: the copy row and links hide until it reads.
-    var invalid = facets.some(function (f) { return f.input.getAttribute("aria-invalid") === "true"; });
+    var unlisted = facets.some(function (f) { return f.input.getAttribute("aria-invalid") === "true"; });
+    var invalid = around === "bad" || around === "wait" || unlisted;
     box.toggleAttribute("data-jc-refused", invalid);
-    if (invalid) { clearTimeout(timer); asked++; list.textContent = ""; status.textContent = box.getAttribute("data-jc-held"); return; }
-    var l = jcFeedLink.links(base, output, jcFeedLink.filter(picked, from.value, to.value));
+    if (invalid) {
+      clearTimeout(timer); asked++; list.textContent = "";
+      // The near field's own hint says why a town gives no link; the held text names an unlisted value.
+      status.textContent = around === "wait" ? box.getAttribute("data-jc-loading") : unlisted ? box.getAttribute("data-jc-held") : "";
+      return;
+    }
+    var l = jcFeedLink.links(base, output, jcFeedLink.filter(picked, from.value, to.value, around));
     if (copyLabel && copyLabel.hasAttribute("data-label")) { clearTimeout(copyLabel.jcTimer); copyLabel.textContent = copyLabel.getAttribute("data-label"); }
     out.value = l.ics;
     Object.keys(anchors).forEach(function (k) { if (anchors[k]) anchors[k].href = l[k]; });
@@ -203,7 +268,15 @@ window.jcFeedLink = (function () {
         var values = (pair[1] && Array.isArray(pair[1].values) ? pair[1].values : [])
           .filter(function (v) { return v && typeof v.value === "string" && v.value !== ""; });
         if (values.length) facets.push(field(pair[0], values, facets.length + 1));
+        // The town list is also the list of places to search around.
+        if (values.length && !near && nearBox && /locality|town|city|municipality/i.test(pair[0].split(".").pop())) {
+          var options = document.getElementById("jc-subscribe-near-places");
+          values.forEach(function (v) { var o = document.createElement("option"); o.value = v.value; options.appendChild(o); });
+          near = { attr: pair[0], input: nearPlace, hint: nearHint, values: values.map(function (v) { return v.value; }), example: values[Math.min(1, values.length - 1)].value, key: "data-jc-near-hint" };
+          nearBox.hidden = false;
+        }
       });
+      if (near) { nearPlace.addEventListener("input", update); nearPlace.addEventListener("change", update); nearKm.addEventListener("change", update); }
       noFacets.hidden = facets.length > 0;
       facets.forEach(function (f) { f.input.addEventListener("input", update); f.input.addEventListener("change", update); });
       update();

@@ -6,15 +6,7 @@ import { useAccess } from "../../components/entities/AccessPanel";
 import type { GrantDocument } from "../../api/access";
 import { writesOf } from "../access/EffectivePermissions";
 import { fetchJson } from "../endpoints/SchemaProjectionPanel";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-  TableRowHeaderCell,
-} from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
 
 /** How many entities are worth showing to judge an endpoint by: enough to see the shape (AP-51). */
 const SAMPLE_LIMIT = 5;
@@ -158,27 +150,33 @@ export function EndpointPreview({ slug }: { slug: string }): JSX.Element {
             <p className="text-xs text-fg-muted">{t("apps.generate.preview.samplesEmpty")}</p>
           )}
           {rows.length > 0 && (
-            <Table caption={t("apps.generate.preview.samples")}>
-              <TableHead>
-                <TableHeaderCell>{t("apps.generate.preview.columnId")}</TableHeaderCell>
-                <TableHeaderCell>{t("apps.generate.preview.columnType")}</TableHeaderCell>
-                <TableHeaderCell>{t("apps.generate.preview.columnValues")}</TableHeaderCell>
-              </TableHead>
-              <TableBody>
-                {rows.map((entity, index) => {
-                  const line = sampleLine(entity);
-                  return (
-                    <TableRow key={line.id || index}>
-                      <TableRowHeaderCell title={line.id} className="break-all font-mono font-normal">
-                        {line.localId}
-                      </TableRowHeaderCell>
-                      <TableCell>{line.type}</TableCell>
-                      <TableCell className="break-all font-mono">{line.values}</TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+            <AdminGrid
+              caption={t("apps.generate.preview.samples")}
+              rows={rows.map((entity, at) => ({ at, ...sampleLine(entity) }))}
+              rowKey={(line) => line.id || String(line.at)}
+              storageKey="apps.generate.preview.samples"
+              empty={t("apps.generate.preview.samplesEmpty")}
+              noSearch
+              columns={[
+                {
+                  key: "id",
+                  label: t("apps.generate.preview.columnId"),
+                  text: (line) => line.localId,
+                  cell: (line) => (
+                    <span title={line.id} className="break-all font-mono">
+                      {line.localId}
+                    </span>
+                  ),
+                },
+                { key: "type", label: t("apps.generate.preview.columnType"), text: (line) => line.type },
+                {
+                  key: "values",
+                  label: t("apps.generate.preview.columnValues"),
+                  text: (line) => line.values,
+                  cell: (line) => <span className="break-all font-mono">{line.values}</span>,
+                },
+              ]}
+            />
           )}
         </div>
       </details>

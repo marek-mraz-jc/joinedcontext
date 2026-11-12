@@ -13,13 +13,9 @@ import { endpointUrl } from "../../components/endpoints/links";
 import {
   Alert,
   Button,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
 } from "../../components/ui";
+import { LazyAdminGrid } from "../../components/grid/LazyAdminGrid";
+import { useIsPhone } from "../../phone";
 
 /** The rows a published view shows. */
 export const PUBLIC_ROWS = 100;
@@ -172,6 +168,7 @@ export function PublicViewPage({ slug }: { slug: string }): JSX.Element {
     [rows.data],
   );
   const locale = i18n.language;
+  const phone = useIsPhone();
   const typeLabel = (name: string) => columnLabel(undefined, name, locale);
   const name = inLanguage(entry.data?.["dct:title"], locale);
   const title = name ?? (type ? typeLabel(type) : t("spaces.share.heading"));
@@ -212,30 +209,33 @@ export function PublicViewPage({ slug }: { slug: string }): JSX.Element {
           <p className="text-caption text-fg-muted">
             {t(rows.data.length >= PUBLIC_ROWS ? "spaces.share.first" : "spaces.share.count", { count: rows.data.length })}
           </p>
-          <Table caption={typeLabel(type)}>
-            <TableHead>
-              <TableHeaderCell className="normal-case! tracking-normal">{t("entityGrid.id")}</TableHeaderCell>
-              {columns.map((column) => (
-                <TableHeaderCell key={column} className="normal-case! tracking-normal">
-                  {columnLabel(undefined, column, locale)}
-                </TableHeaderCell>
-              ))}
-            </TableHead>
-            <TableBody>
-              {rows.data.map((row) => (
-                <TableRow key={String(row.id)}>
-                  <TableCell className="whitespace-nowrap font-mono text-caption" title={String(row.id)}>
+          <LazyAdminGrid
+            caption={typeLabel(type)}
+            rows={rows.data}
+            rowKey={(row) => String(row.id)}
+            storageKey={`public-view.${slug}.${type}`}
+            empty={t("spaces.share.count", { count: 0 })}
+            columns={[
+              {
+                key: "id",
+                label: t("entityGrid.id"),
+                text: (row) => localPart(String(row.id)),
+                cell: (row) => (
+                  <span className="whitespace-nowrap font-mono text-caption" title={String(row.id)}>
                     {localPart(String(row.id))}
-                  </TableCell>
-                  {columns.map((column) => (
-                    <TableCell key={column} className="break-words">
-                      {textOf(row[column])}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                  </span>
+                ),
+              },
+              ...columns.map((column, at) => ({
+                key: `field:${column}`,
+                // A phone shows the id and the first two fields; Arrange columns shows the rest.
+                hidden: phone && at >= 2,
+                label: columnLabel(undefined, column, locale),
+                text: (row: Record<string, unknown>) => textOf(row[column]),
+                cell: (row: Record<string, unknown>) => <span className="break-words">{textOf(row[column])}</span>,
+              })),
+            ]}
+          />
         </>
       ) : null}
     </div>

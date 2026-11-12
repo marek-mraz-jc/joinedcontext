@@ -10,6 +10,8 @@ import type { Change, Manifest, ResourceProposal } from "../../api/manifest";
 import { takePrefill } from "../../assistant/state";
 import { ChangeNotice } from "../../components/ChangeNotice";
 import { DeleteResourceAction } from "../../components/DeleteResourceDialog";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import { FormRecordLink } from "../../components/RecordLink";
 import { EditResourceAction } from "../../components/EditResourceDialog";
 import { FormFrame, useCreateForm, useFormRoute } from "../../components/forms/FormRoute";
@@ -23,14 +25,6 @@ import {
   Input,
   PageFailed,
   Select,
-  Table,
-  TableBody,
-  TableCell,
-  TableEmpty,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-  TableSkeleton,
 } from "../../components/ui";
 import { PermissionGuard } from "../../components/ui/PermissionGuard";
 import { usePermissions, useReadableList } from "../../api/permissions";
@@ -515,6 +509,60 @@ export function RoleBindings({
     (spec.subjects ?? []).flatMap((subject) => (subject.user && !names.has(subject.user) ? [subject.user] : [])).join(", ") ||
     undefined;
 
+  const untilOf = (binding: Manifest) => (binding.spec as BindingSpec).validity?.notAfter;
+  const columns: DataColumn<Manifest>[] = [
+    {
+      key: "who",
+      label: t("access.roles.who"),
+      text: (binding) => who(binding.spec as BindingSpec),
+      cell: (binding) => (
+        <FormRecordLink name={binding.metadata.name}>
+          <span title={whoIds(binding.spec as BindingSpec)}>{who(binding.spec as BindingSpec)}</span>
+        </FormRecordLink>
+      ),
+    },
+    { key: "role", label: t("access.roles.role"), text: (binding) => (binding.spec as BindingSpec).role ?? "" },
+    {
+      key: "where",
+      label: t("access.roles.where"),
+      text: (binding) => where((binding.spec as BindingSpec).scope),
+    },
+    {
+      key: "until",
+      label: t("access.roles.until"),
+      kind: "date",
+      text: (binding) => untilOf(binding) ?? "",
+      cell: (binding) => {
+        const until = untilOf(binding);
+        return until ? new Date(until).toLocaleDateString(locale) : t("access.roles.noEnd");
+      },
+    },
+    {
+      key: "actions",
+      label: t("approvals.actions"),
+      text: () => "",
+      actions: true,
+      align: "right",
+      cell: (binding) => {
+        const spec = binding.spec as BindingSpec;
+        const target = {
+          project,
+          home: ORG_NAMESPACE,
+          kind: "RoleBinding",
+          plural: "rolebindings",
+          name: binding.metadata.name,
+          label: `${who(spec)}: ${spec.role ?? ""}`,
+        };
+        return (
+          <span className="inline-flex items-center gap-1.5">
+            <EditResourceAction target={target} addressed />
+            <DeleteResourceAction target={target} />
+          </span>
+        );
+      },
+    },
+  ];
+
   return (
     <section className="space-y-4" aria-labelledby="role-bindings-heading">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -555,77 +603,31 @@ export function RoleBindings({
           }}
         />
       ) : (
-        <Table
-          data-records=""
+        <AdminGrid
           stack
+          storageKey={`${project}:${scope}:rolebindings`}
+          query={{ ...bindings, isPending: loading }}
           caption={
             scope === "organization" ? t("organization.members.caption") : t("access.roles.caption", { project })
           }
-          status={loading ? t("app.loading") : undefined}
-        >
-          <TableHead>
-            <TableHeaderCell>{t("access.roles.who")}</TableHeaderCell>
-            <TableHeaderCell>{t("access.roles.role")}</TableHeaderCell>
-            <TableHeaderCell>{t("access.roles.where")}</TableHeaderCell>
-            <TableHeaderCell>{t("access.roles.until")}</TableHeaderCell>
-            <TableHeaderCell align="right">{t("approvals.actions")}</TableHeaderCell>
-          </TableHead>
-          {loading ? (
-            <TableSkeleton columns={5} />
-          ) : (
-            <TableBody>
-              {here.length === 0 ? (
-                <TableEmpty columns={5}>
-                  <EmptyState bare
-                    title={t("access.roles.empty")}
-                    description={
-                      scope === "organization" ? t("organization.members.emptyHint") : t("access.roles.emptyHint")
-                    }
-                    action={
-                      <PermissionGuard project={ORG_NAMESPACE} kind="RoleBinding" verb="propose">
-                        <Button variant="primary" onClick={() => setGranting(true)}>
-                          {t("access.roles.grant")}
-                        </Button>
-                      </PermissionGuard>
-                    } />
-                </TableEmpty>
-              ) : (
-                here.map((binding) => {
-                  const spec = binding.spec as BindingSpec;
-                  const target = {
-                    project,
-                    home: ORG_NAMESPACE,
-                    kind: "RoleBinding",
-                    plural: "rolebindings",
-                    name: binding.metadata.name,
-                    label: `${who(spec)}: ${spec.role ?? ""}`,
-                  };
-                  const until = spec.validity?.notAfter;
-                  return (
-                    <TableRow key={binding.metadata.name}>
-                      <TableCell primary>
-                        <FormRecordLink name={binding.metadata.name}>
-                          <span title={whoIds(spec)}>{who(spec)}</span>
-                        </FormRecordLink>
-                      </TableCell>
-                      <TableCell data-label={t("access.roles.role")}>{spec.role}</TableCell>
-                      <TableCell data-label={t("access.roles.where")}>{where(spec.scope)}</TableCell>
-                      <TableCell data-label={t("access.roles.until")}>
-                        {until ? new Date(until).toLocaleDateString(locale) : t("access.roles.noEnd")}
-                      </TableCell>
-                      <TableCell align="right">
-                        <span className="inline-flex items-center gap-1.5">
-                          <EditResourceAction target={target} addressed />
-                          <DeleteResourceAction target={target} />
-                        </span>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          )}
-        </Table>
+          rows={here}
+          rowKey={(binding) => binding.metadata.name}
+          columns={columns}
+          empty={
+            <EmptyState
+              bare
+              title={t("access.roles.empty")}
+              description={scope === "organization" ? t("organization.members.emptyHint") : t("access.roles.emptyHint")}
+              action={
+                <PermissionGuard project={ORG_NAMESPACE} kind="RoleBinding" verb="propose">
+                  <Button variant="primary" onClick={() => setGranting(true)}>
+                    {t("access.roles.grant")}
+                  </Button>
+                </PermissionGuard>
+              }
+            />
+          }
+        />
       )}
 
       <GrantRoleDialog
