@@ -1,0 +1,11 @@
+logger: {level: OFF}
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {"i": counter()}'
+output:
+  sql_raw:
+    driver: sqlite
+    dsn: ${LITE_DSN}
+    query: "INSERT INTO t VALUES (1, 1.5, 'tx', x'414243', '2024-01-02 03:04:05', 7, '2024-02-29'), (2, null, null, null, 'not a time', 'free', null)"

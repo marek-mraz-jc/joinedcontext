@@ -1,0 +1,11 @@
+logger: {level: OFF}
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {"i": counter()}'
+output:
+  sql_raw:
+    driver: mysql
+    dsn: ${MY_DSN}
+    query: "INSERT INTO t VALUES (1, -2, 18446744073709551615, 1.1, 2.5, 1234.5, 'vc', 'blob', '2024-01-02 03:04:05.123456', '2024-02-29', '13:14:15', '{\"b\": 1, \"a\": 2}', 2024, 1), (2, null, null, null, null, null, null, null, null, null, null, null, null, null)"

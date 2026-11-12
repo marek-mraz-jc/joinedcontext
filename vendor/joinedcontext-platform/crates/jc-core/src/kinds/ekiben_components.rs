@@ -19,6 +19,8 @@ pub const INPUTS: &[&str] = &[
     "read_until",
     "resource",
     "sequence",
+    "sql_raw",
+    "sql_select",
     "stdin",
     "websocket",
 ];

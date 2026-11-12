@@ -37,6 +37,7 @@ pub fn build_full_registry() -> Arc<Registry> {
     ekiben_io_http::register_all(&reg);
     ekiben_io_file::register_all(&reg);
     ekiben_io_nats::register_all(&reg);
+    ekiben_io_sql::register_all(&reg);
     #[cfg(feature = "ngsild")]
     ekiben_io_ngsild::register_all(&reg);
     #[cfg(feature = "parquet")]

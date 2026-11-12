@@ -39,7 +39,7 @@ pub use prometheus::{
     Counter, Gauge, MetricMapping, MetricsConfig, Namespaced, PromExporter, SeriesOwner, Timer,
 };
 pub use redact::{redact_config_value, redact_url_str, SecretString};
-pub use registry::{LintReport, Registry};
+pub use registry::{lint_fields, LintFn, LintReport, Registry};
 pub use token_backoff::TokenBackoff;
 pub use traits::{
     Buffer, Cache, Input, Output, Pages, ProcContext, Processor, RateLimit, RunSummary,

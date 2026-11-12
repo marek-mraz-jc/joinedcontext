@@ -90,6 +90,133 @@ fn same_as_bento(case: &Value) -> (bool, String) {
     )
 }
 
+/// The record `scripts/parity-sql.py` writes for one run of a case: each step's exit and stdout,
+/// an exit reduced to ok/failed (Bento retries a failing write until the 60 s cap, ekiben stops).
+fn sql_case_record(case: &Path, env: &[(String, String)]) -> String {
+    // PG_RESET / MY_RESET empty the databases between cases, as the recording did.
+    for key in ["PG_RESET", "MY_RESET"] {
+        if let Ok(cmd) = std::env::var(key) {
+            let ok = Command::new("sh")
+                .arg("-c")
+                .arg(&cmd)
+                .output()
+                .is_ok_and(|o| o.status.success());
+            assert!(ok, "{key} failed");
+        }
+    }
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut steps: Vec<PathBuf> = std::fs::read_dir(case)
+        .expect("case dir")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "yaml"))
+        .collect();
+    steps.sort_by_key(|p| {
+        p.file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.parse::<u32>().ok())
+    });
+    let mut out = String::new();
+    for step in steps {
+        let o = Command::new(env!("CARGO_BIN_EXE_ekiben"))
+            .args(["run", "--host-env", "--allow-private-ips"])
+            .arg(&step)
+            .env("LITE_DSN", format!("file:{}/lite.db", dir.path().display()))
+            .envs(env.iter().cloned())
+            .output()
+            .expect("run ekiben");
+        let stem = step
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        let code = if o.status.success() { "ok" } else { "failed" };
+        out.push_str(&format!(
+            "## step {stem} {code}\n{}",
+            String::from_utf8_lossy(&o.stdout)
+        ));
+    }
+    out
+}
+
+fn strip_codes(record: &str) -> String {
+    record
+        .split_inclusive('\n')
+        .map(|l| {
+            match l
+                .strip_prefix("## step ")
+                .and_then(|r| r.rsplit_once(" exit "))
+            {
+                Some((n, code)) => format!(
+                    "## step {n} {}\n",
+                    if code.trim() == "0" { "ok" } else { "failed" }
+                ),
+                None => l.to_string(),
+            }
+        })
+        .collect()
+}
+
+/// The sql inputs and outputs (T-6834) against Bento 1.22.0's recorded runs: sqlite cases always,
+/// postgres and mysql cases where PG_DSN / MY_DSN name a database (the CI service containers);
+/// each lint case keeps Bento's verdict unless it carries a deviation.txt.
+#[test]
+fn sql_cases_match_bento() {
+    let root = repo().join("tests/parity/sql");
+    let env: Vec<(String, String)> = ["PG_DSN", "MY_DSN"]
+        .iter()
+        .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
+        .collect();
+    let mut checked = 0;
+    for group in std::fs::read_dir(&root)
+        .expect("tests/parity/sql")
+        .flatten()
+    {
+        if !group.path().is_dir() {
+            continue;
+        }
+        for case in std::fs::read_dir(group.path()).expect("group").flatten() {
+            let case = case.path();
+            let name = case
+                .strip_prefix(&root)
+                .unwrap_or(&case)
+                .display()
+                .to_string();
+            let want = std::fs::read_to_string(case.join("expected.txt")).expect("expected.txt");
+            if name.starts_with("lint") {
+                let ok = Command::new(env!("CARGO_BIN_EXE_ekiben"))
+                    .arg("lint")
+                    .arg(case.join("1.yaml"))
+                    .env("LITE_DSN", "file:/tmp/lint.db")
+                    .env("PG_DSN", "postgres://h/db")
+                    .output()
+                    .expect("lint")
+                    .status
+                    .success();
+                let got = if ok { "accepted" } else { "refused" };
+                assert!(
+                    got == want.trim() || case.join("deviation.txt").exists(),
+                    "{name}: Bento lint {}, ekiben {got}",
+                    want.trim()
+                );
+                checked += 1;
+                continue;
+            }
+            let steps = std::fs::read_to_string(case.join("1.yaml")).unwrap_or_default()
+                + &std::fs::read_to_string(case.join("2.yaml")).unwrap_or_default();
+            if ["PG_DSN", "MY_DSN"]
+                .iter()
+                .any(|k| steps.contains(&format!("${{{k}}}")) && !env.iter().any(|(e, _)| e == k))
+            {
+                eprintln!("SKIP {name}: its database is not given");
+                continue;
+            }
+            let got = sql_case_record(&case, &env);
+            assert_eq!(got, strip_codes(&want), "{name} differs from Bento");
+            checked += 1;
+        }
+    }
+    assert!(checked >= 5, "only {checked} sql cases ran");
+}
+
 #[test]
 fn every_recorded_case_keeps_its_verdict_against_bento() {
     let doc: Value = serde_json::from_slice(

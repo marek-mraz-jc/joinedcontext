@@ -320,6 +320,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     defaults: { run: { working-directory: crates/ekiben } }
+    # The sql parity cases (tests/parity/sql, T-6834) replay against the images Bento's sql
+    # integration tests run, at the digests the cases were recorded on.
+    services:
+      postgres:
+        image: postgres@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+        env: { POSTGRES_USER: testuser, POSTGRES_PASSWORD: testpass, POSTGRES_DB: testdb }
+        ports: ["54329:5432"]
+        options: >-
+          --health-cmd "pg_isready -U testuser" --health-interval 5s --health-timeout 5s --health-retries 20
+      mysql:
+        image: mysql@sha256:3819b2b23835c4a73c8b022fafc33c8095c0f81c929a8b7a84613d2fba6c52f5
+        env: { MYSQL_ROOT_PASSWORD: testpass, MYSQL_DATABASE: testdb }
+        ports: ["33069:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -ptestpass" --health-interval 5s --health-timeout 5s --health-retries 30
+    env:
+      PG_DSN: postgres://testuser:testpass@127.0.0.1:54329/testdb?sslmode=disable
+      MY_DSN: root:testpass@tcp(127.0.0.1:33069)/testdb
+      PG_RESET: PGPASSWORD=testpass psql -h 127.0.0.1 -p 54329 -U testuser -d testdb -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public'
+      MY_RESET: mysql -h 127.0.0.1 -P 33069 -uroot -ptestpass -e 'DROP DATABASE testdb; CREATE DATABASE testdb'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/rust
