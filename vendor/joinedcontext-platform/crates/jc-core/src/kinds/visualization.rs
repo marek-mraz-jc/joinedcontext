@@ -453,6 +453,13 @@ fn source(at: &str, data: &VisualizationData, served: &[Representation]) -> Resu
             format!("the Endpoint does not serve {wanted:?}"),
         ));
     }
+    check_source(at, data)
+}
+
+/// Checks a source by itself, without the Endpoint that serves it: its entity type, attributes
+/// and durations. A dashboard widget (UI-17) names its Endpoint by reference, so the Portal checks
+/// what that Endpoint serves where the manifests meet.
+pub fn check_source(at: &str, data: &VisualizationData) -> Result<()> {
     let name = |field: &str, value: &str| {
         if crate::names::validate_entity_type(value).is_ok() {
             Ok(())

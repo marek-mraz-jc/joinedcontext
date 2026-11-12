@@ -1547,7 +1547,7 @@ const numberPair = (title: string): JsonSchema => ({
  * The widget types the Portal draws (UI-18, UI-93): a `grid` reads a type, a `temporal-chart` one
  * entity's property over time, a `bar-chart` and a `histogram` one property over a type.
  */
-export const WIDGET_TYPES = ["temporal-chart", "bar-chart", "histogram", "grid"] as const;
+export const WIDGET_TYPES = ["temporal-chart", "bar-chart", "histogram", "grid", "vega-lite"] as const;
 
 /**
  * The grid's own configuration as a widget carries it (UI-71, SDK-30, T-1440): the schema the SDK

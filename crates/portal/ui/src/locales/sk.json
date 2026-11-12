@@ -3765,6 +3765,10 @@
     "widget": {
       "temporalChart": "{property} v čase",
       "unsupported": "Táto stránka má prvok {type}, ktorý Portál zatiaľ nekreslí.",
+      "vegaNoRowsTitle": "Žiadne riadky na kreslenie",
+      "vegaNoRows": "Zdroj tohto grafu nemá žiadne riadky. Zmeňte filter zdroja alebo overte, či endpoint tento typ zverejňuje.",
+      "vegaCut": "Graf kreslí iba prvých {count} riadkov.",
+      "vegaTitle": "Graf typu {type}",
       "noHistory": "Niet histórie na vykreslenie.",
       "latest": "Posledná hodnota {property}: {value} ({count} meraní)",
       "chartLabel": "{property} entity {entity} v čase",
@@ -8731,7 +8735,8 @@
       "temporal-chart": "Graf v čase",
       "bar-chart": "Stĺpce podľa hodnoty",
       "histogram": "Histogram",
-      "grid": "Tabuľka"
+      "grid": "Tabuľka",
+      "vega-lite": "Graf Vega-Lite"
     },
     "columnFormat": {
       "text": "Text",

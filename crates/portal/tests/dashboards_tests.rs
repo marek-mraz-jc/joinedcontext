@@ -215,6 +215,164 @@ async fn a_public_dashboard_on_a_private_endpoint_is_refused_with_the_reason() {
     assert_eq!(status, StatusCode::OK, "{body}");
 }
 
+/// A public dashboard with one `vega-lite` widget over `endpoint` (T-6786).
+fn chart_dashboard(visibility: &str, endpoint: &str) -> Value {
+    json!({
+        "apiVersion": API_VERSION,
+        "kind": "Dashboard",
+        "metadata": { "name": "air", "namespace": PROJECT },
+        "spec": { "title": { "en": "Air" }, "visibility": visibility, "pages": [{ "widgets": [{
+            "widgetType": "vega-lite",
+            "endpointRef": endpoint,
+            "data": { "source": "ogc", "collection": "AirQualityObserved" },
+            "spec": {
+                "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                "data": { "name": "source" },
+                "mark": "bar",
+                "encoding": { "x": { "field": "pm10", "type": "quantitative", "bin": true }, "y": { "aggregate": "count" } }
+            }
+        }] }] }
+    })
+}
+
+/// T-6786, UI-19: a widget of a public dashboard reads a public Endpoint too, and the refusal
+/// names the widget; its Endpoint cannot leave the public audience while the widget reads it.
+#[tokio::test]
+async fn a_widget_of_a_public_dashboard_reads_only_a_public_endpoint() {
+    let config = Config::for_tests();
+    let (status, body) = put(
+        &config,
+        vec![endpoint("air", "public")],
+        "dashboards",
+        &chart_dashboard("public", "air"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap_or_default()["verdict"]["ok"],
+        true,
+        "{body}"
+    );
+
+    let (status, body) = put(
+        &config,
+        vec![endpoint("internal", "organization")],
+        "dashboards",
+        &chart_dashboard("public", "internal"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let said = findings(&body);
+    assert!(
+        said.contains(
+            "widget /spec/pages/0/widgets/0 reads internal whose audience is organization"
+        ),
+        "{said}"
+    );
+    let (status, body) = propose(
+        &config,
+        vec![endpoint("internal", "organization")],
+        "dashboards",
+        &chart_dashboard("public", "internal"),
+    )
+    .await;
+    assert!(status.is_client_error(), "{status} {body}");
+    assert!(body.contains("/spec/pages/0/widgets/0"), "{body}");
+
+    let published = live(
+        "Dashboard",
+        "air",
+        chart_dashboard("public", "air")["spec"].clone(),
+    );
+    let (status, body) = put(
+        &config,
+        vec![endpoint("air", "public"), published],
+        "endpoints",
+        &manifest(&endpoint("air", "organization")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        findings(&body).contains("widget /spec/pages/0/widgets/0 of the public dashboard air"),
+        "{body}"
+    );
+}
+
+/// `jc_resource_propose`, the registry operation MCP serves as a tool (T-6787: a dashboard made
+/// over MCP is a Change like any other), at `project`.
+async fn propose_op(
+    config: &Config,
+    envelopes: Vec<ResourceEnvelope>,
+    project: &str,
+    manifest: &Value,
+) -> (StatusCode, String) {
+    let state = AppState::new(config.clone(), None);
+    for env in envelopes {
+        state.mirror.upsert(env);
+    }
+    let response = server::app(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/projects/{project}/ops/jc_resource_propose"
+                ))
+                .header(header::COOKIE, cookies(config))
+                .header(CSRF_HEADER, CSRF)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({ "manifest": manifest })).expect("json"),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// T-6787: the registry door (REST `ops/`, MCP) refuses what the PUT door refuses: a public
+/// dashboard over a private Endpoint names the widget, a spec with a URL names its member. A write
+/// outside the caller's Organization is T-6766's rule, proven by its tests at the same door.
+#[tokio::test]
+async fn the_operation_door_refuses_a_private_widget_and_a_url_spec_naming_the_member() {
+    let config = Config::for_tests();
+    let (status, body) = propose_op(
+        &config,
+        vec![endpoint("internal", "organization")],
+        PROJECT,
+        &chart_dashboard("public", "internal"),
+    )
+    .await;
+    assert!(status.is_client_error(), "{status} {body}");
+    assert!(
+        body.contains("widget /spec/pages/0/widgets/0 reads internal"),
+        "{body}"
+    );
+
+    let mut fetching = chart_dashboard("project", "internal");
+    fetching["spec"]["pages"][0]["widgets"][0]["spec"]["data"] =
+        json!({ "url": "https://evil.example/rows.json" });
+    let (status, body) = propose_op(
+        &config,
+        vec![endpoint("internal", "organization")],
+        PROJECT,
+        &fetching,
+    )
+    .await;
+    assert!(status.is_client_error(), "{status} {body}");
+    assert!(
+        body.contains("/spec/pages/0/widgets/0/spec/data/url"),
+        "{body}"
+    );
+}
+
 #[tokio::test]
 async fn a_layer_of_a_public_dashboard_cannot_move_to_a_private_endpoint() {
     let config = Config::for_tests();
