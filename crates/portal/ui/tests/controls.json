@@ -494,8 +494,8 @@
     },
     "src/components/grid/ManifestGrid.tsx": {
       "controls": {
-        "Button": 8,
-        "Checkbox": 3,
+        "Button": 7,
+        "Checkbox": 2,
         "Switch": 1
       },
       "tests": [
@@ -569,11 +569,9 @@
         "glossary_page.test.tsx",
         "list_page_header.test.tsx",
         "page_header_route.test.tsx",
-        "part_resource_list.test.tsx",
         "permission_guard.test.tsx",
         "picker_describedby.test.tsx",
         "record_view.test.tsx",
-        "resource_list.test.tsx",
         "term.test.tsx",
         "ui_components.test.tsx",
         "ui_shared_controls.test.tsx",
@@ -595,11 +593,9 @@
         "glossary_page.test.tsx",
         "list_page_header.test.tsx",
         "page_header_route.test.tsx",
-        "part_resource_list.test.tsx",
         "permission_guard.test.tsx",
         "picker_describedby.test.tsx",
         "record_view.test.tsx",
-        "resource_list.test.tsx",
         "term.test.tsx",
         "ui_components.test.tsx",
         "ui_shared_controls.test.tsx",
@@ -621,11 +617,9 @@
         "glossary_page.test.tsx",
         "list_page_header.test.tsx",
         "page_header_route.test.tsx",
-        "part_resource_list.test.tsx",
         "permission_guard.test.tsx",
         "picker_describedby.test.tsx",
         "record_view.test.tsx",
-        "resource_list.test.tsx",
         "term.test.tsx",
         "ui_components.test.tsx",
         "ui_shared_controls.test.tsx",
@@ -647,11 +641,9 @@
         "glossary_page.test.tsx",
         "list_page_header.test.tsx",
         "page_header_route.test.tsx",
-        "part_resource_list.test.tsx",
         "permission_guard.test.tsx",
         "picker_describedby.test.tsx",
         "record_view.test.tsx",
-        "resource_list.test.tsx",
         "term.test.tsx",
         "ui_components.test.tsx",
         "ui_shared_controls.test.tsx",
@@ -673,11 +665,9 @@
         "glossary_page.test.tsx",
         "list_page_header.test.tsx",
         "page_header_route.test.tsx",
-        "part_resource_list.test.tsx",
         "permission_guard.test.tsx",
         "picker_describedby.test.tsx",
         "record_view.test.tsx",
-        "resource_list.test.tsx",
         "term.test.tsx",
         "ui_components.test.tsx",
         "ui_shared_controls.test.tsx",
@@ -702,11 +692,9 @@
         "list_page_header.test.tsx",
         "page_header_route.test.tsx",
         "part_model_picker.test.tsx",
-        "part_resource_list.test.tsx",
         "permission_guard.test.tsx",
         "picker_describedby.test.tsx",
         "record_view.test.tsx",
-        "resource_list.test.tsx",
         "term.test.tsx",
         "ui_components.test.tsx",
         "ui_shared_controls.test.tsx",
@@ -728,11 +716,9 @@
         "glossary_page.test.tsx",
         "list_page_header.test.tsx",
         "page_header_route.test.tsx",
-        "part_resource_list.test.tsx",
         "permission_guard.test.tsx",
         "picker_describedby.test.tsx",
         "record_view.test.tsx",
-        "resource_list.test.tsx",
         "term.test.tsx",
         "ui_components.test.tsx",
         "ui_shared_controls.test.tsx",
@@ -755,11 +741,9 @@
         "list_page_header.test.tsx",
         "page_header_route.test.tsx",
         "page_state.test.tsx",
-        "part_resource_list.test.tsx",
         "permission_guard.test.tsx",
         "picker_describedby.test.tsx",
         "record_view.test.tsx",
-        "resource_list.test.tsx",
         "term.test.tsx",
         "ui_components.test.tsx",
         "ui_shared_controls.test.tsx",
@@ -781,11 +765,9 @@
         "glossary_page.test.tsx",
         "list_page_header.test.tsx",
         "page_header_route.test.tsx",
-        "part_resource_list.test.tsx",
         "permission_guard.test.tsx",
         "picker_describedby.test.tsx",
         "record_view.test.tsx",
-        "resource_list.test.tsx",
         "term.test.tsx",
         "ui_components.test.tsx",
         "ui_shared_controls.test.tsx",
@@ -807,11 +789,9 @@
         "glossary_page.test.tsx",
         "list_page_header.test.tsx",
         "page_header_route.test.tsx",
-        "part_resource_list.test.tsx",
         "permission_guard.test.tsx",
         "picker_describedby.test.tsx",
         "record_view.test.tsx",
-        "resource_list.test.tsx",
         "term.test.tsx",
         "ui_components.test.tsx",
         "ui_shared_controls.test.tsx",
@@ -833,11 +813,9 @@
         "glossary_page.test.tsx",
         "list_page_header.test.tsx",
         "page_header_route.test.tsx",
-        "part_resource_list.test.tsx",
         "permission_guard.test.tsx",
         "picker_describedby.test.tsx",
         "record_view.test.tsx",
-        "resource_list.test.tsx",
         "row_actions.test.tsx",
         "term.test.tsx",
         "ui_components.test.tsx",
@@ -860,11 +838,9 @@
         "glossary_page.test.tsx",
         "list_page_header.test.tsx",
         "page_header_route.test.tsx",
-        "part_resource_list.test.tsx",
         "permission_guard.test.tsx",
         "picker_describedby.test.tsx",
         "record_view.test.tsx",
-        "resource_list.test.tsx",
         "term.test.tsx",
         "ui_components.test.tsx",
         "ui_shared_controls.test.tsx",
@@ -886,11 +862,9 @@
         "glossary_page.test.tsx",
         "list_page_header.test.tsx",
         "page_header_route.test.tsx",
-        "part_resource_list.test.tsx",
         "permission_guard.test.tsx",
         "picker_describedby.test.tsx",
         "record_view.test.tsx",
-        "resource_list.test.tsx",
         "term.test.tsx",
         "ui_components.test.tsx",
         "ui_shared_controls.test.tsx",
@@ -1142,6 +1116,7 @@
       },
       "tests": [
         "entity_write_card.test.tsx",
+        "grid_data.test.tsx",
         "part_run_cards.test.tsx"
       ]
     },
@@ -1329,6 +1304,7 @@
         "Button": 1
       },
       "tests": [
+        "admin_grid_brokers.test.tsx",
         "datasources_view.test.tsx",
         "mqtt_broker_picker.test.tsx",
         "page_data_sources_page.test.tsx",
@@ -1880,6 +1856,7 @@
         "Button": 1
       },
       "tests": [
+        "admin_grid_organization.test.tsx",
         "organization_agents.test.tsx"
       ]
     },
@@ -1888,6 +1865,7 @@
         "Button": 1
       },
       "tests": [
+        "admin_grid_organization.test.tsx",
         "organization_costs.test.tsx"
       ]
     },
@@ -1914,6 +1892,7 @@
         "Button": 1
       },
       "tests": [
+        "admin_grid_organization.test.tsx",
         "data_access.test.tsx",
         "organization_brokers.test.tsx",
         "organization_connectors.test.tsx",
@@ -2366,6 +2345,7 @@
         "Button": 7
       },
       "tests": [
+        "admin_grid_brokers.test.tsx",
         "approvals_history.test.tsx"
       ]
     },
@@ -2500,6 +2480,7 @@
         "Button": 1
       },
       "tests": [
+        "admin_grid_access.test.tsx",
         "agent_access_matrix.test.tsx"
       ]
     },
@@ -2551,6 +2532,7 @@
         "Button": 1
       },
       "tests": [
+        "admin_grid_brokers.test.tsx",
         "mqtt_allowance_ui.test.tsx",
         "mqtt_broker_access.test.tsx",
         "mqtt_broker_topics.test.tsx",

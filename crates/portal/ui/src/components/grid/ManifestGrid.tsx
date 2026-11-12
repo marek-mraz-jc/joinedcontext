@@ -1,8 +1,10 @@
 /**
  * The one grid of a project's manifests (T-6115, owner 2026-10-29: "one data grid ... easy to
  * sort, query, paginate"): every list page of the sidebar draws its rows through it, so the
- * search, the filter chips, the Columns and Sort panels, the footer and the cell panel look and
- * behave the same on Endpoints, Subscriptions, Data models and Pipelines.
+ * search, the filter chips, the footer and the cell panel look and behave the same on Endpoints,
+ * Subscriptions, Data models and Pipelines. The table itself is the SDK `DataGrid` (T-6750, owner
+ * 2026-11-11: one data grid across the Portal, open data and Apps): its column menu sorts and
+ * filters one column, Arrange columns shows, hides, renames and orders, and its pager pages.
  *
  * The page passes its rows and columns; a column that names a `spec` field is edited in the cell
  * panel with the control the kind's jc-core JSON Schema gives it (`fieldWidget`), and the edit is
@@ -19,6 +21,9 @@ import { api, queryKeys, unwrap } from "../../api/client";
 import { isChange } from "../../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../../api/manifest";
 import { proposeChecked } from "../../api/proposal";
+import { DataGrid, EMPTY_QUERY } from "@joinedcontext/sdk/grid";
+import type { DataColumn, DataGridLabels, DataQuery } from "@joinedcontext/sdk/grid";
+import { gridLabels } from "../entities/PortalEntityGrid";
 import { ResourceNamePicker } from "../pickers/ResourceNamePicker";
 import { ToolbarPopover } from "../entities/GridToolbar";
 import { PageFailed } from "../ui/PageState";
@@ -34,15 +39,8 @@ import {
   Input,
   PermissionGuard,
   Select,
+  recordCard,
   Switch,
-  Table,
-  TableBody,
-  TableCell,
-  TableEmpty,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-  TableSkeleton,
 } from "../ui";
 import { fieldWidget, hintText, specValue, withSpecValue } from "./fieldWidget";
 import type { FieldWidget } from "./fieldWidget";
@@ -57,7 +55,8 @@ export interface GridColumn<T> {
   /** What the cell panel draws, with room for more than one line; the cell when absent. */
   detail?: (row: T) => ReactNode;
   /** The `spec` path (`audience`, `notification.format`) the cell panel edits for this column. */
-  field?: string;  /** How a stored value reads to a person (`project-list` -> "Selected projects"), in the filter, the chips and the panel's choices. */
+  field?: string;
+  /** How a stored value reads to a person (`project-list` -> "Selected projects"), in the filter, the chips and the panel's choices. */
   valueLabel?: (value: string) => string;
   /** Offers a filter chip per value the rows hold. */
   filter?: boolean;
@@ -90,7 +89,7 @@ export interface ManifestGridProps<T> {
   search?: string;
   onSearchChange?: (text: string) => void;
   searchLabel: string;
-  /** The page's header around the toolbar, so search, Filter, Columns and Sort share the title's row (owner 2026-10-31). */
+  /** The page's header around the toolbar, so search and Filter share the title's row (owner 2026-10-31). */
   header?: (toolbar: ReactNode) => ReactNode;
   /** Where cell edits go; without it the cell panel only reads. */
   edit?: {
@@ -122,29 +121,6 @@ type Sort = { column: string; desc: boolean } | null;
 
 const PAGE = 50;
 
-
-/** The browser key a grid keeps its chosen columns under: a view preference (UI-09). */
-function columnsKey(storageKey: string): string {
-  return `jc.list.${storageKey}.columns`;
-}
-
-function readShown(storageKey: string): string[] | null {
-  try {
-    const raw = window.localStorage.getItem(columnsKey(storageKey));
-    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
-    return Array.isArray(parsed) && parsed.every((each) => typeof each === "string") ? (parsed as string[]) : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeShown(storageKey: string, shown: string[]): void {
-  try {
-    window.localStorage.setItem(columnsKey(storageKey), JSON.stringify(shown));
-  } catch {
-    // Kept for this page only: which columns show is a convenience, not the data.
-  }
-}
 
 /** The rows `search`, `filters` and `sort` leave, in order. Exported for its test. */
 export function visibleRows<T>(
@@ -193,30 +169,82 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
   const [ownSearch, setOwnSearch] = useState("");
   const search = props.search ?? ownSearch;
   const [filters, setFilters] = useState<Record<string, string[]>>({});
-  const [sort, setSort] = useState<Sort>(null);
   const step = props.pageSize ?? PAGE;
-  // Rows shown past the first page, for this search and these filters only: a new query starts at the top.
-  const [more, setMore] = useState(0);
-  const [askedBefore, setAskedBefore] = useState("");
-  const [shown, setShown] = useState<string[]>(
-    () => readShown(storageKey) ?? columns.filter((column) => !column.hidden).map((column) => column.id),
-  );
   const [panel, setPanel] = useState<string | null>(null);
-
-  const all = useMemo(() => [name, ...columns], [name, columns]);
-  const visibleColumns = columns.filter((column) => shown.includes(column.id));
+  // The table's sort, column filters and page; a new search or chip starts again on page one.
+  const [gridQuery, setGridQuery] = useState<DataQuery>({ ...EMPTY_QUERY, pageSize: step });
+  const [askedBefore, setAskedBefore] = useState("");
   const asked = JSON.stringify([search, filters]);
   if (askedBefore !== asked) {
     setAskedBefore(asked);
-    setMore(0);
+    if (gridQuery.offset !== 0) setGridQuery({ ...gridQuery, offset: 0 });
   }
-  const limit = step + more;
+
+  const all = useMemo(() => [name, ...columns], [name, columns]);
   const server = props.server;
   const localSearch = props.search === undefined && server === undefined ? ownSearch : "";
-  const kept = useMemo(() => visibleRows(rows, all, localSearch, filters, sort), [rows, all, localSearch, filters, sort]);
-  const page = kept.slice(0, limit);
-  const width = visibleColumns.length + 2;
+  // The search box and the filter chips narrow first; the table's own header menu (sort, the value
+  // filter of one column) and its pager then work on what they keep.
+  const kept = useMemo(() => visibleRows(rows, all, localSearch, filters, null), [rows, all, localSearch, filters]);
   const opened = panel ? rows.find((row) => rowKey(row) === panel) : undefined;
+  const typeSearch = (text: string) => {
+    setOwnSearch(text);
+    server?.onSearch(text);
+  };
+  const dataColumns = useMemo<DataColumn<T>[]>(
+    () => [
+      ...all.map((column, at) => ({
+        key: column.id,
+        label: column.label,
+        text: column.text,
+        valueLabel: column.valueLabel,
+        hidden: at > 0 && column.hidden,
+        align: column.align,
+        kind: column.numeric ? ("number" as const) : ("text" as const),
+        cell: (row: T) =>
+          at === 0 ? (
+            column.cell ? column.cell(row) : column.text(row)
+          ) : (
+            // One element per cell: a phone card lays label and value out as a two-column grid, and a
+            // second child (a list of chips) would wrap into the label column (T-6115 judge).
+            <div className="min-w-0">{column.cell ? column.cell(row) : column.text(row) || <span className="text-fg-subtle">—</span>}</div>
+          ),
+      })),
+      {
+        key: "actions",
+        label: t("approvals.actions"),
+        text: () => "",
+        actions: true,
+        align: "right" as const,
+        // One menu ends the row, Details first (owner 2026-10-31: no pinned column, no second button).
+        // A click in the cell itself is no row click; a click in a dialog the row menu opened reaches
+        // this handler through React's portal bubbling and keeps its default, or its submit never
+        // fires (T-6169).
+        cell: (row: T) => (
+          <div
+            className="flex justify-end"
+            onClick={(event) => (event.currentTarget.contains(event.target as Node) ? event.preventDefault() : undefined)}
+          >
+            <RowDetails.Provider value={{ label: t("grid.details"), onSelect: () => setPanel(rowKey(row)) }}>
+              {actions ? actions(row) : <RowActions label={name.text(row)} actions={[]} />}
+            </RowDetails.Provider>
+          </div>
+        ),
+      },
+    ],
+    [all, actions, name, rowKey, t],
+  );
+  const labels = useMemo<DataGridLabels>(
+    () => ({
+      ...gridLabels(t),
+      searchRows: t("dataGrid.searchRows"),
+      searchRowsHint: t("dataGrid.searchRowsHint"),
+      noMatch: t("dataGrid.noMatch"),
+      rowCount: t("dataGrid.rowCount", { n: "{n}" }),
+      loading: t("app.loading"),
+    }),
+    [t],
+  );
 
   if (query.isError) {
     // The page's own header stays above the failure, so a refused or missing project still
@@ -244,45 +272,15 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
     );
   }
 
-  const typeSearch = (text: string) => {
-    setOwnSearch(text);
-    server?.onSearch(text);
-  };
-  const choose = (next: string[]) => {
-    setShown(next);
-    writeShown(storageKey, next);
-  };
-  const sortBy = (id: string) =>
-    setSort((now) => (now?.column === id ? (now.desc ? null : { column: id, desc: true }) : { column: id, desc: false }));
-
-  const header = (column: GridColumn<T>, primary = false) => {
-    const state = sort?.column === column.id ? (sort.desc ? "descending" : "ascending") : undefined;
-    return (
-      <TableHeaderCell key={column.id} align={column.align} aria-sort={state} className={primary ? undefined : "whitespace-nowrap"}>
-        <Button variant="ghost" size="sm" className="-ml-2 font-semibold" aria-label={t("grid.sortBy", { column: column.label })} onClick={() => sortBy(column.id)}>
-          {column.label}
-          {state ? <Icon name={state === "ascending" ? "arrowUp" : "arrowDown"} className="size-3.5" /> : null}
-        </Button>
-      </TableHeaderCell>
-    );
-  };
-
-  const toolbar = (
-    <GridToolbar
-      caption={caption}
-      rows={rows}
-      all={all}
-      columns={columns}
-      ownSearch={props.search === undefined ? { value: ownSearch, set: typeSearch, label: searchLabel } : undefined}
-      filters={filters}
-      setFilters={setFilters}
-      shown={shown}
-      choose={choose}
-      sort={sort}
-      setSort={setSort}
-      sortId={`${storageKey}-sort`}
-    />
-  );
+  // The search sits with the page's title (owner 2026-10-31); Filter and its chips sit in the
+  // table's own toolbar beside Arrange columns, over the rows they narrow.
+  const toolbar =
+    props.search === undefined ? (
+      <div className="w-full sm:w-96">
+        <Input type="search" aria-label={searchLabel} placeholder={searchLabel} value={ownSearch} onChange={(event) => typeSearch(event.target.value)} />
+      </div>
+    ) : null;
+  const tools = <GridToolbar caption={caption} rows={rows} all={all} columns={columns} filters={filters} setFilters={setFilters} />;
   return (
     <div className="flex flex-col gap-3" data-manifest-grid={storageKey}>
       {props.header ? props.header(toolbar) : toolbar}
@@ -290,47 +288,50 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
       {!query.isPending && rows.length === 0 && !(server && search.trim()) ? (
         <Card padding="md">{empty}</Card>
       ) : (
-      <Table stack data-records="" caption={caption} status={query.isPending ? t("app.loading") : undefined}>
-        <TableHead>
-          {header(name, true)}
-          {visibleColumns.map((column) => header(column))}
-          <TableHeaderCell align="right">
-            <span className="sr-only">{t("approvals.actions")}</span>
-          </TableHeaderCell>
-        </TableHead>
-        {query.isPending ? (
-          <TableSkeleton columns={width} />
-        ) : (
-          <TableBody>
-            {page.length === 0 ? (
-              <TableEmpty columns={width}>
-                {(
-                  <div className="flex flex-col items-center gap-2 py-6 text-center">
-                    <p className="text-body font-medium text-fg">{t("grid.noMatch")}</p>
-                    <Button variant="secondary" size="sm" onClick={() => { setFilters({}); typeSearch(""); props.onSearchChange?.(""); }}>
-                      {t("grid.clearAll")}
-                    </Button>
-                  </div>
-                )}
-              </TableEmpty>
-            ) : (
-              page.map((row) => (
-                <GridRow key={rowKey(row)} row={row} name={name} columns={visibleColumns} actions={actions} onDetails={() => setPanel(rowKey(row))} />
-              ))
-            )}
-          </TableBody>
-        )}
-      </Table>
+        <DataGrid
+          caption={caption}
+          rows={kept}
+          columns={dataColumns}
+          rowKey={rowKey}
+          loading={query.isPending}
+          empty={
+            <div className="flex flex-col items-center gap-2 py-6 text-center">
+              <p className="text-body font-medium text-fg">{t("grid.noMatch")}</p>
+              <Button variant="secondary" size="sm" onClick={() => { setFilters({}); typeSearch(""); props.onSearchChange?.(""); }}>
+                {t("grid.clearAll")}
+              </Button>
+            </div>
+          }
+          labels={labels}
+          storageKey={`portal:list:${storageKey}`}
+          query={gridQuery}
+          onQueryChange={setGridQuery}
+          pageSizes={[step, step * 2, step * 4]}
+          stack
+          noSearch
+          // A click on a plain cell opens the row's record link, as on every list (T-2875).
+          tools={tools}
+          tableProps={{ "data-records": "" }}
+          rowProps={() => recordCard}
+        />
       )}
 
-      {query.isPending ? null : (
+      {query.isPending || !server ? null : (
         <GridFooter
-          shown={page.length}
-          kept={kept.length}
-          total={server?.total ?? props.total ?? rows.length}
+          shown={rows.length}
+          kept={rows.length}
+          total={server.total ?? props.total ?? rows.length}
           step={step}
-          onMore={() => setMore(limit)}
-          onMoreFromServer={server?.hasMore && page.length === kept.length ? () => { setMore(limit); server.loadMore(); } : undefined}
+          onMore={() => undefined}
+          onMoreFromServer={
+            server.hasMore
+              ? () => {
+                  // The table turns to the page the next rows land on.
+                  setGridQuery({ ...gridQuery, offset: rows.length });
+                  server.loadMore();
+                }
+              : undefined
+          }
         />
       )}
 
@@ -347,7 +348,7 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
   );
 }
 
-/** Search (when the page has none in its header), Filter, Columns, Sort and the removable filter chips. */
+/** Search (when the page has none in its header), Filter and the removable filter chips; the table's header menus sort, and Arrange columns shows and orders. */
 export function GridToolbar<T>({
   caption,
   rows,
@@ -356,11 +357,6 @@ export function GridToolbar<T>({
   ownSearch,
   filters,
   setFilters,
-  shown,
-  choose,
-  sort,
-  setSort,
-  sortId,
 }: {
   caption: string;
   rows: T[];
@@ -369,11 +365,6 @@ export function GridToolbar<T>({
   ownSearch?: { value: string; set: (text: string) => void; label: string };
   filters: Record<string, string[]>;
   setFilters: (next: Record<string, string[]> | ((now: Record<string, string[]>) => Record<string, string[]>)) => void;
-  shown: string[];
-  choose: (next: string[]) => void;
-  sort: Sort;
-  setSort: (next: Sort) => void;
-  sortId: string;
 }): JSX.Element {
   const { t } = useTranslation();
   const chips = Object.entries(filters).flatMap(([id, values]) => values.map((value) => ({ id, value })));
@@ -382,7 +373,8 @@ export function GridToolbar<T>({
     setFilters((now) => {
       const values = now[id] ?? [];
       return { ...now, [id]: values.includes(value) ? values.filter((each) => each !== value) : [...values, value] };
-    });  const labelOf = (id: string) => all.find((each) => each.id === id)?.label ?? id;
+    });
+  const labelOf = (id: string) => all.find((each) => each.id === id)?.label ?? id;
   const valueOf = (id: string, value: string) => all.find((each) => each.id === id)?.valueLabel?.(value) ?? value;
   return (
       <div role="toolbar" aria-label={t("grid.toolbar", { list: caption })} className="flex flex-wrap items-center gap-2">
@@ -392,7 +384,7 @@ export function GridToolbar<T>({
         </div>
       ) : null}
       {filterable.length > 0 ? (
-        <ToolbarPopover label={t("grid.filter")} count={chips.length} anchored>
+        <ToolbarPopover label={t("grid.filter")} count={chips.length} anchored outlined>
           <div className="flex flex-col gap-3">
             {filterable.map((column) => {
               const values = valueCounts(rows, column);
@@ -415,44 +407,6 @@ export function GridToolbar<T>({
           </div>
         </ToolbarPopover>
       ) : null}
-      <ToolbarPopover label={t("grid.columns")}>
-        <fieldset className="flex flex-col gap-1">
-          <legend className="mb-1 text-caption text-fg-muted">{t("grid.columnsHint")}</legend>
-          {columns.map((column) => (
-            <Checkbox
-              key={column.id}
-              label={column.label}
-              checked={shown.includes(column.id)}
-              onChange={() => choose(shown.includes(column.id) ? shown.filter((id) => id !== column.id) : [...shown, column.id])}
-            />
-          ))}
-        </fieldset>
-      </ToolbarPopover>
-      <ToolbarPopover label={t("grid.sort")} count={sort ? 1 : undefined}>
-        <div className="flex flex-col gap-2">
-          <label className="text-caption text-fg-muted" htmlFor={sortId}>
-            {t("grid.sortHint")}
-          </label>
-          <Select
-            id={sortId}
-            value={sort?.column ?? ""}
-            onChange={(event) => setSort(event.target.value ? { column: event.target.value, desc: sort?.desc ?? false } : null)}
-          >
-            <option value="">{t("grid.sortNone")}</option>
-            {all.map((column) => (
-              <option key={column.id} value={column.id}>
-                {column.label}
-              </option>
-            ))}
-          </Select>
-          {sort ? (
-            <Select aria-label={t("grid.sortDirection")} value={sort.desc ? "desc" : "asc"} onChange={(event) => setSort({ ...sort, desc: event.target.value === "desc" })}>
-              <option value="asc">{t("grid.ascending")}</option>
-              <option value="desc">{t("grid.descending")}</option>
-            </Select>
-          ) : null}
-        </div>
-      </ToolbarPopover>
       {chips.map(({ id, value }) => (
         <Button
           key={`${id}=${value}`}
@@ -471,50 +425,6 @@ export function GridToolbar<T>({
         </Button>
       ) : null}
     </div>
-  );
-}
-
-/** One row: the name, the shown columns (each one value for a phone card's line) and the row's ways in. */
-export function GridRow<T>({
-  row,
-  name,
-  columns,
-  actions,
-  onDetails,
-}: {
-  row: T;
-  name: GridColumn<T>;
-  columns: GridColumn<T>[];
-  actions?: (row: T) => ReactNode;
-  onDetails: () => void;
-}): JSX.Element {
-  const { t } = useTranslation();
-  return (
-    <TableRow>
-      <TableCell primary className="align-middle">
-        {name.cell ? name.cell(row) : name.text(row)}
-      </TableCell>
-      {columns.map((column) => (
-        <TableCell key={column.id} align={column.align} className="align-middle" data-label={column.label}>
-          {/* One element per cell: a phone card lays label and value out as a two-column grid, and a
-              second child (a list of chips) would wrap into the label column (T-6115 judge). */}
-          <div className="min-w-0">{column.cell ? column.cell(row) : column.text(row) || <span className="text-fg-subtle">—</span>}</div>
-        </TableCell>
-      ))}
-      {/* One menu ends the row, Details first (owner 2026-10-31: no pinned column, no second button).
-          A click in the cell itself is no row click; a click in a dialog the row menu opened reaches
-          this handler through React's portal bubbling and keeps its default, or its submit never
-          fires (T-6169). */}
-      <TableCell
-        align="right"
-        className="align-middle sm:w-px sm:whitespace-nowrap"
-        onClick={(event) => (event.currentTarget.contains(event.target as Node) ? event.preventDefault() : undefined)}
-      >
-        <RowDetails.Provider value={{ label: t("grid.details"), onSelect: onDetails }}>
-          {actions ? actions(row) : <RowActions label={name.text(row)} actions={[]} />}
-        </RowDetails.Provider>
-      </TableCell>
-    </TableRow>
   );
 }
 

@@ -95,7 +95,7 @@ function show(given: Given = {}) {
 }
 
 const rowOf = async (type: string) =>
-  (await screen.findByRole("rowheader", { name: new RegExp(type) })).closest("tr") as HTMLElement;
+  (await screen.findAllByRole("rowheader", { name: new RegExp(type) }))[0].closest("tr") as HTMLElement;
 
 describe("the access matrix against the UI contract", () => {
   beforeEach(async () => {
@@ -137,7 +137,8 @@ describe("the access matrix against the UI contract", () => {
     expect(within(write as HTMLElement).getByText(/updateAttrs/)).toBeInTheDocument();
     expect(within(read as HTMLElement).queryByText(/updateAttrs/)).toBeNull();
     const header = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
-    expect(header).toContain(i18n.t("access.matrix.write"));
+    // Each header is its label plus the grid's column-menu button.
+    expect(header.some((text) => text?.startsWith(i18n.t("access.matrix.write")))).toBe(true);
   });
 
   it("asks the endpoint the reader picks, and only that one", async () => {

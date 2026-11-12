@@ -13,21 +13,14 @@ import { EditResourceAction } from "../../components/EditResourceDialog";
 import { ResourceFormDialog } from "../../components/ResourceFormDialog";
 import { FormFrame, useCreateForm, useFormRoute } from "../../components/forms/FormRoute";
 import { groupSchema } from "../../schemas/kinds";
-import { usePersonNames, withPersonNames } from "../../api/personNames";
+import { personLabel, usePersonNames, withPersonNames } from "../../api/personNames";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import { PersonName } from "../../components/PersonName";
 import {
   Badge,
   Button,
   EmptyState,
-  PageFailed,
-  Table,
-  TableBody,
-  TableCell,
-  TableEmpty,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-  TableSkeleton,
 } from "../../components/ui";
 import { PermissionGuard } from "../../components/ui/PermissionGuard";
 import { useReadableList } from "../../api/permissions";
@@ -218,6 +211,101 @@ export function Groups({ project }: { project: string }): JSX.Element {
   });
   const names = usePersonNames(rows.flatMap((row) => row.members));
 
+  const columns: DataColumn<Row>[] = [
+    {
+      key: "group",
+      label: t("access.groups.group"),
+      text: (row) => row.name,
+      cell: (row) => (
+        <>
+          <Link
+            data-row-link=""
+            to="/organization/$tab/$"
+            params={{ tab: "groups", _splat: encodeURIComponent(row.name) }}
+            className="underline"
+          >
+            {row.name}
+          </Link>
+          {row.description ? <div className="mt-0.5 text-caption text-fg-subtle">{row.description}</div> : null}
+        </>
+      ),
+    },
+    {
+      key: "members",
+      label: t("access.groups.members"),
+      text: (row) => row.members.map((member) => personLabel(member, names)).join(", "),
+      cell: (row) =>
+        row.members.length === 0 ? (
+          <span className="text-fg-subtle">{t("access.groups.nobody")}</span>
+        ) : (
+          <ul className="flex flex-col gap-0.5">
+            {row.members.map((member) => (
+              <li key={member} className="text-caption">
+                <PersonName id={member} names={names} />
+              </li>
+            ))}
+          </ul>
+        ),
+    },
+    {
+      key: "sync",
+      label: t("access.groups.sync"),
+      text: (row) =>
+        row.sync
+          ? t(`access.groups.reason.${row.sync.reason}`, { defaultValue: row.sync.reason })
+          : t("access.groups.inStep"),
+      cell: (row) =>
+        row.sync ? (
+          <div className="flex flex-col items-start gap-1">
+            {/* A member who has not signed in yet is a wait, not a fault (reconciler/groups.rs). */}
+            <Badge tone={row.sync.ok ? "warning" : row.sync.reason === "MemberUnknown" ? "neutral" : "danger"}>
+              {t(`access.groups.reason.${row.sync.reason}`, {
+                defaultValue: row.sync.reason,
+              })}
+            </Badge>
+            <span className="text-caption text-fg-muted">
+              {row.sync.reason === "MemberUnknown"
+                ? t("personName.firstSignIn")
+                : withPersonNames(row.sync.message, names)}
+            </span>
+          </div>
+        ) : (
+          <span className="text-fg-subtle">{t("access.groups.inStep")}</span>
+        ),
+    },
+    {
+      key: "actions",
+      label: t("approvals.actions"),
+      text: () => "",
+      actions: true,
+      align: "right",
+      cell: (row) => {
+        const target = {
+          project,
+          home: ORG_NAMESPACE,
+          kind: "Group",
+          plural: "groups",
+          name: row.name,
+          label: row.name,
+        };
+        return (
+          <span className="inline-flex items-center gap-1.5">
+            {/* Adding or removing a member is editing the manifest (PF-52). */}
+            <EditResourceAction
+              target={target}
+              form={{
+                schema: memberSchema,
+                fromManifest: (manifest) => fromGroupEnvelope(manifest) as unknown as Record<string, unknown>,
+                toManifest: (edited, stored) => toGroupEnvelope(edited as unknown as GroupForm, stored),
+              }}
+            />
+            <DeleteResourceAction target={target} />
+          </span>
+        );
+      },
+    },
+  ];
+
   return (
     <section className="space-y-4" aria-labelledby="groups-heading">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -238,122 +326,19 @@ export function Groups({ project }: { project: string }): JSX.Element {
 
       {groups.hidden ? (
         <AskAdmins message={t("organization.adminOnly")} />
-      ) : groups.error ? (
-        <PageFailed
-          error={groups.error}
-          onRetry={() => {
-            void groups.refetch();
-          }}
-        />
       ) : (
-        <Table
-          data-records=""
+        <AdminGrid
           stack
+          storageKey={`${project}:groups`}
+          query={groups}
           caption={t("access.groups.caption")}
-          status={groups.isPending ? t("app.loading") : undefined}
-        >
-          <TableHead>
-            <TableHeaderCell>{t("access.groups.group")}</TableHeaderCell>
-            <TableHeaderCell>{t("access.groups.members")}</TableHeaderCell>
-            <TableHeaderCell>{t("access.groups.sync")}</TableHeaderCell>
-            <TableHeaderCell align="right">{t("approvals.actions")}</TableHeaderCell>
-          </TableHead>
-          {groups.isPending ? (
-            <TableSkeleton columns={4} />
-          ) : (
-            <TableBody>
-              {rows.length === 0 ? (
-                <TableEmpty columns={4}>
-                  <EmptyState bare
-                    title={t("access.groups.empty")}
-                    description={t("access.groups.emptyHint")} />
-                </TableEmpty>
-              ) : (
-                rows.map((row) => (
-                  <TableRow key={row.name}>
-                    <TableCell primary>
-                      <Link
-                        data-row-link=""
-                        to="/organization/$tab/$"
-                        params={{ tab: "groups", _splat: encodeURIComponent(row.name) }}
-                        className="underline"
-                      >
-                        {row.name}
-                      </Link>
-                      {row.description ? (
-                        <div className="mt-0.5 text-caption text-fg-subtle">{row.description}</div>
-                      ) : null}
-                    </TableCell>
-                    <TableCell data-label={t("access.groups.members")}>
-                      {row.members.length === 0 ? (
-                        <span className="text-fg-subtle">{t("access.groups.nobody")}</span>
-                      ) : (
-                        <ul className="flex flex-col gap-0.5">
-                          {row.members.map((member) => (
-                            <li key={member} className="text-caption">
-                              <PersonName id={member} names={names} />
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </TableCell>
-                    <TableCell data-label={t("access.groups.sync")}>
-                      {row.sync ? (
-                        <div className="flex flex-col items-start gap-1">
-                          {/* A member who has not signed in yet is a wait, not a fault (reconciler/groups.rs). */}
-                          <Badge tone={row.sync.ok ? "warning" : row.sync.reason === "MemberUnknown" ? "neutral" : "danger"}>
-                            {t(`access.groups.reason.${row.sync.reason}`, {
-                              defaultValue: row.sync.reason,
-                            })}
-                          </Badge>
-                          <span className="text-caption text-fg-muted">
-                            {row.sync.reason === "MemberUnknown"
-                              ? t("personName.firstSignIn")
-                              : withPersonNames(row.sync.message, names)}
-                          </span>
-                        </div>
-                      ) : (
-                        <span className="text-fg-subtle">{t("access.groups.inStep")}</span>
-                      )}
-                    </TableCell>
-                    <TableCell align="right">
-                      <span className="inline-flex items-center gap-1.5">
-                        {/* Adding or removing a member is editing the manifest (PF-52). */}
-                        <EditResourceAction
-                          target={{
-                            project,
-                            home: ORG_NAMESPACE,
-                            kind: "Group",
-                            plural: "groups",
-                            name: row.name,
-                            label: row.name,
-                          }}
-                          form={{
-                            schema: memberSchema,
-                            fromManifest: (manifest) =>
-                              fromGroupEnvelope(manifest) as unknown as Record<string, unknown>,
-                            toManifest: (edited, stored) =>
-                              toGroupEnvelope(edited as unknown as GroupForm, stored),
-                          }}
-                        />
-                        <DeleteResourceAction
-                          target={{
-                            project,
-                            home: ORG_NAMESPACE,
-                            kind: "Group",
-                            plural: "groups",
-                            name: row.name,
-                            label: row.name,
-                          }}
-                        />
-                      </span>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          )}
-        </Table>
+          rows={rows}
+          rowKey={(row) => row.name}
+          columns={columns}
+          empty={
+            <EmptyState bare title={t("access.groups.empty")} description={t("access.groups.emptyHint")} />
+          }
+        />
       )}
 
       <NewGroupDialog open={writing} onOpenChange={setWriting} />

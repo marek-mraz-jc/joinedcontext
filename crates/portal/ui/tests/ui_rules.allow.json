@@ -134,5 +134,195 @@
       "group": "ui-pages",
       "reason": "T-4888: the development gallery frames each specimen without a shadow so the specimen's own shadow reads; it ships in no production build."
     }
+  },
+  "data_table_is_the_grid": {
+    "_max": 41,
+    "src/components/ActivityFeed.tsx": {
+      "lines": 2,
+      "group": "grid-ops"
+    },
+    "src/components/diff/PlanDiffViewer.tsx": {
+      "lines": 1,
+      "group": "grid-ops"
+    },
+    "src/components/drift/DriftResolutionModal.tsx": {
+      "lines": 1,
+      "group": "grid-ops"
+    },
+    "src/components/endpoints/AccessMatrix.tsx": {
+      "lines": 1,
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): each cell is a toggle button that grants or revokes one action for one principal; a two-axis matrix of controls, which a sorted or filtered grid would scramble"
+    },
+    "src/components/endpoints/UsageSection.tsx": {
+      "lines": 2,
+      "group": "grid-ops"
+    },
+    "src/components/forms/widgets/AttributeCapabilitiesField.tsx": {
+      "lines": 1,
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): a form widget: each row is one attribute of the Policy being edited, each cell a capability control bound to the form value"
+    },
+    "src/components/forms/widgets/OutputSourceEditors.tsx": {
+      "lines": 2,
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): two form widgets: the fixed iCal fields and feed roles in their schema order, each row an attribute picker bound to the Endpoint form"
+    },
+    "src/components/panels/TablePanel.tsx": {
+      "lines": 1,
+      "group": "grid-data",
+      "reason": "PhoneTable is the phone face of a dashboard table panel whose desktop face is already the SDK EntityGrid: Grafana's units, value mappings and cell colours in a compact row, because the grid's filter and menu heads need ~8rem a column and push all but two columns past a 400 px screen"
+    },
+    "src/components/panels/TimeSeriesPanel.tsx": {
+      "lines": 1,
+      "group": "grid-data",
+      "reason": "a chart's legend in Grafana's table mode: each row is the series' show/hide toggle with its calculations (mean, max ...), part of the chart and read beside it; a toolbar, a pager and a column menu would sit inside the chart"
+    },
+    "src/pages/apps/Prose.tsx": {
+      "lines": 1,
+      "group": "grid-data",
+      "reason": "a markdown table the assistant wrote inside its answer, drawn in the flow of the text as the answer's own words; it holds a few rows of prose, not a data set to search or sort"
+    },
+    "src/pages/apps/QueryResultCard.tsx": {
+      "lines": 2,
+      "group": "grid-data",
+      "reason": "result cards in the assistant dock, which is ~24rem wide at every screen width: these tables stack into cards by their container's width (table-stack-narrow, T-2460), while the grid stacks only below a 640 px viewport, so in the dock it would scroll sideways with a toolbar over a handful of rows"
+    },
+    "src/pages/apps/RunTimeSpent.tsx": {
+      "lines": 1,
+      "group": "grid-ops"
+    },
+    "src/pages/assistant/AssistantPage.tsx": {
+      "lines": 1,
+      "group": "grid-data",
+      "reason": "conversation threads: a thread's later runs fold under its latest run and open in place, and Show more pages by thread; the grid sorts and pages single rows, which would split a thread and orphan its folded runs"
+    },
+    "src/pages/endpoints/EndpointDocs.tsx": {
+      "lines": 1,
+      "group": "grid-editors",
+      "reason": "a key-value fact table (T-6753): an operation's parameters beside their meaning, two columns in the order the API declares them"
+    },
+    "src/pages/endpoints/FilterProof.tsx": {
+      "lines": 1,
+      "group": "grid-editors",
+      "reason": "a comparison, not a list (T-6753): each row puts the original entity beside what the Endpoint serves, and a phone shows one side; sorting or hiding a column would break the pairing"
+    },
+    "src/pages/endpoints/SchemaProjectionPanel.tsx": {
+      "lines": 1,
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): one checkbox per attribute of the type that hides it from the projection, a key-value form in the model's order"
+    },
+    "src/pages/explore/TypeQuality.tsx": {
+      "lines": 1,
+      "group": "grid-ops"
+    },
+    "src/pages/gallery/Gallery.tsx": {
+      "lines": 3,
+      "group": "grid-data",
+      "reason": "the component gallery's specimens of the ui Table itself (rows, waiting, empty), which stays the component for key-value facts and two-column tables; a specimen must draw the component it documents"
+    },
+    "src/pages/health/HealthLog.tsx": {
+      "lines": 1,
+      "group": "grid-ops"
+    },
+    "src/pages/knowledge/AssistantChat.tsx": {
+      "lines": 1,
+      "group": "grid-data",
+      "reason": "a markdown table the assistant wrote inside its answer, drawn in the flow of the text; the data rows a read returned are on the shared grid (Data)"
+    },
+    "src/pages/models/EnumValues.tsx": {
+      "lines": 1,
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): each row is a permissible value with label inputs per language and a remove button, bound to the model draft"
+    },
+    "src/pages/models/LinkmlVisualEditor.tsx": {
+      "lines": 1,
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): each row opens its slot in the editor and marks the selected slot; the slot order is the model's order, which the editor writes back"
+    },
+    "src/pages/models/MappingsEditor.tsx": {
+      "lines": 1,
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): each row is a target slot with a source picker and a unit control bound to the mapping draft"
+    },
+    "src/pages/models/ModelCanvas.tsx": {
+      "lines": 1,
+      "group": "grid-editors",
+      "reason": "a key-value fact table (T-6753): a class card on the canvas listing field and type, two columns highlighted from the drawing"
+    },
+    "src/pages/models/ModelPage.tsx": {
+      "lines": 1,
+      "group": "grid-editors",
+      "reason": "a key-value fact table (T-6753): a type's field beside its range, two columns in the model's order"
+    },
+    "src/pages/models/RelationshipEditor.tsx": {
+      "lines": 1,
+      "group": "grid-editors",
+      "reason": "an editor, not a list (T-6753): each row is a relationship with cardinality and on-delete pickers and row actions, bound to the model draft"
+    },
+    "src/pages/pipelines/PipelineHealth.tsx": {
+      "lines": 2,
+      "group": "grid-ops"
+    },
+    "src/pages/pipelines/PipelineRejected.tsx": {
+      "lines": 2,
+      "group": "grid-ops"
+    },
+    "src/pages/pipelines/PipelineRuns.tsx": {
+      "lines": 2,
+      "group": "grid-ops"
+    },
+    "src/pages/pipelines/PipelineSourceReport.tsx": {
+      "lines": 1,
+      "group": "grid-ops"
+    },
+    "src/pages/pipelines/PipelineStudio.tsx": {
+      "lines": 1,
+      "group": "grid-ops"
+    },
+    "src/pages/pipelines/SpaceChanges.tsx": {
+      "lines": 1,
+      "group": "grid-ops"
+    },
+    "src/pages/pipelines/WorkbenchTarget.tsx": {
+      "lines": 2,
+      "group": "grid-data",
+      "reason": "an editor and a fact sheet: the target table edits each attribute's history plan in its row and closes with the fixed lifetime rows, and the record table is one record's fields, each with its check; neither is a list of records to search or page"
+    },
+    "src/pages/repositories/FilesView.tsx": {
+      "lines": 1,
+      "group": "grid-admin",
+      "reason": "file browser: name and size of a folder's entries with a parent-folder row spanning both columns, not a data list"
+    },
+    "src/pages/spaces/ImportRows.tsx": {
+      "lines": 1,
+      "group": "grid-data",
+      "reason": "the column mapping is a form: each row is a file column with the Select that picks the field it fills; the file's preview rows are on the shared grid"
+    },
+    "src/pages/spaces/SpaceChecks.tsx": {
+      "lines": 1,
+      "group": "grid-ops"
+    },
+    "src/pages/spaces/SpaceDrift.tsx": {
+      "lines": 1,
+      "group": "grid-ops"
+    },
+    "src/pages/spaces/SpaceInside.tsx": {
+      "lines": 1,
+      "group": "grid-data",
+      "reason": "the types table reads each type's count and samples through the space's Endpoint, one read per row in turn (TypeRow), and draws a refusal across two cells; the grid sorts and filters by text a row has not fetched yet. The space's Endpoints and Policies are on the shared grid"
+    },
+    "src/pages/spaces/SpaceQuality.tsx": {
+      "lines": 2,
+      "group": "grid-ops"
+    },
+    "src/pages/spaces/SpaceRetention.tsx": {
+      "lines": 1,
+      "group": "grid-ops"
+    },
+    "src/pages/spaces/SpaceTemporalAudit.tsx": {
+      "lines": 2,
+      "group": "grid-ops"
+    }
   }
 }

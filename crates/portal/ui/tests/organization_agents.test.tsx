@@ -146,10 +146,8 @@ describe("Administration → Agents", () => {
     expect(within(chat).getByText("Cap 200,000 tokens a day")).toBeInTheDocument();
     expect(within(chat).getByText(t.state.active)).toBeInTheDocument();
     expect(within(rows[2]).getByText("jana@hel.fi")).toBeInTheDocument();
-    // The phone list carries the same agents, one card each.
-    const cards = within(screen.getByRole("list", { name: t.caption })).getAllByRole("listitem");
-    expect(cards).toHaveLength(3);
-    expect(within(cards[2]).getByText("Spaces: 1 · Endpoints: 1 · 41,000 of 400,000 tokens")).toBeInTheDocument();
+    // The phone shows the same rows as cards of the same grid (stack), not a second list.
+    expect(screen.queryByRole("list", { name: t.caption })).toBeNull();
     expect(within(rows[2]).getByText(t.spendNone)).toBeInTheDocument();
     expect(within(rows[3]).getByText("41,000 of 400,000 tokens")).toBeInTheDocument();
     expect(within(rows[3]).getByText(t.actsAs.caller)).toBeInTheDocument();

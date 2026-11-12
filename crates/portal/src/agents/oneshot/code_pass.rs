@@ -710,9 +710,9 @@ impl Driver {
         fix: Option<Fix<'_>>,
     ) -> String {
         let mut pack = String::from("## THE SDK\n\n");
-        pack.push_str(code::SDK_API.trim());
+        pack.push_str(code::for_apps(code::SDK_API).trim());
         pack.push_str("\n\nWhat `@joinedcontext/sdk` exports:\n```ts\n");
-        pack.push_str(code::SDK_EXPORTS.trim());
+        pack.push_str(code::for_apps(code::SDK_EXPORTS).trim());
         pack.push_str("\n```\n\n## THE FILES OF THE PROJECT\n\n");
         // The template's components the application has not changed go by their exports and
         // its unchanged tests by name (T-3076): they are used, not rewritten.

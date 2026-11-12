@@ -6,17 +6,14 @@ import { asManifests } from "../../api/manifest";
 import type { Manifest } from "../../api/manifest";
 import { useReadableList } from "../../api/permissions";
 import { RecordLink, RECORD_LINK_STYLE } from "../../components/RecordLink";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import {
   Alert,
   Badge,
   Card,
+  EmptyState,
   Skeleton,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
 } from "../../components/ui";
 import { KindList } from "../../routes/ResourceListPage";
 import { useMqttAllowance } from "./allowance";
@@ -199,49 +196,21 @@ export function Connections({ project, brokers, bare }: { project: string; broke
         accounts: of(accounts),
       });
   const hidden = lists.some((query) => query.hidden);
-  const table = (
-    <Table stack caption={t("mqttbrokers.connections.title")}>
-      <TableHead>
-        <TableHeaderCell>{t("mqttbrokers.connections.edge")}</TableHeaderCell>
-        <TableHeaderCell>{t("mqttbrokers.connections.from")}</TableHeaderCell>
-        <TableHeaderCell>{t("mqttbrokers.connections.to")}</TableHeaderCell>
-        <TableHeaderCell>{t("mqttbrokers.connections.allowedBy")}</TableHeaderCell>
-        <TableHeaderCell>{t("mqttbrokers.connections.state")}</TableHeaderCell>
-      </TableHead>
-      <TableBody>
-        {edges.map((edge, index) => (
-          <EdgeRow key={`${edge.kind}-${edge.from}-${edge.to}-${index}`} project={project} edge={edge} />
-        ))}
-      </TableBody>
-    </Table>
-  );
-  // On a broker's own page the section around it carries the title and the lead.
-  if (bare) return table;
-  return (
-    <section aria-labelledby="mqtt-connections" className="flex flex-col gap-3">
-      <h2 id="mqtt-connections" className="text-title font-semibold text-fg">
-        {t("mqttbrokers.connections.title")}
-      </h2>
-      <p className="text-body text-fg-muted">
-        {t("mqttbrokers.connections.lead")}
-        {hidden ? ` ${t("mqttbrokers.connections.partial")}` : ""}
-      </p>
-      {table}
-    </section>
-  );
-}
-
-function EdgeRow({ project, edge }: { project: string; edge: Edge }): JSX.Element {
-  const { t } = useTranslation();
-  return (
-    <TableRow data-edge={edge.problem ? "red" : "green"}>
-      <TableCell>{t(`mqttbrokers.connections.kind.${edge.kind}`)}</TableCell>
-      <TableCell primary data-label={t("mqttbrokers.connections.from")}>{edge.from}</TableCell>
-      <TableCell data-label={t("mqttbrokers.connections.to")}>{edge.to || "—"}</TableCell>
-      <TableCell data-label={t("mqttbrokers.connections.allowedBy")}>{t(edge.allowedBy.key, edge.allowedBy.values)}</TableCell>
-      <TableCell data-label={t("mqttbrokers.connections.state")}>
-        {edge.problem ? (
-          <span className="flex flex-col gap-1">
+  const kindOf = (edge: Edge) => t(`mqttbrokers.connections.kind.${edge.kind}`);
+  const allowedOf = (edge: Edge) => t(edge.allowedBy.key, edge.allowedBy.values);
+  const stateOf = (edge: Edge) => (edge.problem ? t(edge.problem.key, edge.problem.values) : t("mqttbrokers.connections.ok"));
+  const columns: DataColumn<Edge>[] = [
+    { key: "from", label: t("mqttbrokers.connections.from"), text: (edge) => edge.from },
+    { key: "edge", label: t("mqttbrokers.connections.edge"), text: kindOf },
+    { key: "to", label: t("mqttbrokers.connections.to"), text: (edge) => edge.to, cell: (edge) => edge.to || "—" },
+    { key: "allowedBy", label: t("mqttbrokers.connections.allowedBy"), text: allowedOf },
+    {
+      key: "state",
+      label: t("mqttbrokers.connections.state"),
+      text: stateOf,
+      cell: (edge) =>
+        edge.problem ? (
+          <span className="flex flex-col gap-1" data-edge="red">
             <Badge tone="danger">{t(edge.problem.key, edge.problem.values)}</Badge>
             {edge.fix ? (
               edge.fix.name ? (
@@ -260,9 +229,36 @@ function EdgeRow({ project, edge }: { project: string; edge: Edge }): JSX.Elemen
             ) : null}
           </span>
         ) : (
-          <Badge tone="success">{t("mqttbrokers.connections.ok")}</Badge>
-        )}
-      </TableCell>
-    </TableRow>
+          <span data-edge="green">
+            <Badge tone="success">{t("mqttbrokers.connections.ok")}</Badge>
+          </span>
+        ),
+    },
+  ];
+  const table = (
+    <AdminGrid
+      query={{ isPending: lists.some((query) => query.isPending), isError: false, error: null, refetch: () => undefined }}
+      caption={t("mqttbrokers.connections.title")}
+      rows={edges}
+      rowKey={(edge) => `${edge.kind}-${edge.from}-${edge.to}-${edges.indexOf(edge)}`}
+      columns={columns}
+      storageKey={`${project}:mqtt-connections`}
+      stack
+      empty={<EmptyState bare icon="pipelines" title={t("mqttbrokers.connections.title")} description={t("mqttbrokers.connections.emptyHint")} />}
+    />
+  );
+  // On a broker's own page the section around it carries the title and the lead.
+  if (bare) return table;
+  return (
+    <section aria-labelledby="mqtt-connections" className="flex flex-col gap-3">
+      <h2 id="mqtt-connections" className="text-title font-semibold text-fg">
+        {t("mqttbrokers.connections.title")}
+      </h2>
+      <p className="text-body text-fg-muted">
+        {t("mqttbrokers.connections.lead")}
+        {hidden ? ` ${t("mqttbrokers.connections.partial")}` : ""}
+      </p>
+      {table}
+    </section>
   );
 }

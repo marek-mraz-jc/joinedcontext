@@ -11,7 +11,9 @@ import type { Manifest, ResourceProposal } from "../../api/manifest";
 import { usePermissions } from "../../api/permissions";
 import { proposeChecked } from "../../api/proposal";
 import type { components } from "../../api/schema";
-import { Alert, Badge, Button, Card, EmptyState, safeHref, Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow, TableSkeleton, tabPanelProps, Tabs } from "../../components/ui";
+import { Alert, Badge, Button, buttonClass, EmptyState, safeHref, tabPanelProps, Tabs } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import type { BadgeTone } from "../../components/ui/Badge";
 import { PageFailed } from "../../components/ui/PageState";
 import { AgentActivity } from "./AgentActivity";
@@ -68,6 +70,51 @@ export function Agents(): JSX.Element {
   const agents = useAgents();
   const items = agents.data?.items ?? [];
   const denied = refusal(agents.error);
+  const columns: DataColumn<AgentItem>[] = [
+    {
+      key: "name",
+      label: t("organization.agents.column.name"),
+      text: (item) => item.title ?? item.name,
+      cell: (item) => (
+        <>
+          <Link
+            data-row-link=""
+            to="/organization/$tab/$"
+            params={{ tab: "agents", _splat: agentPath(item) }}
+            className="underline"
+          >
+            {item.title ?? item.name}
+          </Link>
+          <span className="block text-caption text-fg-muted">
+            {t(`organization.agents.kind.${item.kind}`)} · {projectName(t, item.project)}
+          </span>
+        </>
+      ),
+    },
+    { key: "owner", label: t("organization.agents.column.owner"), text: (item) => ownerText(t, item) },
+    {
+      key: "actsAs",
+      label: t("organization.agents.column.actsAs"),
+      text: (item) => t(`organization.agents.actsAs.${item.actsAs}`),
+    },
+    { key: "reach", label: t("organization.agents.column.reach"), text: (item) => reachText(t, item) },
+    {
+      key: "lastActivity",
+      label: t("organization.agents.column.lastActivity"),
+      kind: "date",
+      text: (item) => item.lastActivity ?? "",
+      cell: (item) => <When value={item.lastActivity} />,
+    },
+    { key: "spend", label: t("organization.agents.column.spend"), text: (item) => spendText(t, item) },
+    {
+      key: "state",
+      label: t("organization.agents.column.state"),
+      text: (item) => t(`organization.agents.state.${item.state}`),
+      cell: (item) => (
+        <Badge tone={STATE_TONE[item.state]}>{t(`organization.agents.state.${item.state}`)}</Badge>
+      ),
+    },
+  ];
   return (
     <section
       className="space-y-4"
@@ -86,121 +133,29 @@ export function Agents(): JSX.Element {
       </div>
       {denied !== null ? (
         <Alert tone="info">{denied}</Alert>
-      ) : agents.isError ? (
-        <PageFailed
-          error={agents.error}
-          onRetry={() => void agents.refetch()}
-        />
-      ) : agents.isSuccess && items.length === 0 ? (
-        <EmptyState
-          icon="access"
-          title={t("organization.agents.empty")}
-          description={t("organization.agents.emptyHint")}
-        />
       ) : (
-        <>
-          <ul
-            className="space-y-3 sm:hidden"
-            aria-label={t("organization.agents.caption")}
-          >
-            {items.map((item) => (
-              <Card as="li" padding="md" key={agentPath(item)}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <Link
-                      to="/organization/$tab/$"
-                      params={{ tab: "agents", _splat: agentPath(item) }}
-                      className="font-semibold underline [overflow-wrap:anywhere]"
-                    >
-                      {item.title ?? item.name}
-                    </Link>
-                    <span className="block text-caption text-fg-muted">
-                      {t(`organization.agents.kind.${item.kind}`)} ·{" "}
-                      {projectName(t, item.project)}
-                    </span>
-                  </div>
-                  <Badge tone={STATE_TONE[item.state]}>
-                    {t(`organization.agents.state.${item.state}`)}
-                  </Badge>
-                </div>
-                <p className="mt-2 text-body text-fg">
-                  {t(`organization.agents.actsAs.${item.actsAs}`)}
-                </p>
-                <p className="text-caption text-fg-muted">
-                  {reachText(t, item)} · {spendText(t, item)}
-                </p>
-              </Card>
-            ))}
-          </ul>
-          <div className="hidden sm:block">
-            <Table
-              caption={t("organization.agents.caption")}
-              status={agents.isPending ? t("app.loading") : undefined}
-            >
-              <TableHead>
-                <TableHeaderCell>
-                  {t("organization.agents.column.name")}
-                </TableHeaderCell>
-                <TableHeaderCell>
-                  {t("organization.agents.column.owner")}
-                </TableHeaderCell>
-                <TableHeaderCell>
-                  {t("organization.agents.column.actsAs")}
-                </TableHeaderCell>
-                <TableHeaderCell>
-                  {t("organization.agents.column.reach")}
-                </TableHeaderCell>
-                <TableHeaderCell>
-                  {t("organization.agents.column.lastActivity")}
-                </TableHeaderCell>
-                <TableHeaderCell>
-                  {t("organization.agents.column.spend")}
-                </TableHeaderCell>
-                <TableHeaderCell>
-                  {t("organization.agents.column.state")}
-                </TableHeaderCell>
-              </TableHead>
-              {agents.isPending ? (
-                <TableSkeleton columns={7} />
-              ) : (
-                <TableBody>
-                  {items.map((item) => (
-                    <TableRow key={agentPath(item)}>
-                      <TableCell primary>
-                        <Link
-                          data-row-link=""
-                          to="/organization/$tab/$"
-                          params={{ tab: "agents", _splat: agentPath(item) }}
-                          className="underline"
-                        >
-                          {item.title ?? item.name}
-                        </Link>
-                        <span className="block text-caption text-fg-muted">
-                          {t(`organization.agents.kind.${item.kind}`)} ·{" "}
-                          {projectName(t, item.project)}
-                        </span>
-                      </TableCell>
-                      <TableCell>{ownerText(t, item)}</TableCell>
-                      <TableCell>
-                        {t(`organization.agents.actsAs.${item.actsAs}`)}
-                      </TableCell>
-                      <TableCell>{reachText(t, item)}</TableCell>
-                      <TableCell>
-                        <When value={item.lastActivity} />
-                      </TableCell>
-                      <TableCell>{spendText(t, item)}</TableCell>
-                      <TableCell>
-                        <Badge tone={STATE_TONE[item.state]}>
-                          {t(`organization.agents.state.${item.state}`)}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              )}
-            </Table>
-          </div>
-        </>
+        <AdminGrid<AgentItem>
+          query={agents}
+          caption={t("organization.agents.caption")}
+          storageKey="organization:agents"
+          rows={items}
+          rowKey={agentPath}
+          columns={columns}
+          stack
+          empty={
+            <EmptyState
+              bare
+              icon="chat"
+              title={t("organization.agents.empty")}
+              description={t("organization.agents.emptyHint")}
+              action={
+                <Link to="/organization/$tab" params={{ tab: "projects" }} className={buttonClass("secondary", "md")}>
+                  {t("organization.agents.emptyAction")}
+                </Link>
+              }
+            />
+          }
+        />
       )}
     </section>
   );

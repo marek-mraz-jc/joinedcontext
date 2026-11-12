@@ -23,15 +23,9 @@ import {
   Icon,
   PageHeader,
   PageLoading,
-  Table,
-  TableBody,
-  TableCell,
-  TableEmpty,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-  TableSkeleton,
 } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import { Groups } from "../access/Groups";
 import { RoleBindings } from "../access/RoleBindings";
 import { Roles } from "../access/Roles";
@@ -152,6 +146,57 @@ function OrganizationProjects({ anchor }: { anchor: string }): JSX.Element {
     ].join(" · ");
   const names = projects.data ?? [];
   const [importing, setImporting] = useState(false);
+  const peopleText = (name: string) =>
+    readsBindings ? (bindings.isPending ? t("app.loading") : people(name)) : t("organization.projects.peopleHidden");
+  const columns: DataColumn<string>[] = [
+    {
+      key: "name",
+      label: t("organization.projects.name"),
+      text: (name) => titles.get(name) || name,
+      cell: (name) => (
+        <>
+          {/* Underlined like every other link of a list: plain text read as a name
+              one could not open (T-2759). */}
+          <Link
+            data-row-link=""
+            to="/projects/$project/$plural"
+            params={{ project: name, plural: "spaces" }}
+            className="focus-ring rounded-sm font-medium text-primary-soft-fg underline underline-offset-2 hover:no-underline"
+          >
+            {titles.get(name) || name}
+          </Link>
+          {titles.get(name) ? <span className="ml-2 text-caption text-fg-muted">{name}</span> : null}
+        </>
+      ),
+    },
+    { key: "people", label: t("organization.projects.people"), text: peopleText },
+    {
+      key: "mqtt",
+      label: t("mqttAllowance.admin.column"),
+      text: () => "",
+      filter: false,
+      sortable: false,
+      cell: (name) => <ProjectMqttState project={name} />,
+    },
+    {
+      key: "actions",
+      label: t("approvals.actions"),
+      actions: true,
+      align: "right",
+      text: () => "",
+      cell: (name) => (
+        <span className="inline-flex items-center gap-2">
+          <Link to="/projects/$project/settings" params={{ project: name }} className={buttonClass("secondary", "sm")}>
+            {t("organization.projects.settings")}
+          </Link>
+          <ProjectMqtt project={name} title={titles.get(name) || name} />
+          {/* The whole project leaves here and nowhere else (UI-87, CC-49). */}
+          <ExportButton project={name} target={{}} label={t("organization.projects.export")} size="sm" />
+          <DeleteProjectAction project={name} />
+        </span>
+      ),
+    },
+  ];
 
   return (
     <section className="space-y-4" aria-labelledby="organization-projects-heading">
@@ -189,85 +234,22 @@ function OrganizationProjects({ anchor }: { anchor: string }): JSX.Element {
           }}
         />
       ) : null}
-      {projects.isError ? (
-        <PageFailed error={projects.error} onRetry={() => void projects.refetch()} />
-      ) : (
-        <Table
-          data-records=""
-          caption={t("organization.projects.caption")}
-          status={projects.isPending ? t("app.loading") : undefined}
-        >
-          <TableHead>
-            <TableHeaderCell>{t("organization.projects.name")}</TableHeaderCell>
-            <TableHeaderCell>{t("organization.projects.people")}</TableHeaderCell>
-            <TableHeaderCell>{t("mqttAllowance.admin.column")}</TableHeaderCell>
-            <TableHeaderCell align="right">{t("approvals.actions")}</TableHeaderCell>
-          </TableHead>
-          {projects.isPending ? (
-            <TableSkeleton columns={4} />
-          ) : (
-            <TableBody>
-              {names.length === 0 ? (
-                <TableEmpty columns={4}>
-                  <EmptyState
-                    bare
-                    title={t("organization.projects.empty")}
-                    description={t("organization.projects.emptyHint")}
-                  />
-                </TableEmpty>
-              ) : (
-                names.map((name) => (
-                  <TableRow key={name}>
-                    <TableCell primary>
-                      {/* Underlined like every other link of a list: plain text read as a name
-                          one could not open (T-2759). */}
-                      <Link
-                        data-row-link=""
-                        to="/projects/$project/$plural"
-                        params={{ project: name, plural: "spaces" }}
-                        className="focus-ring rounded-sm font-medium text-primary-soft-fg underline underline-offset-2 hover:no-underline"
-                      >
-                        {titles.get(name) || name}
-                      </Link>
-                      {titles.get(name) ? <span className="ml-2 text-caption text-fg-muted">{name}</span> : null}
-                    </TableCell>
-                    <TableCell>
-                      {readsBindings
-                        ? bindings.isPending
-                          ? t("app.loading")
-                          : people(name)
-                        : t("organization.projects.peopleHidden")}
-                    </TableCell>
-                    <TableCell>
-                      <ProjectMqttState project={name} />
-                    </TableCell>
-                    <TableCell align="right">
-                      <span className="inline-flex items-center gap-2">
-                        <Link
-                          to="/projects/$project/settings"
-                          params={{ project: name }}
-                          className={buttonClass("secondary", "sm")}
-                        >
-                          {t("organization.projects.settings")}
-                        </Link>
-                        <ProjectMqtt project={name} title={titles.get(name) || name} />
-                        {/* The whole project leaves here and nowhere else (UI-87, CC-49). */}
-                        <ExportButton
-                          project={name}
-                          target={{}}
-                          label={t("organization.projects.export")}
-                          size="sm"
-                        />
-                        <DeleteProjectAction project={name} />
-                      </span>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          )}
-        </Table>
-      )}
+      <AdminGrid<string>
+        query={projects}
+        caption={t("organization.projects.caption")}
+        storageKey="organization:projects"
+        rows={names}
+        rowKey={(name) => name}
+        columns={columns}
+        stack
+        empty={
+          <EmptyState
+            bare
+            title={t("organization.projects.empty")}
+            description={t("organization.projects.emptyHint")}
+          />
+        }
+      />
     </section>
   );
 }

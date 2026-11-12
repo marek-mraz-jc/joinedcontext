@@ -142,7 +142,8 @@ describe("the data sources page", () => {
     await waitFor(() => {
       expect(table).not.toHaveAttribute("aria-busy");
     });
-    expect(table.querySelectorAll("tbody tr")).toHaveLength(Math.max(rows, 1));
+    // The shared grid pages a long list (25 a page); an empty one is its one empty-state row.
+    expect(table.querySelectorAll("tbody tr")).toHaveLength(Math.min(Math.max(rows, 1), 25));
     expectHeadingOutline(container);
   });
 

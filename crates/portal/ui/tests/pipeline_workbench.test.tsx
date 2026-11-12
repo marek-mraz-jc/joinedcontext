@@ -233,8 +233,8 @@ describe("the pipeline workbench", () => {
     await within(sample).findByRole("table", { name: en.pipelines.workbench.sample.caption });
     expect(within(sample).getByText("2 of 20 messages arrived within 5 s, with 2 fields")).toBeInTheDocument();
     // The message's members are the columns, by path: values, not the message's JSON.
-    expect(within(sample).getByRole("columnheader", { name: "VP.veh" })).toBeInTheDocument();
-    expect(within(sample).getByRole("cell", { name: "60.18" })).toBeInTheDocument();
+    expect(within(sample).getByRole("columnheader", { name: /^VP\.veh/ })).toBeInTheDocument();
+    expect(within(sample).getByText("60.18")).toBeInTheDocument();
     await waitFor(() => expect(seen.ops.map((op) => op.name)).toContain("jc_pipeline_try_mapping"));
     const tried = seen.ops.find((op) => op.name === "jc_pipeline_try_mapping")?.body;
     expect(tried?.messages).toEqual(STREAMED.records);
@@ -362,7 +362,7 @@ describe("the pipeline workbench", () => {
     const sample = await within(step(en.pipelines.workbench.sample.title)).findByRole("table", {
       name: en.pipelines.workbench.sample.caption,
     });
-    expect(within(sample).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["pm10", "station"]);
+    expect(within(sample).getAllByRole("columnheader").map((cell) => cell.textContent?.replace(/⋮$/, ""))).toEqual(["pm10", "station"]);
     expect(within(sample).getAllByRole("row")).toHaveLength(3);
     expect(screen.getByText("2 records with 2 fields")).toBeInTheDocument();
 
@@ -410,7 +410,7 @@ describe("the pipeline workbench", () => {
     const sample = await within(step(en.pipelines.workbench.sample.title)).findByRole("table", {
       name: en.pipelines.workbench.sample.caption,
     });
-    expect(within(sample).getByRole("cell", { name: "-BsWfs: http://xml.fmi.fi/schema/wfs/2.0; -gml: http://www.…" })).toBeInTheDocument();
+    expect(within(sample).getByRole("rowheader", { name: "-BsWfs: http://xml.fmi.fi/schema/wfs/2.0; -gml: http://www.…" })).toBeInTheDocument();
     expect(within(sample).getByRole("cell", { name: "1, 2" })).toBeInTheDocument();
     expect(pageFindings({ namespaces: [], layout: false }).filter((finding) => finding.startsWith("raw-json"))).toEqual([]);
   });

@@ -180,10 +180,8 @@ describe("the Context Spaces page", () => {
         .map((cell) => cell.textContent);
     expect(shown()).toEqual(["1,200", "14,232", "0"]);
 
-    // The grid's own sort (T-6169): ascending, then descending, then the list order.
-    const sort = within(table).getByRole("button", {
-      name: en.grid.sortBy.replace("{column}", en.spaces.field.entities),
-    });
+    // The grid's own sort (T-6169; the SDK DataGrid's header since T-6750): ascending, then descending, then the list order.
+    const sort = within(table).getByRole("button", { name: en.spaces.field.entities });
     const header = sort.closest("th") as HTMLElement;
     expect(header).not.toHaveAttribute("aria-sort");
     await userEvent.click(sort);
@@ -193,6 +191,7 @@ describe("the Context Spaces page", () => {
     expect(header).toHaveAttribute("aria-sort", "descending");
     expect(shown()).toEqual(["14,232", "1,200", "0"]);
     await userEvent.click(sort);
+    expect(header).not.toHaveAttribute("aria-sort");
     expect(shown()).toEqual(["1,200", "14,232", "0"]);
   });
 
@@ -231,7 +230,7 @@ describe("the Context Spaces page", () => {
     const history = within(table).getAllByTestId("space-history-size");
     expect(history.slice(0, 2).map((cell) => cell.textContent)).toEqual(["512 KiB", "0 B"]);
     expect(history[2]).toHaveAttribute("title", en.spaces.sizeMissing);
-    expect(within(table).getByRole("columnheader", { name: en.spaces.field.history })).toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: (name) => name.startsWith(en.spaces.field.history) })).toBeInTheDocument();
   });
 
   it("says_why_a_count_is_missing_and_never_shows_a_zero_for_it", async () => {

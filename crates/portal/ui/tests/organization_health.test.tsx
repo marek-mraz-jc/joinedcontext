@@ -103,7 +103,7 @@ describe("Organization → Health", () => {
     expect(await screen.findByText("1 check red, 1 check stale, 1 result unreadable")).toBeInTheDocument();
     const table = screen.getByRole("table", { name: en.organization.health.caption });
     const rows = within(table).getAllByRole("row").slice(1);
-    expect(rows.map((row) => within(row).getAllByRole("cell")[1].textContent)).toEqual([
+    expect(rows.map((row) => within(row).getAllByRole("cell")[0].textContent)).toEqual([
       "Red",
       "Green",
       "Stale",

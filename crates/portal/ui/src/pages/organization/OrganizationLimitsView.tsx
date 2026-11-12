@@ -1,17 +1,25 @@
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableEmpty,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-} from "../../components/ui";
+import { EmptyState } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import { DEFAULT_ORGANIZATION_SERVICES } from "../../schemas/kinds";
 import { boundText, entryKey, SECTIONS, valueText } from "./limits";
 import type { OrganizationLimits } from "./limits";
+
+/** One setting of a section: its name and hint, the value in force and the range allowed. */
+interface SettingRow {
+  key: string;
+  label: string;
+  hint: string;
+  value: string;
+  range: string;
+}
+
+type ProjectLimits = NonNullable<OrganizationLimits["projects"]>[number];
+
+/** The limits are already read by the page around: the grids have no read of their own. */
+const LOADED = { isPending: false, isError: false, error: null, refetch: () => undefined };
 
 /** The quota dimensions a manifest count answers (PF-75), in the order a person reads them. */
 const COUNTED = ["contextSpaces", "residentPipelines", "publicEndpoints", "apps"] as const;
@@ -45,72 +53,108 @@ export function OrganizationLimitsView({
     return used === null || used === undefined ? allowed : t("organization.limits.usedOf", { used, limit: allowed });
   };
 
+  const settingColumns: DataColumn<SettingRow>[] = [
+    {
+      key: "setting",
+      label: t("organization.limits.setting"),
+      text: (row) => row.label,
+      cell: (row) => (
+        <>
+          <span className="font-medium text-fg">{row.label}</span>
+          <p className="text-caption text-fg-muted">{row.hint}</p>
+        </>
+      ),
+    },
+    { key: "inForce", label: t("organization.limits.inForce"), text: (row) => row.value },
+    { key: "range", label: t("organization.limits.range"), text: (row) => row.range },
+  ];
+  const projectColumns: DataColumn<ProjectLimits>[] = [
+    {
+      key: "project",
+      label: t("organization.limits.project"),
+      text: (row) => row.project,
+      cell: (row) => <span className="font-mono">{row.project}</span>,
+    },
+    {
+      key: "whose",
+      label: t("organization.limits.whose"),
+      text: (row) => t(`organization.limits.origin.${row.origin}`),
+    },
+    ...[...COUNTED, ...RUNTIME, ...MQTT].map((dimension) => ({
+      key: dimension,
+      label: t(`organization.limit.projects.quota.${dimension}.label`),
+      text: (row: ProjectLimits) => quotaCell(row.quota[dimension]?.used, row.quota[dimension]?.limit),
+    })),
+  ];
+
   return (
     <div className="space-y-8">
       {SECTIONS.map((section) => {
         const entries = (limits.entries ?? []).filter((entry) => entry.section === section);
         const headingId = `organization-limits-${section}`;
+        const settings: SettingRow[] = [
+          ...(section === "applications"
+            ? [
+                {
+                  key: "publicApps",
+                  label: t("organization.policy.publicApps"),
+                  hint: t("organization.policy.publicAppsHint"),
+                  value: t(`organization.policy.publicApps_${publicApps === "refused" ? "refused" : "allowed"}`),
+                  range: "—",
+                },
+                {
+                  key: "appServices",
+                  label: t("appServices.field"),
+                  hint: t("appServices.organizationHint"),
+                  value:
+                    (services ?? DEFAULT_ORGANIZATION_SERVICES)
+                      .map((service) => t(`appServices.service.${service}.label`))
+                      .join(", ") + (services ? "" : ` ${t("appServices.byDefault")}`),
+                  range: "—",
+                },
+              ]
+            : []),
+          ...(section === "agents"
+            ? [
+                {
+                  key: "models",
+                  label: t("organization.policy.models"),
+                  hint: t("organization.policy.modelsHint"),
+                  value: models && models.length > 0 ? models.join(", ") : t("organization.policy.everyModel"),
+                  range: "—",
+                },
+              ]
+            : []),
+          ...entries.map((entry) => ({
+            key: entry.path,
+            label: t(`organization.limit.${entryKey(entry.path)}.label`),
+            hint: t(`organization.limit.${entryKey(entry.path)}.hint`),
+            value: valueText(t, entry),
+            range: boundText(t, entry),
+          })),
+        ];
         return (
           <section key={section} className="space-y-3" aria-labelledby={headingId}>
             <h3 id={headingId} className="text-body font-semibold text-fg">
               {t(`organization.limits.section.${section}`)}
             </h3>
-            <Table caption={t(`organization.limits.section.${section}`)}>
-              {/* TableHead is the header row itself: a TableRow inside it nested a second <tr>, and
-                  the header cells slid off the body's columns (T-4831). */}
-              <TableHead>
-                <TableHeaderCell scope="col">{t("organization.limits.setting")}</TableHeaderCell>
-                <TableHeaderCell scope="col">{t("organization.limits.inForce")}</TableHeaderCell>
-                <TableHeaderCell scope="col">{t("organization.limits.range")}</TableHeaderCell>
-              </TableHead>
-              <TableBody>
-                {section === "applications" ? (
-                  <TableRow>
-                    <TableCell>
-                      <span className="font-medium text-fg">{t("organization.policy.publicApps")}</span>
-                      <p className="text-caption text-fg-muted">{t("organization.policy.publicAppsHint")}</p>
-                    </TableCell>
-                    <TableCell>{t(`organization.policy.publicApps_${publicApps === "refused" ? "refused" : "allowed"}`)}</TableCell>
-                    <TableCell>—</TableCell>
-                  </TableRow>
-                ) : null}
-                {section === "applications" ? (
-                  <TableRow>
-                    <TableCell>
-                      <span className="font-medium text-fg">{t("appServices.field")}</span>
-                      <p className="text-caption text-fg-muted">{t("appServices.organizationHint")}</p>
-                    </TableCell>
-                    <TableCell>
-                      {(services ?? DEFAULT_ORGANIZATION_SERVICES)
-                        .map((service) => t(`appServices.service.${service}.label`))
-                        .join(", ")}
-                      {services ? null : ` ${t("appServices.byDefault")}`}
-                    </TableCell>
-                    <TableCell>—</TableCell>
-                  </TableRow>
-                ) : null}
-                {section === "agents" ? (
-                  <TableRow>
-                    <TableCell>
-                      <span className="font-medium text-fg">{t("organization.policy.models")}</span>
-                      <p className="text-caption text-fg-muted">{t("organization.policy.modelsHint")}</p>
-                    </TableCell>
-                    <TableCell>{models && models.length > 0 ? models.join(", ") : t("organization.policy.everyModel")}</TableCell>
-                    <TableCell>—</TableCell>
-                  </TableRow>
-                ) : null}
-                {entries.map((entry) => (
-                  <TableRow key={entry.path}>
-                    <TableCell>
-                      <span className="font-medium text-fg">{t(`organization.limit.${entryKey(entry.path)}.label`)}</span>
-                      <p className="text-caption text-fg-muted">{t(`organization.limit.${entryKey(entry.path)}.hint`)}</p>
-                    </TableCell>
-                    <TableCell>{valueText(t, entry)}</TableCell>
-                    <TableCell>{boundText(t, entry)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <AdminGrid<SettingRow>
+              query={LOADED}
+              caption={t(`organization.limits.section.${section}`)}
+              storageKey={`organization:limits:${section}`}
+              rows={settings}
+              rowKey={(row) => row.key}
+              columns={settingColumns}
+              stack
+              noSearch
+              empty={
+                <EmptyState
+                  bare
+                  title={t("organization.limits.noSettings")}
+                  description={t("organization.limits.noSettingsHint")}
+                />
+              }
+            />
           </section>
         );
       })}
@@ -121,34 +165,22 @@ export function OrganizationLimitsView({
         </h3>
         <p className="text-body text-fg-muted">{t("organization.limits.perProjectLead")}</p>
         {/* A card per project below 640 px: a row of ten quota columns was cut off at 400 px. */}
-        <Table stack caption={t("organization.limits.perProject")}>
-          <TableHead>
-            <TableHeaderCell scope="col">{t("organization.limits.project")}</TableHeaderCell>
-            <TableHeaderCell scope="col">{t("organization.limits.whose")}</TableHeaderCell>
-            {[...COUNTED, ...RUNTIME, ...MQTT].map((dimension) => (
-              <TableHeaderCell key={dimension} scope="col">
-                {t(`organization.limit.projects.quota.${dimension}.label`)}
-              </TableHeaderCell>
-            ))}
-          </TableHead>
-          <TableBody>
-            {(limits.projects ?? []).length === 0 ? (
-              <TableEmpty columns={2 + COUNTED.length + RUNTIME.length + MQTT.length}>{t("organization.limits.noProjects")}</TableEmpty>
-            ) : (
-              (limits.projects ?? []).map((row) => (
-                <TableRow key={row.project}>
-                  <TableCell className="font-mono">{row.project}</TableCell>
-                  <TableCell data-label={t("organization.limits.whose")}>{t(`organization.limits.origin.${row.origin}`)}</TableCell>
-                  {[...COUNTED, ...RUNTIME, ...MQTT].map((dimension) => (
-                    <TableCell key={dimension} data-label={t(`organization.limit.projects.quota.${dimension}.label`)}>
-                      {quotaCell(row.quota[dimension]?.used, row.quota[dimension]?.limit)}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+        <AdminGrid<ProjectLimits>
+          query={LOADED}
+          caption={t("organization.limits.perProject")}
+          storageKey="organization:limits:projects"
+          rows={limits.projects ?? []}
+          rowKey={(row) => row.project}
+          columns={projectColumns}
+          stack
+          empty={
+            <EmptyState
+              bare
+              title={t("organization.limits.noProjects")}
+              description={t("organization.limits.noProjectsHint")}
+            />
+          }
+        />
       </section>
     </div>
   );

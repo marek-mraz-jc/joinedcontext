@@ -19,17 +19,13 @@ import {
   PageFailed,
   PageHeader,
   PermissionGuard,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
 } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import type { BadgeTone } from "../../components/ui";
 import { putDraft } from "../../api/drafts";
 import { duplicateDeployment, knowledgeKeys, listSources, topLanguages, listUsage, recrawl, timeText } from "./knowledge";
-import type { KnowledgeSourceRow } from "./knowledge";
+import type { KnowledgeSourceRow, UsageDay } from "./knowledge";
 import { AssistantChat, EmbedSnippet } from "./AssistantChat";
 import { sum } from "./IndexStatus";
 
@@ -513,38 +509,32 @@ function Usage({ project, deployment }: { project: string; deployment: string })
     queryKey: ["projects", project, "knowledge", "deployments", deployment, "usage"],
     queryFn: () => listUsage(project, deployment),
   });
-  if (usage.isLoading) return <p role="status">{t("app.loading")}</p>;
-  if (usage.isError) {
-    return (
-      <PageFailed
-        error={usage.error}
-        onRetry={() => {
-          void usage.refetch();
-        }}
-      />
-    );
-  }
   const days = usage.data ?? [];
-  if (days.length === 0) return <p>{t("knowledge.assistants.noUsage")}</p>;
   const number = new Intl.NumberFormat(i18n.language);
+  const count = (label: string, pick: (day: UsageDay) => number): DataColumn<UsageDay> => ({
+    key: label,
+    label,
+    kind: "number",
+    align: "right",
+    text: (day) => String(pick(day)),
+    cell: (day) => number.format(pick(day)),
+  });
+  const columns: DataColumn<UsageDay>[] = [
+    { key: "day", label: t("knowledge.assistants.day"), kind: "date", text: (day) => day.day },
+    count(t("knowledge.assistants.requests"), (day) => day.requests),
+    count(t("knowledge.assistants.tokensIn"), (day) => day.tokensIn),
+    count(t("knowledge.assistants.tokensOut"), (day) => day.tokensOut),
+  ];
   return (
-    <Table data-records="" caption={t("knowledge.assistants.usage")}>
-      <TableHead>
-        <TableHeaderCell>{t("knowledge.assistants.day")}</TableHeaderCell>
-        <TableHeaderCell align="right">{t("knowledge.assistants.requests")}</TableHeaderCell>
-        <TableHeaderCell align="right">{t("knowledge.assistants.tokensIn")}</TableHeaderCell>
-        <TableHeaderCell align="right">{t("knowledge.assistants.tokensOut")}</TableHeaderCell>
-      </TableHead>
-      <TableBody>
-        {days.map((day) => (
-          <TableRow key={day.day}>
-            <TableCell>{day.day}</TableCell>
-            <TableCell align="right">{number.format(day.requests)}</TableCell>
-            <TableCell align="right">{number.format(day.tokensIn)}</TableCell>
-            <TableCell align="right">{number.format(day.tokensOut)}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <AdminGrid<UsageDay>
+      query={usage}
+      caption={t("knowledge.assistants.usage")}
+      rows={days}
+      columns={columns}
+      rowKey={(day) => day.day}
+      storageKey={`${project}:assistant-usage`}
+      stack
+      empty={<EmptyState bare title={t("knowledge.assistants.noUsage")} description={t("knowledge.assistants.noUsageHint")} />}
+    />
   );
 }

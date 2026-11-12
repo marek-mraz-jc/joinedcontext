@@ -9,6 +9,8 @@ import { usePermissions, useReadableList } from "../../api/permissions";
 import type { Manifest } from "../../api/manifest";
 import type { components } from "../../api/schema";
 import { CopyUrlButton } from "../../components/endpoints/links";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import { LifecycleBadge } from "../../components/status/LifecycleBadge";
 import {
   Alert,
@@ -19,12 +21,6 @@ import {
   PageHeader,
   PageLoading,
   SourceLink,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
 } from "../../components/ui";
 import { ResourcePageFailed } from "../../components/ui/PageState";
 import { AddDevice } from "./AddDevice";
@@ -674,42 +670,51 @@ function Devices({
   }
   const rolesOf = (account: string) =>
     rolesHeldBy(account, spec.roles ?? [], accounts, name, project).map((role) => role.name ?? "");
+  type Account = (typeof measured.accounts)[number];
+  const columns: DataColumn<Account>[] = [
+    {
+      key: "account",
+      label: t("mqttbrokers.page.account"),
+      text: (account) => account.serviceAccount,
+      cell: (account) => <span data-account={account.serviceAccount}>{account.serviceAccount}</span>,
+    },
+    {
+      key: "role",
+      label: t("mqttbrokers.acl.role"),
+      text: (account) => rolesOf(account.serviceAccount).join(", "),
+      cell: (account) => rolesOf(account.serviceAccount).join(", ") || "—",
+    },
+    {
+      key: "connected",
+      label: t("mqttbrokers.measured.connected"),
+      kind: "number",
+      text: (account) => String(account.connected),
+      cell: (account) =>
+        account.connected > 0 ? (
+          <Badge tone="success">{t("mqttbrokers.page.connectedCount", { count: account.connected })}</Badge>
+        ) : (
+          <Badge tone="neutral">{t("mqttbrokers.page.offlineNow")}</Badge>
+        ),
+    },
+    {
+      key: "since",
+      label: t("mqttbrokers.page.since"),
+      kind: "date",
+      text: (account) => account.since ?? "",
+      cell: (account) => (account.since ? time.format(new Date(account.since)) : "—"),
+    },
+  ];
   return (
-    <Table stack caption={t("mqttbrokers.page.devices")}>
-      <TableHead>
-        <TableHeaderCell>{t("mqttbrokers.page.account")}</TableHeaderCell>
-        <TableHeaderCell>{t("mqttbrokers.acl.role")}</TableHeaderCell>
-        <TableHeaderCell>{t("mqttbrokers.measured.connected")}</TableHeaderCell>
-        <TableHeaderCell>{t("mqttbrokers.page.since")}</TableHeaderCell>
-      </TableHead>
-      <TableBody>
-        {measured.accounts.map((account) => (
-          <TableRow
-            key={account.serviceAccount}
-            data-account={account.serviceAccount}
-          >
-            <TableCell primary>{account.serviceAccount}</TableCell>
-            <TableCell data-label={t("mqttbrokers.acl.role")}>
-              {rolesOf(account.serviceAccount).join(", ") || "—"}
-            </TableCell>
-            <TableCell data-label={t("mqttbrokers.measured.connected")}>
-              {account.connected > 0 ? (
-                <Badge tone="success">
-                  {t("mqttbrokers.page.connectedCount", {
-                    count: account.connected,
-                  })}
-                </Badge>
-              ) : (
-                <Badge tone="neutral">{t("mqttbrokers.page.offlineNow")}</Badge>
-              )}
-            </TableCell>
-            <TableCell data-label={t("mqttbrokers.page.since")}>
-              {account.since ? time.format(new Date(account.since)) : "—"}
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <AdminGrid
+      query={{ isPending: false, isError: false, error: null, refetch: () => undefined }}
+      caption={t("mqttbrokers.page.devices")}
+      rows={measured.accounts}
+      rowKey={(account) => account.serviceAccount}
+      columns={columns}
+      storageKey={`${project}:mqtt-devices`}
+      stack
+      empty={<EmptyState bare title={t("mqttbrokers.page.noDevices")} description={t("mqttbrokers.page.noDevicesHint")} />}
+    />
   );
 }
 

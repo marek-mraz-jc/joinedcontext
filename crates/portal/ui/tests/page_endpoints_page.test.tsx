@@ -229,23 +229,26 @@ describe("the endpoints page", () => {
     await renderRoute({ path: PATH, answer: answering(many) });
     await screen.findByRole("link", { name: "ep-0000" });
     expect(rowLinks()).toHaveLength(50);
-    expect(screen.getByText("Showing 50 of 120")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Show 50 more" }));
-    expect(rowLinks()).toHaveLength(100);
-    await userEvent.click(screen.getByRole("button", { name: "Show 20 more" }));
-    expect(rowLinks()).toHaveLength(120);
-    expect(screen.queryByRole("button", { name: /^Show \d+ more$/ })).toBeNull();
+    // The shared grid's pager (T-6750): 50 a page, the whole list counted.
+    expect(screen.getByText("120 rows")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: `${en.entityGrid.page} 2` }));
+    expect(rowLinks()).toHaveLength(50);
+    expect(rowLinks()[0]).toHaveTextContent("ep-0050");
+    await userEvent.click(screen.getByRole("button", { name: `${en.entityGrid.page} 3` }));
+    expect(rowLinks()).toHaveLength(20);
+    expect(screen.getByRole("button", { name: new RegExp(en.entityGrid.next) })).toBeDisabled();
 
     await search("EP-0119");
     expect(rowLinks().map((link) => link.textContent)).toEqual(["ep-0119"]);
-    expect(screen.getByText("Showing 1 of 1 matching, 120 in total")).toBeInTheDocument();
+    expect(screen.getByText("1 rows")).toBeInTheDocument();
     // A search matching nothing names the text and clears back to the first page (T-6095).
     await search("nothing-like-it");
-    expect(screen.queryByText(/^Showing/)).toBeNull();
+    expect(screen.queryByText(/^\d+ rows$/)).toBeNull();
     expect(screen.getByText(i18n.t("endpoints.searchNoMatch", { text: "nothing-like-it" }))).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: en.spaces.inside.clearSearch }));
     expect(screen.getByRole("searchbox", { name: en.endpoints.find })).toHaveValue("");
     expect(rowLinks()).toHaveLength(50);
+    expect(rowLinks()[0]).toHaveTextContent("ep-0000");
   });
 
   it("nothing_shared_with_the_project_adds_no_second_table", async () => {
@@ -262,13 +265,16 @@ describe("the endpoints page", () => {
     );
     await renderRoute({ path: PATH, answer: answering(titled) });
     await screen.findByRole("link", { name: "ep-0000" });
-    await userEvent.click(screen.getByRole("button", { name: "Show 50 more" }));
+    await userEvent.click(screen.getByRole("button", { name: `${en.entityGrid.page} 2` }));
     await search("   ");
     expect(rowLinks()).toHaveLength(50);
-    expect(screen.getByText("Showing 50 of 120")).toBeInTheDocument();
+    expect(screen.getByText("120 rows")).toBeInTheDocument();
     await search("zvolen");
     expect(screen.getByRole("link", { name: "Noise in Zvolen" })).toBeInTheDocument();
-    expect(screen.getByText("Showing 1 of 1 matching, 120 in total")).toBeInTheDocument();
+    expect(screen.getByText("1 rows")).toBeInTheDocument();
+    // The search started on page one: back to the whole list, the first page shows.
+    await search("ep-");
+    expect(rowLinks()[0]).toHaveTextContent("ep-0000");
   });
 
   it("opens_an_endpoint_the_url_names_beyond_the_first_page", async () => {

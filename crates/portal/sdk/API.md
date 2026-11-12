@@ -227,6 +227,19 @@ The header's second row filters at the endpoint (UI-66, EP-07): per column the o
 A subset of the grid: `const view = useGridView(props)`, then `<GridFrame view={view}>` around any of `GridTable`, `GridPager`, `GridMapPanel`, `GridDetail`, `GridNotices`, `GridStatus`, `GridQueryBox`, `GridReview`, each with `view={view}`. `RowDetail` takes `tabs`; `AttributeView` shows one attribute.
 
 `EntityCompare` puts a space and an endpoint side by side (UI-69, EP-61): the right side is asked for the left's ids, and `marks` paints on the left what the right does not answer.
+<!-- portal-only: the Portal's admin lists; the app builder's pack leaves it out -->
+```ts
+function DataGrid<T>(props: DataGridProps<T>): JSX.Element
+function arrangeRows<T>(rows, columns, query: DataQuery): { rows: T[]; total: number } // filterDataRows, then sortDataRows, then one page
+function filterDataRows<T>(rows, columns, query: { search, filters }): T[]
+function sortDataRows<T>(rows, columns, sort: DataSort | null): T[]
+function passes(text: string, kind: DataKind, filter: ColumnFilter): boolean
+function valuesOf<T>(rows, column: DataColumn<T>): ColumnValues
+function ArrangePanel(props: ArrangePanelProps): JSX.Element // the Arrange columns panel EntityGrid and DataGrid share
+const EMPTY_QUERY: DataQuery, DEFAULT_DATA_LABELS: DataGridLabels
+```
+`DataGrid` draws rows that are not NGSI-LD (an admin list) with the entity grid's look: `rows` (a typed array), `columns` (`DataColumn<T>`: `key`, `label`, `text(row)` that search, sort and filter read, `cell(row)`, `kind` text/number/date/boolean, `hidden`, `actions`), `rowKey`, `caption`, `empty`, `loading`, `error`, `labels`, `storageKey` (the arranged layout in `localStorage`), `stack`. Search, filter, sort and paging run in the browser; with `query` + `onQueryChange` + `total` the host answers the query and the grid shows its rows as given.
+<!-- /portal-only -->
 ```ts
 function endpointSource(slug: string, transport: Transport, language?: string): EntitySource
 function spaceSource(space: string, transport: Transport, language?: string): EntitySource
