@@ -11,7 +11,7 @@
 //! against a `Runner`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::{DateTime, Duration as Span, SecondsFormat, Timelike, Utc};
@@ -262,12 +262,78 @@ fn field(text: &str, lo: u32, hi: u32) -> Option<u64> {
 /// clock, and whether an output replaces its entities (PL-79).
 #[derive(Debug, Clone)]
 pub struct Planned {
-    /// The stream as its compact JSON text, parsed only when its run starts: the queue holds
-    /// every scheduled pipeline's stream, and parsed they held 145 MiB on the prod rehearsal,
-    /// several times their text (jc-memory-peak).
-    pub stream: String,
+    /// The stream as its compact JSON text, deflated, parsed only when its run starts: the queue
+    /// holds every scheduled pipeline's stream, and parsed they held 145 MiB on the prod
+    /// rehearsal (jc-memory-peak), as text 167 MiB (T-6820). A pass that finds the stream the
+    /// queue holds hands over its digest alone ([`Packed::known`]).
+    pub stream: Packed,
     pub clock: Clock,
     pub replace: bool,
+}
+
+/// A stream's compact JSON text as the queue holds it: its SHA-256 and, unless the pass found
+/// the queue already holding it, the text deflated (T-6820). Deflating every stream on every
+/// pass would cost about a second of CPU per 10 s pass on the prod profile; hashing costs a
+/// tenth of that, so a pass deflates only what changed.
+#[derive(Debug, Clone)]
+pub struct Packed {
+    digest: [u8; 32],
+    deflated: Option<Arc<[u8]>>,
+}
+
+impl Packed {
+    /// `text` hashed and deflated.
+    pub fn new(text: &str) -> Self {
+        use std::io::Write;
+        let mut deflate =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::fast());
+        // Writing to a Vec cannot fail.
+        let deflated = deflate
+            .write_all(text.as_bytes())
+            .and_then(|()| deflate.finish())
+            .unwrap_or_default();
+        Self {
+            digest: digest(text),
+            deflated: Some(deflated.into()),
+        }
+    }
+
+    /// A stream the queue already holds, by its digest alone.
+    pub fn known(digest: [u8; 32]) -> Self {
+        Self {
+            digest,
+            deflated: None,
+        }
+    }
+
+    pub fn digest(&self) -> [u8; 32] {
+        self.digest
+    }
+
+    /// The JSON text again; `None` for a digest alone.
+    fn text(&self) -> Option<String> {
+        use std::io::Read;
+        let mut text = String::new();
+        flate2::read::DeflateDecoder::new(self.deflated.as_deref()?)
+            .read_to_string(&mut text)
+            .ok()?;
+        Some(text)
+    }
+
+    /// [`stream_hash`] of the text.
+    fn hash(&self) -> String {
+        hex(&self.digest)
+    }
+}
+
+/// SHA-256 of a stream's text.
+pub fn digest(text: &str) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(text.as_bytes()).into()
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[derive(Debug, Clone)]
@@ -285,7 +351,8 @@ struct Retry {
 
 #[derive(Debug)]
 struct Entry {
-    stream: String,
+    /// Always deflated: [`RunQueue::plan`] stores no digest alone.
+    stream: Packed,
     clock: Clock,
     lane: Lane,
     /// When it is due next.
@@ -501,7 +568,26 @@ impl RunQueue {
                 .streams
                 .as_ref()
                 .and_then(|streams| streams.get(key))
-                .is_some_and(|ran| *ran != stream_hash(&planned.stream))
+                .is_some_and(|ran| *ran != planned.stream.hash())
+    }
+
+    /// The digest of each stream the queue holds, for a pass to hand over unchanged ones by
+    /// [`Packed::known`].
+    pub fn digests(&self) -> HashMap<Key, [u8; 32]> {
+        self.entries
+            .iter()
+            .map(|(key, entry)| (key.clone(), entry.stream.digest))
+            .collect()
+    }
+
+    /// Deflated stream bytes the queue holds.
+    #[cfg(test)]
+    fn held_stream_bytes(&self) -> usize {
+        self.entries
+            .values()
+            .filter_map(|entry| entry.stream.deflated.as_deref())
+            .map(<[u8]>::len)
+            .sum()
     }
 
     /// Takes the reconciler's whole set of run-and-delete pipelines: a new one or one whose
@@ -535,9 +621,20 @@ impl RunQueue {
             };
             let lane = planned.clock.lane(now);
             match self.entries.get_mut(&key) {
-                Some(entry) if entry.stream == planned.stream && entry.clock == planned.clock => {}
+                Some(entry)
+                    if entry.stream.digest == planned.stream.digest
+                        && entry.clock == planned.clock => {}
+                Some(entry) if entry.stream.digest == planned.stream.digest => {
+                    entry.stuck = false;
+                    entry.clock = planned.clock;
+                    entry.lane = lane;
+                    entry.next = first;
+                }
+                // A digest alone names a stream the queue held when the pass began; one that
+                // changed or left since is packed by the next pass.
+                _ if planned.stream.deflated.is_none() => {}
                 Some(entry) => {
-                    let rewrite = planned.replace && entry.stream != planned.stream;
+                    let rewrite = planned.replace;
                     entry.stuck = false;
                     entry.stream = planned.stream;
                     entry.clock = planned.clock;
@@ -748,9 +845,10 @@ impl RunQueue {
                     let run = stamp(*due);
                     entry.queued = None;
                     entry.running = Some(now);
-                    starts.push((key.clone(), with_run(&entry.stream, &run)));
+                    let stream = entry.stream.text().unwrap_or_default();
+                    starts.push((key.clone(), with_run(&stream, &run)));
                     entry.run = Some(run);
-                    entry.run_stream = Some(stream_hash(&entry.stream));
+                    entry.run_stream = Some(entry.stream.hash());
                 }
             }
             crate::telemetry::pipeline_queue_depth(
@@ -900,11 +998,7 @@ fn missed(clock: &Clock, last: DateTime<Utc>, now: DateTime<Utc>) -> Option<Date
 /// written in (T-5825): SHA-256 of its JSON text, stable across Portal builds. The stream names
 /// secrets by environment variable only, so no secret value is hashed.
 pub fn stream_hash(stream: &str) -> String {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(stream.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    hex(&digest(stream))
 }
 
 fn stamp(t: DateTime<Utc>) -> String {
@@ -1063,7 +1157,9 @@ mod tests {
 
     fn planned(clock: Clock) -> Planned {
         Planned {
-            stream: serde_json::json!({"input": {"generate": {"count": 1}}}).to_string(),
+            stream: Packed::new(
+                &serde_json::json!({"input": {"generate": {"count": 1}}}).to_string(),
+            ),
             clock,
             replace: false,
         }
@@ -1409,7 +1505,9 @@ mod tests {
 
     fn weekly_run(replace: bool, count: u64) -> Planned {
         Planned {
-            stream: serde_json::json!({"input": {"generate": {"count": count}}}).to_string(),
+            stream: Packed::new(
+                &serde_json::json!({"input": {"generate": {"count": count}}}).to_string(),
+            ),
             clock: Clock::of(None, Some("0 5 * * 1")).expect("a schedule"),
             replace,
         }
@@ -1466,7 +1564,7 @@ mod tests {
         let last = now - Span::hours(1);
         let names = ["replaced", "same", "unhashed", "upserted"];
         queue.ran(names.iter().map(|name| (key(name), last)).collect());
-        let old = stream_hash(&weekly_run(true, 1).stream);
+        let old = weekly_run(true, 1).stream.hash();
         queue.streams(
             ["replaced", "same", "upserted"]
                 .iter()
@@ -1511,8 +1609,66 @@ mod tests {
         step(&queue, &fake, now + Span::minutes(1)).await;
         assert_eq!(
             fake.ran_streams.lock().unwrap().first(),
-            Some(&("a".to_owned(), stream_hash(&first.stream)))
+            Some(&("a".to_owned(), first.stream.hash()))
         );
+    }
+
+    /// T-6820: the queue holds each stream deflated, and a run starts on the stream as it was
+    /// planned. The queue holds every scheduled pipeline's stream, 167 MiB of JSON text on the
+    /// prod rehearsal profile after round 1's cut.
+    #[tokio::test]
+    async fn a_queued_stream_is_held_deflated_and_runs_as_planned() {
+        let queue = Mutex::new(RunQueue::new(1, 1));
+        let fake = Fake::default();
+        let now = at("2026-10-27T06:00:00Z");
+        let mapping = "root.name = this.name.uppercase()\n".repeat(30_000);
+        let stream = serde_json::json!({"input": {"generate": {"count": 1, "mapping": mapping}}});
+        let text = stream.to_string();
+        let first = Planned {
+            stream: Packed::new(&text),
+            clock: Clock::Once,
+            replace: false,
+        };
+        queue.lock().unwrap().plan([(key("a"), first)].into(), now);
+        let held = queue.lock().unwrap().held_stream_bytes();
+        assert!(
+            held * 4 < text.len(),
+            "{held} bytes held for a {} byte stream",
+            text.len()
+        );
+        step(&queue, &fake, now).await;
+        assert_eq!(
+            fake.sent.lock().unwrap().get("a"),
+            Some(&with_run(&text, &stamp(now)))
+        );
+    }
+
+    /// T-6820: a pass that finds a stream unchanged hands over its digest alone, and the queue
+    /// keeps what it holds; a digest alone for a pipeline the queue does not hold is left to the
+    /// next pass, which packs it.
+    #[test]
+    fn a_digest_alone_keeps_the_held_stream() {
+        let mut queue = RunQueue::new(1, 1);
+        let now = at("2026-10-27T06:00:00Z");
+        let run = weekly_run(false, 1);
+        queue.plan([(key("a"), run.clone())].into(), now);
+        let next = next_of(&queue, "a");
+        let known = queue.digests();
+        assert_eq!(known.get(&key("a")), Some(&run.stream.digest()));
+        let digest_only = |planned: &Planned| Planned {
+            stream: Packed::known(planned.stream.digest()),
+            ..planned.clone()
+        };
+        queue.plan(
+            [(key("a"), digest_only(&run)), (key("b"), digest_only(&run))].into(),
+            now + Span::hours(1),
+        );
+        assert_eq!(next_of(&queue, "a"), next, "unchanged, not re-queued");
+        assert!(
+            queue.entries[&key("a")].stream.text().is_some(),
+            "the held stream stays"
+        );
+        assert!(!queue.entries.contains_key(&key("b")));
     }
 
     /// The hash is the stream's whole JSON text in hex: stable across builds, and any change of
@@ -1524,10 +1680,7 @@ mod tests {
             stream_hash(&stream),
             "9406b26e4cbbee539aeb8444702f2e6394d766abf9f0a9d94fa5489252e93c31"
         );
-        assert_ne!(
-            stream_hash(&stream),
-            stream_hash(&weekly_run(true, 2).stream)
-        );
+        assert_ne!(stream_hash(&stream), weekly_run(true, 2).stream.hash());
     }
 
     /// T-5824: a seed sync that changes many replace streams queues them all at once, and the
@@ -1882,7 +2035,9 @@ mod tests {
         changed.insert(
             key("loop"),
             Planned {
-                stream: serde_json::json!({"input": {"generate": {"count": 2}}}).to_string(),
+                stream: Packed::new(
+                    &serde_json::json!({"input": {"generate": {"count": 2}}}).to_string(),
+                ),
                 clock: Clock::Once,
                 replace: false,
             },
@@ -1900,7 +2055,9 @@ mod tests {
         let fake = Fake::default();
         let now = at("2026-10-17T05:00:00Z");
         let hourly = |count: u64| Planned {
-            stream: serde_json::json!({"input": {"generate": {"count": count}}}).to_string(),
+            stream: Packed::new(
+                &serde_json::json!({"input": {"generate": {"count": count}}}).to_string(),
+            ),
             clock: Clock::Every(Duration::from_secs(3600), Duration::ZERO),
             replace: false,
         };
@@ -1933,7 +2090,7 @@ mod tests {
     #[test]
     fn a_short_poll_is_capped_at_three_periods_and_two_minutes_at_least() {
         let entry = |clock| Entry {
-            stream: String::new(),
+            stream: Packed::new(""),
             clock,
             lane: Lane::Short,
             next: None,
@@ -2092,7 +2249,7 @@ mod tests {
         let wanted = [(
             key("a"),
             Planned {
-                stream: tick_stream.to_string(),
+                stream: Packed::new(&tick_stream.to_string()),
                 clock: daily_at_5(),
                 replace: false,
             },
