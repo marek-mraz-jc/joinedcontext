@@ -6,6 +6,9 @@ pub mod branch;
 pub mod flow;
 pub mod json_schema;
 pub mod mapping;
+pub mod processor_cached;
+pub mod processor_group_by;
+pub mod processor_group_by_value;
 pub mod resources;
 pub mod switch;
 pub mod utility;
@@ -24,4 +27,15 @@ pub fn register_all(registry: &Registry) {
     archive::register(registry);
     utility::register(registry);
     resources::register(registry);
+    registry.register_processor("group_by", |conf, ctx| {
+        Ok(std::sync::Arc::new(processor_group_by::GroupByProcessor::from_config(conf, ctx)?))
+    });
+    registry.register_processor("group_by_value", |conf, ctx| {
+        Ok(std::sync::Arc::new(
+            processor_group_by_value::GroupByValueProcessor::from_config(conf, ctx)?,
+        ))
+    });
+    registry.register_processor("cached", |conf, ctx| {
+        Ok(std::sync::Arc::new(processor_cached::CachedProcessor::from_config(conf, ctx)?))
+    });
 }
