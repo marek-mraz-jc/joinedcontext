@@ -201,6 +201,15 @@ enum FileScannerKind {
     Chunker {
         size: usize,
     },
+    Decompress {
+        algorithm: crate::scanner_decompress::Algorithm,
+        into: Box<FileScannerKind>,
+    },
+    SkipBom {
+        into: Box<FileScannerKind>,
+    },
+    ReMatch(crate::scanner_re_match::ReMatchScanner),
+    XmlDocuments(crate::scanner_xml::XmlDocumentScanner),
 }
 
 /// Implements `file` and `csv` inputs (`internal/impl/io/input_file.go`).
@@ -385,9 +394,23 @@ impl Input for FileInput {
 }
 
 /// Splits raw bytes into message parts with a file/stdin scanner.
-fn scan_parts(raw: Vec<u8>, scanner: FileScannerKind) -> Result<Vec<Part>, CoreError> {
+fn scan_parts(mut raw: Vec<u8>, scanner: FileScannerKind) -> Result<Vec<Part>, CoreError> {
     let mut parts: Vec<Part> = Vec::new();
     match scanner {
+        FileScannerKind::Decompress { algorithm, into } => {
+            return scan_parts(algorithm.decompress(&raw)?, *into);
+        }
+        FileScannerKind::SkipBom { into } => {
+            let bom = raw.len() - crate::scanner_skip_bom::skip_bom(&raw).len();
+            raw.drain(..bom);
+            return scan_parts(raw, *into);
+        }
+        FileScannerKind::ReMatch(re) => {
+            parts.extend(re.split(&raw)?.into_iter().map(Part::new));
+        }
+        FileScannerKind::XmlDocuments(xml) => {
+            parts.extend(xml.documents(&raw)?.into_iter().map(Part::from_structured));
+        }
         FileScannerKind::ToTheEnd => {
             parts.push(Part::new(Bytes::from(raw)));
         }
@@ -495,43 +518,86 @@ fn parse_scanner_config(
             _ => Ok(FileScannerKind::Lines),
         };
     }
-    if let Some(scanner_obj) = obj.get("scanner").and_then(JsonValue::as_object) {
-        if scanner_obj.contains_key("to_the_end") {
-            return Ok(FileScannerKind::ToTheEnd);
-        }
-        if scanner_obj.contains_key("json_documents") {
-            return Ok(FileScannerKind::JsonDocuments);
-        }
-        if scanner_obj.contains_key("tar") {
-            return Ok(FileScannerKind::Tar);
-        }
-        if let Some(ch_obj) = scanner_obj.get("chunker").and_then(JsonValue::as_object) {
-            let size = ch_obj
-                .get("size")
-                .and_then(JsonValue::as_u64)
-                .unwrap_or(1024) as usize;
-            return Ok(FileScannerKind::Chunker { size });
-        }
-        if let Some(csv_val) = scanner_obj.get("csv") {
-            let parse_header_row = csv_val
-                .get("parse_header_row")
-                .and_then(JsonValue::as_bool)
-                .unwrap_or(true);
-            let delimiter = csv_val
-                .get("custom_delimiter")
-                .and_then(JsonValue::as_str)
-                .and_then(|s| s.bytes().next())
-                .unwrap_or(b',');
-            let lazy_quotes = csv_val
-                .get("lazy_quotes")
-                .and_then(JsonValue::as_bool)
-                .unwrap_or(false);
-            return Ok(FileScannerKind::Csv {
-                parse_header_row,
-                delimiter,
-                lazy_quotes,
-            });
-        }
+    match obj.get("scanner").and_then(JsonValue::as_object) {
+        Some(scanner_obj) => parse_scanner(scanner_obj),
+        None => Ok(FileScannerKind::Lines),
+    }
+}
+
+/// One scanner object (`{<name>: {..}}`), nested ones (`into`) included.
+fn parse_scanner(
+    scanner_obj: &serde_json::Map<String, JsonValue>,
+) -> Result<FileScannerKind, CoreError> {
+    let empty = serde_json::Map::new();
+    let field = |name: &str| {
+        scanner_obj
+            .get(name)
+            .map(|v| v.as_object().unwrap_or(&empty))
+    };
+    let child = |conf: &serde_json::Map<String, JsonValue>| match conf
+        .get("into")
+        .and_then(JsonValue::as_object)
+    {
+        Some(into) => parse_scanner(into).map(Box::new),
+        None => Ok(Box::new(FileScannerKind::ToTheEnd)),
+    };
+    if let Some(conf) = field("decompress") {
+        let name = conf.get("algorithm").and_then(JsonValue::as_str).ok_or_else(|| {
+            CoreError::config("decompress: field 'algorithm' is required")
+        })?;
+        return Ok(FileScannerKind::Decompress {
+            algorithm: crate::scanner_decompress::Algorithm::parse(name)?,
+            into: child(conf)?,
+        });
+    }
+    if let Some(conf) = field("skip_bom") {
+        return Ok(FileScannerKind::SkipBom { into: child(conf)? });
+    }
+    if let Some(conf) = field("re_match") {
+        return Ok(FileScannerKind::ReMatch(
+            crate::scanner_re_match::ReMatchScanner::from_config(conf)?,
+        ));
+    }
+    if let Some(conf) = field("xml_documents") {
+        return Ok(FileScannerKind::XmlDocuments(
+            crate::scanner_xml::XmlDocumentScanner::from_config(conf)?,
+        ));
+    }
+    if scanner_obj.contains_key("to_the_end") {
+        return Ok(FileScannerKind::ToTheEnd);
+    }
+    if scanner_obj.contains_key("json_documents") {
+        return Ok(FileScannerKind::JsonDocuments);
+    }
+    if scanner_obj.contains_key("tar") {
+        return Ok(FileScannerKind::Tar);
+    }
+    if let Some(ch_obj) = scanner_obj.get("chunker").and_then(JsonValue::as_object) {
+        let size = ch_obj
+            .get("size")
+            .and_then(JsonValue::as_u64)
+            .unwrap_or(1024) as usize;
+        return Ok(FileScannerKind::Chunker { size });
+    }
+    if let Some(csv_val) = scanner_obj.get("csv") {
+        let parse_header_row = csv_val
+            .get("parse_header_row")
+            .and_then(JsonValue::as_bool)
+            .unwrap_or(true);
+        let delimiter = csv_val
+            .get("custom_delimiter")
+            .and_then(JsonValue::as_str)
+            .and_then(|s| s.bytes().next())
+            .unwrap_or(b',');
+        let lazy_quotes = csv_val
+            .get("lazy_quotes")
+            .and_then(JsonValue::as_bool)
+            .unwrap_or(false);
+        return Ok(FileScannerKind::Csv {
+            parse_header_row,
+            delimiter,
+            lazy_quotes,
+        });
     }
     Ok(FileScannerKind::Lines)
 }
