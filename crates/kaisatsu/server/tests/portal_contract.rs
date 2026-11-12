@@ -1254,6 +1254,22 @@ async fn bearer_and_connector_tokens_verify_and_exchange_for_one_endpoint() {
     // own audience mapper (context-gateway-simulate) does not ride along.
     assert_eq!(claims["aud"], json!("mcp-hub"), "{claims}");
 
+    // auth/endpoint_token.rs: a Portal page's read of a closed Endpoint exchanges the person's
+    // sign-in token (auth/oidc.rs:596 scope), which therefore names portal-api, the requester.
+    let (code, verifier) = portal_code(app, "openid profile email").await;
+    let signed_in = tokens(&redeem(app, &code, &verifier).await);
+    let session_answer = exchange(app, &signed_in.access_token, SLUG).await;
+    assert_eq!(
+        session_answer.status,
+        StatusCode::OK,
+        "{}",
+        session_answer.text
+    );
+    let claims = bearer
+        .verify(&tokens(&session_answer).access_token, "mcp-hub", "Bearer")
+        .unwrap_or_else(|e| panic!("the session's exchanged token: {e}"));
+    assert_eq!(claims["sub"], json!(ana.id));
+
     // A client the realm grants no exchange (portal-reconciler) is refused, with Keycloak's text,
     // whatever it asks.
     let ungranted = post_form(

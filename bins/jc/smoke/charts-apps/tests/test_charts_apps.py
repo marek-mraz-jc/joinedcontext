@@ -100,6 +100,8 @@ def test_a_closed_panel_read_by_a_person_no_policy_names_passes_only_on_the_gate
     r, _, why = suite.judge_refused(200, frames, "")
     assert r == suite.FAIL and "LEAK" in why  # any row is a leak
     assert suite.judge_refused(200, [{"fields": []}], "upstream status 403")[0] == suite.FAIL  # a frame too
+    assert suite.judge_refused(200, [], suite.PERSON_REFUSED)[0] == suite.PASS  # the refusal state
+    assert suite.judge_refused(200, frames, suite.PERSON_REFUSED)[0] == suite.FAIL
     assert suite.judge_refused(200, [], "")[0] == suite.FAIL  # silence is no refusal
     assert suite.judge_refused(500, [], "upstream status 403")[0] == suite.FAIL
     assert suite.judge_refused(200, [], "upstream status 500: boom")[0] == suite.FAIL

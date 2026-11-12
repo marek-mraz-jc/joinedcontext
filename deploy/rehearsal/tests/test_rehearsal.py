@@ -1586,6 +1586,22 @@ def test_only_the_clients_jc_signs_in_as_trade_federated_jwt_for_their_secret():
     assert realm["clients"][0]["clientAuthenticatorType"] == "federated-jwt"
 
 
+def test_the_portals_sign_in_token_names_the_portal_once_and_nothing_else_moves():
+    realm = {"clients": [{"clientId": "portal-api", "protocolMappers": [{"name": "groups"}]},
+                         {"clientId": "jc-assistant"}]}
+    out, changed = rh.add_portal_audience(realm)
+    assert changed
+    portal, assistant = out["clients"]
+    assert [m["name"] for m in portal["protocolMappers"]] == ["groups", "portal-api-audience"]
+    assert portal["protocolMappers"][1]["config"]["included.client.audience"] == "portal-api"
+    assert assistant == {"clientId": "jc-assistant"}
+    assert realm["clients"][0]["protocolMappers"] == [{"name": "groups"}], "the input is not changed"
+    assert rh.add_portal_audience(out) == (out, False)
+    assert rh.add_portal_audience({"clients": [{"clientId": "edge"}]})[1] is False
+    shipped = json.loads(rh.SHIPPED_REALM.read_text())
+    assert rh.add_portal_audience(shipped)[1] is False, "jc's shipped realm has the mapper"
+
+
 def test_the_assistants_client_may_ask_the_shared_embedders_scope_and_nothing_else_moves():
     realm = {"clients": [{"clientId": "jc-assistant", "secret": "$(file:x)", "optionalClientScopes": ["address"]},
                          {"clientId": "portal-api", "optionalClientScopes": []}],

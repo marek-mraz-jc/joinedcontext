@@ -260,6 +260,21 @@ fn panel_reason(body: &Value) -> String {
     }
 }
 
+/// The panel's refusal line when the gateway refuses the person's read of its Endpoint.
+pub(crate) const PERSON_REFUSED: &str = "no Policy of this Endpoint lets you read its data";
+
+/// Whether daiya's error answer is the gateway refusing the person's token
+/// (daiya-query `upstream status {status}: ...`, 401, 403 or 404).
+fn person_refused(body: &Value) -> bool {
+    let message = body["message"]
+        .as_str()
+        .or_else(|| body["error"]["message"].as_str())
+        .unwrap_or_default();
+    ["401", "403", "404"]
+        .iter()
+        .any(|status| message.starts_with(&format!("upstream status {status}:")))
+}
+
 fn unreachable(what: &str, err: impl std::fmt::Display) -> ApiError {
     tracing::warn!(error = %err, what, "Grafana did not answer");
     ApiError::Unavailable(format!(
@@ -593,6 +608,11 @@ impl<'a> Client<'a> {
         let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
         if status.is_success() {
             return Ok(body);
+        }
+        // The gateway refusing the person's own read (no Policy grants them, EP-14's 404 for an
+        // outsider of the Endpoint's Organization) is the panel's refusal state, not a failure.
+        if person.is_some() && person_refused(&body) {
+            return Ok(json!({ "accessDeniedMessage": PERSON_REFUSED }));
         }
         // A query the datasource refused or could not answer is the panel's error state, said in
         // daiya's words; the credentials never are in them.
