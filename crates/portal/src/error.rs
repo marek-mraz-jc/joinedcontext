@@ -77,6 +77,7 @@ pub const PORTAL_PROBLEM_TYPES: &[ProblemType] = &[
     ProblemType { slug: "file-too-large", status: 413, title: "File Too Large", hint: "Store a smaller object; the answer names the limit in bytes." },
     ProblemType { slug: "unprocessable", status: 422, title: "Unprocessable Content", hint: "Correct each member errors names; the dry run lists the same findings before you send." },
     ProblemType { slug: "secret-in-argument", status: 422, title: "Secret In Argument", hint: "Enter the credential in the Portal's secret form, never in a chat or a manifest, and name it by secretRef." },
+    ProblemType { slug: "precondition-required", status: 428, title: "Precondition Required", hint: "Read the entity, then send the action again with its @odata.etag in If-Match." },
     ProblemType { slug: "quota", status: 429, title: "Quota Used", hint: "Wait until resetAt, delete what the App no longer needs, or ask an administrator to raise the quota." },
     ProblemType { slug: "not-implemented", status: 501, title: "Not Implemented", hint: "This Portal does not do this yet; the detail names what it does instead." },
     ProblemType { slug: "no-json", status: 502, title: "No JSON", hint: "The model answered with something other than JSON of the schema; ask again." },
