@@ -190,6 +190,18 @@ def test_the_suite_windows_count_only_passed_writes(tmp_path):
     assert w["writes"] == 2 and w["start"] == 1_000_000 - 100 - 60 and w["end"] == 1_000_000 + 60
 
 
+def test_a_suite_run_against_another_jc_has_no_window_here(tmp_path):
+    # Smoke 43161732041: multiorg wrote to the gate's own multiorg jc (port 42111) and logs looked
+    # for its events in the gate jc's feed (activity.multiorg.8, 0 events).
+    for name, base in (("multiorg", "http://127.0.0.1:42111"), ("mcp", "http://127.0.0.1:42101/")):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "results.json").write_text(json.dumps({"suite": name, "base": base, "seconds": 10, "checks": [
+            {"call": "POST /api/v1/connectors", "result": "pass"}]}))
+    (w,) = suite.suite_windows([tmp_path / "multiorg", tmp_path / "mcp"], "http://127.0.0.1:42101")
+    assert w["suite"] == "mcp"
+
+
 def test_a_refused_write_or_a_sign_in_exchange_is_no_write(tmp_path):
     # The 2026-11-09T155017Z gate counted refusal probes and token exchanges as writes and then
     # missed their activity events (activity.endpoints, .kaisatsu, .subscriptions).

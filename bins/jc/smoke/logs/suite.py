@@ -395,11 +395,15 @@ def judge_metrics(res: Results, a) -> None:
 
 # ------------------------------------------------------------------ activity feed
 
-def suite_windows(dirs: list[Path]) -> list[dict]:
+def suite_windows(dirs: list[Path], base: str = "") -> list[dict]:
+    """A window per suite result that ran against `base`: a suite judged on another jc (the gate's
+    multiorg on its own two) wrote into that jc's activity feed, not this one's."""
     out = []
     for f in [f for d in dirs for f in sorted(d.rglob("results.json"))]:
         doc = as_json(f.read_bytes())
         if not isinstance(doc, dict) or not isinstance(doc.get("checks"), list):
+            continue
+        if base and doc.get("base") and doc["base"].rstrip("/") != base.rstrip("/"):
             continue
         end = f.stat().st_mtime
         start = end - float(doc.get("seconds") or 0)
@@ -629,7 +633,7 @@ def main(argv=None) -> int:
 
     judge_metrics(res, a)
 
-    windows = suite_windows([Path(d) for d in a.results_dir])
+    windows = suite_windows([Path(d) for d in a.results_dir], a.base_url)
     judge_activity(res, person, why, windows, started - dt.timedelta(minutes=5))
 
     # Secrets and personal data: the log and every text file of the other suites' results.

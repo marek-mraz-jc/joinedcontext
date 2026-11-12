@@ -80,6 +80,12 @@ class HostHttp(R.Http):
         return super().call(method, wire, body, {**(headers or {}), "Host": netloc}, form, timeout)
 
 
+def users(emails) -> list[str]:
+    """The user names of e-mail addresses, sorted: rows name people by user name, never by address
+    (the logs suite fails any result file naming an e-mail address)."""
+    return sorted(e.partition("@")[0] for e in emails)
+
+
 def claims(token: str) -> dict:
     """The payload of a JWT, unverified: only to read which audience kaisatsu wrote."""
     part = token.split(".")[1]
@@ -389,12 +395,12 @@ class Suite:
             st, body = self.session(f"{org}-admin").json("GET", "/api/v1/organization/people")
             emails = {i.get("email", "") for i in (body or {}).get("items", [])} if st == 200 else set()
             own = {f"mo-{org}-admin@rehearsal.invalid", f"mo-{org}-member@rehearsal.invalid"}
-            foreign = sorted(x for x in emails if (m := re.match(r"mo-(.+)-(admin|member)@", x)) and m.group(1) != org)
+            foreign = users(x for x in emails if (m := re.match(r"mo-(.+)-(admin|member)@", x)) and m.group(1) != org)
             # The list is realm-wide (people.rs list_people asks read on Person at the installation):
             # an admin of another Organization is refused it and has no list of its own members.
             gap = org != self.installation and st in DENIED
-            self.row(f"people.{org}-admin.own", org, "GET /api/v1/organization/people", f"{sorted(own)} listed",
-                     f"{st}, missing {sorted(own - emails)}", None if gap else (st == 200 and own <= emails),
+            self.row(f"people.{org}-admin.own", org, "GET /api/v1/organization/people", f"{users(own)} listed",
+                     f"{st}, missing {users(own - emails)}", None if gap else (st == 200 and own <= emails),
                      "gap: the Portal has no per-Organization people list; the realm-wide one is the "
                      "installation's (ADR-N-058 2.2), so this admin cannot list its own members" if gap else "")
             if org == self.installation:

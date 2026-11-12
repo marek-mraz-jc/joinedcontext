@@ -123,6 +123,9 @@ class Suite:
         self.http = Http(a.base_url, timeout=a.timeout)
         self.r = Results("endpoints", a.base_url)
         self.busy: dict[str, int] = {}  # path -> busy answers before the one judged (get)
+        # (slug, type) -> the bundle's rows of a type of expiring entities a Pipeline writes while
+        # the suite reads it (grown): a surface then shows at least those, never an exact count.
+        self.moving: dict[tuple[str, str], int] = {}
         now = dt.datetime.now(dt.timezone.utc)
         # The rehearsal keeps 24 h of history and sweeps hourly: an instance may be up to
         # 24 h + the sweep interval old; anything before that is a leak of older history.
@@ -228,15 +231,26 @@ class Suite:
         """A synthetic bundle's rehearsal runs the imported Pipelines against their live sources
         (helsinki citybikes-gbfs wrote 455 BikeHireDockingStation rows in smoke 43074228505), so a
         type may hold more than the bundle. Then the seeded rows (ex.seeded_ids) must count exactly
-        what the bundle holds, and every surface must agree with the live count instead."""
+        what the bundle holds, and every surface must agree with the live count instead.
+        A type of expiring entities keeps changing while the suite reads it (helsinki linked-events
+        wrote 100 Events every few seconds in smoke 43161732041: 99, 393, 447 within one Endpoint):
+        its seeded rows count at most the bundle's, and each surface shows at least those."""
         for t, count in want.items():
-            if count is None or tenant[t].get("expires"):
+            if count is None:
                 continue
             live = self.live_count(e, token, t)
             if live is None or live <= count:
                 continue
             seeded = self.live_count(e, token, t, ex.seeded_ids(t))
             path = f"GET /api/endpoint/{e.slug}/ngsi-ld/v1/entities?type={q(t)}&idPattern={q(ex.seeded_ids(t))}&count=true"
+            if tenant[t].get("expires"):
+                ok = seeded is not None and seeded <= count
+                self.r.check(f"{who}.count.seeded", f"{e.slug} {t}", path,
+                             f"<= {count} (the bundle's rows, entities expire; {live - count} more written by "
+                             "the rehearsal's Pipelines)", f"count={seeded}", ok)
+                if ok:
+                    self.moving[(e.slug, t)] = seeded
+                continue
             self.r.check(f"{who}.count.seeded", f"{e.slug} {t}", path,
                          f"{count} (the bundle's rows; {live - count} more written by the rehearsal's Pipelines)",
                          f"count={seeded}", seeded == count)
@@ -301,8 +315,10 @@ class Suite:
             self.r.add(f"{who}.count", target, f"GET {path}", "a count (not comparable: " + (narrowed or "overlapping idPatterns") + ")",
                        f"{st} count={actual}", "pass" if st == 200 and actual is not None else "fail")
         elif slot.get("expires"):
-            ok = st == 200 and actual is not None and int(actual) <= count
-            self.r.check(f"{who}.count", target, f"GET {path}", f"<= {count} (entities expire)",
+            ok = st == 200 and actual is not None and self.agrees(e, t, int(actual), count)
+            floor = self.moving.get((e.slug, t))
+            self.r.check(f"{who}.count", target, f"GET {path}",
+                         f">= {floor} (a Pipeline writes the type)" if floor is not None else f"<= {count} (entities expire)",
                          f"{st} count={actual}", ok)
         else:
             ok = st == 200 and actual is not None and int(actual) == count
@@ -409,7 +425,7 @@ class Suite:
                     matched = fc.get("numberMatched") if isinstance(fc, dict) else None
                     ok = st == 200 and isinstance(fc, dict) and fc.get("type") == "FeatureCollection"
                     if ok and count is not None and matched is not None and not narrowed:
-                        ok = int(matched) == count or (int(matched) <= count and self.expires(e, t))
+                        ok = self.agrees(e, t, int(matched), count)
                     self.r.check(f"{who}.ogc.items", f"{e.slug} {t}", f"GET {path}",
                                  f"200 FeatureCollection, numberMatched {count}", f"{st} numberMatched={matched} {short(raw, 80) if st != 200 else ''}", ok)
                 shown = {t: c for t, c in want.items() if t in ids}
@@ -434,7 +450,7 @@ class Suite:
                 n = body.get("@odata.count", body.get("@count")) if isinstance(body, dict) else None
                 ok = st == 200 and isinstance(body, dict) and isinstance(body.get("value"), list)
                 if ok and count is not None and n is not None:
-                    ok = int(n) == count or (int(n) <= count and self.expires(e, t))
+                    ok = self.agrees(e, t, int(n), count)
                 self.r.check(f"{who}.odata.query", f"{e.slug} {t}", f"GET {path}", f"200, @odata.count {count}",
                              f"{st} count={n} {short(raw, 80) if st != 200 else ''}", ok)
         if "sta" in reps:
@@ -479,7 +495,7 @@ class Suite:
         n = len(rows) - 1
         ok = st == 200 and h.get("content-type", "").startswith("text/csv") and bool(rows) and "id" in rows[0]
         if ok and count is not None:
-            ok = n == count or (n <= count and self.expires(e, t))
+            ok = self.agrees(e, t, n, count)
         self.r.check(f"{who}.ogc.csv", f"{e.slug} {t}", f"GET {items}?f=csv", f"200 text/csv, {count} rows",
                      f"{st} {h.get('content-type', '')} rows={n} {short(raw, 80) if st != 200 else ''}", ok)
         st, h, raw = self.file(f"{items}?f=parquet", token)
@@ -496,6 +512,14 @@ class Suite:
         ok = st == 200 and h.get("content-type", "").startswith("application/zip") and f"{t}.csv" in names
         self.r.check(f"{who}.ogc.zip", f"{e.slug} {t}", f"GET {path}", f"200 application/zip holding {t}.csv",
                      f"{st} {h.get('content-type', '')} {names} {short(raw, 80) if st != 200 else ''}", ok)
+
+    def agrees(self, e, t, n: int, count: int) -> bool:
+        """A surface's count of `t` against the bundle's `count`: equal; at most it when the type's
+        entities expire; at least the bundle's rows still there when a Pipeline writes it (grown)."""
+        floor = self.moving.get((e.slug, t))
+        if floor is not None:
+            return n >= floor
+        return n == count or (n <= count and self.expires(e, t))
 
     def expires(self, e, t) -> bool:
         return bool(((self.index["tenants"].get(e.tenant) or {}).get(t) or {}).get("expires"))

@@ -1328,11 +1328,43 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
     );
     add(
         "subscribe_mine_lead",
-        "Pick a town, a genre or dates: only matching events arrive, and the address below follows your choice.",
-        "Vyberte obec, žáner alebo dátumy: prídu len zodpovedajúce podujatia a adresa nižšie sa podľa výberu zmení.",
-        "Vyberte obec, žánr nebo data: přijdou jen odpovídající akce a adresa níže se podle výběru změní.",
-        "Wählen Sie einen Ort, ein Genre oder Daten: nur passende Termine kommen an, und die Adresse unten folgt Ihrer Wahl.",
-        "Válasszon települést, műfajt vagy dátumokat: csak az egyező események érkeznek, és a lenti cím a választást követi.",
+        "Start from a calendar or feed, then pick a town, a genre, a place or dates: only matching items arrive, and the address below follows your choice.",
+        "Začnite kalendárom alebo kanálom, potom vyberte obec, žáner, miesto alebo dátumy: prídu len zodpovedajúce položky a adresa nižšie sa podľa výberu zmení.",
+        "Začněte kalendářem nebo kanálem, pak vyberte obec, žánr, místo nebo data: přijdou jen odpovídající položky a adresa níže se podle výběru změní.",
+        "Beginnen Sie mit einem Kalender oder Feed, dann wählen Sie Ort, Genre, Umkreis oder Daten: nur passende Einträge kommen an, und die Adresse unten folgt Ihrer Wahl.",
+        "Kezdjen egy naptárral vagy hírcsatornával, majd válasszon települést, műfajt, helyet vagy dátumokat: csak az egyező tételek érkeznek, és a lenti cím a választást követi.",
+    );
+    add(
+        "subscribe_pick",
+        "Choose or type",
+        "Vyberte alebo píšte",
+        "Vyberte nebo pište",
+        "Wählen oder tippen",
+        "Válasszon vagy írjon",
+    );
+    add(
+        "subscribe_preset",
+        "Calendar or feed",
+        "Kalendár alebo kanál",
+        "Kalendář nebo kanál",
+        "Kalender oder Feed",
+        "Naptár vagy hírcsatorna",
+    );
+    add(
+        "subscribe_preset_ics",
+        "A calendar for a calendar app such as Google Calendar or Outlook (.ics); the fields below narrow it, empty fields keep all of it.",
+        "Kalendár pre kalendárovú aplikáciu, napríklad Google Kalendár alebo Outlook (.ics); polia nižšie ho zúžia, prázdne polia ponechajú všetko.",
+        "Kalendář pro kalendářovou aplikaci, například Google Kalendář nebo Outlook (.ics); pole níže ho zúží, prázdná pole ponechají vše.",
+        "Ein Kalender für eine Kalender-App wie Google Kalender oder Outlook (.ics); die Felder unten grenzen ihn ein, leere Felder behalten alles.",
+        "Naptár naptáralkalmazáshoz, például Google Naptár vagy Outlook (.ics); a lenti mezők szűkítik, az üres mezők mindent megtartanak.",
+    );
+    add(
+        "subscribe_preset_feed",
+        "A news feed for a feed reader such as Feedly or Thunderbird (RSS, Atom, JSON Feed); the fields below narrow it.",
+        "Kanál noviniek pre čítačku, napríklad Feedly alebo Thunderbird (RSS, Atom, JSON Feed); polia nižšie ho zúžia.",
+        "Kanál novinek pro čtečku, například Feedly nebo Thunderbird (RSS, Atom, JSON Feed); pole níže ho zúží.",
+        "Ein Feed für einen Feedreader wie Feedly oder Thunderbird (RSS, Atom, JSON Feed); die Felder unten grenzen ihn ein.",
+        "Hírcsatorna olvasóhoz, például Feedly vagy Thunderbird (RSS, Atom, JSON Feed); a lenti mezők szűkítik.",
     );
     add(
         "subscribe_query_hint",
@@ -1435,11 +1467,11 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
     );
     add(
         "subscribe_no_facets",
-        "This calendar offers no town or genre lists; narrow it by dates, or subscribe to it whole above.",
-        "Tento kalendár neponúka zoznam obcí ani žánrov; zúžte ho dátumami alebo ho vyššie odoberajte celý.",
-        "Tento kalendář nenabízí seznam obcí ani žánrů; zužte ho daty nebo ho výše odebírejte celý.",
-        "Dieser Kalender bietet keine Orts- oder Genrelisten; grenzen Sie ihn mit Daten ein oder abonnieren Sie ihn oben ganz.",
-        "Ez a naptár nem kínál település- vagy műfajlistát; szűkítse dátumokkal, vagy fent iratkozzon fel a teljesre.",
+        "This calendar offers no town or genre lists; narrow it by dates, or leave the dates empty for all of it.",
+        "Tento kalendár neponúka zoznam obcí ani žánrov; zúžte ho dátumami alebo nechajte dátumy prázdne pre všetko.",
+        "Tento kalendář nenabízí seznam obcí ani žánrů; zužte ho daty nebo nechte data prázdná pro vše.",
+        "Dieser Kalender bietet keine Orts- oder Genrelisten; grenzen Sie ihn mit Daten ein oder lassen Sie die Daten leer für alles.",
+        "Ez a naptár nem kínál település- vagy műfajlistát; szűkítse dátumokkal, vagy hagyja üresen a dátumokat az összeshez.",
     );
     add(
         "subscribe_events",
@@ -1467,11 +1499,11 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
     );
     add(
         "subscribe_preview_none",
-        "No upcoming event matches this query.",
-        "Tomuto dopytu nezodpovedá žiadne nadchádzajúce podujatie.",
-        "Tomuto dotazu neodpovídá žádná nadcházející akce.",
-        "Kein kommender Termin passt zu dieser Abfrage.",
-        "Egyetlen közelgő esemény sem felel meg a lekérdezésnek.",
+        "No upcoming event matches this query; widen the dates or empty a field. The link still works and fills as events arrive.",
+        "Tomuto dopytu nezodpovedá žiadne nadchádzajúce podujatie; rozšírte dátumy alebo vyprázdnite niektoré pole. Odkaz platí a naplní sa, keď podujatia pribudnú.",
+        "Tomuto dotazu neodpovídá žádná nadcházející akce; rozšiřte data nebo vyprázdněte některé pole. Odkaz platí a naplní se, až akce přibudou.",
+        "Kein kommender Termin passt zu dieser Abfrage; erweitern Sie die Daten oder leeren Sie ein Feld. Der Link bleibt gültig und füllt sich mit neuen Terminen.",
+        "Egyetlen közelgő esemény sem felel meg a lekérdezésnek; bővítse a dátumokat vagy ürítsen ki egy mezőt. A link érvényes marad, és megtelik, ahogy események érkeznek.",
     );
     add(
         "subscribe_preview_loading",
