@@ -117,7 +117,7 @@ fn space_of(envelope: &ResourceEnvelope) -> Option<String> {
 }
 
 /// One row of a listing: enough to pick a resource and open it, not the whole manifest.
-fn row(envelope: &ResourceEnvelope) -> Value {
+pub(crate) fn row(envelope: &ResourceEnvelope) -> Value {
     let status = envelope.status.as_ref();
     let mut row = json!({
         "kind": envelope.kind,
