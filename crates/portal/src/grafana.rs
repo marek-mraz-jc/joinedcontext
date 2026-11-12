@@ -264,12 +264,16 @@ fn panel_reason(body: &Value) -> String {
 pub(crate) const PERSON_REFUSED: &str = "no Policy of this Endpoint lets you read its data";
 
 /// Whether daiya's error answer is the gateway refusing the person's token
-/// (daiya-query `upstream status {status}: ...`, 401, 403 or 404).
+/// (daiya-query `upstream status {status}: ...`, 401, 403 or 404), bare or under the
+/// `outbound datasource error: ` its OData envelope puts before it (T-6799).
 fn person_refused(body: &Value) -> bool {
     let message = body["message"]
         .as_str()
         .or_else(|| body["error"]["message"].as_str())
         .unwrap_or_default();
+    let message = message
+        .strip_prefix("outbound datasource error: ")
+        .unwrap_or(message);
     ["401", "403", "404"]
         .iter()
         .any(|status| message.starts_with(&format!("upstream status {status}:")))

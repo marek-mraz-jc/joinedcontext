@@ -561,15 +561,32 @@ class Suite:
                     self.check("portal.project.resource_get.foreign", f"portal project in {foreign}",
                                f"jc_resource_get kind=Endpoint name={f.name}", "refused (404)", a.brief(100),
                                a.refused and f.slug not in json.dumps(a.result or {}))
-        # Writes each is refused: a new project (O, A), another Organization's settings (O, A),
-        # a space in a project it does not hold (A, O).
+        # A new project: O opens one in its own Organization, so it is asked to confirm and the
+        # question is left unanswered; the installation's Organization, named by O, and any
+        # project for A are refused before the question (T-6766, T-6798).
+        if "organization" in doors:
+            a = doors["organization"].call("jc_project_create", {
+                "project": ORG_NAMESPACE, "name": f"smoke-mcp-{secrets.token_hex(3)}"})
+            self.check("portal.organization.project_create.asked", "portal organization",
+                       "jc_project_create", "input_required: its own Organization lets it (T-6766)",
+                       a.brief(120), a.ok and (a.result or {}).get("status") == "input_required")
+            a = doors["organization"].call("jc_project_create", {
+                "project": ORG_NAMESPACE, "name": f"smoke-mcp-{secrets.token_hex(3)}", "organization": inst})
+            self.check("portal.organization.project_create.refused", "portal organization",
+                       f"jc_project_create organization={inst}",
+                       "refused before the question (ADR-N-058 §2.2, T-6798)", a.brief(120),
+                       a.refused and (a.result or {}).get("status") != "input_required")
+        # Writes each is refused: another Organization's settings (O, A), a space in a project it
+        # does not hold (A, O).
         for k in ("organization", "project"):
             if k not in doors:
                 continue
-            a = doors[k].call("jc_project_create", {"project": ORG_NAMESPACE if k == "organization" else own,
-                                                    "name": f"smoke-mcp-{secrets.token_hex(3)}"})
-            self.check(f"portal.{k}.project_create.refused", f"portal {k}", "jc_project_create",
-                       "refused (ADR-N-058 §2.2, PF-65)", a.brief(120), a.refused)
+            if k == "project":
+                a = doors[k].call("jc_project_create", {"project": own,
+                                                        "name": f"smoke-mcp-{secrets.token_hex(3)}"})
+                self.check(f"portal.{k}.project_create.refused", f"portal {k}", "jc_project_create",
+                           "refused (ADR-N-058 §2.2, PF-65)", a.brief(120),
+                           a.refused and (a.result or {}).get("status") != "input_required")
             org = {"apiVersion": "joinedcontext.com/v1alpha1", "kind": "Organization",
                    "metadata": {"name": inst, "namespace": ORG_NAMESPACE}, "spec": self.x.orgs[inst]}
             a = doors[k].call("jc_resource_propose", {"project": ORG_NAMESPACE, "manifest": org})

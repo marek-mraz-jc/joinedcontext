@@ -1326,14 +1326,19 @@ mod tests {
 
     /// T-6783: the gateway refusing the person's exchanged token (no Policy names them) is the
     /// panel's refusal state; the same refusal of a public panel's anonymous read stays an error.
+    /// T-6799: daiya answers it in its OData envelope, `outbound datasource error: upstream
+    /// status 404: …` (the 404 of an outsider of the Endpoint's Organization), as smoke
+    /// 43135784935 met it.
     #[tokio::test]
     async fn a_person_the_gateway_refuses_meets_the_refusal_state_not_a_failure() {
         let server = service("grafana").await;
         Mock::given(method("GET"))
             .and(path("/api/dashboards/live/render"))
-            .respond_with(ResponseTemplate::new(502).set_body_json(json!({
-                "message": "upstream status 403: {\"type\":\"https://joinedcontext.com/errors/forbidden\"}"
-            })))
+            .respond_with(ResponseTemplate::new(502).set_body_json(json!({ "error": {
+                "code": "cr.outbound_failed",
+                "message": "outbound datasource error: upstream status 404: {\"type\":\"https://joinedcontext.com/errors/not-found\"}",
+                "status": 502
+            } })))
             .mount(&server)
             .await;
         let mut state = world(Some(&server));
