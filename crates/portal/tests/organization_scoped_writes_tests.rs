@@ -293,6 +293,92 @@ fn a_project_opens_in_the_callers_organization_and_never_in_the_installations() 
     );
 }
 
+/// T-6798: the MCP door judges `jc_project_create` on the Organization its input names before it
+/// asks the person, so a caller the REST door refuses is refused, never shown the question; one
+/// who may open the project there is asked.
+#[tokio::test]
+async fn opening_a_project_is_refused_on_mcp_before_the_question_as_on_rest() {
+    let state = world();
+    let call = |who: Identity, input: Value| {
+        let state = state.clone();
+        async move {
+            let mut arguments = input;
+            arguments["project"] = json!(ORG_NAMESPACE);
+            mcp_rpc(
+                &mcp(who),
+                &state,
+                json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+                    "name": "jc_project_create", "arguments": arguments } }),
+            )
+            .await
+        }
+    };
+    for (who, input) in [
+        (
+            bbsk_admin(),
+            json!({ "name": "praha-tram", "organization": "praha" }),
+        ),
+        (
+            bbsk_admin(),
+            json!({ "name": "ops-tram", "organization": "ops" }),
+        ),
+        (
+            bbsk_admin(),
+            json!({ "name": "no-tram", "organization": "nowhere" }),
+        ),
+        (bbsk_steward(), json!({ "name": "bbsk-tram" })),
+        (operator(), json!({ "name": "ops-tram" })),
+    ] {
+        let answer = call(who.clone(), input.clone()).await;
+        assert_eq!(
+            answer["result"]["isError"],
+            json!(true),
+            "{} {input}: {answer}",
+            who.username
+        );
+        assert_ne!(
+            answer["result"]["status"],
+            json!("input_required"),
+            "{} {input}: {answer}",
+            who.username
+        );
+        let rest = http(
+            &state,
+            who.clone(),
+            "POST",
+            "/api/v1/projects",
+            Some(input.clone()),
+        )
+        .await;
+        assert!(
+            refused(rest.status),
+            "rest {} {input}: {} {}",
+            who.username,
+            rest.status,
+            rest.body
+        );
+    }
+    for (who, input) in [
+        (bbsk_admin(), json!({ "name": "bbsk-tram" })),
+        (
+            bbsk_admin(),
+            json!({ "name": "bbsk-tram", "organization": "bbsk" }),
+        ),
+        (
+            twice_admin(),
+            json!({ "name": "praha-tram", "organization": "praha" }),
+        ),
+    ] {
+        let answer = call(who.clone(), input.clone()).await;
+        assert_eq!(
+            answer["result"]["status"],
+            json!("input_required"),
+            "{} {input}: {answer}",
+            who.username
+        );
+    }
+}
+
 /// Point 3: `bbsk`'s administrator edits its own Organization's settings but not its domain,
 /// limits or catalogue, and creates no Organization.
 #[test]

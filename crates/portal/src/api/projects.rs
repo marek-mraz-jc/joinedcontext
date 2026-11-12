@@ -411,14 +411,17 @@ fn unknown_organization(asked: &str) -> ApiError {
     ))
 }
 
-/// Whether the caller may open a project in some Organization: [`opening_organization`] without
-/// a name, where one that must still be named, or a mirror not yet holding the Organization,
-/// counts as allowed; the open itself answers those.
+/// Whether the caller may open a project in the `requested` Organization, or in some
+/// Organization when none is named: [`opening_organization`], where one that must still be
+/// named, or a mirror not yet holding the Organization, counts as allowed; the open itself
+/// answers those. An MCP call is judged on the Organization it names, so nobody is asked to
+/// confirm an open the Portal then refuses (AG-63, T-6798).
 pub fn may_open(
     state: &AppState,
     identity: &crate::auth::session::Identity,
+    requested: Option<&str>,
 ) -> Result<(), ApiError> {
-    match opening_organization(state, identity, None) {
+    match opening_organization(state, identity, requested) {
         Ok(_) | Err(ApiError::Unprocessable { .. } | ApiError::Unavailable(_)) => Ok(()),
         Err(err) => Err(err),
     }
@@ -430,7 +433,7 @@ pub fn creation_affordance(
     state: &AppState,
     identity: &crate::auth::session::Identity,
 ) -> crate::permissions::Affordance {
-    match may_open(state, identity) {
+    match may_open(state, identity, None) {
         Ok(()) => crate::permissions::Affordance {
             allowed: true,
             reason: None,
@@ -1880,7 +1883,7 @@ mod tests {
         ));
         assert_eq!(creation(&state, "bb"), "org-admin");
         assert!(!lets_anyone_open(&state, "bb"));
-        assert!(may_open(&state, &person("sub-jana")).is_err());
+        assert!(may_open(&state, &person("sub-jana"), None).is_err());
     }
 
     /// F-R2POR3-007: a `group:` member written as a Keycloak id (ADR-N-061) is its person.

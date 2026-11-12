@@ -606,7 +606,7 @@ pub fn may_try(
     if op.verb.is_some() || op.annotations.read_only_hint {
         return Ok(());
     }
-    if let Some(decided) = organization_right(op.name, state, identity) {
+    if let Some(decided) = organization_right(op.name, state, identity, input) {
         return Ok(decided?);
     }
     let effective = crate::permissions::for_request(state, identity, project);
@@ -690,6 +690,7 @@ fn organization_right(
     name: &str,
     state: &AppState,
     identity: &crate::auth::session::Identity,
+    input: Option<&Value>,
 ) -> Option<Result<(), ApiError>> {
     use jc_core::kinds::Verb;
     let person = |verb| Some(crate::api::people::allow(state, identity, verb));
@@ -697,7 +698,13 @@ fn organization_right(
         "jc_person_create" => person(Verb::Create),
         "jc_person_edit" => person(Verb::Update),
         "jc_person_disable" | "jc_person_enable" | "jc_person_sign_out" => person(Verb::Disable),
-        "jc_project_create" => Some(crate::api::projects::may_open(state, identity)),
+        "jc_project_create" => Some(crate::api::projects::may_open(
+            state,
+            identity,
+            input
+                .and_then(|input| input.get("organization"))
+                .and_then(Value::as_str),
+        )),
         _ => None,
     }
 }
