@@ -1936,3 +1936,345 @@ async fn organization_sets_hold_only_the_organizations_own_rows() {
         assert!(!metadata.text.contains("\"rolebindings\""), "{mode:?}");
     }
 }
+
+/// One action call on `hel`'s host as `who` ("" is anonymous: the CSRF pair and no session),
+/// by `method` (POST for OData, the REST verb otherwise).
+async fn call_as(
+    state: &AppState,
+    who: &str,
+    method: &str,
+    uri: &str,
+    if_match: Option<&str>,
+    content_type: &str,
+    body: Value,
+) -> Answer {
+    let minted = cookies(&state.config, person(who, groups_of(who)), "hel").await;
+    let token = minted
+        .split("; ")
+        .find_map(|c| c.strip_prefix(&format!("{CSRF_COOKIE}=")))
+        .unwrap_or_default()
+        .to_owned();
+    let cookie = if who.is_empty() {
+        format!("{CSRF_COOKIE}={token}")
+    } else {
+        minted
+    };
+    let mut request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::HOST, HEL)
+        .header(header::COOKIE, cookie)
+        .header(csrf::CSRF_HEADER, token)
+        .header(header::CONTENT_TYPE, content_type);
+    if let Some(tag) = if_match {
+        request = request.header(header::IF_MATCH, tag);
+    }
+    let body = if body.is_null() {
+        Body::empty()
+    } else {
+        Body::from(body.to_string())
+    };
+    let response = server::app(state.clone())
+        .oneshot(request.body(body).expect("request"))
+        .await
+        .expect("response");
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    Answer {
+        status,
+        headers,
+        text: String::from_utf8_lossy(&bytes).into_owned(),
+    }
+}
+
+/// The Organization's access fixture: `hel-reader` reads the access kinds at hel, `hel-admin`
+/// and `ba-admin` read, propose and delete them at their own Organization; hel's Group
+/// `noise-team`, helsinki's Role `air-steward` and Policy `air-open`.
+fn access_state() -> AppState {
+    let state = state();
+    let m = &state.mirror;
+    let kinds = json!([
+        "Project",
+        "ContextSpace",
+        "Endpoint",
+        "Workspace",
+        "Role",
+        "RoleBinding",
+        "Group",
+        "Policy",
+        "Organization"
+    ]);
+    m.upsert(envelope(
+        "Role",
+        "access-reader",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": kinds, "verbs": ["read"] }] }),
+    ));
+    m.upsert(envelope(
+        "Role",
+        "access-admin",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": kinds, "verbs": ["read", "propose", "delete"] }] }),
+    ));
+    for (who, role, org) in [
+        ("hel-reader", "access-reader", "hel"),
+        ("hel-admin", "access-admin", "hel"),
+        ("ba-admin", "access-admin", "ba"),
+    ] {
+        m.upsert(envelope(
+            "RoleBinding",
+            &format!("{who}-{org}"),
+            ORG_NAMESPACE,
+            json!({ "subjects": [{ "user": format!("{who}@hel.fi") }], "role": role,
+                    "scope": { "organization": org } }),
+        ));
+    }
+    m.upsert(envelope(
+        "Group",
+        "noise-team",
+        ORG_NAMESPACE,
+        json!({ "members": [{ "user": "hel-only@hel.fi" }] }),
+    ));
+    m.upsert(envelope(
+        "Role",
+        "air-steward",
+        "helsinki",
+        json!({ "rules": [{ "kinds": ["ContextSpace"], "verbs": ["read"] }] }),
+    ));
+    m.upsert(envelope(
+        "Policy",
+        "air-open",
+        "helsinki",
+        json!({ "endpoint": "air", "rules": [] }),
+    ));
+    state
+}
+
+/// The bound entities of the Organization's access kinds: OData address, REST door, and the
+/// manifest whose `ETag` the If-Match carries.
+const ACCESS_TARGETS: [(&str, &str, (&str, &str, &str)); 6] = [
+    (
+        "rolebindings('hel-editor-hel')",
+        "/api/v1/projects/org/rolebindings/hel-editor-hel",
+        (ORG_NAMESPACE, "RoleBinding", "hel-editor-hel"),
+    ),
+    (
+        "organizationRoles('editor')",
+        "/api/v1/projects/org/roles/editor",
+        (ORG_NAMESPACE, "Role", "editor"),
+    ),
+    (
+        "groups('noise-team')",
+        "/api/v1/projects/org/groups/noise-team",
+        (ORG_NAMESPACE, "Group", "noise-team"),
+    ),
+    (
+        "Organization",
+        "/api/v1/projects/org/organizations/hel",
+        (ORG_NAMESPACE, "Organization", "hel"),
+    ),
+    (
+        "roles(project='helsinki',name='air-steward')",
+        "/api/v1/projects/helsinki/roles/air-steward",
+        ("helsinki", "Role", "air-steward"),
+    ),
+    (
+        "policies(project='helsinki',name='air-open')",
+        "/api/v1/projects/helsinki/policies/air-open",
+        ("helsinki", "Policy", "air-open"),
+    ),
+];
+
+/// T-6827 (PF-52, PF-56, ADR-N-070 §2.4): `propose_update` and `propose_delete` on the
+/// Organization's Roles, RoleBindings and Groups, on the `Organization` singleton and on a
+/// project's Role and Policy answer what the REST door's dry-run `PATCH` and `DELETE` answer:
+/// anonymous 401, a reader without `propose` 403, the Organization's admin the plan. A row the
+/// caller may not read is 404, as its read is. `dryRun` writes nothing: every manifest keeps
+/// its `ETag`.
+#[tokio::test]
+async fn every_organization_action_answers_as_its_rest_door() {
+    let state = access_state();
+    let before: Vec<String> = ACCESS_TARGETS
+        .iter()
+        .map(|(.., (ns, kind, name))| state.mirror.get(ns, kind, name).expect(name).etag())
+        .collect();
+    let mut differ = Vec::new();
+    for who in ["", "hel-only", "hel-reader", "hel-admin", "root"] {
+        for ((entity, rest, _), etag) in ACCESS_TARGETS.iter().zip(&before) {
+            for (action, method, body) in [
+                ("propose_delete", "DELETE", json!({ "dryRun": true })),
+                (
+                    "propose_update",
+                    "PATCH",
+                    json!({ "patch": { "metadata": { "title": "Renamed" } }, "dryRun": true }),
+                ),
+            ] {
+                let odata = call_as(
+                    &state,
+                    who,
+                    "POST",
+                    &format!("/api/v1/{entity}/JoinedContext.Portal.{action}"),
+                    Some(etag),
+                    "application/json",
+                    body.clone(),
+                )
+                .await;
+                let rest = call_as(
+                    &state,
+                    who,
+                    method,
+                    &format!("{rest}?dryRun=All"),
+                    Some(etag),
+                    "application/merge-patch+json",
+                    if method == "PATCH" {
+                        body["patch"].clone()
+                    } else {
+                        Value::Null
+                    },
+                )
+                .await;
+                let expected = match who {
+                    "" => Some(StatusCode::UNAUTHORIZED),
+                    "hel-reader" => Some(StatusCode::FORBIDDEN),
+                    "hel-admin" | "root" => Some(StatusCode::OK),
+                    _ => None,
+                };
+                // A row the caller may not read answers 404 as its GET does; else the REST door's.
+                let unreadable = odata.status == StatusCode::NOT_FOUND
+                    && get(&state, Mode::Host("hel"), who, &format!("/api/v1/{entity}"))
+                        .await
+                        .status
+                        == StatusCode::NOT_FOUND;
+                let same = odata.status == rest.status || unreadable;
+                if !same || expected.is_some_and(|e| e != odata.status) {
+                    differ.push(format!(
+                        "{who:?} {entity} {action}: OData {} {} / REST {method} {} {}",
+                        odata.status,
+                        odata.text.chars().take(300).collect::<String>(),
+                        rest.status,
+                        rest.text.chars().take(200).collect::<String>()
+                    ));
+                }
+                if odata.status == StatusCode::OK {
+                    assert!(odata.text.contains("\"valid\""), "{}", odata.text);
+                }
+            }
+        }
+    }
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
+    let after: Vec<String> = ACCESS_TARGETS
+        .iter()
+        .map(|(.., (ns, kind, name))| state.mirror.get(ns, kind, name).expect(name).etag())
+        .collect();
+    assert_eq!(before, after, "a dry run changed a manifest");
+}
+
+/// T-6827: another Organization's row is 404 to the action as to a read, an action without
+/// If-Match 428, and `$metadata` offers the Organization actions only to who may propose there.
+#[tokio::test]
+async fn organization_actions_keep_to_the_organization_and_its_rights() {
+    let state = access_state();
+    let foreign = state
+        .mirror
+        .get(ORG_NAMESPACE, "RoleBinding", "ba-admin-ba")
+        .expect("ba's")
+        .etag();
+    let ba = call_as(
+        &state,
+        "hel-admin",
+        "POST",
+        "/api/v1/rolebindings('ba-admin-ba')/JoinedContext.Portal.propose_delete",
+        Some(&foreign),
+        "application/json",
+        json!({ "dryRun": true }),
+    )
+    .await;
+    assert_eq!(ba.status, StatusCode::NOT_FOUND, "{}", ba.text);
+    let cookie = cookies(&state.config, person("hel-admin", &[]), "hel").await;
+    let singleton = send(
+        &state,
+        Mode::Host("hel"),
+        &cookie,
+        "/api/v1/Organization",
+        &[("OData-Version", "4.0")],
+    )
+    .await;
+    let tag = singleton.json()["@odata.etag"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the singleton's etag: {}", singleton.text))
+        .to_owned();
+    for (if_match, status) in [
+        (None, StatusCode::PRECONDITION_REQUIRED),
+        (Some("\"stale\""), StatusCode::PRECONDITION_FAILED),
+        (Some(tag.as_str()), StatusCode::OK),
+    ] {
+        let answer = call_as(
+            &state,
+            "hel-admin",
+            "POST",
+            "/api/v1/Organization/JoinedContext.Portal.propose_update",
+            if_match,
+            "application/json",
+            json!({ "patch": { "metadata": { "title": "Helsinki" } }, "dryRun": true }),
+        )
+        .await;
+        assert_eq!(answer.status, status, "{if_match:?}: {}", answer.text);
+    }
+    let unknown = call_as(
+        &state,
+        "hel-admin",
+        "POST",
+        "/api/v1/groups('noise-team')/JoinedContext.Portal.approve",
+        Some("*"),
+        "application/json",
+        json!({}),
+    )
+    .await;
+    assert_eq!(unknown.status, StatusCode::NOT_FOUND, "{}", unknown.text);
+
+    let offered = |doc: &Value| -> Vec<String> {
+        doc["JoinedContext.Portal"]["propose_update"]
+            .as_array()
+            .map(|overloads| {
+                overloads
+                    .iter()
+                    .filter_map(|o| o["$Parameter"][0]["$Type"].as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let admin = get(
+        &state,
+        Mode::Host("hel"),
+        "hel-admin",
+        "/api/v1/$metadata?$format=json",
+    )
+    .await;
+    let admin = offered(&admin.json());
+    for ty in ["RoleBinding", "OrganizationRole", "Group", "Organization"] {
+        assert!(
+            admin.contains(&format!("JoinedContext.Portal.{ty}")),
+            "{ty}: {admin:?}"
+        );
+    }
+    let reader = get(
+        &state,
+        Mode::Host("hel"),
+        "hel-reader",
+        "/api/v1/$metadata?$format=json",
+    )
+    .await;
+    let reader = offered(&reader.json());
+    assert!(
+        reader
+            .iter()
+            .all(|ty| !ty.ends_with(".RoleBinding") && !ty.ends_with(".Organization")),
+        "{reader:?}"
+    );
+}

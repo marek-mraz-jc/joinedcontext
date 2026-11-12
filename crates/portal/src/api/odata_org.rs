@@ -1735,10 +1735,13 @@ fn service_document(state: &AppState) -> Response {
 }
 
 /// What the caller may do anywhere in the Organization: what their `$metadata` offers.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct Rights {
     propose: bool,
     approve: bool,
+    /// The Organization-scoped types the caller proposes on at the Organization itself: the
+    /// singleton's `Organization` and each Organization set's type (`OrganizationRole`, ...).
+    org_propose: BTreeSet<&'static str>,
     /// A member's personal properties ([`people_admin`]).
     people: bool,
 }
@@ -1755,10 +1758,32 @@ fn rights(state: &AppState, user: &CurrentUser, org: &str) -> Rights {
             rights.approve |= effective.may_anything(jc_core::kinds::Verb::Approve);
         }
     }
+    let proposes = |kind: &str| {
+        crate::permissions::holds_at_organization(
+            state,
+            &user.0.identity,
+            org,
+            kind,
+            jc_core::kinds::Verb::Propose,
+            None,
+        )
+    };
+    rights.org_propose = org_kinds()
+        .filter(|(.., set)| proposes(&set.type_name))
+        .map(|(_, type_name, _)| type_name)
+        .chain(proposes(ORGANIZATION).then_some(ORGANIZATION))
+        .collect();
     rights
 }
 
 const CHANGES: &str = "changes";
+
+/// `propose_update`'s parameters: the whole manifest or a merge patch of it.
+const UPDATE_PARAMETERS: &[(&str, &str)] = &[
+    ("manifest", "Edm.Untyped"),
+    ("patch", "Edm.Untyped"),
+    ("dryRun", "Edm.Boolean"),
+];
 
 /// An action, its binding type and its parameters.
 type BoundAction = (
@@ -1771,9 +1796,9 @@ type BoundAction = (
 type Binding = (String, Option<(&'static ListSet, String)>);
 
 /// The bound actions `rights` allow: `propose_create` on a project, `propose_update` and
-/// `propose_delete` on each manifest kind, `approve` and `reject` on a Change. Each is
-/// (name, binding type, parameters).
-fn bound_actions(rights: Rights, visible: &BTreeSet<String>) -> Vec<BoundAction> {
+/// `propose_delete` on each manifest kind, on each Organization set and on the `Organization`
+/// singleton, `approve` and `reject` on a Change. Each is (name, binding type, parameters).
+fn bound_actions(rights: &Rights, visible: &BTreeSet<String>) -> Vec<BoundAction> {
     let mut out = Vec::new();
     if rights.propose {
         out.push((
@@ -1786,14 +1811,20 @@ fn bound_actions(rights: Rights, visible: &BTreeSet<String>) -> Vec<BoundAction>
             out.push((
                 "propose_update",
                 ty.clone(),
-                &[
-                    ("manifest", "Edm.Untyped"),
-                    ("patch", "Edm.Untyped"),
-                    ("dryRun", "Edm.Boolean"),
-                ][..],
+                UPDATE_PARAMETERS,
             ));
             out.push(("propose_delete", ty, &[("dryRun", "Edm.Boolean")][..]));
         }
+    }
+    let org_types = org_kinds()
+        .filter(|(set, ..)| visible.contains(*set))
+        .map(|(_, type_name, _)| type_name)
+        .chain(std::iter::once(ORGANIZATION))
+        .filter(|type_name| rights.org_propose.contains(type_name));
+    for type_name in org_types {
+        let ty = format!("{NAMESPACE}.{type_name}");
+        out.push(("propose_update", ty.clone(), UPDATE_PARAMETERS));
+        out.push(("propose_delete", ty, &[("dryRun", "Edm.Boolean")][..]));
     }
     if rights.approve {
         if let Some(change) = kind(CHANGES).filter(|_| visible.contains(CHANGES)) {
@@ -1812,7 +1843,7 @@ fn manifest_kind(set: &ListSet) -> bool {
 /// The CSDL XML of the caller: the bound actions they may call inside the schema.
 fn xml_for(
     base: &str,
-    rights: Rights,
+    rights: &Rights,
     visible: &BTreeSet<String>,
     offered: &[&'static crate::ops::Operation],
 ) -> String {
@@ -1839,7 +1870,7 @@ fn xml_for(
 /// The CSDL JSON of the caller: each action's overloads under its name.
 fn json_for(
     base: &str,
-    rights: Rights,
+    rights: &Rights,
     visible: &BTreeSet<String>,
     offered: &[&'static crate::ops::Operation],
 ) -> String {
@@ -1898,9 +1929,9 @@ fn metadata(
     match body {
         Ok(text) => {
             let text = if json_asked {
-                json_for(&text, rights, visible, offered)
+                json_for(&text, &rights, visible, offered)
             } else {
-                xml_for(&text, rights, visible, offered)
+                xml_for(&text, &rights, visible, offered)
             };
             (StatusCode::OK, headers_for(content_type), text).into_response()
         }
@@ -1934,8 +1965,10 @@ fn singleton(state: &AppState, user: &CurrentUser, org: &str, name: &str) -> Res
         let manifest = state
             .mirror
             .get(crate::permissions::ORG_NAMESPACE, ORGANIZATION, org);
+        // Its `@odata.etag` is the REST door's `ETag`: the If-Match of `propose_update`.
         json!({
             "@odata.context": format!("{root}$metadata#{ORGANIZATION}"),
+            "@odata.etag": manifest.as_ref().map(|m| m.etag()),
             "name": org,
             "title": manifest.and_then(|m| m.metadata.title),
         })
@@ -2220,6 +2253,14 @@ async fn act(call: Call<'_>, entity: &str, name: &str) -> Response {
 }
 
 async fn act_inner(call: Call<'_>, entity: &str, name: &str) -> Result<Response, Refused> {
+    if let Some((plural, key, current)) = org_bound(&call, entity).await? {
+        if !matches!(name, "propose_update" | "propose_delete") {
+            return Err(no(not_found(format!(
+                "{entity} has no action {name}; $metadata lists the actions you may call"
+            ))));
+        }
+        return propose(call, name, &current, (ORG_NAMESPACE.to_owned(), plural, key)).await;
+    }
     let Call {
         state,
         user,
@@ -2299,40 +2340,15 @@ async fn act_inner(call: Call<'_>, entity: &str, name: &str) -> Result<Response,
     let plural = set.set.clone();
     match name {
         "propose_update" | "propose_delete" if manifest_kind(set) => {
-            precondition(headers, &current)?;
-            let mut forwarded = HeaderMap::new();
-            if let Some(tag) = headers.get(header::IF_MATCH) {
-                forwarded.insert(header::IF_MATCH, tag.clone());
-            }
-            if name == "propose_delete" {
-                let params = parameters(&body, &["dryRun"])?;
-                return Ok(door(
-                    crate::api::delete::delete_resource(
-                        user,
-                        front,
-                        State(state.clone()),
-                        Path((project, plural, key)),
-                        Query(dry_run(&params)?),
-                        forwarded,
-                    )
-                    .await,
-                ));
-            }
-            let params = parameters(&body, &["manifest", "patch", "dryRun"])?;
-            let query = dry_run(&params)?;
-            match (params.get("manifest"), params.get("patch")) {
-                (Some(manifest), None) if manifest.is_object() => {
-                    let (h, bytes) = json(manifest);
-                    forwarded.extend(h);
-                    Ok(door(crate::api::mutate::replace(user, front, State(state.clone()), Path((project, plural, key)), Query(query), forwarded, bytes).await))
-                }
-                (None, Some(patch)) if patch.is_object() => {
-                    forwarded.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/merge-patch+json"));
-                    let bytes = Bytes::from(patch.to_string());
-                    Ok(door(crate::api::mutate::patch(user, front, State(state.clone()), Path((project, plural, key)), Query(query), forwarded, bytes).await))
-                }
-                _ => Err(no(bad("propose_update takes the whole manifest or a merge patch of it, one of them: {\"manifest\": {...}} or {\"patch\": {\"spec\": {...}}}"))),
-            }
+            let call = Call {
+                state,
+                user,
+                front,
+                org,
+                headers,
+                body,
+            };
+            propose(call, name, &current, (project, plural, key)).await
         }
         "approve" | "reject" if set.set == CHANGES => {
             precondition(headers, &current)?;
@@ -2354,6 +2370,114 @@ async fn act_inner(call: Call<'_>, entity: &str, name: &str) -> Result<Response,
             set.type_name
         )))),
     }
+}
+
+/// `propose_update` or `propose_delete` on the manifest `(project, plural, key)` whose ETag is
+/// `current`, through the REST door's `PUT`, `PATCH` or `DELETE` (its rights, lane and four eyes).
+async fn propose(
+    call: Call<'_>,
+    name: &str,
+    current: &str,
+    (project, plural, key): (String, String, String),
+) -> Result<Response, Refused> {
+    let Call {
+        state,
+        user,
+        front,
+        headers,
+        body,
+        ..
+    } = call;
+    let door =
+        |r: Result<Response, crate::error::ApiError>| r.unwrap_or_else(IntoResponse::into_response);
+    precondition(headers, current)?;
+    let mut forwarded = HeaderMap::new();
+    if let Some(tag) = headers.get(header::IF_MATCH) {
+        forwarded.insert(header::IF_MATCH, tag.clone());
+    }
+    if name == "propose_delete" {
+        let params = parameters(&body, &["dryRun"])?;
+        return Ok(door(
+            crate::api::delete::delete_resource(
+                user,
+                front,
+                State(state.clone()),
+                Path((project, plural, key)),
+                Query(dry_run(&params)?),
+                forwarded,
+            )
+            .await,
+        ));
+    }
+    let params = parameters(&body, &["manifest", "patch", "dryRun"])?;
+    let query = dry_run(&params)?;
+    match (params.get("manifest"), params.get("patch")) {
+        (Some(manifest), None) if manifest.is_object() => {
+            forwarded.insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            );
+            let bytes = Bytes::from(manifest.to_string());
+            Ok(door(crate::api::mutate::replace(user, front, State(state.clone()), Path((project, plural, key)), Query(query), forwarded, bytes).await))
+        }
+        (None, Some(patch)) if patch.is_object() => {
+            forwarded.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/merge-patch+json"));
+            let bytes = Bytes::from(patch.to_string());
+            Ok(door(crate::api::mutate::patch(user, front, State(state.clone()), Path((project, plural, key)), Query(query), forwarded, bytes).await))
+        }
+        _ => Err(no(bad("propose_update takes the whole manifest or a merge patch of it, one of them: {\"manifest\": {...}} or {\"patch\": {\"spec\": {...}}}"))),
+    }
+}
+
+/// The Organization's own manifest an action is bound to: `Organization` (the singleton) or a
+/// row of an Organization set (`rolebindings('hel-admins')`), as (plural, name, ETag) of the
+/// REST door at `/projects/org/{plural}/{name}`; `None` when `entity` is a project's. A row the
+/// caller may not read, or another Organization's, is 404 as on a read.
+async fn org_bound(
+    call: &Call<'_>,
+    entity: &str,
+) -> Result<Option<(String, String, String)>, Refused> {
+    let (state, org) = (call.state, call.org);
+    if entity == ORGANIZATION {
+        let manifest = state
+            .mirror
+            .get(ORG_NAMESPACE, ORGANIZATION, org)
+            .ok_or_else(|| no(not_found(format!("no Organization {org}"))))?;
+        let plural = crate::resource::by_kind(ORGANIZATION).map_or("organizations", |i| i.plural);
+        return Ok(Some((plural.to_owned(), org.to_owned(), manifest.etag())));
+    }
+    let set_name = entity.split(['(', '/']).next().unwrap_or_default();
+    let Some(set) = org_set(set_name) else {
+        return Ok(None);
+    };
+    let parsed = odata_url::parse(entity, &EdmModel(&ORG.public), &limits())
+        .map_err(|e| no(not_found(format!("{e}: no such entity"))))?;
+    let ODataUri::Resource { path, .. } = parsed else {
+        return Err(no(not_found("no such entity")));
+    };
+    let [Segment::EntitySet(_), Segment::Key(key)] = path.as_slice() else {
+        return Err(no(not_found(format!(
+            "an action is bound to one row of {set_name}, e.g. {set_name}('name')"
+        ))));
+    };
+    let key = match single_key(key)? {
+        Value::String(name) => name,
+        other => other.to_string(),
+    };
+    let read = Read {
+        state,
+        user: &call.user,
+        caller: caller_of(call.user.clone(), call.front),
+        people: false,
+        org: org.to_owned(),
+        page: 0,
+    };
+    let current = org_rows(&read, set_name)?
+        .iter()
+        .find(|row| row.get(ROW_KEY).and_then(Value::as_str) == Some(key.as_str()))
+        .and_then(|row| row.get(ETAG).and_then(Value::as_str).map(str::to_owned))
+        .ok_or_else(|| no(not_found(format!("no {set_name} {key} you may read"))))?;
+    Ok(Some((set.set.clone(), key, current)))
 }
 
 /// The Organization's projects the caller may read.
