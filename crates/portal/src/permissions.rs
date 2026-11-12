@@ -151,6 +151,13 @@ fn organization_of_reach(mirror: &Mirror, reach: &Reach) -> Option<String> {
     }
 }
 
+/// The Organization a `RoleBinding`'s spec reaches: its `scope.organization`, the Organization of
+/// its project or of its space's project. None for a spec that does not parse or reaches none.
+pub fn binding_organization(mirror: &Mirror, spec: &Value) -> Option<String> {
+    let binding = serde_json::from_value::<RoleBindingSpec>(spec.clone()).ok()?;
+    organization_of_reach(mirror, &Reach::of(&binding.scope)?)
+}
+
 /// Whether the caller belongs to `organization` on its own Portal host (`organization_host`): a
 /// binding in force that reaches it, one of its projects or one of their spaces, or the
 /// bootstrap group, whose administrators work in every Organization, each on its own host.

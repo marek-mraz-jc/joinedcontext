@@ -1,0 +1,9 @@
+{
+  "error": {
+    "code": "unauthorized",
+    "message": "Unauthorized",
+    "status": 401,
+    "title": "Unauthorized",
+    "type": "https://joinedcontext.com/errors/unauthorized"
+  }
+}

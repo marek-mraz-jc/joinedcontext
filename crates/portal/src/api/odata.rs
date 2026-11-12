@@ -74,6 +74,28 @@ pub(crate) struct ListSet {
     pub(crate) endpoint_list: bool,
 }
 
+impl ListSet {
+    /// Whether `identity` reads this set's rows in `project`, as its door decides: a kind's REST
+    /// list (404 without a read right, PF-59), the Endpoints page (a project the caller reads),
+    /// or the operation's own check.
+    pub(crate) fn readable(
+        &self,
+        state: &AppState,
+        identity: &crate::auth::session::Identity,
+        project: &str,
+    ) -> bool {
+        let effective = || crate::permissions::for_request(state, identity, project);
+        if self.endpoint_list {
+            return effective().may_read_project();
+        }
+        if self.op == "jc_resource_list" {
+            return effective().may_read_some(&self.type_name);
+        }
+        ops::find(self.op)
+            .is_some_and(|op| ops::may_try(op, identity, state, project, None).is_ok())
+    }
+}
+
 /// The mapped list operations, in `$metadata` order. The ones left out and why are in T-6655.
 fn list_sets() -> Vec<ListSet> {
     let mut sets: Vec<ListSet> = crate::resource::kinds()
@@ -394,7 +416,7 @@ fn readable_project(state: &AppState, user: &CurrentUser, project: &str) -> Resu
 
 /// A row with its `metadata` and `status` members lifted to the top (a Change answers
 /// `metadata.name`), a top-level member winning: the properties are read off the top.
-fn flat(row: Value) -> Value {
+pub(crate) fn flat(row: Value) -> Value {
     let Value::Object(mut top) = row else {
         return row;
     };

@@ -14,15 +14,22 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum::response::IntoResponse;
 use axum_extra::extract::cookie::PrivateCookieJar;
+use base64::Engine;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
+use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::envelope;
 use joinedcontext_portal::auth::csrf::{self, CSRF_COOKIE};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
+use joinedcontext_portal::config::ClientAuth;
 use joinedcontext_portal::config::Config;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::organization_host::{self, OrganizationHost, RequestOrganization};
+use joinedcontext_portal::people::People;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
@@ -843,29 +850,130 @@ async fn a_function_answers_as_mcp_tools_call_and_takes_aliases() {
 /// regenerated (`node sdk/scripts/odata-gen.mjs`), which CI checks has no diff.
 #[tokio::test]
 async fn sdk_metadata_snapshot_is_the_org_admins_metadata() {
-    const SNAPSHOT: &str = "sdk/odata/org-admin.metadata.json";
+    // One snapshot per role (T-6821): the SDK client is generated from the org-admin's.
     let state = state();
-    let answer = get(
-        &state,
-        Mode::Host("hel"),
-        "root",
-        "/api/v1/$metadata?$format=json",
-    )
-    .await;
-    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
-    let pretty = format!(
-        "{}\n",
-        serde_json::to_string_pretty(&answer.json()).expect("JSON")
-    );
-    if std::env::var_os("JC_WRITE_SNAPSHOT").is_some() {
-        std::fs::write(SNAPSHOT, &pretty).expect("write the snapshot");
+    let mut stale = Vec::new();
+    for (role, who) in [
+        ("org-admin", "root"),
+        ("editor", "hel-editor"),
+        ("viewer", "hel-only"),
+        ("anonymous", ""),
+    ] {
+        let snapshot = format!("sdk/odata/{role}.metadata.json");
+        let cookie = if who.is_empty() {
+            String::new()
+        } else {
+            cookies(&state.config, person(who, groups_of(who)), "hel").await
+        };
+        let answer = send(
+            &state,
+            Mode::Host("hel"),
+            &cookie,
+            "/api/v1/$metadata?$format=json",
+            &[],
+        )
+        .await;
+        let expected = if who.is_empty() {
+            StatusCode::UNAUTHORIZED
+        } else {
+            StatusCode::OK
+        };
+        assert_eq!(answer.status, expected, "{role}: {}", answer.text);
+        let pretty = format!(
+            "{}\n",
+            serde_json::to_string_pretty(&answer.json()).expect("JSON")
+        );
+        if std::env::var_os("JC_WRITE_SNAPSHOT").is_some() {
+            std::fs::write(&snapshot, &pretty).expect("write the snapshot");
+        }
+        if std::fs::read_to_string(&snapshot).unwrap_or_default() != pretty {
+            stale.push(snapshot);
+        }
     }
-    let stored = std::fs::read_to_string(SNAPSHOT).unwrap_or_default();
     assert!(
-        stored == pretty,
-        "{SNAPSHOT} is not the org-admin's $metadata: write it with JC_WRITE_SNAPSHOT=1 and \
+        stale.is_empty(),
+        "{stale:?} are not their role's $metadata: write them with JC_WRITE_SNAPSHOT=1 and \
          regenerate the SDK client with node sdk/scripts/odata-gen.mjs"
     );
+}
+
+/// Red first (T-6821): a viewer's `$metadata` named every kind's set, the ones whose reads
+/// answer 404 included. Now a set is in a caller's `$metadata` exactly when they read it in a
+/// project of theirs, and a bound action names no type the caller cannot see.
+#[tokio::test]
+async fn metadata_names_only_the_sets_the_caller_reads() {
+    let state = state();
+    let mode = Mode::Host("hel");
+    let sets: Vec<String> = joinedcontext_portal::resource::kinds()
+        .filter(|info| !matches!(info.scope, jc_core::Scope::Organization))
+        .map(|info| info.plural.to_owned())
+        .chain(["changes".to_owned(), "workspaces".to_owned()])
+        .collect();
+    let mut wrong = Vec::new();
+    for who in ["hel-only", "hel-editor"] {
+        let doc = get(&state, mode, who, "/api/v1/$metadata?$format=json")
+            .await
+            .json();
+        let container = &doc["JoinedContext.Portal"]["Service"];
+        let xml = get(&state, mode, who, "/api/v1/$metadata").await.text;
+        for set in &sets {
+            let listed = container.get(set).is_some();
+            let read = get(
+                &state,
+                mode,
+                who,
+                &format!("/api/v1/projects('helsinki')/{set}"),
+            )
+            .await;
+            // A refusal is 401, 403 or 404; anything else (a 503 of the test's absent change
+            // store) is a read the caller was let in to.
+            let refused = matches!(read.status.as_u16(), 401 | 403 | 404);
+            if listed == refused {
+                wrong.push(format!(
+                    "{who} {set}: listed {listed}, read {}",
+                    read.status
+                ));
+            }
+            let in_xml = xml.contains(&format!("<EntitySet Name=\"{set}\""));
+            if listed != in_xml {
+                wrong.push(format!("{who} {set}: JSON {listed}, XML {in_xml}"));
+            }
+        }
+        assert!(container.get("projects").is_some(), "{who}: {container}");
+        // Every type an action is bound to is a type of this caller's model.
+        for (name, member) in doc["JoinedContext.Portal"]
+            .as_object()
+            .into_iter()
+            .flatten()
+        {
+            for overload in member.as_array().into_iter().flatten() {
+                if let Some(ty) = overload["$Parameter"][0]["$Type"].as_str() {
+                    let short = ty.trim_start_matches("JoinedContext.Portal.");
+                    if doc["JoinedContext.Portal"].get(short).is_none() {
+                        wrong.push(format!("{who}: {name} is bound to the hidden {ty}"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    // The viewer reads four kinds, not every one: the model is theirs, not the org-admin's.
+    let viewer = get(&state, mode, "hel-only", "/api/v1/$metadata?$format=json")
+        .await
+        .json();
+    let admin = get(&state, mode, "root", "/api/v1/$metadata?$format=json")
+        .await
+        .json();
+    let count = |doc: &Value| {
+        doc["JoinedContext.Portal"]["Service"]
+            .as_object()
+            .map_or(0, serde_json::Map::len)
+    };
+    assert!(count(&viewer) < count(&admin), "{viewer}");
+    assert!(viewer["JoinedContext.Portal"]["Service"]
+        .get("roles")
+        .is_none());
+    assert!(viewer["JoinedContext.Portal"].get("Role").is_none());
 }
 
 /// The names a REST list answers, whatever its envelope.
@@ -1467,4 +1575,537 @@ async fn plain_writes_are_405_and_actions_need_the_csrf_token() {
         .await
         .expect("response");
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+/// Red first (T-6822): an Organization's own Roles, RoleBindings and groups were no set of the
+/// Organization service. Now each is a set keyed by name holding only that Organization's: a
+/// RoleBinding is the Organization's its scope reaches, the rest of the `org` namespace the
+/// installation's (hel). The other Organization's rows and keys answer nothing.
+/// The `Member` entity type of the CSDL XML in `text`.
+fn member_type(text: &str) -> &str {
+    let start = text
+        .find("<EntityType Name=\"Member\"")
+        .unwrap_or(text.len());
+    let end = text[start..]
+        .find("</EntityType>")
+        .map_or(text.len(), |n| start + n);
+    &text[start..end]
+}
+
+/// ADR-N-070 section 2.4, PF-52, PF-58 (T-6826): an Organization's own RoleBindings and Roles
+/// take `propose_update` and `propose_delete`, run through the REST door of `org`, so its rights,
+/// its red lane and its four-eyes rule are that door's. `$metadata` offers them only to a caller
+/// who may propose on the kind at the Organization; another Organization's row is 404; an
+/// administrator's own access change waits for a second person (PF-58); 401 without a session.
+#[tokio::test]
+async fn organization_rows_take_red_lane_actions_through_the_rest_door() {
+    let shako = common::forge().await;
+    let client = ShakoClient::new(
+        shako.uri().parse().expect("mock url"),
+        "test-owner",
+        "test-repo",
+        "token-xyz",
+    )
+    .expect("client");
+    let state = state().with_shako(Arc::new(client));
+    // The forge holds the binding's file, as a real proposal reads it before it removes it.
+    let file = serde_norway::to_string(&envelope(
+        "RoleBinding",
+        "hel-only-hel",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "hel-only@hel.fi" }], "role": "reader",
+                "scope": { "organization": "hel" } }),
+    ))
+    .expect("yaml");
+    Mock::given(method("GET"))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "sha-binding",
+            "Content": base64::engine::general_purpose::STANDARD.encode(file),
+        })))
+        .with_priority(1)
+        .mount(&shako)
+        .await;
+    let m = &state.mirror;
+    m.upsert(envelope(
+        "Role",
+        "access-admin",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Project", "RoleBinding", "Role", "Group"],
+                            "verbs": ["read", "propose", "approve", "delete"] }] }),
+    ));
+    m.upsert(envelope(
+        "Role",
+        "binding-reader",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Project", "RoleBinding"], "verbs": ["read"] }] }),
+    ));
+    for (name, user, role) in [
+        ("hel-admins", "sub-adm", "access-admin"),
+        ("hel-bindings", "sub-acc", "binding-reader"),
+    ] {
+        m.upsert(envelope(
+            "RoleBinding",
+            name,
+            ORG_NAMESPACE,
+            json!({ "subjects": [{ "user": user }], "role": role,
+                    "scope": { "organization": "hel" } }),
+        ));
+    }
+    let tag = |kind: &str, name: &str| m.get(ORG_NAMESPACE, kind, name).expect(name).etag();
+    let binding = "/api/v1/rolebindings('hel-only-hel')/JoinedContext.Portal.";
+    let dry = json!({ "dryRun": true });
+
+    let admin = get(&state, Mode::Host("hel"), "adm", "/api/v1/$metadata").await;
+    let offered = |text: &str, ty: &str| {
+        text.contains(&format!(
+            r#"<Action Name="propose_delete" IsBound="true"><Parameter Name="bindingParameter" Type="JoinedContext.Portal.{ty}""#
+        ))
+    };
+    for ty in ["RoleBinding", "OrganizationRole", "Group"] {
+        assert!(offered(&admin.text, ty), "{ty}: {}", admin.text);
+    }
+    let reader = get(&state, Mode::Host("hel"), "acc", "/api/v1/$metadata").await;
+    assert!(!offered(&reader.text, "RoleBinding"), "{}", reader.text);
+
+    // A dry run answers the plan, in the red lane, and writes nothing.
+    let etag = tag("RoleBinding", "hel-only-hel");
+    for (action, body) in [
+        ("propose_delete", dry.clone()),
+        (
+            "propose_update",
+            json!({ "patch": { "spec": { "role": "editor" } }, "dryRun": true }),
+        ),
+    ] {
+        let plan = act(
+            &state,
+            "adm",
+            &format!("{binding}{action}"),
+            Some(&etag),
+            body,
+        )
+        .await;
+        assert_eq!(plan.status, StatusCode::OK, "{action}: {}", plan.text);
+        assert_eq!(plan.json()["lane"], "red", "{action}: {}", plan.text);
+    }
+    let role = "/api/v1/organizationRoles('reader')/JoinedContext.Portal.propose_delete";
+    let plan = act(
+        &state,
+        "adm",
+        role,
+        Some(&tag("Role", "reader")),
+        dry.clone(),
+    )
+    .await;
+    assert_eq!(plan.status, StatusCode::OK, "{}", plan.text);
+    assert_eq!(plan.json()["lane"], "red", "{}", plan.text);
+
+    let delete = format!("{binding}propose_delete");
+    let missing = act(&state, "adm", &delete, None, dry.clone()).await;
+    assert_eq!(
+        missing.status,
+        StatusCode::PRECONDITION_REQUIRED,
+        "{}",
+        missing.text
+    );
+    // A reader of the row without propose: the REST door's 403.
+    let reader = act(&state, "acc", &delete, Some(&etag), dry.clone()).await;
+    assert_eq!(reader.status, StatusCode::FORBIDDEN, "{}", reader.text);
+    // Who reads no RoleBinding, and ba's row read from hel: not there.
+    let viewer = act(&state, "hel-only", &delete, Some(&etag), dry.clone()).await;
+    assert_eq!(viewer.status, StatusCode::NOT_FOUND, "{}", viewer.text);
+    let foreign = act(
+        &state,
+        "adm",
+        "/api/v1/rolebindings('ba-only-ba')/JoinedContext.Portal.propose_delete",
+        Some(&tag("RoleBinding", "ba-only-ba")),
+        dry.clone(),
+    )
+    .await;
+    assert_eq!(foreign.status, StatusCode::NOT_FOUND, "{}", foreign.text);
+
+    // PF-58: the administrator's own access change is proposed and waits for a second person.
+    let proposed = act(&state, "adm", &delete, Some(&etag), json!({})).await;
+    assert_eq!(proposed.status, StatusCode::ACCEPTED, "{}", proposed.text);
+    let change = proposed.json();
+    assert_eq!(change["status"]["lane"], "red", "{}", proposed.text);
+    assert_eq!(
+        change["status"]["phase"], "PendingApproval",
+        "{}",
+        proposed.text
+    );
+    assert!(
+        m.get(ORG_NAMESPACE, "RoleBinding", "hel-only-hel")
+            .is_some(),
+        "nothing is removed before a second person approves"
+    );
+
+    // No session (the CSRF pair present, so the guard lets it by): 401, whatever the action.
+    let csrf_token = organization_host::scope(host("hel"), async { csrf::Token::mint() }).await;
+    let response = server::app(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&delete)
+                .header(header::HOST, HEL)
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::IF_MATCH, &etag)
+                .header(
+                    header::COOKIE,
+                    format!("{CSRF_COOKIE}={}", csrf_token.as_str()),
+                )
+                .header(csrf::CSRF_HEADER, csrf_token.as_str())
+                .body(Body::from(dry.to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// [`get`] as an OData request, which a plain read without a `$` option is not.
+async fn odata(state: &AppState, mode: Mode, who: &str, uri: &str) -> Answer {
+    let cookie = cookies(&state.config, person(who, groups_of(who)), mode.org()).await;
+    send(state, mode, &cookie, uri, &[("OData-Version", "4.0")]).await
+}
+
+/// ADR-N-070 section 2.8, ADR-N-061 (T-6826): `members` lists the people the Organization's
+/// RoleBindings name, directly or through a Group. Only a people-admin has their name and e-mail,
+/// as properties and as values; to anyone else a personal property is what a typo is, the same
+/// 400. A realm change to a person's e-mail moves the people-admin's ETag of the row and leaves
+/// everyone else's.
+#[tokio::test]
+async fn members_carry_personal_data_only_for_people_admins() {
+    let kc = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/realms/hel/protocol/openid-connect/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "access_token": "t" })))
+        .mount(&kc)
+        .await;
+    let email = Arc::new(Mutex::new("ada@hel.fi".to_owned()));
+    let current = email.clone();
+    Mock::given(method("GET"))
+        .and(path("/admin/realms/hel/users/sub-ada"))
+        .respond_with(move |_: &wiremock::Request| {
+            let email = current.lock().map(|e| e.clone()).unwrap_or_default();
+            ResponseTemplate::new(200).set_body_json(json!({ "id": "sub-ada", "username": "ada",
+                "firstName": "Ada", "lastName": "Lovelace", "email": email }))
+        })
+        .mount(&kc)
+        .await;
+    let mut state = state();
+    state.people = People::new(
+        &format!("{}/realms/hel", kc.uri()),
+        "portal".into(),
+        ClientAuth::Secret("secret".into()),
+    )
+    .map(Arc::new);
+    let m = &state.mirror;
+    for (role, kind) in [
+        ("binding-reader", "RoleBinding"),
+        ("person-reader", "Person"),
+    ] {
+        m.upsert(envelope(
+            "Role",
+            role,
+            ORG_NAMESPACE,
+            json!({ "rules": [{ "kinds": ["Project", kind], "verbs": ["read"] }] }),
+        ));
+    }
+    for (name, subject, role) in [
+        (
+            "hel-bindings",
+            json!({ "user": "sub-acc" }),
+            "binding-reader",
+        ),
+        ("hel-people", json!({ "user": "sub-ppl" }), "person-reader"),
+        ("hel-team", json!({ "group": "team" }), "reader"),
+    ] {
+        m.upsert(envelope(
+            "RoleBinding",
+            name,
+            ORG_NAMESPACE,
+            json!({ "subjects": [subject], "role": role, "scope": { "organization": "hel" } }),
+        ));
+    }
+    m.upsert(envelope(
+        "Group",
+        "team",
+        ORG_NAMESPACE,
+        json!({ "members": [{ "user": "sub-ada" }] }),
+    ));
+    let without_trace = |answer: &Answer| {
+        let mut body = answer.json();
+        if let Some(error) = body["error"].as_object_mut() {
+            error.remove("trace_id");
+        }
+        body.to_string()
+    };
+    for mode in [Mode::Host("hel"), Mode::Path("hel")] {
+        // A people-admin: name and e-mail are properties and values; an old e-mail subject too.
+        let rows = odata(&state, mode, "ppl", "/api/v1/members").await;
+        assert_eq!(rows.status, StatusCode::OK, "{mode:?}: {}", rows.text);
+        let body = rows.json();
+        let ada = body["value"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|r| r["user"] == "sub-ada"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        assert_eq!(ada["email"], "ada@hel.fi", "{mode:?}: {}", rows.text);
+        assert_eq!(ada["name"], "Ada Lovelace", "{mode:?}");
+        assert_eq!(ada["roles"], "reader", "{mode:?}");
+        assert_eq!(ada["bindings"], "hel-team", "{mode:?}");
+        let users = names(&body, "user");
+        assert!(users.contains(&"hel-only@hel.fi".to_owned()), "{users:?}");
+        assert!(
+            !users.iter().any(|u| u.starts_with("ba-only")),
+            "{mode:?}: ba's people in hel's members: {users:?}"
+        );
+        let found = odata(
+            &state,
+            mode,
+            "ppl",
+            "/api/v1/members?$filter=email%20eq%20'ada@hel.fi'&$select=user",
+        )
+        .await;
+        assert_eq!(
+            names(&found.json(), "user"),
+            vec!["sub-ada"],
+            "{}",
+            found.text
+        );
+        let metadata = odata(&state, mode, "ppl", "/api/v1/$metadata").await;
+        assert!(
+            member_type(&metadata.text).contains("Name=\"email\""),
+            "{}",
+            metadata.text
+        );
+
+        // A RoleBinding reader: the people, never their name or e-mail, nor an e-mail subject.
+        let rows = odata(&state, mode, "acc", "/api/v1/members").await;
+        assert_eq!(rows.status, StatusCode::OK, "{mode:?}: {}", rows.text);
+        let body = rows.json();
+        let users = names(&body, "user");
+        assert!(users.contains(&"sub-ada".to_owned()), "{users:?}");
+        assert!(users.iter().all(|u| !u.contains('@')), "{users:?}");
+        for row in body["value"].as_array().into_iter().flatten() {
+            assert!(
+                row.get("email").is_none() && row.get("name").is_none(),
+                "{mode:?}: {row}"
+            );
+        }
+        let metadata = odata(&state, mode, "acc", "/api/v1/$metadata").await;
+        let member = member_type(&metadata.text);
+        assert!(member.contains("Name=\"user\""), "{}", metadata.text);
+        assert!(
+            !member.contains("Name=\"email\"") && !member.contains("Name=\"name\""),
+            "{member}"
+        );
+        for option in [
+            "$filter=email%20eq%20'x'",
+            "$select=email",
+            "$orderby=email",
+        ] {
+            let hidden = odata(&state, mode, "acc", &format!("/api/v1/members?{option}")).await;
+            let typo = option.replace("email", "emailx");
+            let typo = odata(&state, mode, "acc", &format!("/api/v1/members?{typo}")).await;
+            assert_eq!(
+                hidden.status,
+                StatusCode::BAD_REQUEST,
+                "{option}: {}",
+                hidden.text
+            );
+            assert_eq!(
+                without_trace(&hidden),
+                without_trace(&typo).replace("emailx", "email"),
+                "{option}"
+            );
+        }
+
+        // The e-mail changes in the realm: only the people-admin's ETag moves.
+        let etag = |answer: Answer| answer.json()["@odata.etag"].as_str().map(str::to_owned);
+        let row = "/api/v1/members('sub-ada')";
+        let before_acc = etag(odata(&state, mode, "acc", row).await);
+        let before_ppl = etag(odata(&state, mode, "ppl", row).await);
+        assert!(before_acc.is_some() && before_ppl.is_some());
+        let old = email.lock().map(|e| e.clone()).unwrap_or_default();
+        if let Ok(mut e) = email.lock() {
+            *e = format!("{old}.new");
+        }
+        assert_eq!(
+            etag(odata(&state, mode, "acc", row).await),
+            before_acc,
+            "{mode:?}"
+        );
+        assert_ne!(
+            etag(odata(&state, mode, "ppl", row).await),
+            before_ppl,
+            "{mode:?}"
+        );
+        if let Ok(mut e) = email.lock() {
+            *e = old;
+        }
+
+        // A reader of neither RoleBinding nor Person has no members set.
+        let viewer = odata(&state, mode, "hel-only", "/api/v1/members").await;
+        assert_eq!(viewer.status, StatusCode::NOT_FOUND, "{}", viewer.text);
+        let metadata = odata(&state, mode, "hel-only", "/api/v1/$metadata").await;
+        assert!(
+            !metadata.text.contains("EntitySet Name=\"members\""),
+            "{mode:?}"
+        );
+    }
+    // Another Organization's host: hel's RoleBinding reader is turned away at its door, and
+    // ba's own administrator reads ba's people only.
+    let ba = odata(&state, Mode::Host("ba"), "acc", "/api/v1/members").await;
+    assert_eq!(ba.status, StatusCode::FORBIDDEN, "{}", ba.text);
+    let ba = odata(&state, Mode::Host("ba"), "root", "/api/v1/members").await;
+    let users = names(&ba.json(), "user");
+    assert!(users.contains(&"ba-only@hel.fi".to_owned()), "{}", ba.text);
+    assert!(
+        !users
+            .iter()
+            .any(|u| u.starts_with("hel-") || u.starts_with("sub-")),
+        "{users:?}"
+    );
+}
+
+#[tokio::test]
+async fn organization_sets_hold_only_the_organizations_own_rows() {
+    let state = state();
+    let m = &state.mirror;
+    m.upsert(envelope(
+        "Role",
+        "access-reader",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Project", "RoleBinding", "Role", "Group"], "verbs": ["read"] }] }),
+    ));
+    for org in ["hel", "ba"] {
+        m.upsert(envelope(
+            "RoleBinding",
+            &format!("{org}-access-{org}"),
+            ORG_NAMESPACE,
+            json!({ "subjects": [{ "user": format!("{org}-access@hel.fi") }],
+                    "role": "access-reader", "scope": { "organization": org } }),
+        ));
+    }
+    m.upsert(envelope(
+        "RoleBinding",
+        "air-reader-ba",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "ba-only@hel.fi" }], "role": "reader",
+                "scope": { "project": "bratislava" } }),
+    ));
+    m.upsert(envelope(
+        "Group",
+        "noise-team",
+        ORG_NAMESPACE,
+        json!({ "members": [{ "user": "hel-only@hel.fi" }] }),
+    ));
+    for mode in MODES {
+        let org = mode.org();
+        let (own, other) = if org == "hel" {
+            ("hel", "ba")
+        } else {
+            ("ba", "hel")
+        };
+        for who in ["root", &format!("{own}-access")] {
+            let bindings = get(&state, mode, who, "/api/v1/rolebindings?$select=name").await;
+            assert_eq!(
+                bindings.status,
+                StatusCode::OK,
+                "{who} {mode:?}: {}",
+                bindings.text
+            );
+            let names = names(&bindings.json(), "name");
+            assert!(
+                names.contains(&format!("{own}-access-{own}")),
+                "{who} {mode:?}: {names:?}"
+            );
+            assert!(
+                names.iter().all(|n| !n.ends_with(&format!("-{other}"))),
+                "{who} {mode:?} reads {other}'s bindings: {names:?}"
+            );
+            assert_eq!(
+                names.contains(&"air-reader-ba".to_owned()),
+                own == "ba",
+                "a project binding is its project's Organization's: {who} {mode:?}"
+            );
+            let foreign = format!("/api/v1/rolebindings('{other}-access-{other}')");
+            let foreign = get(&state, mode, who, &foreign).await;
+            assert_eq!(
+                foreign.status,
+                StatusCode::NOT_FOUND,
+                "{who} {mode:?}: {}",
+                foreign.text
+            );
+            let mine = format!("/api/v1/rolebindings('{own}-access-{own}')");
+            let mine = get(&state, mode, who, &mine).await;
+            assert_eq!(mine.status, StatusCode::OK, "{who} {mode:?}: {}", mine.text);
+            assert!(mine.json()["@odata.etag"].is_string(), "{}", mine.text);
+            let count = get(&state, mode, who, "/api/v1/rolebindings/$count").await;
+            assert_eq!(count.text, names.len().to_string(), "{who} {mode:?}");
+
+            let metadata = get(&state, mode, who, "/api/v1/$metadata").await;
+            for (set, path) in [
+                (
+                    "organizationRoles",
+                    "/api/v1/organizationRoles?$select=name",
+                ),
+                ("groups", "/api/v1/groups?$select=name"),
+            ] {
+                let answer = get(&state, mode, who, path).await;
+                let listed = metadata.text.contains(&format!("EntitySet Name=\"{set}\""));
+                if org == "hel" {
+                    assert_eq!(
+                        answer.status,
+                        StatusCode::OK,
+                        "{who} {mode:?} {set}: {}",
+                        answer.text
+                    );
+                    assert!(listed, "{who} {mode:?}: {set} not in $metadata");
+                } else {
+                    assert_eq!(
+                        answer.status,
+                        StatusCode::NOT_FOUND,
+                        "{who} {mode:?} {set}: {}",
+                        answer.text
+                    );
+                    assert!(!listed, "{who} {mode:?}: {set} in ba's $metadata");
+                }
+            }
+            assert!(
+                metadata.text.contains("EntitySet Name=\"rolebindings\""),
+                "{who} {mode:?}"
+            );
+        }
+        let roles = get(
+            &state,
+            Mode::Host("hel"),
+            "root",
+            "/api/v1/organizationRoles?$select=name",
+        )
+        .await;
+        let roles = names(&roles.json(), "name");
+        assert!(
+            roles.contains(&"reader".to_owned()) && roles.contains(&"access-reader".to_owned()),
+            "{roles:?}"
+        );
+        // A viewer whose Role reads no RoleBinding has no such set and its URL answers 404.
+        let viewer = get(
+            &state,
+            mode,
+            &format!("{own}-only"),
+            "/api/v1/rolebindings?$select=name",
+        )
+        .await;
+        assert_eq!(
+            viewer.status,
+            StatusCode::NOT_FOUND,
+            "{mode:?}: {}",
+            viewer.text
+        );
+        let metadata = get(&state, mode, &format!("{own}-only"), "/api/v1/$metadata").await;
+        assert!(!metadata.text.contains("\"rolebindings\""), "{mode:?}");
+    }
 }
