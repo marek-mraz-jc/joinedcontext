@@ -215,7 +215,7 @@ jobs:
           fi
           [ "$tests" = 0 ] && [ "$docs" = 0 ]
       - if: always()
-        run: du -sh target/debug/deps
+        run: du -sh target/debug/deps 2>/dev/null || echo "no target/debug/deps (cold target cache)"
       - if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with: { name: "junit-root-${{ matrix.part }}", path: target/nextest/ci/junit.xml, if-no-files-found: ignore, retention-days: 7 }
@@ -395,7 +395,7 @@ jobs:
       - if: matrix.part == 2
         run: cargo test --workspace --locked --no-fail-fast --doc
       - if: always()
-        run: du -sh target/debug/deps
+        run: du -sh target/debug/deps 2>/dev/null || echo "no target/debug/deps (cold target cache)"
   # The bundles the jc image embeds: a UI that does not build ships the placeholder page.
   ui:
     needs: changes
