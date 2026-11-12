@@ -603,9 +603,13 @@ async fn approving_a_binding_to_an_organization_that_does_not_exist_is_refused()
             json!({ "domain": format!("{organization}.example"), "installation": organization == "hel" }),
         ));
     }
+    // The bootstrap group holds every right, so the refusal is the scope's and never the rights'
+    // 403, which a caller without them hears first.
+    let mut bootstrap = person("admin");
+    bootstrap.groups = vec![state.config.bootstrap_admins.clone()];
     let answer = send(
         &state,
-        person("admin"),
+        bootstrap,
         "POST",
         &format!("/api/v1/projects/org/changes/chg-{GHOST_GRANT:08x}/approve"),
         Some(json!({ "confirm": "jana-ghost" })),
@@ -622,6 +626,63 @@ async fn approving_a_binding_to_an_organization_that_does_not_exist_is_refused()
         "{}",
         answer.text
     );
+}
+
+/// T-6806: a project opened in the Portal brings its opener's binding in the same Change, and
+/// the approval counts the project that Change creates as there.
+#[tokio::test]
+async fn approving_a_new_project_with_its_own_binding_counts_the_project_it_creates() {
+    const NEW_PROJECT: u64 = 0x305;
+    let shako = forge().await;
+    let own = "users/assignments/e2e-city-creator.yaml";
+    let project = "projects/e2e-city/project.yaml";
+    pull(
+        &shako,
+        NEW_PROJECT,
+        "portal/create-project-e2e-city-00000305",
+        own,
+        &binding("e2e-city-creator", "steward", json!({ "project": "e2e-city" })),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/PullRequests({NEW_PROJECT})/Files")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                { "Filename": project, "Status": "added" },
+                { "Filename": own, "Status": "added" }
+            ]
+        })))
+        .with_priority(1)
+        .mount(&shako)
+        .await;
+    let manifest = json!({
+        "apiVersion": API_VERSION,
+        "kind": "Project",
+        "metadata": { "name": "e2e-city", "namespace": ORG_NAMESPACE },
+        "spec": { "organizationRef": "hel" },
+    });
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{project}'")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "sha-project",
+            "Content": encode(&serde_norway::to_string(&manifest).expect("yaml"))
+        })))
+        .with_priority(1)
+        .mount(&shako)
+        .await;
+    let state = state_with(&shako);
+    let mut bootstrap = person("admin");
+    bootstrap.groups = vec![state.config.bootstrap_admins.clone()];
+    let answer = send(
+        &state,
+        bootstrap,
+        "POST",
+        &format!("/api/v1/projects/org/changes/chg-{NEW_PROJECT:08x}/approve"),
+        Some(json!({ "confirm": "e2e-city" })),
+    )
+    .await;
+    assert!(answer.status.is_success(), "{} {}", answer.status, answer.text);
 }
 
 #[tokio::test]

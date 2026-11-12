@@ -1776,7 +1776,6 @@ pub fn within_own_rights(
     // is the gate every door to a `users/` manifest passes through — the resource route, an
     // import, a blueprint and an approval.
     subjects_name_a_group(mirror, manifest)?;
-    scopes_name_a_target(mirror, manifest, before)?;
     replaces_only_own_settings(state, identity, manifest, who)?;
     keeps_an_administrator(mirror, AccessChange::Write(manifest))?;
     let spec = manifest.get("spec").cloned().unwrap_or(Value::Null);
@@ -1837,8 +1836,15 @@ pub fn within_own_rights(
             }
             _ => return Ok(()),
         };
+    // A scope naming no Organization or project is refused after the rights, so a caller who may
+    // not grant this hears the 403 first (T-6806). An approval judges it with the Change's other
+    // files after every check of who may approve (`changes.rs` `judge_at_approval`).
+    let scopes = || match who {
+        "approver" => Ok(()),
+        _ => scopes_name_a_target(mirror, manifest, before),
+    };
     if in_group(identity, &state.config.bootstrap_admins) {
-        return Ok(());
+        return scopes();
     }
     let held = in_force(mirror, identity, Utc::now());
     let mut missing: Vec<String> = Vec::new();
@@ -1866,7 +1872,7 @@ pub fn within_own_rights(
         }
     }
     if missing.is_empty() {
-        return Ok(());
+        return scopes();
     }
     Err(ApiError::Denied(format!(
         "a {noun} may not grant more than its {who} holds: missing {} (PF-52)",
