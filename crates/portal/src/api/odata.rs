@@ -91,7 +91,8 @@ impl ListSet {
         if self.op == "jc_resource_list" {
             return effective().may_read_some(&self.type_name);
         }
-        ops::find(self.op).is_some_and(|op| ops::may_try(op, identity, state, project, None).is_ok())
+        ops::find(self.op)
+            .is_some_and(|op| ops::may_try(op, identity, state, project, None).is_ok())
     }
 }
 

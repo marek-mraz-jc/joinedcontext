@@ -911,12 +911,21 @@ async fn metadata_names_only_the_sets_the_caller_reads() {
         let xml = get(&state, mode, who, "/api/v1/$metadata").await.text;
         for set in &sets {
             let listed = container.get(set).is_some();
-            let read = get(&state, mode, who, &format!("/api/v1/projects('helsinki')/{set}")).await;
+            let read = get(
+                &state,
+                mode,
+                who,
+                &format!("/api/v1/projects('helsinki')/{set}"),
+            )
+            .await;
             // A refusal is 401, 403 or 404; anything else (a 503 of the test's absent change
             // store) is a read the caller was let in to.
             let refused = matches!(read.status.as_u16(), 401 | 403 | 404);
             if listed == refused {
-                wrong.push(format!("{who} {set}: listed {listed}, read {}", read.status));
+                wrong.push(format!(
+                    "{who} {set}: listed {listed}, read {}",
+                    read.status
+                ));
             }
             let in_xml = xml.contains(&format!("<EntitySet Name=\"{set}\""));
             if listed != in_xml {
@@ -925,7 +934,11 @@ async fn metadata_names_only_the_sets_the_caller_reads() {
         }
         assert!(container.get("projects").is_some(), "{who}: {container}");
         // Every type an action is bound to is a type of this caller's model.
-        for (name, member) in doc["JoinedContext.Portal"].as_object().into_iter().flatten() {
+        for (name, member) in doc["JoinedContext.Portal"]
+            .as_object()
+            .into_iter()
+            .flatten()
+        {
             for overload in member.as_array().into_iter().flatten() {
                 if let Some(ty) = overload["$Parameter"][0]["$Type"].as_str() {
                     let short = ty.trim_start_matches("JoinedContext.Portal.");
@@ -950,7 +963,9 @@ async fn metadata_names_only_the_sets_the_caller_reads() {
             .map_or(0, serde_json::Map::len)
     };
     assert!(count(&viewer) < count(&admin), "{viewer}");
-    assert!(viewer["JoinedContext.Portal"]["Service"].get("roles").is_none());
+    assert!(viewer["JoinedContext.Portal"]["Service"]
+        .get("roles")
+        .is_none());
     assert!(viewer["JoinedContext.Portal"].get("Role").is_none());
 }
 
