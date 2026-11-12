@@ -373,7 +373,7 @@ async fn remint_batched_commits_each_range_and_ends_as_one_transaction_would() {
     let (lo, hi) = (&ends[0], &ends[ends.len() - 1]);
     // the counters also hold what this backend read before and has not
     // flushed yet: the range's own reads are the difference
-    let before = rows_read(&mut *tx).await;
+    let before = rows_read(&mut tx).await;
     let one: Value =
         sqlx::query_scalar("SELECT remint_apply($1, 'bbsk.sk', 'sk_bbsk', false, $2, $3)")
             .bind(t)
@@ -383,7 +383,7 @@ async fn remint_batched_commits_each_range_and_ends_as_one_transaction_would() {
             .await
             .expect("one range");
     assert_eq!(one["entities"], 250, "{one}");
-    let read = rows_read(&mut *tx).await - before;
+    let read = rows_read(&mut tx).await - before;
     assert!(
         read < total / 2,
         "a range of 250 of 1201 Entities read {read} entity_values rows of the Tenant's {total}"
