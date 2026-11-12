@@ -2379,7 +2379,15 @@
       "policyRefsDrafted": "Die mit diesem Endpunkt entworfenen Lese- und Schreibrichtlinien sind bereits eingetragen; kreuzen Sie weitere Richtlinien seines Raums an, die er bedienen soll."
     },
     "policyRefsNone": "Der Raum {space} enthält keine Richtlinie, die Sie lesen dürfen, daher würde dieser Endpunkt niemanden bedienen. Fügen Sie zuerst eine Richtlinie für den Raum hinzu und wählen Sie sie dann hier.",
-    "policyRefsAdd": "Richtlinien öffnen"
+    "policyRefsAdd": "Richtlinien öffnen",
+    "refused": {
+      "title": "Sie lesen die Daten dieses Endpoints nicht",
+      "body": "Ihre Portal-Rolle erlaubt Ihnen, diesen Endpoint zu verwalten, doch das Gateway lässt Leser nach den Projektgruppen und Policies des Endpoints zu, und keine davon nennt Sie. Eine Portal-Rolle erweitert nie eine Policy.",
+      "action": "Zugriff anfordern",
+      "checking": "Prüfe, ob das Gateway Sie zulässt…",
+      "unavailable": "Das Portal konnte nicht feststellen, ob das Gateway Sie zulässt; laden Sie die Seite neu.",
+      "short": "Zählung und Nachweis lesen über den Endpoint, und das Gateway lässt Sie nicht zu; bitten Sie unten unter Zugriff anfordern um Lesezugriff."
+    }
   },
   "datasources": {
     "title": "Datenquellen",

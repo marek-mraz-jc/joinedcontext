@@ -11586,6 +11586,81 @@
         }
       }
     },
+    "/api/v1/projects/{project}/endpoints/{name}/admission": {
+      "get": {
+        "tags": [
+          "spaces"
+        ],
+        "summary": "Whether The Gateway Admits You",
+        "description": "Whether the gateway's door admits the signed-in person on this Endpoint, decided by the gateway's own rule from the session's groups and Organization and the Endpoint's audience and allowed projects (EP-14, EP-15, ADR-N-067 2.3). A Portal role never widens it. Names no group or Policy. Members of the Endpoint's Context Space only.",
+        "operationId": "endpoint_admission",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Endpoint name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Admitted or not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Admission"
+                },
+                "example": {
+                  "admitted": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A workload token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such Endpoint in a space the caller may read, or one of another Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project}/endpoints/{name}/ical-preview": {
       "post": {
         "tags": [
@@ -43728,6 +43803,19 @@
           }
         },
         "additionalProperties": false
+      },
+      "Admission": {
+        "type": "object",
+        "description": "Whether the signed-in person reads Endpoint `name` through the gateway.",
+        "required": [
+          "admitted"
+        ],
+        "properties": {
+          "admitted": {
+            "type": "boolean",
+            "description": "`false`: the gateway refuses the person at its door (no project group its audience\nadmits), whatever their Portal role, so the page reads nothing through the Endpoint."
+          }
+        }
       },
       "Affordance": {
         "type": "object",

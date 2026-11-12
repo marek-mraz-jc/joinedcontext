@@ -2379,7 +2379,15 @@
       "policyRefsDrafted": "Politiky na čítanie a zápis navrhnuté s týmto endpointom sú už uvedené; zaškrtnite aj ďalšie politiky jeho priestoru, ktoré má obsluhovať."
     },
     "policyRefsNone": "Priestor {space} nemá žiadnu politiku, ktorú smiete čítať, takže tento endpoint by neobsluhoval nikoho. Najprv pridajte politiku pre priestor, potom ju vyberte tu.",
-    "policyRefsAdd": "Otvoriť politiky"
+    "policyRefsAdd": "Otvoriť politiky",
+    "refused": {
+      "title": "Údaje tohto Endpointu nečítate",
+      "body": "Vaša rola v Portáli vám dovoľuje Endpoint spravovať, no brána púšťa čitateľa podľa skupín projektu a Policies Endpointu a žiadna z nich vás nemenuje. Rola v Portáli Policy nikdy nerozširuje.",
+      "action": "Požiadať o prístup",
+      "checking": "Overujem, či vás brána púšťa…",
+      "unavailable": "Portál nezistil, či vás brána púšťa; obnovte stránku a skúste znova.",
+      "short": "Počet a ukážka sa čítajú cez Endpoint a brána vás nepúšťa; o čítanie požiadajte v časti Požiadať o prístup nižšie."
+    }
   },
   "datasources": {
     "title": "Zdroje údajov",

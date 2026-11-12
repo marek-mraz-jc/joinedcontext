@@ -172,6 +172,10 @@ function renderPage({
     if (path.endsWith("/auth/me")) {
       return json(IDENTITY);
     }
+    // The gateway admits the reader (T-6802); tests/endpoint_admission.test.tsx holds the refusal.
+    if (path.endsWith("/admission")) {
+      return json({ admitted: true });
+    }
     // Who reads the Endpoint is the Organization administrators' (T-6412): this caller is refused.
     if (path === "/api/v1/organization/data-access") {
       return json({ title: "Forbidden", status: 403, detail: "read on Person" }, 403);

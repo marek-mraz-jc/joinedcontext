@@ -84,6 +84,8 @@ function renderSettings(world: World = {}) {
           ),
         );
       }
+      // The gateway admits the reader (T-6802); tests/endpoint_admission.test.tsx holds the refusal.
+      if (url.pathname.endsWith("/admission")) return json({ admitted: true });
       if (url.pathname.endsWith("/endpoints")) return json(list([ENDPOINT]));
       if (url.pathname.includes("/api/endpoint/")) {
         return grants === "forbidden"

@@ -5,6 +5,7 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { EndpointAccessRequest } from "./AccessRequest";
+import { EndpointRefused, REQUEST_ACCESS_ANCHOR, useEndpointAdmission } from "../../components/endpoints/EndpointAdmission";
 import { ShareFlow } from "./ShareFlow";
 import { AccessRequestInbox } from "../pipelines/AccessRequests";
 import { ConnectAssistant } from "../../components/endpoints/ConnectAssistant";
@@ -116,6 +117,10 @@ export function EndpointPage({
   const [openAction, setOpenAction] = useState<"saveAs" | "workOnCopy" | "delete" | null>(null);
   const [publishing, setPublishing] = useState(false);
 
+  // The gateway's door decides every read below under /api/endpoint/{slug}; a Portal role widens
+  // nothing, so the page asks once and reads only when admitted (T-6802).
+  const admission = useEndpointAdmission(project, name);
+  const admitted = admission.data?.admitted === true;
   const endpoint = useQuery({
     queryKey: queryKeys.resource(project, "endpoints", name),
     retry: false,
@@ -352,20 +357,24 @@ export function EndpointPage({
           sees what their grants show and nothing more (T-5082). Only a Live endpoint answers. */}
       {slug && (manifest.status?.phase ?? "").toLowerCase() === "live" ? (
         <Section title={t("endpoints.data.section")} lead={t("endpoints.data.sectionLead")}>
-          <EndpointDataView
-            project={project}
-            slug={slug}
-            hidden={spec.projection?.hiddenAttributes ?? []}
-            space={space}
-            link={dataLink}
-            onLink={writeDataLink}
-            csv={servedRepresentations(spec).includes("csv")}
-          />
+          {admitted ? (
+            <EndpointDataView
+              project={project}
+              slug={slug}
+              hidden={spec.projection?.hiddenAttributes ?? []}
+              space={space}
+              link={dataLink}
+              onLink={writeDataLink}
+              csv={servedRepresentations(spec).includes("csv")}
+            />
+          ) : (
+            <EndpointRefused project={project} name={name} admission={admission} onPage />
+          )}
         </Section>
       ) : null}
 
       {/* This Endpoint's query card and MCP address, then the one connector for every Endpoint (EP-113). */}
-      {slug && servedRepresentations(spec).includes("mcp") ? (
+      {slug && admitted && servedRepresentations(spec).includes("mcp") ? (
         <>
           <QueryCard slug={slug} name={name} domain={domain} />
           <ConnectAssistant domain={domain} />
@@ -384,6 +393,7 @@ export function EndpointPage({
               enums={modelSource ? enumsOfClasses(modelSource, classesOf(filtered)) : {}}
               geoProperties={geoPropertiesOf(modelSource, classesOf(filtered))}
               live={(manifest.status?.phase ?? "").toLowerCase() === "live"}
+              admitted={admitted}
             />
             {projection ? (
               <p className="text-caption text-fg-muted">
@@ -445,7 +455,7 @@ export function EndpointPage({
       </Section>
 
       {/* A person's own ask for a read here, decided by the space's owners (EP-55, T-5615). */}
-      <Section title={t("endpoints.request.section")} lead={t("endpoints.request.sectionLead")}>
+      <Section id={REQUEST_ACCESS_ANCHOR} title={t("endpoints.request.section")} lead={t("endpoints.request.sectionLead")}>
         <EndpointAccessRequest project={project} name={name} />
       </Section>
 
@@ -599,6 +609,7 @@ function FilterForm({
   enums,
   geoProperties,
   live,
+  admitted,
 }: {
   project: string;
   projection: Manifest;
@@ -613,6 +624,8 @@ function FilterForm({
   /** The `{space}` segment of the space's canonical surface (PF-84). */
   segment: string;
   live: boolean;
+  /** The gateway admits the person: the count and the proof read through the Endpoint (T-6802). */
+  admitted: boolean;
 }): JSX.Element {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -780,7 +793,11 @@ function FilterForm({
             </Field>
           ))}
         </div>
-        <MatchCount slug={slug} type={classesOf(projection)[0]} q={draft.q ?? ""} live={live} />
+        {admitted ? (
+          <MatchCount slug={slug} type={classesOf(projection)[0]} q={draft.q ?? ""} live={live} />
+        ) : (
+          <p className="text-caption text-fg-muted">{t("endpoints.refused.short")}</p>
+        )}
         <AreaFromBox geoProperties={geoProperties} onSet={(geoQ) => setDraft({ ...draft, geoQ })} />
         <ConditionBuilder
           attributes={slotsOf(projection)}
@@ -841,14 +858,16 @@ function FilterForm({
           </Button>
         </PermissionGuard>
       </form>
-      <FilterProof
-        project={project}
-        name={endpoint.metadata.name}
-        slug={slug}
-        segment={segment}
-        live={live}
-        draft={{ classes, filter, hiddenAttributes: hidden }}
-      />
+      {admitted ? (
+        <FilterProof
+          project={project}
+          name={endpoint.metadata.name}
+          slug={slug}
+          segment={segment}
+          live={live}
+          draft={{ classes, filter, hiddenAttributes: hidden }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1349,16 +1368,18 @@ export function classesOf(projection: Manifest): string[] {
 }
 
 function Section({
+  id,
   title,
   lead,
   children,
 }: {
+  id?: string;
   title: string;
   lead?: string;
   children: ReactNode;
 }): JSX.Element {
   return (
-    <section className="space-y-2">
+    <section id={id} className="space-y-2 scroll-mt-4">
       <h2 className="text-base font-semibold">{title}</h2>
       {lead ? <p className="text-sm text-fg-muted">{lead}</p> : null}
       {children}

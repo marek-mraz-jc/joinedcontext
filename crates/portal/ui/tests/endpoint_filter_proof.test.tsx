@@ -171,6 +171,8 @@ function renderPage({
       });
 
     if (path.endsWith("/auth/me")) return json(IDENTITY);
+    // The gateway admits the reader (T-6802); tests/endpoint_admission.test.tsx holds the refusal.
+    if (path.endsWith("/admission")) return json({ admitted: true });
     if (path.endsWith("/permissions/me")) return json(PERMITTED);
     if (path === `/cs/${SEGMENT}/ngsi-ld/v1/entities`) {
       return space === "readable"

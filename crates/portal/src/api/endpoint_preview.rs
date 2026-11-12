@@ -8,7 +8,7 @@
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use jc_core::kinds::{IcalOutput, ProjectedClass, ProjectionFilter};
 use serde::{Deserialize, Serialize};
@@ -16,9 +16,11 @@ use serde_json::Value;
 use utoipa::ToSchema;
 
 use axum::http::HeaderMap;
-use context_gateway::auth::subject::{admission, anonymous_with, person, with_endpoint_roles};
+use context_gateway::auth::subject::{
+    admission, anonymous_with, person, with_endpoint_roles, Outside,
+};
 use context_gateway::auth::token::{Claims, RealmAccess};
-use jc_core::kinds::Audience;
+use jc_core::kinds::{Audience, EndpointSpec};
 
 use crate::auth::{CurrentUser, Session};
 use crate::error::ApiError;
@@ -198,6 +200,66 @@ fn admitted(
         ));
     }
     Ok(())
+}
+
+/// Whether the signed-in person reads Endpoint `name` through the gateway.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct Admission {
+    /// `false`: the gateway refuses the person at its door (no project group its audience
+    /// admits), whatever their Portal role, so the page reads nothing through the Endpoint.
+    pub admitted: bool,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project}/endpoints/{name}/admission",
+    summary = "Whether The Gateway Admits You",
+    description = "Whether the gateway's door admits the signed-in person on this Endpoint, decided by the gateway's own rule from the session's groups and Organization and the Endpoint's audience and allowed projects (EP-14, EP-15, ADR-N-067 2.3). A Portal role never widens it. Names no group or Policy. Members of the Endpoint's Context Space only.",
+    tag = "spaces",
+    params(
+        ("project" = String, Path, description = "Project name"),
+        ("name" = String, Path, description = "Endpoint name"),
+    ),
+    responses(
+        (status = 200, description = "Admitted or not", body = Admission, example = json!({ "admitted": false })),
+        (status = 401, description = "Not signed in", body = crate::error::ProblemDetails),
+        (status = 403, description = "A workload token", body = crate::error::ProblemDetails),
+        (status = 404, description = "No such Endpoint in a space the caller may read, or one of another Organization", body = crate::error::ProblemDetails),
+    )
+)]
+pub async fn endpoint_admission(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    Path((project, name)): Path<(String, String)>,
+) -> Result<Json<Admission>, ApiError> {
+    admitted(&state, &user, &project, &name)?;
+    let unknown = || ApiError::NotFound(format!("no Endpoint {name} in project {project}"));
+    let spec = state
+        .mirror
+        .get(&project, "Endpoint", &name)
+        .and_then(|endpoint| serde_json::from_value::<EndpointSpec>(endpoint.spec).ok())
+        .ok_or_else(unknown)?;
+    if spec.audience == Audience::Public {
+        return Ok(Json(Admission { admitted: true }));
+    }
+    let claims = claims_of(&state, &user.0);
+    let organization = organization_of(&state, &project);
+    let Some(caller) = person(&claims, spec.audience, organization.as_deref()) else {
+        return Ok(Json(Admission { admitted: false }));
+    };
+    match admission(
+        &project,
+        spec.audience,
+        &spec.allowed_projects,
+        &caller.groups,
+        caller.member_of_organization,
+        |project| organization_of(&state, project),
+    ) {
+        Ok(_) => Ok(Json(Admission { admitted: true })),
+        Err(Outside::Audience) => Ok(Json(Admission { admitted: false })),
+        // The gateway answers a slug nobody created (PF-32), and so does this.
+        Err(Outside::Organization) => Err(unknown()),
+    }
 }
 
 /// The body of `POST …/endpoints/{name}/ical-preview`.
@@ -480,6 +542,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/projects/{project}/endpoints/{name}/preview",
             post(preview_endpoint),
+        )
+        .route(
+            "/projects/{project}/endpoints/{name}/admission",
+            get(endpoint_admission),
         )
         .route(
             "/projects/{project}/endpoints/{name}/ical-preview",
