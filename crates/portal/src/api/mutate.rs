@@ -2619,7 +2619,12 @@ pub(crate) fn check_unmade_writes(
         mine.status = None;
         proposed.push(mine);
     }
-    let domain = ground.org_domain();
+    // The domain the gateway binds a reference on: the project's own first (T-6759), as
+    // `check_policy_refs` asks for, else the installation's (T-6829).
+    let domain = crate::permissions::project_domains(mirror, project)
+        .first()
+        .cloned()
+        .unwrap_or_else(|| ground.org_domain());
     let domain = Some(domain.as_str()).filter(|d| !d.is_empty());
     let before = unmade_writes(&current, domain);
     let field = |unmade: &jcctl::commands::validate::UnmadeWrite| {
@@ -4881,6 +4886,63 @@ mod tests {
             1,
             "an unknown Policy stays refused at load"
         );
+    }
+
+    /// T-6829: the PL-111 check judges a write Policy on the domain the gateway binds for the
+    /// project (its Organization's, T-6759), as the policyRefs check does; before, it judged on
+    /// the installation's, so an Organization that is not the installation's met two checks that
+    /// each refused the URN the other asked for and could bind no write Policy at all.
+    #[test]
+    fn a_write_policy_binds_on_its_projects_organization_domain() {
+        const OWN: &str = "urn:ngsi-ld:Policy:zilina.sk:ovzdusie-ovzdusie:air-write";
+        let state = AppState::new(Config::for_tests(), None);
+        state.mirror.upsert(organization(
+            "helsinki",
+            json!({ "domain": "hel.fi", "installation": true }),
+        ));
+        state
+            .mirror
+            .upsert(organization("zilina", json!({ "domain": "zilina.sk" })));
+        let mut project = manifest(
+            "Project",
+            "ovzdusie",
+            json!({ "organizationRef": "zilina" }),
+        );
+        project.metadata.namespace = Some(crate::api::blueprints::ORG_NAMESPACE.into());
+        state.mirror.upsert(project);
+        state
+            .mirror
+            .upsert(manifest("ContextSpace", "ovzdusie", json!({})));
+        state
+            .mirror
+            .upsert(manifest("Endpoint", "air-write", public_air(Some(OWN))));
+        let writer = manifest(
+            "Policy",
+            "air-write",
+            space_policy(
+                "{ \"kind\": \"serviceAccount\", \"id\": \"sensors\" }",
+                &["upsertBatch"],
+            ),
+        );
+        let ground = crate::judge::Ground::of(&state);
+
+        check_unmade_writes(&ground, "ovzdusie", Operation::Create, &writer)
+            .expect("the Endpoint binds the Policy on the project's own domain");
+        let mut elsewhere = state
+            .mirror
+            .get("ovzdusie", "Endpoint", "air-write")
+            .unwrap();
+        elsewhere.spec = public_air(Some(
+            "urn:ngsi-ld:Policy:hel.fi:ovzdusie-ovzdusie:air-write",
+        ));
+        state.mirror.upsert(elsewhere);
+        let errors = refusal(check_unmade_writes(
+            &crate::judge::Ground::of(&state),
+            "ovzdusie",
+            Operation::Create,
+            &writer,
+        ));
+        assert!(errors[0].contains(&format!("write {OWN}")), "{errors:?}");
     }
 
     /// An `Organization` in the namespace that holds them.
