@@ -420,11 +420,10 @@ fn with_dashboards(
         organization.insert(id, org.name.clone());
     }
     Ok(state.with_dashboard_resolver(move |catalogue, lang| {
-        match (
-            organization.get(catalogue),
-            super::appearance::PORTAL_MIRROR.get(),
-        ) {
-            (Some(name), Some(mirror)) => super::appearance::dashboard_cards(mirror, name, lang),
+        match (organization.get(catalogue), super::PORTAL_STATE.get()) {
+            (Some(name), Some(state)) => {
+                super::appearance::dashboard_cards(&state.mirror, name, lang)
+            }
             _ => Vec::new(),
         }
     }))
