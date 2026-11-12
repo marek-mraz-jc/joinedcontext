@@ -165,6 +165,8 @@ test.describe("an Endpoint the gateway does not admit you to (T-6802)", () => {
       const data = page.locator("section", { has: page.getByRole("heading", { name: "Data", exact: true }) });
       await expect(data.getByText("Mannerheimintie").first()).toBeVisible();
       await expect(page.getByText(CARD)).toBeVisible();
+      // A phone scrolls the grid inside its own frame; the page itself never scrolls sideways.
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       await shot(page, `endpoint-granted-${width}`);
 
       await page.goto(`/projects/${PROJECT}/settings/access?lang=en`);
