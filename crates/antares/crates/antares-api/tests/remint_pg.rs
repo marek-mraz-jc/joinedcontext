@@ -154,6 +154,17 @@ async fn call(pool: &PgPool, f: &str, tenant: &str) -> Result<Value, String> {
         .map_err(|e| e.to_string())
 }
 
+/// The entity_values rows this backend read: sequential and through an index.
+async fn rows_read(conn: &mut sqlx::PgConnection) -> i64 {
+    sqlx::query_scalar(
+        "SELECT coalesce(seq_tup_read, 0) + coalesce(idx_tup_fetch, 0)
+           FROM pg_stat_xact_user_tables WHERE relname = 'entity_values'",
+    )
+    .fetch_one(conn)
+    .await
+    .expect("rows read")
+}
+
 async fn count(pool: &PgPool, sql: &str, tenant: &str) -> i64 {
     sqlx::query_scalar(sqlx::AssertSqlSafe(sql.to_owned()))
         .bind(tenant)
@@ -337,6 +348,48 @@ async fn remint_batched_commits_each_range_and_ends_as_one_transaction_would() {
         .execute(&mut *conn)
         .await
         .expect("work_mem");
+
+    // one range reads the entity_values of its own ids, not the Tenant's:
+    // 0034's Merge Join read every row from the Tenant's first id (jc-dev
+    // praha-mesto: 9.66 M rows for 16.9 k renamed, 40 s a range)
+    sqlx::query("ANALYZE entity_values")
+        .execute(&mut *conn)
+        .await
+        .expect("analyze");
+    let total = count(
+        &pool,
+        "SELECT count(*) FROM entity_values WHERE tenant_id = $1",
+        t,
+    )
+    .await;
+    let mut tx = sqlx::Connection::begin(&mut *conn).await.expect("begin");
+    let ends: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM entities WHERE tenant_id = $1 ORDER BY id OFFSET 900 LIMIT 2 * 125 + 1",
+    )
+    .bind(t)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("range ends");
+    let (lo, hi) = (&ends[0], &ends[ends.len() - 1]);
+    // the counters also hold what this backend read before and has not
+    // flushed yet: the range's own reads are the difference
+    let before = rows_read(&mut tx).await;
+    let one: Value =
+        sqlx::query_scalar("SELECT remint_apply($1, 'bbsk.sk', 'sk_bbsk', false, $2, $3)")
+            .bind(t)
+            .bind(lo)
+            .bind(hi)
+            .fetch_one(&mut *tx)
+            .await
+            .expect("one range");
+    assert_eq!(one["entities"], 250, "{one}");
+    let read = rows_read(&mut tx).await - before;
+    assert!(
+        read < total / 2,
+        "a range of 250 of 1201 Entities read {read} entity_values rows of the Tenant's {total}"
+    );
+    tx.rollback().await.expect("rollback range");
+
     let report: Value =
         sqlx::query_scalar("CALL antares_remint_batched($1, 'bbsk.sk', 'sk_bbsk', 250, NULL)")
             .bind(t)

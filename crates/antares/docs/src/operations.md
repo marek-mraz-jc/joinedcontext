@@ -503,9 +503,12 @@ refused):
   again, up to five times. A run that stops keeps the ranges it committed:
   call it again with the same arguments and it renames the rest. Budget
   (jc-dev copy, 2026-11-12, one Postgres 16 container on a shared disk,
-  4 MB work_mem): about 4 s per range, longest 5.5 s, so a writer waits at
-  most one range; praha-mesto (1.19 M ids) runs about 85 min, about 4 ms
-  an id, most of it moving about 16 `entity_values` rows per id. 0033's
+  4 MB work_mem, with 0035): about 3 s per range, the same for the first
+  and the last tenth of the Tenant, longest 7 s, so a writer waits at most
+  one range; praha-mesto (1.19 M ids) ran 61 min (85 s clash check, then
+  1194 ranges), about 3 ms an id, most of it moving about 16
+  `entity_values` rows per id. Before 0035 a range read every
+  `entity_values` row of its Tenant: praha-mesto took 2 h 14 min. 0033's
   single transaction held the locks 49 min for helsinki (211 k ids).
 - A `GET /ngsi-ld/v1/entities/{old id}` answers the Entity under its new id
   for twelve months after the remint, through the same Policy gate as the
