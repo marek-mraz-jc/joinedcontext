@@ -34,7 +34,8 @@ fn make_ctx() -> ProcContext {
 
 fn add_cache(ctx: &ProcContext, name: &str) -> Arc<dyn Cache> {
     let cache: Arc<dyn Cache> = Arc::new(MemoryCache::new(None, None));
-    ctx.resources.insert_cache(ctx.org_id(), name, cache.clone());
+    ctx.resources
+        .insert_cache(ctx.org_id(), name, cache.clone());
     cache
 }
 
@@ -117,7 +118,7 @@ async fn test_group_by_errs() {
     )
     .err()
     .expect("refused");
-    assert!(err.contains("field 'check' is required"), "{err}");
+    assert!(err.contains("field check is required"), "{err}");
 }
 
 #[tokio::test]
@@ -146,7 +147,11 @@ async fn test_group_by_value_basic() {
         vec![r#"{"bar":2}"#],
         vec![r#"{"foo":2,"bar":3}"#],
         vec![r#"{"foo":4,"bar":4}"#],
-        vec![r#"{"foo":1,"bar":5}"#, r#"{"foo":1,"bar":6}"#, r#"{"foo":1,"bar":8}"#],
+        vec![
+            r#"{"foo":1,"bar":5}"#,
+            r#"{"foo":1,"bar":6}"#,
+            r#"{"foo":1,"bar":8}"#,
+        ],
     ];
     assert_eq!(bodies(&out), want);
 }
@@ -157,7 +162,11 @@ async fn group_by_value_flags_an_interpolation_error() {
     let proc = build(&ctx, "group_by_value:\n  value: ${! this.foo.number() }\n").expect("built");
     let out = run(&ctx, &proc, &[r#"{"foo":"x"}"#]).await;
     let err = out[0][0].error_get().expect("flagged");
-    assert!(err.message.starts_with("group value interpolation error:"), "{}", err.message);
+    assert!(
+        err.message.starts_with("group value interpolation error:"),
+        "{}",
+        err.message
+    );
 }
 
 const HAPPY: &str = r#"
@@ -255,8 +264,11 @@ async fn test_cached_skip() {
 async fn test_cached_bad_ttl() {
     let ctx = make_ctx();
     add_cache(&ctx, "foo");
-    let proc = build(&ctx, &SKIP.replace("  cache: foo", "  ttl: ${! 2+2 }\n  cache: foo"))
-        .expect("built");
+    let proc = build(
+        &ctx,
+        &SKIP.replace("  cache: foo", "  ttl: ${! 2+2 }\n  cache: foo"),
+    )
+    .expect("built");
     let out = run(&ctx, &proc, &["keya"]).await;
     let err = out[0][0].error_get().expect("flagged");
     assert_eq!(

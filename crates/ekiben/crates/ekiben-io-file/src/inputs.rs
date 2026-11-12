@@ -542,9 +542,10 @@ fn parse_scanner(
         None => Ok(Box::new(FileScannerKind::ToTheEnd)),
     };
     if let Some(conf) = field("decompress") {
-        let name = conf.get("algorithm").and_then(JsonValue::as_str).ok_or_else(|| {
-            CoreError::config("decompress: field 'algorithm' is required")
-        })?;
+        let name = conf
+            .get("algorithm")
+            .and_then(JsonValue::as_str)
+            .ok_or_else(|| CoreError::config("field algorithm is required"))?;
         return Ok(FileScannerKind::Decompress {
             algorithm: crate::scanner_decompress::Algorithm::parse(name)?,
             into: child(conf)?,
@@ -599,7 +600,14 @@ fn parse_scanner(
             lazy_quotes,
         });
     }
-    Ok(FileScannerKind::Lines)
+    if scanner_obj.contains_key("lines") {
+        return Ok(FileScannerKind::Lines);
+    }
+    // A scanner ekiben does not build is refused, never read as lines.
+    let name = scanner_obj.keys().next().map_or("", String::as_str);
+    Err(CoreError::config(format!(
+        "scanner type '{name}' was not recognised"
+    )))
 }
 
 /// Implements `broker` input (`internal/impl/pure/input_broker.go`),
@@ -1064,5 +1072,42 @@ impl Input for EmptyInput {
         _ctx: &StreamContext,
     ) -> Result<(Batch, AckResponder), CoreError> {
         Err(CoreError::EndOfInput)
+    }
+}
+
+#[cfg(test)]
+mod scanner_config_tests {
+    use super::*;
+
+    fn scanner(conf: serde_json::Value) -> Result<FileScannerKind, CoreError> {
+        parse_scanner_config(conf.as_object().expect("an object"))
+    }
+
+    #[test]
+    fn an_unknown_scanner_is_refused_by_name() {
+        let err =
+            scanner(serde_json::json!({"scanner": {"regex_lines": {}}})).expect_err("refused");
+        assert!(
+            err.to_string()
+                .contains("scanner type 'regex_lines' was not recognised"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn nested_scanners_read_a_compressed_stream_after_its_bom() {
+        use std::io::Write;
+        let conf = serde_json::json!({"scanner": {"skip_bom": {"into": {"decompress": {
+            "algorithm": "gzip", "into": {"re_match": {"pattern": "(?m)^#"}}}}}}});
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(b"#a\n#b\n").expect("gz");
+        let mut raw = vec![0xEF, 0xBB, 0xBF];
+        raw.extend(gz.finish().expect("gz"));
+        let parts = scan_parts(raw, scanner(conf).expect("scanner")).expect("parts");
+        let bodies: Vec<Bytes> = parts.iter().map(Part::as_bytes_ref).collect();
+        assert_eq!(
+            bodies,
+            [Bytes::from_static(b"#a\n"), Bytes::from_static(b"#b\n")]
+        );
     }
 }

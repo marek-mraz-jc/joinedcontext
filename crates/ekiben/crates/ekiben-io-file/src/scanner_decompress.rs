@@ -51,7 +51,8 @@ impl Algorithm {
             Self::Lz4 => Box::new(lz4_flex::frame::FrameDecoder::new(raw)),
             Self::Snappy => Box::new(snap::read::FrameDecoder::new(raw)),
             Self::Zstd => Box::new(
-                zstd::stream::read::Decoder::new(raw).map_err(|e| CoreError::other(e.to_string()))?,
+                zstd::stream::read::Decoder::new(raw)
+                    .map_err(|e| CoreError::other(e.to_string()))?,
             ),
         };
         let mut out = Vec::new();
@@ -120,17 +121,28 @@ mod tests {
             (Algorithm::Snappy, &sn),
             (Algorithm::Zstd, &zs),
         ] {
-            assert_eq!(alg.decompress(stream).expect("decompressed"), body, "{alg:?}");
+            assert_eq!(
+                alg.decompress(stream).expect("decompressed"),
+                body,
+                "{alg:?}"
+            );
         }
         let mut two = gz.clone();
         two.extend_from_slice(&gz);
-        assert_eq!(Algorithm::Gzip.decompress(&two).expect("two members").len(), body.len() * 2);
+        assert_eq!(
+            Algorithm::Gzip.decompress(&two).expect("two members").len(),
+            body.len() * 2
+        );
     }
 
     #[test]
     fn an_unknown_algorithm_names_itself() {
         let err = Algorithm::parse("rar").expect_err("unknown");
-        assert!(err.to_string().contains("compression type not recognised: rar"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("compression type not recognised: rar"),
+            "{err}"
+        );
     }
 
     #[test]

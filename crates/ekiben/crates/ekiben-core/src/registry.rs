@@ -509,7 +509,11 @@ impl Registry {
         }
 
         if conf.buffer.component_type != "none"
-            && !self.buffers.read().unwrap().contains_key(&conf.buffer.component_type)
+            && !self
+                .buffers
+                .read()
+                .unwrap()
+                .contains_key(&conf.buffer.component_type)
         {
             report.add_error(format!(
                 "buffer: type '{}' was not recognised",

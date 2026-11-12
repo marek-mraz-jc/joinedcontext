@@ -35,7 +35,12 @@ mod tests {
         let cases: [(&str, &str, &[&[u8]], &str); 7] = [
             ("no groups", "foo", &[], "foo"),
             ("no input", "", &[b"hello "], ""),
-            ("an empty group", "hello world", &[b"not this", b""], "hello world"),
+            (
+                "an empty group",
+                "hello world",
+                &[b"not this", b""],
+                "hello world",
+            ),
             ("easy match", "hello world", &[b"hello "], "world"),
             ("exact skip match", "foo", &[b"foo"], ""),
             ("max is bigger", "foa", &[b"fo", b"what this is huge"], "a"),
@@ -47,7 +52,11 @@ mod tests {
             ),
         ];
         for (name, input, skips, expected) in cases {
-            assert_eq!(skip_group(input.as_bytes(), skips), expected.as_bytes(), "{name}");
+            assert_eq!(
+                skip_group(input.as_bytes(), skips),
+                expected.as_bytes(),
+                "{name}"
+            );
         }
     }
 

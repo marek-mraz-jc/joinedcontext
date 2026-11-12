@@ -31,7 +31,7 @@ impl CachedProcessor {
         let field = |name: &str| {
             obj.get(name)
                 .and_then(JsonValue::as_str)
-                .ok_or_else(|| CoreError::config(format!("field '{name}' is required")))
+                .ok_or_else(|| CoreError::config(format!("field {name} is required")))
         };
         let cache = field("cache")?.to_string();
         if !ctx.resources.has_cache(ctx.org_id(), &cache) {
@@ -56,7 +56,7 @@ impl CachedProcessor {
         let list = obj
             .get("processors")
             .and_then(JsonValue::as_array)
-            .ok_or_else(|| CoreError::config("field 'processors' is required"))?;
+            .ok_or_else(|| CoreError::config("field processors is required"))?;
         let confs = list
             .iter()
             .map(|p| ComponentConfig::from_json_value(p, "noop", None))
@@ -74,7 +74,12 @@ impl CachedProcessor {
 
     /// Bento's `Process` for one message: the cached or freshly processed result, or an error that
     /// flags the message.
-    async fn process_one(&self, ctx: &ProcContext, batch: &[Part], i: usize) -> Result<Batch, String> {
+    async fn process_one(
+        &self,
+        ctx: &ProcContext,
+        batch: &[Part],
+        i: usize,
+    ) -> Result<Batch, String> {
         let view = PartsView(batch);
         let key = self
             .key
@@ -86,8 +91,13 @@ impl CachedProcessor {
                 let s = expr
                     .resolve_string(i, &view)
                     .map_err(|e| format!("failed to interpolate ttl expression: {e}"))?;
-                let nanos = ekiben_bloblang::time_format::parse_go_duration_nanos(&s)
-                    .map_err(|e| format!("failed to parse ttl expression: {}", go_duration_error(&s, &e)))?;
+                let nanos =
+                    ekiben_bloblang::time_format::parse_go_duration_nanos(&s).map_err(|e| {
+                        format!(
+                            "failed to parse ttl expression: {}",
+                            go_duration_error(&s, &e)
+                        )
+                    })?;
                 Some(Duration::from_nanos(u64::try_from(nanos).unwrap_or(0)))
             }
         };
@@ -111,7 +121,9 @@ impl CachedProcessor {
         let mut collapsed = Vec::new();
         for b in results {
             let skip = self.should_skip(&b).unwrap_or_else(|e| {
-                tracing::error!("skip_on check failed: {e}, caching will be skipped as a precaution");
+                tracing::error!(
+                    "skip_on check failed: {e}, caching will be skipped as a precaution"
+                );
                 true
             });
             should_cache &= !skip;
@@ -143,7 +155,11 @@ impl Processor for CachedProcessor {
         "cached"
     }
 
-    async fn process_batch(&self, ctx: &ProcContext, batch: Batch) -> Result<Vec<Batch>, CoreError> {
+    async fn process_batch(
+        &self,
+        ctx: &ProcContext,
+        batch: Batch,
+    ) -> Result<Vec<Batch>, CoreError> {
         let mut out = Vec::with_capacity(batch.len());
         for i in 0..batch.len() {
             match self.process_one(ctx, &batch, i).await {
@@ -155,7 +171,11 @@ impl Processor for CachedProcessor {
                 }
             }
         }
-        Ok(if out.is_empty() { Vec::new() } else { vec![out] })
+        Ok(if out.is_empty() {
+            Vec::new()
+        } else {
+            vec![out]
+        })
     }
 
     async fn close(&self) -> Result<(), CoreError> {
@@ -203,15 +223,17 @@ fn take_u32(data: &[u8]) -> Result<(u32, &[u8]), String> {
 
 /// `cachedProcResultToBatch`: each stored message is a copy of `msg` (its metadata) with the stored bytes.
 fn result_to_batch(msg: &Part, stored: &[u8]) -> Result<Batch, String> {
-    let (version, data) =
-        take_u32(stored).map_err(|e| format!("failed to extract serialisation format version: {e}"))?;
+    let (version, data) = take_u32(stored)
+        .map_err(|e| format!("failed to extract serialisation format version: {e}"))?;
     if version != 1 {
         return Err(format!("invalid format version: {version}"));
     }
-    let (count, mut data) = take_u32(data).map_err(|e| format!("failed to extract batch size: {e}"))?;
+    let (count, mut data) =
+        take_u32(data).map_err(|e| format!("failed to extract batch size: {e}"))?;
     let mut out = Vec::new();
     for i in 0..count {
-        let (size, rest) = take_u32(data).map_err(|e| format!("failed to extract message {i} size: {e}"))?;
+        let (size, rest) =
+            take_u32(data).map_err(|e| format!("failed to extract message {i} size: {e}"))?;
         let size = size as usize;
         if rest.len() < size {
             return Err(format!(

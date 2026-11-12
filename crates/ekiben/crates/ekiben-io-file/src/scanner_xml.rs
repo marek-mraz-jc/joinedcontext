@@ -15,14 +15,17 @@ pub struct XmlDocumentScanner;
 
 impl XmlDocumentScanner {
     pub fn from_config(obj: &serde_json::Map<String, JsonValue>) -> Result<Self, CoreError> {
-        let operator = obj.get("operator").and_then(JsonValue::as_str).unwrap_or("");
+        let operator = obj
+            .get("operator")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("");
         if operator != "to_json" {
             return Err(CoreError::config(format!(
                 "operator not recognised: {operator}"
             )));
         }
         if obj.get("cast").is_some_and(|c| !c.is_boolean()) {
-            return Err(CoreError::config("xml_documents: field 'cast' must be a bool"));
+            return Err(CoreError::config("field cast must be a bool"));
         }
         Ok(Self)
     }
@@ -93,13 +96,22 @@ mod tests {
     fn test_xml_scanner_default() {
         check(
             "<a>a0</a>\n<a>a1</a>\n<a>a2</a>\n<a>a3</a>\n<a>a4</a>\n",
-            &[r#"{"a":"a0"}"#, r#"{"a":"a1"}"#, r#"{"a":"a2"}"#, r#"{"a":"a3"}"#, r#"{"a":"a4"}"#],
+            &[
+                r#"{"a":"a0"}"#,
+                r#"{"a":"a1"}"#,
+                r#"{"a":"a2"}"#,
+                r#"{"a":"a3"}"#,
+                r#"{"a":"a4"}"#,
+            ],
         );
     }
 
     #[test]
     fn test_xml_scanner_bad_data() {
-        check("<a>a0</a>invalid\n<a>a1</a>\n", &[r#"{"a":"a0"}"#, r#"{"a":"a1"}"#]);
+        check(
+            "<a>a0</a>invalid\n<a>a1</a>\n",
+            &[r#"{"a":"a0"}"#, r#"{"a":"a1"}"#],
+        );
     }
 
     #[test]
@@ -128,13 +140,16 @@ mod tests {
     fn test_xml_scanner_nested_and_formatted() {
         let doc = |i: usize| format!("<a>\n\t<b>\n\t\tab{i}\n\t</b>\n</a>\n");
         let input: String = (0..5).map(doc).collect();
-        let want: Vec<String> = (0..5).map(|i| format!(r#"{{"a":{{"b":"ab{i}"}}}}"#)).collect();
+        let want: Vec<String> = (0..5)
+            .map(|i| format!(r#"{{"a":{{"b":"ab{i}"}}}}"#))
+            .collect();
         check(&input, &want.iter().map(String::as_str).collect::<Vec<_>>());
     }
 
     #[test]
     fn test_xml_scanner_multiple_values_and_formatted() {
-        let doc = |i: usize| format!("<a>\n\t<b>\n\t\tab{i}\n\t</b>\n\t<c>\n\t\tac{i}\n\t</c>\n</a>\n");
+        let doc =
+            |i: usize| format!("<a>\n\t<b>\n\t\tab{i}\n\t</b>\n\t<c>\n\t\tac{i}\n\t</c>\n</a>\n");
         let input: String = (0..3).map(doc).collect();
         let want: Vec<String> = (0..3)
             .map(|i| format!(r#"{{"a":{{"b":"ab{i}","c":"ac{i}"}}}}"#))
@@ -147,13 +162,17 @@ mod tests {
         let conf = serde_json::json!({"operator": "to_yaml"});
         let err = XmlDocumentScanner::from_config(conf.as_object().expect("object"))
             .expect_err("refused");
-        assert!(err.to_string().contains("operator not recognised: to_yaml"), "{err}");
+        assert!(
+            err.to_string().contains("operator not recognised: to_yaml"),
+            "{err}"
+        );
     }
 
     #[test]
     fn a_doctype_is_refused() {
         let conf = serde_json::json!({"operator": "to_json"});
-        let scanner = XmlDocumentScanner::from_config(conf.as_object().expect("object")).expect("ok");
+        let scanner =
+            XmlDocumentScanner::from_config(conf.as_object().expect("object")).expect("ok");
         let xxe = "<!DOCTYPE a [<!ENTITY x SYSTEM \"file:///etc/passwd\">]><a>&x;</a>";
         assert!(scanner.documents(xxe.as_bytes()).is_err());
     }

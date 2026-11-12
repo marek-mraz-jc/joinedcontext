@@ -21,11 +21,11 @@ impl ReMatchScanner {
         let pattern = obj
             .get("pattern")
             .and_then(JsonValue::as_str)
-            .ok_or_else(|| CoreError::config("re_match: field 'pattern' is required"))?;
+            .ok_or_else(|| CoreError::config("field pattern is required"))?;
         let max_buffer_size = match obj.get("max_buffer_size") {
             None => MAX_SCAN_TOKEN_SIZE,
             Some(v) => v.as_u64().ok_or_else(|| {
-                CoreError::config("re_match: field 'max_buffer_size' must be a positive integer")
+                CoreError::config("field max_buffer_size must be a positive integer")
             })?,
         };
         let regex = regex::bytes::RegexBuilder::new(pattern)
@@ -97,7 +97,11 @@ mod tests {
             "foo\nbar\nsplit\nbaz\nsplitsplit",
             &["foo", "\nbar", "\nsplit", "\nbaz", "\nsplitsplit"],
         );
-        check("\\n", "foo\nbar\nsplit\nbaz", &["foo", "\nbar", "\nsplit", "\nbaz"]);
+        check(
+            "\\n",
+            "foo\nbar\nsplit\nbaz",
+            &["foo", "\nbar", "\nsplit", "\nbaz"],
+        );
         check(
             "\\n\\d",
             "20:20:22 ERROR\nCode\n20:20:21 INFO\n20:20:21 INFO\n20:20:22 ERROR\nCode\n",
@@ -124,15 +128,17 @@ mod tests {
     #[test]
     fn a_segment_over_max_buffer_size_fails() {
         let long = "x".repeat(201);
-        let err = scanner("split").split(long.as_bytes()).expect_err("too long");
+        let err = scanner("split")
+            .split(long.as_bytes())
+            .expect_err("too long");
         assert!(err.to_string().contains("token too long"), "{err}");
     }
 
     #[test]
     fn a_pattern_past_the_compile_limit_is_refused() {
         let conf = serde_json::json!({"pattern": "(\\w{100}){100}"});
-        let err = ReMatchScanner::from_config(conf.as_object().expect("an object"))
-            .expect_err("refused");
+        let err =
+            ReMatchScanner::from_config(conf.as_object().expect("an object")).expect_err("refused");
         assert!(err.to_string().contains("invalid pattern"), "{err}");
     }
 }

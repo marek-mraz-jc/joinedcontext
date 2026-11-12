@@ -32,7 +32,7 @@ impl GroupByProcessor {
             let check = item
                 .get("check")
                 .and_then(JsonValue::as_str)
-                .ok_or_else(|| parse_err("field 'check' is required".to_string()))?;
+                .ok_or_else(|| parse_err("field check is required".to_string()))?;
             let check = ctx
                 .blobl_env
                 .compile_mapping(check)
@@ -41,12 +41,13 @@ impl GroupByProcessor {
             if let Some(list) = item.get("processors") {
                 let list = list
                     .as_array()
-                    .ok_or_else(|| parse_err("field 'processors' must be a list".to_string()))?;
+                    .ok_or_else(|| parse_err("field processors must be a list".to_string()))?;
                 for p in list {
                     confs.push(ComponentConfig::from_json_value(p, "noop", None)?);
                 }
             }
-            let group_ctx = ctx.into_child("group_by", ctx.label.clone(), format!("{i}.processors"));
+            let group_ctx =
+                ctx.into_child("group_by", ctx.label.clone(), format!("{i}.processors"));
             let processors = ctx.registry.build_processor_list(&confs, &group_ctx)?;
             groups.push(Group { check, processors });
         }
@@ -60,7 +61,11 @@ impl Processor for GroupByProcessor {
         "group_by"
     }
 
-    async fn process_batch(&self, ctx: &ProcContext, batch: Batch) -> Result<Vec<Batch>, CoreError> {
+    async fn process_batch(
+        &self,
+        ctx: &ProcContext,
+        batch: Batch,
+    ) -> Result<Vec<Batch>, CoreError> {
         if batch.is_empty() {
             return Ok(Vec::new());
         }

@@ -103,17 +103,30 @@ impl Input for BufferedInput {
     async fn connect(&mut self, ctx: &StreamContext) -> Result<(), CoreError> {
         if let Some(mut input) = self.inner.take() {
             input.connect(ctx).await?;
-            let task = feed(input, self.buffer.clone(), ctx.clone(), self.read_err.clone());
+            let task = feed(
+                input,
+                self.buffer.clone(),
+                ctx.clone(),
+                self.read_err.clone(),
+            );
             self.feeder = Some(tokio::spawn(task));
         }
         Ok(())
     }
 
-    async fn read_batch(&mut self, ctx: &StreamContext) -> Result<(Batch, AckResponder), CoreError> {
+    async fn read_batch(
+        &mut self,
+        ctx: &StreamContext,
+    ) -> Result<(Batch, AckResponder), CoreError> {
         match self.buffer.pop(ctx).await {
             Ok(tx) => Ok((tx.payload, tx.ack)),
             Err(CoreError::EndOfInput) => {
-                match self.read_err.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                match self
+                    .read_err
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .take()
+                {
                     Some(e) => Err(CoreError::other(e)),
                     None => Err(CoreError::EndOfInput),
                 }

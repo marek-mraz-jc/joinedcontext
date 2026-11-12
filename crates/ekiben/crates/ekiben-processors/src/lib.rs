@@ -29,7 +29,9 @@ pub fn register_all(registry: &Registry) {
     utility::register(registry);
     resources::register(registry);
     registry.register_processor("group_by", |conf, ctx| {
-        Ok(std::sync::Arc::new(processor_group_by::GroupByProcessor::from_config(conf, ctx)?))
+        Ok(std::sync::Arc::new(
+            processor_group_by::GroupByProcessor::from_config(conf, ctx)?,
+        ))
     });
     registry.register_processor("group_by_value", |conf, ctx| {
         Ok(std::sync::Arc::new(
@@ -42,6 +44,8 @@ pub fn register_all(registry: &Registry) {
         ))
     });
     registry.register_processor("cached", |conf, ctx| {
-        Ok(std::sync::Arc::new(processor_cached::CachedProcessor::from_config(conf, ctx)?))
+        Ok(std::sync::Arc::new(
+            processor_cached::CachedProcessor::from_config(conf, ctx)?,
+        ))
     });
 }

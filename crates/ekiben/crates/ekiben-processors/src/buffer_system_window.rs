@@ -24,8 +24,11 @@ type SharedAck = Arc<Mutex<Option<AckResponder>>>;
 const SECOND: Nanos = 1_000_000_000;
 /// Go's zero `time.Time`, 0001-01-01T00:00:00Z.
 const GO_ZERO: Nanos = -62_135_596_800 * SECOND;
-/// Messages one window buffer may hold before a write is refused (limit class, PIP-11).
-pub const MAX_PENDING: usize = 1_000_000;
+/// Bytes one window buffer may hold before a write is nacked: the pipeline limit class bounds a
+/// run's memory (PIP-11).
+pub const MAX_PENDING_BYTES: usize = 256 * 1024 * 1024;
+/// The longest window: a longer one is refused when the stream is built (PIP-11).
+pub const MAX_SIZE: Nanos = 24 * 3600 * SECOND;
 
 struct TsMessage {
     ts: Nanos,
@@ -37,6 +40,7 @@ struct State {
     latest_flushed_window_end: Nanos,
     oldest_ts: Nanos,
     pending: Vec<TsMessage>,
+    pending_bytes: usize,
 }
 
 pub struct SystemWindowBuffer {
@@ -174,6 +178,13 @@ impl SystemWindowBuffer {
         blobl_env: &ekiben_bloblang::Environment,
     ) -> Result<(Executor, [Nanos; 4]), CoreError> {
         let size = duration_field(obj, "size", true)?;
+        if size > MAX_SIZE {
+            return Err(CoreError::config(format!(
+                "system_window: size '{}' is over the {} a pipeline window may hold",
+                go_duration_string(size),
+                go_duration_string(MAX_SIZE)
+            )));
+        }
         let slide = duration_field(obj, "slide", false)?;
         let d = go_duration_string;
         if slide >= size {
@@ -208,9 +219,9 @@ impl SystemWindowBuffer {
         }
         let mapping = match obj.get("timestamp_mapping") {
             None => "root = now()",
-            Some(v) => v.as_str().ok_or_else(|| {
-                CoreError::config("field timestamp_mapping must be a string")
-            })?,
+            Some(v) => v
+                .as_str()
+                .ok_or_else(|| CoreError::config("field timestamp_mapping must be a string"))?,
         };
         let ts_mapping = blobl_env
             .compile_mapping(mapping)
@@ -232,6 +243,7 @@ impl SystemWindowBuffer {
                 latest_flushed_window_end: GO_ZERO,
                 oldest_ts,
                 pending: Vec::new(),
+                pending_bytes: 0,
             }),
             end_of_input: watch::channel(false).0,
         }
@@ -244,7 +256,11 @@ impl SystemWindowBuffer {
     /// `(prevStart, prevEnd, start, end)` of the window the clock is in, as Bento's `nextSystemWindow`.
     fn next_system_window(&self) -> (Nanos, Nanos, Nanos, Nanos) {
         let now = (self.clock)();
-        let epoch = if self.slide > 0 { self.slide } else { self.size };
+        let epoch = if self.slide > 0 {
+            self.slide
+        } else {
+            self.size
+        };
         let mut start = go_round(now, epoch) + 1 + self.offset;
         if start > now {
             start -= epoch;
@@ -290,6 +306,7 @@ impl SystemWindowBuffer {
                 new_oldest = new_oldest.min(p.ts);
                 kept.push(p);
             }
+            st.pending_bytes = kept.iter().map(|p| p.part.as_bytes_ref().len()).sum();
             st.pending = kept;
             st.oldest_ts = new_oldest;
         }
@@ -309,12 +326,17 @@ impl SystemWindowBuffer {
             if ts <= st.latest_flushed_window_end {
                 continue;
             }
-            if st.pending.len() >= MAX_PENDING {
-                let e = format!("system_window holds {MAX_PENDING} messages, the most one buffer may hold");
+            let bytes = batch[i].as_bytes_ref().len();
+            if st.pending_bytes + bytes > MAX_PENDING_BYTES {
+                let e = format!(
+                    "system_window holds {} bytes, the most one buffer may hold is {MAX_PENDING_BYTES}",
+                    st.pending_bytes
+                );
                 fire(&root, Some(BatchError::new(batch.clone(), e.clone())));
                 return Err(CoreError::other(e));
             }
             added = true;
+            st.pending_bytes += bytes;
             st.pending.push(TsMessage {
                 ts,
                 part: batch[i].clone(),
@@ -330,7 +352,12 @@ impl SystemWindowBuffer {
 
     fn flush_window(&self, start: Nanos, end: Nanos) -> (Batch, AckResponder) {
         let mut st = self.lock();
-        let next_start = start + if self.slide > 0 { self.slide } else { self.size };
+        let next_start = start
+            + if self.slide > 0 {
+                self.slide
+            } else {
+                self.size
+            };
         let stamp = format_rfc3339_nano(end);
         let mut out = Vec::new();
         let mut acks = Vec::new();
@@ -352,6 +379,7 @@ impl SystemWindowBuffer {
                 fire(&p.ack, None);
             }
         }
+        st.pending_bytes = kept.iter().map(|p| p.part.as_bytes_ref().len()).sum();
         st.pending = kept;
         st.latest_flushed_window_end = end;
         st.oldest_ts = new_oldest;
@@ -365,7 +393,11 @@ impl SystemWindowBuffer {
 
     /// Nacks every held message so the input delivers it again on the next start.
     fn nack_pending(&self) {
-        let pending = std::mem::take(&mut self.lock().pending);
+        let pending = {
+            let mut st = self.lock();
+            st.pending_bytes = 0;
+            std::mem::take(&mut st.pending)
+        };
         for p in pending {
             let err = BatchError::new(vec![p.part], "message rejected as window did not complete");
             fire(&p.ack, Some(err));
@@ -474,7 +506,12 @@ mod tests {
         }
 
         fn pending(&self) -> Vec<String> {
-            self.w.lock().pending.iter().map(|p| body(&p.part)).collect()
+            self.w
+                .lock()
+                .pending
+                .iter()
+                .map(|p| body(&p.part))
+                .collect()
         }
 
         async fn read(&self) -> (Vec<String>, AckResponder) {
@@ -498,11 +535,19 @@ mod tests {
     #[test]
     fn test_system_window_buffer_configs() {
         let env = ekiben_bloblang::Environment::new();
-        let cases: [(&str, Option<&str>); 8] = [
+        let cases: [(&str, Option<&str>); 10] = [
             (r#"{"size":"60m"}"#, None),
+            (r#"{"size":"24h"}"#, None),
+            (
+                r#"{"size":"25h"}"#,
+                Some("size '25h0m0s' is over the 24h0m0s"),
+            ),
             (r#"{}"#, Some("field size is required")),
             (r#"{"timestamp_mapping":"root =","size":"60m"}"#, Some("")),
-            (r#"{"size":"60m","slide":"5m","offset":"1m","allowed_lateness":"2m"}"#, None),
+            (
+                r#"{"size":"60m","slide":"5m","offset":"1m","allowed_lateness":"2m"}"#,
+                None,
+            ),
             (
                 r#"{"size":"60m","slide":"120m","offset":"1m","allowed_lateness":"2m"}"#,
                 Some("invalid window slide '2h0m0s' must be lower than the size '1h0m0s'"),
@@ -521,8 +566,7 @@ mod tests {
             ),
         ];
         for (conf, want) in cases {
-            let obj: serde_json::Map<String, JsonValue> =
-                serde_json::from_str(conf).expect("json");
+            let obj: serde_json::Map<String, JsonValue> = serde_json::from_str(conf).expect("json");
             match (SystemWindowBuffer::parse(&obj, &env), want) {
                 (Ok(_), None) => {}
                 (Err(e), Some(text)) => assert!(e.to_string().contains(text), "{conf}: {e}"),
@@ -535,15 +579,96 @@ mod tests {
     #[test]
     fn test_system_current_window_calc() {
         let cases = [
-            ("2006-01-02T15:00:00Z", HOUR, 0, 0, "2006-01-02T13:00:00.000000001Z", "2006-01-02T14:00:00Z", "2006-01-02T14:00:00.000000001Z", "2006-01-02T15:00:00Z"),
-            ("2006-01-02T15:00:00.000000001Z", HOUR, 0, 0, "2006-01-02T14:00:00.000000001Z", "2006-01-02T15:00:00Z", "2006-01-02T15:00:00.000000001Z", "2006-01-02T16:00:00Z"),
-            ("2006-01-02T15:04:05.123456789Z", HOUR, 0, 0, "2006-01-02T14:00:00.000000001Z", "2006-01-02T15:00:00Z", "2006-01-02T15:00:00.000000001Z", "2006-01-02T16:00:00Z"),
-            ("2006-01-02T15:34:05.123456789Z", HOUR, 0, 0, "2006-01-02T14:00:00.000000001Z", "2006-01-02T15:00:00Z", "2006-01-02T15:00:00.000000001Z", "2006-01-02T16:00:00Z"),
-            ("2006-01-02T00:04:05.123456789Z", HOUR, 0, 0, "2006-01-01T23:00:00.000000001Z", "2006-01-02T00:00:00Z", "2006-01-02T00:00:00.000000001Z", "2006-01-02T01:00:00Z"),
-            ("2006-01-02T15:04:05.123456789Z", HOUR, 10 * MIN, 0, "2006-01-02T14:00:00.000000001Z", "2006-01-02T15:00:00Z", "2006-01-02T14:10:00.000000001Z", "2006-01-02T15:10:00Z"),
-            ("2006-01-02T15:04:05.123456789Z", HOUR, 0, 30 * MIN, "2006-01-02T13:30:00.000000001Z", "2006-01-02T14:30:00Z", "2006-01-02T14:30:00.000000001Z", "2006-01-02T15:30:00Z"),
-            ("2006-01-02T15:04:05.123456789Z", HOUR, 10 * MIN, 5 * MIN, "2006-01-02T13:55:00.000000001Z", "2006-01-02T14:55:00Z", "2006-01-02T14:05:00.000000001Z", "2006-01-02T15:05:00Z"),
-            ("2006-01-02T15:09:59.123456789Z", HOUR, 10 * MIN, 5 * MIN, "2006-01-02T14:05:00.000000001Z", "2006-01-02T15:05:00Z", "2006-01-02T14:15:00.000000001Z", "2006-01-02T15:15:00Z"),
+            (
+                "2006-01-02T15:00:00Z",
+                HOUR,
+                0,
+                0,
+                "2006-01-02T13:00:00.000000001Z",
+                "2006-01-02T14:00:00Z",
+                "2006-01-02T14:00:00.000000001Z",
+                "2006-01-02T15:00:00Z",
+            ),
+            (
+                "2006-01-02T15:00:00.000000001Z",
+                HOUR,
+                0,
+                0,
+                "2006-01-02T14:00:00.000000001Z",
+                "2006-01-02T15:00:00Z",
+                "2006-01-02T15:00:00.000000001Z",
+                "2006-01-02T16:00:00Z",
+            ),
+            (
+                "2006-01-02T15:04:05.123456789Z",
+                HOUR,
+                0,
+                0,
+                "2006-01-02T14:00:00.000000001Z",
+                "2006-01-02T15:00:00Z",
+                "2006-01-02T15:00:00.000000001Z",
+                "2006-01-02T16:00:00Z",
+            ),
+            (
+                "2006-01-02T15:34:05.123456789Z",
+                HOUR,
+                0,
+                0,
+                "2006-01-02T14:00:00.000000001Z",
+                "2006-01-02T15:00:00Z",
+                "2006-01-02T15:00:00.000000001Z",
+                "2006-01-02T16:00:00Z",
+            ),
+            (
+                "2006-01-02T00:04:05.123456789Z",
+                HOUR,
+                0,
+                0,
+                "2006-01-01T23:00:00.000000001Z",
+                "2006-01-02T00:00:00Z",
+                "2006-01-02T00:00:00.000000001Z",
+                "2006-01-02T01:00:00Z",
+            ),
+            (
+                "2006-01-02T15:04:05.123456789Z",
+                HOUR,
+                10 * MIN,
+                0,
+                "2006-01-02T14:00:00.000000001Z",
+                "2006-01-02T15:00:00Z",
+                "2006-01-02T14:10:00.000000001Z",
+                "2006-01-02T15:10:00Z",
+            ),
+            (
+                "2006-01-02T15:04:05.123456789Z",
+                HOUR,
+                0,
+                30 * MIN,
+                "2006-01-02T13:30:00.000000001Z",
+                "2006-01-02T14:30:00Z",
+                "2006-01-02T14:30:00.000000001Z",
+                "2006-01-02T15:30:00Z",
+            ),
+            (
+                "2006-01-02T15:04:05.123456789Z",
+                HOUR,
+                10 * MIN,
+                5 * MIN,
+                "2006-01-02T13:55:00.000000001Z",
+                "2006-01-02T14:55:00Z",
+                "2006-01-02T14:05:00.000000001Z",
+                "2006-01-02T15:05:00Z",
+            ),
+            (
+                "2006-01-02T15:09:59.123456789Z",
+                HOUR,
+                10 * MIN,
+                5 * MIN,
+                "2006-01-02T14:05:00.000000001Z",
+                "2006-01-02T15:05:00Z",
+                "2006-01-02T14:15:00.000000001Z",
+                "2006-01-02T15:15:00Z",
+            ),
         ];
         for (now, size, slide, offset, prev_start, prev_end, start, end) in cases {
             let f = Fixture::new(at(now), [size, slide, offset, 0]);
@@ -557,12 +682,22 @@ mod tests {
     fn test_system_window_write_purge() {
         let f = Fixture::new(unix(10, 1), [SECOND, 0, 0, 0]);
         f.write(
-            &[r#"{"id":"1","ts":7.999999999}"#, r#"{"id":"2","ts":8.5}"#, r#"{"id":"3","ts":9.5}"#, r#"{"id":"4","ts":10.5}"#],
+            &[
+                r#"{"id":"1","ts":7.999999999}"#,
+                r#"{"id":"2","ts":8.5}"#,
+                r#"{"id":"3","ts":9.5}"#,
+                r#"{"id":"4","ts":10.5}"#,
+            ],
             AckResponder::noop(),
         );
         assert_eq!(f.pending().len(), 4);
         f.write(
-            &[r#"{"id":"5","ts":10.6}"#, r#"{"id":"6","ts":10.7}"#, r#"{"id":"7","ts":10.8}"#, r#"{"id":"8","ts":10.9}"#],
+            &[
+                r#"{"id":"5","ts":10.6}"#,
+                r#"{"id":"6","ts":10.7}"#,
+                r#"{"id":"7","ts":10.8}"#,
+                r#"{"id":"8","ts":10.9}"#,
+            ],
             AckResponder::noop(),
         );
         assert_eq!(f.pending().len(), 6);
@@ -572,24 +707,38 @@ mod tests {
     async fn test_system_window_creation() {
         let f = Fixture::new(unix(10, 1), [SECOND, 0, 0, 0]);
         f.write(
-            &[r#"{"id":"1","ts":7.999999999}"#, r#"{"id":"2","ts":8.5}"#, r#"{"id":"3","ts":9.5}"#, r#"{"id":"4","ts":10.5}"#],
+            &[
+                r#"{"id":"1","ts":7.999999999}"#,
+                r#"{"id":"2","ts":8.5}"#,
+                r#"{"id":"3","ts":9.5}"#,
+                r#"{"id":"4","ts":10.5}"#,
+            ],
             AckResponder::noop(),
         );
         assert_eq!(f.pending().len(), 4);
         assert_eq!(f.read().await.0, [r#"{"id":"3","ts":9.5}"#]);
         assert_eq!(f.pending().len(), 1);
-        assert_eq!(format_rfc3339_nano(f.w.lock().latest_flushed_window_end), "1970-01-01T00:00:10Z");
+        assert_eq!(
+            format_rfc3339_nano(f.w.lock().latest_flushed_window_end),
+            "1970-01-01T00:00:10Z"
+        );
 
         f.set(unix(10, 999_999_100));
         assert_eq!(f.read().await.0, [r#"{"id":"4","ts":10.5}"#]);
         assert!(f.pending().is_empty());
-        assert_eq!(format_rfc3339_nano(f.w.lock().latest_flushed_window_end), "1970-01-01T00:00:11Z");
+        assert_eq!(
+            format_rfc3339_nano(f.w.lock().latest_flushed_window_end),
+            "1970-01-01T00:00:11Z"
+        );
 
         f.set(unix(11, 999_999_100));
         let (_tx, rx) = watch::channel(false);
         let small_wait = tokio::time::timeout(Duration::from_millis(50), f.w.read_batch(rx)).await;
         assert!(small_wait.is_err(), "no window holds a message");
-        assert_eq!(format_rfc3339_nano(f.w.lock().latest_flushed_window_end), "1970-01-01T00:00:12Z");
+        assert_eq!(
+            format_rfc3339_nano(f.w.lock().latest_flushed_window_end),
+            "1970-01-01T00:00:12Z"
+        );
 
         f.write(
             &[
@@ -602,20 +751,29 @@ mod tests {
             ],
             AckResponder::noop(),
         );
-        assert_eq!(f.pending(), [r#"{"id":"9","ts":12.1}"#, r#"{"id":"10","ts":13}"#]);
+        assert_eq!(
+            f.pending(),
+            [r#"{"id":"9","ts":12.1}"#, r#"{"id":"10","ts":13}"#]
+        );
     }
 
     #[tokio::test]
     async fn test_system_window_creation_sliding() {
         let f = Fixture::new(unix(10, 0), [SECOND, 500_000_000, 0, 0]);
         f.w.lock().latest_flushed_window_end = unix(9, 500_000_000);
-        let ids = ["9.85", "9.9", "10.15", "10.3", "10.5", "10.7", "10.9", "11.1", "11.35", "11.52", "11.8"];
+        let ids = [
+            "9.85", "9.9", "10.15", "10.3", "10.5", "10.7", "10.9", "11.1", "11.35", "11.52",
+            "11.8",
+        ];
         let msgs: Vec<String> = ids
             .iter()
             .enumerate()
             .map(|(i, ts)| format!(r#"{{"id":"{}","ts":{ts}}}"#, i + 1))
             .collect();
-        f.write(&msgs.iter().map(String::as_str).collect::<Vec<_>>(), AckResponder::noop());
+        f.write(
+            &msgs.iter().map(String::as_str).collect::<Vec<_>>(),
+            AckResponder::noop(),
+        );
         assert_eq!(f.pending().len(), 11);
         let window = |from: usize, to: usize| msgs[from - 1..to].to_vec();
         assert_eq!(f.read().await.0, window(1, 2));
@@ -634,7 +792,11 @@ mod tests {
         let f = Fixture::new(unix(10, 1), [SECOND, 0, 0, 0]);
         let calls = Arc::new(Mutex::new(Vec::new()));
         f.write(
-            &[r#"{"id":"1","ts":9.5}"#, r#"{"id":"2","ts":10.5}"#, r#"{"id":"3","ts":11.5}"#],
+            &[
+                r#"{"id":"1","ts":9.5}"#,
+                r#"{"id":"2","ts":10.5}"#,
+                r#"{"id":"3","ts":11.5}"#,
+            ],
             counting_ack(&calls),
         );
         let (b1, a1) = f.read().await;
@@ -651,21 +813,38 @@ mod tests {
         a2.nack(BatchError::new(Vec::new(), "custom error"));
         assert!(calls.lock().expect("calls").is_empty());
         a3.ack();
-        assert_eq!(*calls.lock().expect("calls"), [Some("custom error".to_string())]);
+        assert_eq!(
+            *calls.lock().expect("calls"),
+            [Some("custom error".to_string())]
+        );
     }
 
     #[tokio::test]
     async fn test_system_window_ack_many_to_one() {
         let f = Fixture::new(unix(10, 1), [SECOND, 0, 0, 0]);
         let calls = Arc::new(Mutex::new(Vec::new()));
-        for msg in [r#"{"id":"1","ts":9.5}"#, r#"{"id":"2","ts":9.6}"#, r#"{"id":"3","ts":9.7}"#] {
+        for msg in [
+            r#"{"id":"1","ts":9.5}"#,
+            r#"{"id":"2","ts":9.6}"#,
+            r#"{"id":"3","ts":9.7}"#,
+        ] {
             f.write(&[msg], counting_ack(&calls));
         }
         let (batch, ack) = f.read().await;
-        assert_eq!(batch, [r#"{"id":"1","ts":9.5}"#, r#"{"id":"2","ts":9.6}"#, r#"{"id":"3","ts":9.7}"#]);
+        assert_eq!(
+            batch,
+            [
+                r#"{"id":"1","ts":9.5}"#,
+                r#"{"id":"2","ts":9.6}"#,
+                r#"{"id":"3","ts":9.7}"#
+            ]
+        );
         assert!(calls.lock().expect("calls").is_empty());
         ack.nack(BatchError::new(Vec::new(), "custom error"));
-        assert_eq!(*calls.lock().expect("calls"), vec![Some("custom error".to_string()); 3]);
+        assert_eq!(
+            *calls.lock().expect("calls"),
+            vec![Some("custom error".to_string()); 3]
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -674,7 +853,10 @@ mod tests {
         let writer = f.clone();
         let writes = tokio::spawn(async move {
             for i in 0..1000 {
-                writer.write(&[&format!(r#"{{"id":"{i}","ts":10.5}}"#)], AckResponder::noop());
+                writer.write(
+                    &[&format!(r#"{{"id":"{i}","ts":10.5}}"#)],
+                    AckResponder::noop(),
+                );
             }
         });
         let reader = f.clone();
@@ -690,13 +872,17 @@ mod tests {
     async fn test_system_window_ownership() {
         let f = Fixture::new(unix(10, 1), [SECOND, 0, 0, 0]);
         let original = Part::from_str(r#"{"hello":"world","ts":10}"#);
-        f.w.write_batch(vec![original.clone()], AckResponder::noop()).expect("written");
+        f.w.write_batch(vec![original.clone()], AckResponder::noop())
+            .expect("written");
         let (_tx, rx) = watch::channel(false);
         let (mut out, ack) = f.w.read_batch(rx).await.expect("a window");
         ack.ack();
         out[0].set_bytes(bytes::Bytes::from_static(b"changed"));
         assert_eq!(body(&original), r#"{"hello":"world","ts":10}"#);
-        assert_eq!(out[0].meta_get_str("window_end_timestamp"), "1970-01-01T00:00:10Z");
+        assert_eq!(
+            out[0].meta_get_str("window_end_timestamp"),
+            "1970-01-01T00:00:10Z"
+        );
     }
 
     #[tokio::test]
@@ -706,10 +892,15 @@ mod tests {
         f.write(&[r#"{"id":"1","ts":10.5}"#], counting_ack(&calls));
         f.w.end_of_input();
         let (_tx, rx) = watch::channel(false);
-        assert!(matches!(f.w.read_batch(rx).await, Err(CoreError::EndOfInput)));
+        assert!(matches!(
+            f.w.read_batch(rx).await,
+            Err(CoreError::EndOfInput)
+        ));
         assert_eq!(
             *calls.lock().expect("calls"),
-            [Some("message rejected as window did not complete".to_string())]
+            [Some(
+                "message rejected as window did not complete".to_string()
+            )]
         );
     }
 
@@ -717,12 +908,34 @@ mod tests {
     fn a_failed_timestamp_mapping_nacks_the_input() {
         let f = Fixture::new(unix(10, 1), [SECOND, 0, 0, 0]);
         let calls = Arc::new(Mutex::new(Vec::new()));
-        let err = f
-            .w
-            .write_batch(vec![Part::from_str(r#"{"ts":"yesterday"}"#)], counting_ack(&calls))
+        let err =
+            f.w.write_batch(
+                vec![Part::from_str(r#"{"ts":"yesterday"}"#)],
+                counting_ack(&calls),
+            )
             .expect_err("refused");
-        assert!(err.to_string().contains("unable to parse result of timestamp mapping"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("unable to parse result of timestamp mapping"),
+            "{err}"
+        );
         assert_eq!(calls.lock().expect("calls").len(), 1);
+    }
+
+    #[test]
+    fn a_write_past_the_byte_cap_is_nacked() {
+        let f = Fixture::new(unix(10, 1), [SECOND, 0, 0, 0]);
+        f.w.lock().pending_bytes = MAX_PENDING_BYTES - 5;
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let err =
+            f.w.write_batch(vec![Part::from_str(r#"{"ts":10.5}"#)], counting_ack(&calls))
+                .expect_err("over the cap");
+        assert!(
+            err.to_string().contains("the most one buffer may hold"),
+            "{err}"
+        );
+        assert_eq!(calls.lock().expect("calls").len(), 1);
+        assert!(f.pending().is_empty());
     }
 
     #[test]

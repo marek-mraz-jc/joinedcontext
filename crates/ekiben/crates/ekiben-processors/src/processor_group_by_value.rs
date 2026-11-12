@@ -18,7 +18,7 @@ impl GroupByValueProcessor {
             .config
             .get("value")
             .and_then(JsonValue::as_str)
-            .ok_or_else(|| CoreError::config("field 'value' is required"))?;
+            .ok_or_else(|| CoreError::config("field value is required"))?;
         let value = ctx
             .blobl_env
             .compile_field(value)
@@ -33,7 +33,11 @@ impl Processor for GroupByValueProcessor {
         "group_by_value"
     }
 
-    async fn process_batch(&self, ctx: &ProcContext, batch: Batch) -> Result<Vec<Batch>, CoreError> {
+    async fn process_batch(
+        &self,
+        ctx: &ProcContext,
+        batch: Batch,
+    ) -> Result<Vec<Batch>, CoreError> {
         let view = PartsView(&batch);
         let mut out: Vec<Batch> = Vec::new();
         let mut index: HashMap<String, usize> = HashMap::new();
