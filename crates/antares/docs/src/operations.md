@@ -498,9 +498,10 @@ refused):
   range shows progress. Call it outside a transaction block (`psql -c`, no
   `BEGIN`): it commits itself. Between two
   commits a Relationship may name a new id whose range is still to come
-  (404 until that range commits). A run stopped by a lock timeout or an
-  error keeps the ranges it committed: call it again with the same
-  arguments and it renames the rest.
+  (404 until that range commits). A range that deadlocks with a writer or
+  waits on one past the 30 s lock timeout rolls back alone and is tried
+  again, up to five times. A run that stops keeps the ranges it committed:
+  call it again with the same arguments and it renames the rest.
 - A `GET /ngsi-ld/v1/entities/{old id}` answers the Entity under its new id
   for twelve months after the remint, through the same Policy gate as the
   new id. Writes to an old id are not redirected.

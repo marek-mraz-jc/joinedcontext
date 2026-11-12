@@ -21,9 +21,9 @@
 -- writer waits on the locks of one range (seconds), not of the whole
 -- Tenant. Between commits a Relationship can name a new id whose range is
 -- still to come: the run ends with every id and document renamed, as one
--- transaction would. CALL it outside a transaction block; a run that
--- stopped (a lock timeout, a clash written meanwhile) is resumed by
--- calling it again.
+-- transaction would. CALL it outside a transaction block; a range that
+-- deadlocks with a writer is tried again, and a run that stopped (a clash
+-- written meanwhile) is resumed by calling it again.
 
 CREATE FUNCTION remint_map_build(p_tenant text, p_from text, p_to text, p_lo text, p_hi text)
   RETURNS bigint LANGUAGE plpgsql
@@ -33,7 +33,9 @@ DECLARE
   n bigint;
   clash text;
 BEGIN
-  DROP TABLE IF EXISTS pg_temp.remint_map;
+  IF to_regclass('pg_temp.remint_map') IS NOT NULL THEN
+    DROP TABLE pg_temp.remint_map;
+  END IF;
   CREATE TEMP TABLE remint_map (old_id text PRIMARY KEY, new_id text NOT NULL UNIQUE)
     ON COMMIT DROP;
   INSERT INTO remint_map
@@ -206,6 +208,7 @@ DECLARE
   hi text;
   r jsonb;
   batches integer := 0;
+  tries integer;
 BEGIN
   PERFORM remint_guard(p_tenant, p_from, p_to);
   IF p_from = p_to THEN
@@ -218,12 +221,32 @@ BEGIN
   PERFORM remint_map_build(p_tenant, p_from, p_to, NULL, NULL);
   result := jsonb_build_object('tenant', p_tenant, 'from', p_from, 'to', p_to);
   COMMIT;
+  -- the last range is open above (hi NULL) and takes the unkeyed tables
   FOR hi IN
     SELECT s.id FROM (SELECT id, row_number() OVER (ORDER BY id) AS k
                         FROM entities WHERE tenant_id = p_tenant) s
-     WHERE s.k % p_batch = 0 ORDER BY s.id
+     WHERE s.k % p_batch = 0
+    UNION ALL SELECT NULL
+    ORDER BY 1 NULLS LAST
   LOOP
-    r := remint_apply(p_tenant, p_from, p_to, true, lo, hi);
+    -- a writer taking its table locks in another order can deadlock with
+    -- the range's LOCK TABLE, and a long one runs out lock_timeout: the
+    -- range rolls back alone and is tried again
+    tries := 0;
+    LOOP
+      BEGIN
+        r := remint_apply(p_tenant, p_from, p_to, true, lo, hi);
+        EXIT;
+      EXCEPTION WHEN deadlock_detected OR lock_not_available THEN
+        tries := tries + 1;
+        IF tries >= 5 THEN
+          RAISE;
+        END IF;
+        RAISE NOTICE 'remint %: range % waited on a writer (%), try % of 5',
+          p_tenant, batches + 1, SQLERRM, tries + 1;
+        PERFORM pg_sleep(tries);
+      END;
+    END LOOP;
     result := result || (SELECT jsonb_object_agg(key, coalesce((result ->> key)::bigint, 0) + value::bigint)
                            FROM jsonb_each_text(r) WHERE value ~ '^[0-9]+$');
     batches := batches + 1;
@@ -231,11 +254,7 @@ BEGIN
     RAISE NOTICE 'remint %: range % committed, % ids so far', p_tenant, batches, result ->> 'ids';
     lo := hi;
   END LOOP;
-  r := remint_apply(p_tenant, p_from, p_to, true, lo, NULL);
-  result := result || (SELECT jsonb_object_agg(key, coalesce((result ->> key)::bigint, 0) + value::bigint)
-                         FROM jsonb_each_text(r) WHERE value ~ '^[0-9]+$')
-                   || jsonb_build_object('batches', batches + 1);
-  COMMIT;
+  result := result || jsonb_build_object('batches', batches);
 END $$;
 
 REVOKE EXECUTE ON FUNCTION remint_map_build(text, text, text, text, text),
