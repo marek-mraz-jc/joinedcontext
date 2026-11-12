@@ -84,6 +84,19 @@ fn state() -> AppState {
             m.upsert(envelope("ContextSpace", space, project, json!({})));
         }
     }
+    m.upsert(envelope(
+        "Role",
+        "editor",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Project", "ContextSpace", "Endpoint", "Workspace"], "verbs": ["read", "propose"] }] }),
+    ));
+    m.upsert(envelope(
+        "RoleBinding",
+        "hel-editor-hel",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "hel-editor@hel.fi" }], "role": "editor",
+                "scope": { "organization": "hel" } }),
+    ));
     for (who, org) in [
         ("hel-only", "hel"),
         ("hel-two", "hel"),
@@ -380,7 +393,7 @@ async fn each_query_option_answers_on_an_organization_wide_set() {
         selected["value"][0]
             .as_object()
             .map(|o| o.keys().cloned().collect::<Vec<_>>()),
-        Some(vec!["name".to_owned()]),
+        Some(vec!["@odata.etag".to_owned(), "name".to_owned()]),
         "{selected}"
     );
     assert!(
@@ -679,4 +692,257 @@ async fn an_unpinned_request_with_several_organizations_reads_none() {
         .await
         .expect("response");
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+/// A write as an action: POST with the session's CSRF token, `If-Match` when given.
+async fn act(
+    state: &AppState,
+    who: &str,
+    uri: &str,
+    if_match: Option<&str>,
+    body: Value,
+) -> Answer {
+    let cookie = cookies(&state.config, person(who, groups_of(who)), "hel").await;
+    let token = cookie
+        .split("; ")
+        .find_map(|c| c.strip_prefix(&format!("{CSRF_COOKIE}=")))
+        .unwrap_or_default()
+        .to_owned();
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(header::HOST, HEL)
+        .header(header::COOKIE, &cookie)
+        .header(csrf::CSRF_HEADER, token)
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(tag) = if_match {
+        request = request.header(header::IF_MATCH, tag);
+    }
+    let response = server::app(state.clone())
+        .oneshot(request.body(Body::from(body.to_string())).expect("request"))
+        .await
+        .expect("response");
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    Answer {
+        status,
+        headers,
+        text: String::from_utf8_lossy(&bytes).into_owned(),
+    }
+}
+
+/// Every entity carries its `@odata.etag` (a manifest's is the REST door's `ETag`), `$select` or
+/// not, and one entity answers it as `ETag` too.
+#[tokio::test]
+async fn every_entity_carries_its_etag() {
+    let state = state();
+    let mode = Mode::Host("hel");
+    let manifest = state
+        .mirror
+        .get("helsinki", "ContextSpace", "air")
+        .expect("air");
+    let one = get(
+        &state,
+        mode,
+        "hel-only",
+        "/api/v1/spaces(project='helsinki',name='air')",
+    )
+    .await;
+    assert_eq!(one.status, StatusCode::OK, "{}", one.text);
+    assert_eq!(
+        one.json()["@odata.etag"],
+        json!(manifest.etag()),
+        "{}",
+        one.text
+    );
+    assert_eq!(
+        one.headers.get(header::ETAG).and_then(|v| v.to_str().ok()),
+        Some(manifest.etag().as_str())
+    );
+    let list = get(
+        &state,
+        mode,
+        "hel-only",
+        "/api/v1/projects('helsinki')/spaces?$select=name&$orderby=name",
+    )
+    .await
+    .json();
+    assert_eq!(
+        list["value"][0]["@odata.etag"],
+        json!(manifest.etag()),
+        "{list}"
+    );
+    assert!(list["value"][0].get("_key").is_none(), "{list}");
+}
+
+/// A write is a bound action through the REST door's own check: If-Match first required (428),
+/// then current (412 with the current ETag), only on an entity the caller reads (404 else); a
+/// viewer is refused as REST refuses them; `$metadata` offers a viewer no action.
+#[tokio::test]
+async fn bound_writes_need_if_match_and_keep_the_rest_doors_rights() {
+    let state = state();
+    let etag = state
+        .mirror
+        .get("helsinki", "ContextSpace", "air")
+        .expect("air")
+        .etag();
+    let update =
+        "/api/v1/spaces(project='helsinki',name='air')/JoinedContext.Portal.propose_update";
+    let patch = json!({ "patch": { "spec": {} }, "dryRun": true });
+
+    let viewer = get(&state, Mode::Host("hel"), "hel-only", "/api/v1/$metadata").await;
+    assert!(
+        !viewer.text.contains("propose_update"),
+        "a viewer's $metadata offers a write"
+    );
+    let editor = get(&state, Mode::Host("hel"), "hel-editor", "/api/v1/$metadata").await;
+    assert!(
+        editor
+            .text
+            .contains(r#"<Action Name="propose_update" IsBound="true">"#),
+        "an editor's $metadata lacks the action"
+    );
+    let json = get(
+        &state,
+        Mode::Host("hel"),
+        "hel-editor",
+        "/api/v1/$metadata?$format=json",
+    )
+    .await;
+    assert!(
+        json.json()["JoinedContext.Portal"]["propose_update"].is_array(),
+        "{}",
+        json.text
+    );
+
+    let missing = act(&state, "hel-editor", update, None, patch.clone()).await;
+    assert_eq!(
+        missing.status,
+        StatusCode::PRECONDITION_REQUIRED,
+        "{}",
+        missing.text
+    );
+    let stale = act(
+        &state,
+        "hel-editor",
+        update,
+        Some("\"0000\""),
+        patch.clone(),
+    )
+    .await;
+    assert_eq!(
+        stale.status,
+        StatusCode::PRECONDITION_FAILED,
+        "{}",
+        stale.text
+    );
+    assert_eq!(
+        stale
+            .headers
+            .get(header::ETAG)
+            .and_then(|v| v.to_str().ok()),
+        Some(etag.as_str())
+    );
+    // Another Organization's entity is not there, whatever the precondition says.
+    for tag in [None, Some(etag.as_str())] {
+        let other = act(
+            &state,
+            "hel-editor",
+            "/api/v1/spaces(project='bratislava',name='air')/JoinedContext.Portal.propose_update",
+            tag,
+            patch.clone(),
+        )
+        .await;
+        assert_eq!(other.status, StatusCode::NOT_FOUND, "{}", other.text);
+    }
+    let viewer = act(&state, "hel-only", update, Some(&etag), patch.clone()).await;
+    assert_eq!(viewer.status, StatusCode::FORBIDDEN, "{}", viewer.text);
+    assert_eq!(
+        viewer.json()["error"]["status"],
+        json!(403),
+        "{}",
+        viewer.text
+    );
+    let current = act(&state, "hel-editor", update, Some(&etag), patch.clone()).await;
+    assert!(
+        !matches!(
+            current.status,
+            StatusCode::PRECONDITION_REQUIRED
+                | StatusCode::PRECONDITION_FAILED
+                | StatusCode::NOT_FOUND
+                | StatusCode::FORBIDDEN
+        ),
+        "the current ETag passes to the REST door: {} {}",
+        current.status,
+        current.text
+    );
+    let unknown = act(
+        &state,
+        "hel-editor",
+        update,
+        Some(&etag),
+        json!({ "spec": {} }),
+    )
+    .await;
+    assert_eq!(unknown.status, StatusCode::BAD_REQUEST, "{}", unknown.text);
+    let create = act(
+        &state,
+        "hel-editor",
+        "/api/v1/projects('bratislava')/JoinedContext.Portal.propose_create",
+        None,
+        json!({ "manifest": { "kind": "ContextSpace" } }),
+    )
+    .await;
+    assert_eq!(create.status, StatusCode::NOT_FOUND, "{}", create.text);
+}
+
+/// Writes other than actions answer 405 naming the action; a cookie write without the CSRF
+/// token is refused before anything runs.
+#[tokio::test]
+async fn plain_writes_are_405_and_actions_need_the_csrf_token() {
+    let state = state();
+    let cookie = cookies(&state.config, person("hel-editor", &[]), "hel").await;
+    for (method, uri) in [
+        ("PATCH", "/api/v1/spaces(project='helsinki',name='air')"),
+        ("PUT", "/api/v1/projects('helsinki')/spaces('air')"),
+        ("POST", "/api/v1/spaces?$top=1"),
+    ] {
+        let response = server::app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header::HOST, HEL)
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(
+            response.status(),
+            StatusCode::METHOD_NOT_ALLOWED,
+            "{method} {uri}"
+        );
+    }
+    let response = server::app(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/spaces(project='helsinki',name='air')/JoinedContext.Portal.propose_delete")
+                .header(header::HOST, HEL)
+                .header(header::COOKIE, &cookie)
+                .header(header::IF_MATCH, "*")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }

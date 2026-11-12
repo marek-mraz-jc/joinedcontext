@@ -71,7 +71,7 @@ pub(crate) struct ListSet {
     /// The input member a page's `next` goes back in, for an operation that pages.
     cursor: Option<&'static str>,
     /// Whether the rows are the Endpoints page's ([`endpoint_list::rows`]), not the operation's.
-    endpoint_list: bool,
+    pub(crate) endpoint_list: bool,
 }
 
 /// The mapped list operations, in `$metadata` order. The ones left out and why are in T-6655.

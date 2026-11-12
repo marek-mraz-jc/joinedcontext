@@ -24,7 +24,9 @@
 use std::sync::{Arc, LazyLock};
 
 use axum::body::Body;
+use axum::body::Bytes;
 use axum::extract::{FromRequestParts, Request, State};
+use axum::extract::{Path, Query};
 use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -43,9 +45,11 @@ use odata_url::{
 use serde_json::{json, Map, Value};
 use sha2::Sha256;
 
+use crate::api::dry_run::DryRunQuery;
+
 use crate::api::odata::{
-    bad, key_value, limits, metadata_xml, not_found, not_implemented, rows_of, ListSet, Refusal,
-    MAX_ROWS, MAX_TOP, NAMESPACE, SERVED,
+    bad, key_value, limits, not_found, not_implemented, rows_of, ListSet, Refusal, MAX_ROWS,
+    MAX_TOP, NAMESPACE, SERVED,
 };
 use crate::api::ops::caller_of;
 use crate::auth::session::{CurrentUser, Front};
@@ -171,7 +175,13 @@ static ORG: LazyLock<OrgServed> = LazyLock::new(|| {
         }
         .model(),
     ));
-    let metadata = metadata_xml(&public).map(|xml| with_singletons_xml(&xml));
+    let metadata = {
+        let mut xml = Vec::new();
+        odata_csdl::write_xml(&public, &odata_csdl::Limits::strict(), &mut xml)
+            .map_err(|e| e.to_string())
+            .and_then(|()| String::from_utf8(xml).map_err(|e| e.to_string()))
+            .map(|xml| with_singletons_xml(&xml))
+    };
     let metadata_json = metadata_json(&public);
     OrgServed {
         public,
@@ -320,6 +330,7 @@ fn no(r: Refusal) -> Refused {
 /// error object, its `type` kept.
 async fn as_odata_error(response: Response) -> Response {
     let status = response.status();
+    let etag = response.headers().get(header::ETAG).cloned();
     let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
         .await
         .unwrap_or_default();
@@ -336,7 +347,11 @@ async fn as_odata_error(response: Response) -> Response {
         .and_then(|t| t.rsplit('/').next())
         .unwrap_or_else(|| slug_of(status))
         .to_owned();
-    error(status, &slug, &message)
+    let mut answer = error(status, &slug, &message);
+    if let Some(etag) = etag {
+        answer.headers_mut().insert(header::ETAG, etag);
+    }
+    answer
 }
 
 fn headers(content_type: &'static str) -> [(header::HeaderName, HeaderValue); 3] {
@@ -418,9 +433,64 @@ async fn kind_rows(
             })?;
             row.insert(PROJECT.into(), Value::String(project.to_owned()));
             row.insert(ROW_KEY.into(), Value::String(format!("{project}/{key}")));
+            let tag = etag_of(state, set, project, &key, &row);
+            row.insert(ETAG.into(), Value::String(tag));
             Some(Value::Object(row))
         })
         .collect())
+}
+
+/// The member every entity carries its `ETag` in (API/13 §2a).
+const ETAG: &str = "@odata.etag";
+
+/// An entity's `ETag`: a manifest's own (API/13 §3, what the REST door compares), else a SHA-256
+/// of the row the caller reads (a Change, a Workspace, an Endpoints page row).
+fn etag_of(
+    state: &AppState,
+    set: &ListSet,
+    project: &str,
+    key: &str,
+    row: &Map<String, Value>,
+) -> String {
+    if !set.endpoint_list && crate::resource::by_kind(&set.type_name).is_some() {
+        if let Some(manifest) = state.mirror.get(project, &set.type_name, key) {
+            return manifest.etag();
+        }
+    }
+    use sha2::Digest;
+    let mut visible = row.clone();
+    visible.remove(ROW_KEY);
+    visible.remove(ETAG);
+    let digest = Sha256::digest(Value::Object(visible).to_string().as_bytes());
+    format!(
+        "\"{}\"",
+        digest
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    )
+}
+
+/// The `ETag` of each evaluator key in `rows`, for the answer after its projection.
+fn etags(rows: &[Value]) -> std::collections::HashMap<String, Value> {
+    rows.iter()
+        .filter_map(|row| {
+            Some((
+                row.get(ROW_KEY)?.as_str()?.to_owned(),
+                row.get(ETAG)?.clone(),
+            ))
+        })
+        .collect()
+}
+
+/// Puts each answered row's `ETag` back, by its key: `$select` never drops it.
+fn tag(answer: &mut Answer, tags: &std::collections::HashMap<String, Value>) {
+    for (row, key) in answer.rows.iter_mut().zip(&answer.keys) {
+        let tag = key.as_str().and_then(|k| tags.get(k));
+        if let (Value::Object(row), Some(tag)) = (row, tag) {
+            row.insert(ETAG.into(), tag.clone());
+        }
+    }
 }
 
 fn strip_key(rows: &mut [Value]) {
@@ -546,6 +616,7 @@ impl Read<'_> {
         options: &QueryOptions,
         rows: Vec<Value>,
     ) -> Result<(Answer, Value), Refused> {
+        let tags = etags(&rows);
         let table = self.table(set, rows)?;
         let query_text = canonical(path, options);
         let mut options = options.clone();
@@ -567,6 +638,7 @@ impl Read<'_> {
         let mut answer = query(&table, &options, &Scope::all(), self.page)
             .await
             .map_err(|e| no(Refusal::from(e)))?;
+        tag(&mut answer, &tags);
         strip_key(&mut answer.rows);
         let mut body = Map::new();
         let root = service_root(self.state);
@@ -706,8 +778,13 @@ fn entity(root: &str, context: &str, answer: Answer, what: &str) -> Response {
         "@odata.context".into(),
         Value::String(format!("{root}$metadata#{context}/$entity")),
     );
+    let tag = row.get(ETAG).and_then(Value::as_str).map(str::to_owned);
     body.extend(row);
-    ok_json(&Value::Object(body))
+    let mut response = ok_json(&Value::Object(body));
+    if let Some(tag) = tag.and_then(|t| HeaderValue::from_str(&t).ok()) {
+        response.headers_mut().insert(header::ETAG, tag);
+    }
+    response
 }
 
 async fn by_key(
@@ -719,6 +796,7 @@ async fn by_key(
     context: &str,
     what: &str,
 ) -> Response {
+    let tags = etags(&rows);
     let table = match read.table(set, rows) {
         Ok(table) => table,
         Err(r) => return *r,
@@ -729,6 +807,7 @@ async fn by_key(
     };
     match answered {
         Ok(mut answer) => {
+            tag(&mut answer, &tags);
             strip_key(&mut answer.rows);
             entity(&service_root(read.state), context, answer, what)
         }
@@ -1119,7 +1198,126 @@ fn service_document(state: &AppState) -> Response {
     }))
 }
 
-fn metadata(headers: &HeaderMap, query: &str) -> Response {
+/// What the caller may do anywhere in the Organization: what their `$metadata` offers.
+#[derive(Clone, Copy, Debug, Default)]
+struct Rights {
+    propose: bool,
+    approve: bool,
+}
+
+fn rights(state: &AppState, user: &CurrentUser, org: &str) -> Rights {
+    let mut rights = Rights::default();
+    for project in state.mirror.namespaces() {
+        if readable(state, user, org, &project) {
+            let effective = crate::permissions::for_request(state, &user.0.identity, &project);
+            rights.propose |= effective.may_propose_anything();
+            rights.approve |= effective.may_anything(jc_core::kinds::Verb::Approve);
+        }
+    }
+    rights
+}
+
+const CHANGES: &str = "changes";
+
+/// An action, its binding type and its parameters.
+type BoundAction = (
+    &'static str,
+    String,
+    &'static [(&'static str, &'static str)],
+);
+
+/// What an action is bound to: its project, and the kind and key of an entity in it.
+type Binding = (String, Option<(&'static ListSet, String)>);
+
+/// The bound actions `rights` allow: `propose_create` on a project, `propose_update` and
+/// `propose_delete` on each manifest kind, `approve` and `reject` on a Change. Each is
+/// (name, binding type, parameters).
+fn bound_actions(rights: Rights) -> Vec<BoundAction> {
+    let mut out = Vec::new();
+    if rights.propose {
+        out.push((
+            "propose_create",
+            format!("{NAMESPACE}.Project"),
+            &[("manifest", "Edm.Untyped"), ("dryRun", "Edm.Boolean")][..],
+        ));
+        for set in kinds().filter(|set| manifest_kind(set)) {
+            let ty = format!("{NAMESPACE}.{}", set.type_name);
+            out.push((
+                "propose_update",
+                ty.clone(),
+                &[
+                    ("manifest", "Edm.Untyped"),
+                    ("patch", "Edm.Untyped"),
+                    ("dryRun", "Edm.Boolean"),
+                ][..],
+            ));
+            out.push(("propose_delete", ty, &[("dryRun", "Edm.Boolean")][..]));
+        }
+    }
+    if rights.approve {
+        if let Some(change) = kind(CHANGES) {
+            let ty = format!("{NAMESPACE}.{}", change.type_name);
+            out.push(("approve", ty.clone(), &[("confirm", "Edm.String")][..]));
+            out.push(("reject", ty, &[("reason", "Edm.String")][..]));
+        }
+    }
+    out
+}
+
+fn manifest_kind(set: &ListSet) -> bool {
+    !set.endpoint_list && crate::resource::by_kind(&set.type_name).is_some()
+}
+
+/// The CSDL XML of the caller: the bound actions they may call inside the schema.
+fn xml_for(base: &str, rights: Rights) -> String {
+    let mut actions = String::new();
+    for (name, binding, parameters) in bound_actions(rights) {
+        actions.push_str(&format!(
+            r#"<Action Name="{name}" IsBound="true"><Parameter Name="bindingParameter" Type="{binding}" Nullable="false"/>"#
+        ));
+        for (parameter, ty) in parameters {
+            actions.push_str(&format!(r#"<Parameter Name="{parameter}" Type="{ty}"/>"#));
+        }
+        actions.push_str(r#"<ReturnType Type="Edm.Untyped"/></Action>"#);
+    }
+    match base.rfind("<EntityContainer") {
+        Some(at) => {
+            let mut xml = base.to_owned();
+            xml.insert_str(at, &actions);
+            xml
+        }
+        None => base.to_owned(),
+    }
+}
+
+/// The CSDL JSON of the caller: each action's overloads under its name.
+fn json_for(base: &str, rights: Rights) -> String {
+    let Ok(mut doc) = serde_json::from_str::<Value>(base) else {
+        return base.to_owned();
+    };
+    if let Some(schema) = doc.get_mut(NAMESPACE).and_then(Value::as_object_mut) {
+        for (name, binding, parameters) in bound_actions(rights) {
+            let mut params =
+                vec![json!({ "$Name": "bindingParameter", "$Type": binding, "$Nullable": false })];
+            params.extend(
+                parameters
+                    .iter()
+                    .map(|(p, ty)| json!({ "$Name": p, "$Type": ty, "$Nullable": true })),
+            );
+            let overload = json!({ "$Kind": "Action", "$IsBound": true, "$Parameter": params,
+                                   "$ReturnType": { "$Type": "Edm.Untyped" } });
+            match schema.get_mut(name).and_then(Value::as_array_mut) {
+                Some(overloads) => overloads.push(overload),
+                None => {
+                    schema.insert(name.to_owned(), Value::Array(vec![overload]));
+                }
+            }
+        }
+    }
+    doc.to_string()
+}
+
+fn metadata(headers: &HeaderMap, query: &str, rights: Rights) -> Response {
     let json_asked = query.split('&').any(|p| {
         p.split_once('=').is_some_and(|(n, v)| {
             n.replacen("%24", "$", 1).eq_ignore_ascii_case("$format")
@@ -1137,7 +1335,14 @@ fn metadata(headers: &HeaderMap, query: &str) -> Response {
         (&ORG.metadata, "application/xml")
     };
     match body {
-        Ok(text) => (StatusCode::OK, headers_for(content_type), text.clone()).into_response(),
+        Ok(text) => {
+            let text = if json_asked {
+                json_for(text, rights)
+            } else {
+                xml_for(text, rights)
+            };
+            (StatusCode::OK, headers_for(content_type), text).into_response()
+        }
         Err(e) => {
             tracing::warn!("the Organization OData metadata did not write: {e}");
             error(
@@ -1178,7 +1383,7 @@ fn singleton(state: &AppState, user: &CurrentUser, org: &str, name: &str) -> Res
 }
 
 /// Serves one OData request below `/api/v1/` (`rel` without that prefix and the leading `/`).
-async fn serve(state: AppState, mut parts: axum::http::request::Parts) -> Response {
+async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Bytes) -> Response {
     let rel = parts
         .uri
         .path()
@@ -1189,15 +1394,31 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts) -> Respon
     if rel == "$batch" {
         return refused(not_implemented("$batch"));
     }
-    if !matches!(parts.method, Method::GET | Method::HEAD) {
-        let mut r = error(
-            StatusCode::METHOD_NOT_ALLOWED,
-            "invalid-request",
-            "this service answers reads; a write is a reviewed Change the Portal's actions open",
-        );
-        r.headers_mut()
-            .insert(header::ALLOW, HeaderValue::from_static("GET, HEAD"));
-        return r;
+    let action = rel.rsplit_once('/').and_then(|(entity, last)| {
+        Some((
+            entity.to_owned(),
+            last.strip_prefix(ACTION_PREFIX)?.to_owned(),
+        ))
+    });
+    let action = match (&parts.method, action) {
+        (&Method::POST, Some(action)) => Some(action),
+        (&Method::GET | &Method::HEAD, None) => None,
+        _ => {
+            let mut r = error(
+                StatusCode::METHOD_NOT_ALLOWED,
+                "invalid-request",
+                "a write is a reviewed Change: POST the action JoinedContext.Portal.propose_create \
+                 on its project, propose_update or propose_delete on the entity (with If-Match), \
+                 approve or reject on the Change; $metadata lists the ones you may call",
+            );
+            r.headers_mut()
+                .insert(header::ALLOW, HeaderValue::from_static("GET, HEAD"));
+            return r;
+        }
+    };
+    // The API router's own guard, which this layer stands in front of.
+    if !crate::auth::csrf::is_allowed(&parts.method, &parts.headers) {
+        return as_odata_error(crate::error::ApiError::Forbidden.into_response()).await;
     }
     let user = match CurrentUser::from_request_parts(&mut parts, &state).await {
         Ok(user) => user,
@@ -1212,6 +1433,17 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts) -> Respon
             "this address serves several Organizations; read one at /{org}/api/v1/",
         ));
     };
+    if let Some((entity, name)) = action {
+        let call = Call {
+            state: &state,
+            user,
+            front,
+            org: &org,
+            headers: &parts.headers,
+            body,
+        };
+        return act(call, &entity, &name).await;
+    }
     let metadata_asked = rel == "$metadata";
     if let Some(r) = refuse_options(&query, metadata_asked) {
         return r;
@@ -1224,7 +1456,7 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts) -> Respon
         );
     }
     if metadata_asked {
-        return metadata(&parts.headers, &query);
+        return metadata(&parts.headers, &query, rights(&state, &user, &org));
     }
     if rel.is_empty() {
         return service_document(&state);
@@ -1284,6 +1516,265 @@ pub fn is_odata(path: &str, query: Option<&str>, headers: &HeaderMap) -> bool {
         })
 }
 
+/// The bound actions' namespace prefix: `.../JoinedContext.Portal.propose_update`.
+const ACTION_PREFIX: &str = "JoinedContext.Portal.";
+
+/// The most an action's parameters may weigh.
+const MAX_BODY: usize = 1 << 20;
+
+/// An action's parameters: a JSON object holding only `allowed` members.
+fn parameters(body: &[u8], allowed: &[&str]) -> Result<Map<String, Value>, Refused> {
+    if body.is_empty() {
+        return Ok(Map::new());
+    }
+    let Ok(Value::Object(params)) = serde_json::from_slice::<Value>(body) else {
+        return Err(no(bad(
+            "an action's parameters are a JSON object, e.g. {\"dryRun\": true}",
+        )));
+    };
+    if let Some(unknown) = params.keys().find(|k| !allowed.contains(&k.as_str())) {
+        return Err(no(bad(format!(
+            "this action takes no parameter {unknown}; it takes {}",
+            allowed.join(", ")
+        ))));
+    }
+    Ok(params)
+}
+
+fn dry_run(params: &Map<String, Value>) -> Result<DryRunQuery, Refused> {
+    let dry = match params.get("dryRun") {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => false,
+        Some(Value::Bool(true)) => true,
+        Some(_) => return Err(no(bad("dryRun is true or false"))),
+    };
+    Ok(DryRunQuery {
+        dry_run: dry.then(|| "All".to_owned()),
+        ..DryRunQuery::default()
+    })
+}
+
+/// The `If-Match` a bound write needs: absent 428; not the entity's `tag` 412 with the current
+/// one. Asked only once the entity is known readable, so neither tells an unreadable one exists.
+fn precondition(headers: &HeaderMap, current: &str) -> Result<(), Refused> {
+    let Some(sent) = headers.get(header::IF_MATCH).and_then(|v| v.to_str().ok()) else {
+        return Err(Box::new(error(
+            StatusCode::PRECONDITION_REQUIRED,
+            "precondition-required",
+            "a bound write sends If-Match with the entity's @odata.etag, e.g. If-Match: \"3f2a…\"",
+        )));
+    };
+    let matches = sent
+        .split(',')
+        .map(|t| t.trim().trim_start_matches("W/"))
+        .any(|t| t == "*" || t == current);
+    if matches {
+        return Ok(());
+    }
+    let mut stale = error(
+        StatusCode::PRECONDITION_FAILED,
+        "precondition-failed",
+        "the entity changed since you read it; read it again and send its new @odata.etag",
+    );
+    if let Ok(tag) = HeaderValue::from_str(current) {
+        stale.headers_mut().insert(header::ETAG, tag);
+    }
+    Err(Box::new(stale))
+}
+
+/// The entity an action is bound to: its project, kind and key, from either path form.
+fn bound_to(entity: &str) -> Result<Binding, Refused> {
+    let entity = key_as_segment(entity)?;
+    let parsed = odata_url::parse(&entity, &EdmModel(&ORG.public), &limits()).map_err(|e| {
+        no(not_found(format!(
+            "{e}: no such entity; $metadata lists the actions"
+        )))
+    })?;
+    let ODataUri::Resource { path, .. } = parsed else {
+        return Err(no(not_found("no such entity")));
+    };
+    let text = |v: Value| v.as_str().map_or_else(|| v.to_string(), str::to_owned);
+    match path.as_slice() {
+        [Segment::EntitySet(s), Segment::Key(key)] if s == PROJECTS => {
+            Ok((text(single_key(key)?), None))
+        }
+        [Segment::EntitySet(s), Segment::Key(project), Segment::Navigation(nav), Segment::Key(Key::Single(KeyValue::Literal(name)))]
+            if s == PROJECTS =>
+        {
+            let set = kind(nav).ok_or_else(|| no(not_found(format!("a project has no {nav}"))))?;
+            let name = key_value(name).map_err(no)?;
+            Ok((text(single_key(project)?), Some((set, text(name)))))
+        }
+        [Segment::EntitySet(s), Segment::Key(Key::Compound(pairs))] => {
+            let set = kind(s).ok_or_else(|| no(not_found(format!("no entity set {s}"))))?;
+            match (compound(pairs, PROJECT), compound(pairs, set.key)) {
+                (Some(project), Some(name)) => Ok((text(project), Some((set, text(name))))),
+                _ => Err(no(bad(format!("{s} is keyed by (project,{})", set.key)))),
+            }
+        }
+        _ => Err(no(not_found(
+            "an action is bound to a project, an entity or a Change",
+        ))),
+    }
+}
+
+/// Runs a bound action through the REST door of the same write, so its permission check, lane
+/// and four-eyes rule are that door's (PF-52, PF-56, PF-58): `propose_create` on a project,
+/// `propose_update` and `propose_delete` on a manifest, `approve` and `reject` on a Change.
+/// One action call: who, where, what.
+struct Call<'a> {
+    state: &'a AppState,
+    user: CurrentUser,
+    front: Front,
+    org: &'a str,
+    headers: &'a HeaderMap,
+    body: Bytes,
+}
+
+async fn act(call: Call<'_>, entity: &str, name: &str) -> Response {
+    match act_inner(call, entity, name).await {
+        Ok(response) if response.status().is_success() => response,
+        Ok(response) => as_odata_error(response).await,
+        Err(refusal) => *refusal,
+    }
+}
+
+async fn act_inner(call: Call<'_>, entity: &str, name: &str) -> Result<Response, Refused> {
+    let Call {
+        state,
+        user,
+        front,
+        org,
+        headers,
+        body,
+    } = call;
+    let (project, bound) = bound_to(entity)?;
+    if !readable(state, &user, org, &project) {
+        return Err(no(not_found(format!("no project {project} you may read"))));
+    }
+    let json = |value: &Value| {
+        let mut h = HeaderMap::new();
+        h.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+        (h, Bytes::from(value.to_string()))
+    };
+    let door =
+        |r: Result<Response, crate::error::ApiError>| r.unwrap_or_else(IntoResponse::into_response);
+    let Some((set, key)) = bound else {
+        if name != "propose_create" {
+            return Err(no(not_found(format!(
+                "a project has no action {name}; it has propose_create"
+            ))));
+        }
+        let params = parameters(&body, &["manifest", "dryRun"])?;
+        let manifest = params
+            .get("manifest")
+            .filter(|m| m.is_object())
+            .ok_or_else(|| no(bad("propose_create takes the manifest, e.g. {\"manifest\": {\"kind\": \"ContextSpace\", ...}}")))?;
+        let plural = manifest
+            .get("kind")
+            .and_then(Value::as_str)
+            .and_then(crate::resource::by_kind)
+            .filter(|info| kind(info.plural).is_some())
+            .map(|info| info.plural.to_owned())
+            .ok_or_else(|| {
+                no(bad(
+                    "manifest.kind is a kind of a project, as $metadata lists its sets",
+                ))
+            })?;
+        let (h, bytes) = json(manifest);
+        return Ok(door(
+            crate::api::mutate::create(
+                user,
+                front,
+                State(state.clone()),
+                Path((project, plural)),
+                Query(dry_run(&params)?),
+                h,
+                bytes,
+            )
+            .await,
+        ));
+    };
+    // The entity first: one the caller may not read answers 404 whatever the precondition.
+    let caller = caller_of(user.clone(), front);
+    let rows = kind_rows(set, &caller, state, &project).await?;
+    let row_key = format!("{project}/{key}");
+    let row = rows
+        .iter()
+        .find(|row| row.get(ROW_KEY).and_then(Value::as_str) == Some(row_key.as_str()))
+        .ok_or_else(|| {
+            no(not_found(format!(
+                "no {} {key} you may read",
+                set.type_name
+            )))
+        })?;
+    let current = row
+        .get(ETAG)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let plural = set.set.clone();
+    match name {
+        "propose_update" | "propose_delete" if manifest_kind(set) => {
+            precondition(headers, &current)?;
+            let mut forwarded = HeaderMap::new();
+            if let Some(tag) = headers.get(header::IF_MATCH) {
+                forwarded.insert(header::IF_MATCH, tag.clone());
+            }
+            if name == "propose_delete" {
+                let params = parameters(&body, &["dryRun"])?;
+                return Ok(door(
+                    crate::api::delete::delete_resource(
+                        user,
+                        front,
+                        State(state.clone()),
+                        Path((project, plural, key)),
+                        Query(dry_run(&params)?),
+                        forwarded,
+                    )
+                    .await,
+                ));
+            }
+            let params = parameters(&body, &["manifest", "patch", "dryRun"])?;
+            let query = dry_run(&params)?;
+            match (params.get("manifest"), params.get("patch")) {
+                (Some(manifest), None) if manifest.is_object() => {
+                    let (h, bytes) = json(manifest);
+                    forwarded.extend(h);
+                    Ok(door(crate::api::mutate::replace(user, front, State(state.clone()), Path((project, plural, key)), Query(query), forwarded, bytes).await))
+                }
+                (None, Some(patch)) if patch.is_object() => {
+                    forwarded.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/merge-patch+json"));
+                    let bytes = Bytes::from(patch.to_string());
+                    Ok(door(crate::api::mutate::patch(user, front, State(state.clone()), Path((project, plural, key)), Query(query), forwarded, bytes).await))
+                }
+                _ => Err(no(bad("propose_update takes the whole manifest or a merge patch of it, one of them: {\"manifest\": {...}} or {\"patch\": {\"spec\": {...}}}"))),
+            }
+        }
+        "approve" | "reject" if set.set == CHANGES => {
+            precondition(headers, &current)?;
+            let params = if name == "approve" {
+                parameters(&body, &["confirm"])?
+            } else {
+                parameters(&body, &["reason"])?
+            };
+            let bytes = Bytes::from(Value::Object(params).to_string());
+            let path = Path((project, key));
+            Ok(door(if name == "approve" {
+                crate::api::changes::approve_change(user, State(state.clone()), path, bytes).await
+            } else {
+                crate::api::changes::reject_change(user, State(state.clone()), path, bytes).await
+            }))
+        }
+        _ => Err(no(not_found(format!(
+            "{} has no action {name}; $metadata lists the actions you may call",
+            set.type_name
+        )))),
+    }
+}
+
 /// The compat negotiation in front of `/api/v1` (API/13 §2a).
 pub async fn negotiate(State(state): State<AppState>, request: Request, next: Next) -> Response {
     let odata = is_odata(
@@ -1292,8 +1783,15 @@ pub async fn negotiate(State(state): State<AppState>, request: Request, next: Ne
         request.headers(),
     );
     let mut response = if odata {
-        let (parts, _body): (_, Body) = request.into_parts();
-        serve(state, parts).await
+        let (parts, body): (_, Body) = request.into_parts();
+        match axum::body::to_bytes(body, MAX_BODY).await {
+            Ok(body) => serve(state, parts, body).await,
+            Err(_) => error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "payload-too-large",
+                "an action's parameters are at most 1 MiB",
+            ),
+        }
     } else {
         next.run(request).await
     };
