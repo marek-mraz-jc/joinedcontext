@@ -2,6 +2,18 @@
 // The Portal's OData service per Organization (ADR-N-070, API/13 §2a); CI regenerates it and
 // fails on any difference (T-6816).
 
+export interface AgentProfile {
+  kind?: string | null;
+  name: string;
+  notServing?: string | null;
+  phase?: string | null;
+  sourceUrl?: string | null;
+  space?: string | null;
+  title?: string | null;
+  url?: string | null;
+  "@odata.etag"?: string;
+}
+
 export interface App {
   kind?: string | null;
   name: string;
@@ -28,6 +40,30 @@ export interface AssistantDeployment {
   "@odata.etag"?: string;
 }
 
+export interface Blueprint {
+  kind?: string | null;
+  name: string;
+  notServing?: string | null;
+  phase?: string | null;
+  sourceUrl?: string | null;
+  space?: string | null;
+  title?: string | null;
+  url?: string | null;
+  "@odata.etag"?: string;
+}
+
+export interface Bundle {
+  kind?: string | null;
+  name: string;
+  notServing?: string | null;
+  phase?: string | null;
+  sourceUrl?: string | null;
+  space?: string | null;
+  title?: string | null;
+  url?: string | null;
+  "@odata.etag"?: string;
+}
+
 export interface Change {
   lane?: string | null;
   mergeRequest?: string | null;
@@ -46,6 +82,18 @@ export interface CkanInstance {
   notServing?: string | null;
   phase?: string | null;
   project: string;
+  sourceUrl?: string | null;
+  space?: string | null;
+  title?: string | null;
+  url?: string | null;
+  "@odata.etag"?: string;
+}
+
+export interface ContextBroker {
+  kind?: string | null;
+  name: string;
+  notServing?: string | null;
+  phase?: string | null;
   sourceUrl?: string | null;
   space?: string | null;
   title?: string | null;
@@ -144,6 +192,30 @@ export interface DataSource {
   "@odata.etag"?: string;
 }
 
+export interface DataSpaceParticipant {
+  kind?: string | null;
+  name: string;
+  notServing?: string | null;
+  phase?: string | null;
+  sourceUrl?: string | null;
+  space?: string | null;
+  title?: string | null;
+  url?: string | null;
+  "@odata.etag"?: string;
+}
+
+export interface DelegationPolicy {
+  kind?: string | null;
+  name: string;
+  notServing?: string | null;
+  phase?: string | null;
+  sourceUrl?: string | null;
+  space?: string | null;
+  title?: string | null;
+  url?: string | null;
+  "@odata.etag"?: string;
+}
+
 export interface Endpoint {
   kind?: string | null;
   name: string;
@@ -183,6 +255,30 @@ export interface Entity {
   notServing?: string | null;
   phase?: string | null;
   project: string;
+  sourceUrl?: string | null;
+  space?: string | null;
+  title?: string | null;
+  url?: string | null;
+  "@odata.etag"?: string;
+}
+
+export interface Environment {
+  kind?: string | null;
+  name: string;
+  notServing?: string | null;
+  phase?: string | null;
+  sourceUrl?: string | null;
+  space?: string | null;
+  title?: string | null;
+  url?: string | null;
+  "@odata.etag"?: string;
+}
+
+export interface Group {
+  kind?: string | null;
+  name: string;
+  notServing?: string | null;
+  phase?: string | null;
   sourceUrl?: string | null;
   space?: string | null;
   title?: string | null;
@@ -274,6 +370,18 @@ export interface Organization {
   "@odata.etag"?: string;
 }
 
+export interface OrganizationRole {
+  kind?: string | null;
+  name: string;
+  notServing?: string | null;
+  phase?: string | null;
+  sourceUrl?: string | null;
+  space?: string | null;
+  title?: string | null;
+  url?: string | null;
+  "@odata.etag"?: string;
+}
+
 export interface Person {
   email?: string | null;
   name?: string | null;
@@ -322,6 +430,18 @@ export interface Role {
   notServing?: string | null;
   phase?: string | null;
   project: string;
+  sourceUrl?: string | null;
+  space?: string | null;
+  title?: string | null;
+  url?: string | null;
+  "@odata.etag"?: string;
+}
+
+export interface RoleBinding {
+  kind?: string | null;
+  name: string;
+  notServing?: string | null;
+  phase?: string | null;
   sourceUrl?: string | null;
   space?: string | null;
   title?: string | null;
@@ -394,6 +514,18 @@ export interface SyncSource {
   "@odata.etag"?: string;
 }
 
+export interface UiSchema {
+  kind?: string | null;
+  name: string;
+  notServing?: string | null;
+  phase?: string | null;
+  sourceUrl?: string | null;
+  space?: string | null;
+  title?: string | null;
+  url?: string | null;
+  "@odata.etag"?: string;
+}
+
 export interface Workspace {
   baseRevision?: string | null;
   branch?: string | null;
@@ -410,28 +542,38 @@ export interface Workspace {
 
 /** Each entity set and the type of its rows. */
 export interface EntitySets {
+  agentprofiles: AgentProfile;
   apps: App;
   assistantdeployments: AssistantDeployment;
+  blueprints: Blueprint;
+  bundles: Bundle;
   changes: Change;
   ckaninstances: CkanInstance;
+  contextbrokers: ContextBroker;
   csrs: ContextSourceRegistration;
   dashboards: Dashboard;
   dataagreements: DataAgreement;
   datamodels: DataModel;
   dataoffers: DataOffer;
   datasources: DataSource;
+  dataspaceparticipants: DataSpaceParticipant;
+  delegationpolicies: DelegationPolicy;
   endpointList: EndpointRow;
   endpoints: Endpoint;
   entities: Entity;
+  environments: Environment;
+  groups: Group;
   knowledgesources: KnowledgeSource;
   layers: Layer;
   mappings: Mapping;
   mcpservers: McpServer;
   mqttbrokers: MqttBroker;
+  organizationRoles: OrganizationRole;
   pipelines: Pipeline;
   policies: Policy;
   projections: ModelProjection;
   projects: Project;
+  rolebindings: RoleBinding;
   roles: Role;
   scopedefinitions: ScopeDefinition;
   serviceaccounts: ServiceAccount;
@@ -439,6 +581,7 @@ export interface EntitySets {
   spaces: ContextSpace;
   subscriptions: Subscription;
   syncsources: SyncSource;
+  uischemas: UiSchema;
   workspaces: Workspace;
 }
 
@@ -450,28 +593,38 @@ export interface Singletons {
 
 /** Each entity set's key members, in key order. */
 export const ENTITY_KEYS: { readonly [S in keyof EntitySets]: readonly string[] } = {
+  agentprofiles: ["name"],
   apps: ["project","name"],
   assistantdeployments: ["project","name"],
+  blueprints: ["name"],
+  bundles: ["name"],
   changes: ["project","name"],
   ckaninstances: ["project","name"],
+  contextbrokers: ["name"],
   csrs: ["project","name"],
   dashboards: ["project","name"],
   dataagreements: ["project","name"],
   datamodels: ["project","name"],
   dataoffers: ["project","name"],
   datasources: ["project","name"],
+  dataspaceparticipants: ["name"],
+  delegationpolicies: ["name"],
   endpointList: ["project","id"],
   endpoints: ["project","name"],
   entities: ["project","name"],
+  environments: ["name"],
+  groups: ["name"],
   knowledgesources: ["project","name"],
   layers: ["project","name"],
   mappings: ["project","name"],
   mcpservers: ["project","name"],
   mqttbrokers: ["project","name"],
+  organizationRoles: ["name"],
   pipelines: ["project","name"],
   policies: ["project","name"],
   projections: ["project","name"],
   projects: ["name"],
+  rolebindings: ["name"],
   roles: ["project","name"],
   scopedefinitions: ["project","name"],
   serviceaccounts: ["project","name"],
@@ -479,6 +632,7 @@ export const ENTITY_KEYS: { readonly [S in keyof EntitySets]: readonly string[] 
   spaces: ["project","name"],
   subscriptions: ["project","name"],
   syncsources: ["project","name"],
+  uischemas: ["name"],
   workspaces: ["project","name"],
 };
 

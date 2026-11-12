@@ -416,7 +416,7 @@ fn readable_project(state: &AppState, user: &CurrentUser, project: &str) -> Resu
 
 /// A row with its `metadata` and `status` members lifted to the top (a Change answers
 /// `metadata.name`), a top-level member winning: the properties are read off the top.
-fn flat(row: Value) -> Value {
+pub(crate) fn flat(row: Value) -> Value {
     let Value::Object(mut top) = row else {
         return row;
     };

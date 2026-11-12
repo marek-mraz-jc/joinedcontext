@@ -56,6 +56,7 @@ use crate::api::odata_ops;
 use crate::api::ops::caller_of;
 use crate::auth::session::{CurrentUser, Front};
 use crate::ops::Caller;
+use crate::permissions::ORG_NAMESPACE;
 use crate::resource::is_dns1123;
 use crate::state::AppState;
 
@@ -125,6 +126,67 @@ fn project_kind(type_name: &str) -> bool {
         .is_none_or(|info| !matches!(info.scope, jc_core::Scope::Organization))
 }
 
+/// The Organization's own Roles (no project row carries them since T-6817), a set of their own
+/// type so the project kind `Role` keeps its `(project,name)` key.
+const ORG_ROLES: &str = "organizationRoles";
+const ORG_ROLE_TYPE: &str = "OrganizationRole";
+
+/// The Organization sets (T-6822): each Organization-scoped kind but `Project` and
+/// `Organization` (served as `projects` and the singleton), keyed by name, with its type.
+fn org_kinds() -> impl Iterator<Item = (&'static str, &'static str, &'static ListSet)> {
+    SERVED
+        .sets
+        .iter()
+        .filter(|set| {
+            !set.endpoint_list
+                && !project_kind(&set.type_name)
+                && !matches!(set.type_name.as_str(), "Project" | ORGANIZATION)
+        })
+        .map(|set| (set.set.as_str(), set.type_name.as_str(), set))
+        .chain(
+            kinds()
+                .find(|set| set.type_name == "Role")
+                .map(|set| (ORG_ROLES, ORG_ROLE_TYPE, set)),
+        )
+}
+
+/// The Organization set `name`: its rows' kind, read in the `org` namespace.
+fn org_set(name: &str) -> Option<&'static ListSet> {
+    org_kinds()
+        .find(|(set, ..)| *set == name)
+        .map(|(.., set)| set)
+}
+
+/// Whether the manifest `name` of `kind` in the `org` namespace is `org`'s own: a RoleBinding
+/// belongs to the Organization its scope reaches; every other Organization-scoped manifest names
+/// no Organization, so it is the installation's (ADR-N-058 section 2.2) and no other one reads it.
+fn owned_by(state: &AppState, org: &str, kind: &str, name: &str) -> bool {
+    let m = &state.mirror;
+    let owner = if kind == "RoleBinding" {
+        m.get(ORG_NAMESPACE, kind, name)
+            .and_then(|env| crate::permissions::binding_organization(m, &env.spec))
+    } else {
+        crate::permissions::installation_organization(m)
+    };
+    owner.as_deref() == Some(org)
+}
+
+/// Whether the caller reads the Organization set of `set` in `org`: the Organization owns that
+/// kind, and a binding at the Organization itself grants reading it
+/// ([`crate::permissions::holds_at_organization`]); a project's binding reads none of it.
+fn org_set_readable(state: &AppState, user: &CurrentUser, org: &str, set: &ListSet) -> bool {
+    let installation = crate::permissions::installation_organization(&state.mirror);
+    (set.type_name == "RoleBinding" || installation.as_deref() == Some(org))
+        && crate::permissions::holds_at_organization(
+            state,
+            &user.0.identity,
+            org,
+            &set.type_name,
+            jc_core::kinds::Verb::Read,
+            None,
+        )
+}
+
 static ORG: LazyLock<OrgServed> = LazyLock::new(|| {
     let read = || {
         vec![Rule {
@@ -153,6 +215,15 @@ static ORG: LazyLock<OrgServed> = LazyLock::new(|| {
         def.fields.retain(|f| f.name != PROJECT);
         def.fields.insert(0, project);
         public_sets.push(def);
+    }
+    for (set, type_name, kind) in org_kinds() {
+        if let Some(def) = SERVED.service.sets.iter().find(|def| def.set == kind.set) {
+            let mut def = def.clone();
+            def.set = set.into();
+            def.type_name = type_name.into();
+            def.description = format!("The Organization's own {}", kind.set);
+            public_sets.push(def);
+        }
     }
     let mut evaluated_sets = public_sets.clone();
     for def in evaluated_sets.iter_mut().skip(1) {
@@ -247,8 +318,9 @@ fn public_model(mut model: Model) -> Model {
 /// projects is no entity set, no entity type and no navigation of `Project` (API/13 §2a).
 fn visible_model(visible: &BTreeSet<String>) -> Model {
     let hidden: Vec<(&str, &str)> = kinds()
-        .filter(|set| !visible.contains(&set.set))
         .map(|set| (set.set.as_str(), set.type_name.as_str()))
+        .chain(org_kinds().map(|(set, type_name, _)| (set, type_name)))
+        .filter(|(set, _)| !visible.contains(*set))
         .collect();
     let mut model = (*ORG.public).clone();
     for schema in &mut model.schemas {
@@ -274,7 +346,12 @@ fn visible_model(visible: &BTreeSet<String>) -> Model {
 
 /// The sets the caller reads in at least one of `projects`: `projects` always, each kind by its
 /// door's own read check ([`ListSet::readable`]).
-fn visible_sets(state: &AppState, user: &CurrentUser, projects: &[String]) -> BTreeSet<String> {
+fn visible_sets(
+    state: &AppState,
+    user: &CurrentUser,
+    org: &str,
+    projects: &[String],
+) -> BTreeSet<String> {
     let mut visible: BTreeSet<String> = kinds()
         .filter(|set| {
             projects
@@ -283,6 +360,11 @@ fn visible_sets(state: &AppState, user: &CurrentUser, projects: &[String]) -> BT
         })
         .map(|set| set.set.clone())
         .collect();
+    visible.extend(
+        org_kinds()
+            .filter(|(.., set)| org_set_readable(state, user, org, set))
+            .map(|(name, ..)| name.to_owned()),
+    );
     visible.insert(PROJECTS.into());
     visible
 }
@@ -926,7 +1008,7 @@ async fn resource(read: &Read<'_>, target: &str) -> Response {
                 UrlErrorKind::NotImplemented(_) => not_implemented(&e.to_string()),
                 UrlErrorKind::Unresolved => {
                     let name = target.split(['(', '/', '?']).next().unwrap_or_default();
-                    if name != PROJECTS && kind(name).is_none() {
+                    if name != PROJECTS && kind(name).is_none() && org_set(name).is_none() {
                         not_found(format!(
                             "no entity set {name}; $metadata lists the entity sets"
                         ))
@@ -1138,8 +1220,77 @@ async fn resource(read: &Read<'_>, target: &str) -> Response {
                 _ => refused(not_implemented("this resource path")),
             }
         }
+        [Segment::EntitySet(s), rest @ ..] if org_set(s).is_some() => {
+            if !sets.is_empty() {
+                return refused(bad("$expand goes from a project; a kind has no navigation"));
+            }
+            let rows = match org_rows(read, s) {
+                Ok(rows) => rows,
+                Err(r) => return *r,
+            };
+            match rest {
+                [] => collection_answer(read, s, s, &path, &plain, rows).await,
+                [Segment::Count] => {
+                    match read.collection(s, s, &path, &counting(&plain), rows).await {
+                        Ok((answer, _)) => count_text(answer.count.unwrap_or(0)),
+                        Err(r) => *r,
+                    }
+                }
+                [Segment::Key(key)] => {
+                    let name = match single_key(key) {
+                        Ok(Value::String(name)) => name,
+                        Ok(_) | Err(_) => {
+                            return refused(bad(format!("{s} is keyed by name, e.g. {s}('x')")))
+                        }
+                    };
+                    by_key(read, s, rows, json!(name), &plain, s, s).await
+                }
+                _ => refused(not_implemented("this resource path")),
+            }
+        }
         _ => refused(not_implemented("this resource path")),
     }
+}
+
+/// The caller's rows of the Organization set `name`: the Organization's own manifests of its
+/// kind in the `org` namespace, each read under the caller's right at the Organization (a
+/// constrained grant per row), shaped as the REST list's rows and keyed by name.
+fn org_rows(read: &Read<'_>, name: &str) -> Result<Vec<Value>, Refused> {
+    let Some(set) = org_set(name) else {
+        return Err(no(not_found(format!("no entity set {name}"))));
+    };
+    if !org_set_readable(read.state, read.user, &read.org, set) {
+        return Err(no(not_found(format!("no {name} you may read"))));
+    }
+    let (state, kind) = (read.state, set.type_name.as_str());
+    let rows: Vec<Value> = state
+        .mirror
+        .list(ORG_NAMESPACE, kind, &crate::store::ListOptions::default())
+        .items
+        .into_iter()
+        .chain(state.mirror.refused_of(ORG_NAMESPACE, kind))
+        .filter(|env| owned_by(state, &read.org, kind, &env.metadata.name))
+        .filter(|env| {
+            crate::permissions::holds_at_organization(
+                state,
+                &read.caller.identity,
+                &read.org,
+                kind,
+                jc_core::kinds::Verb::Read,
+                serde_json::to_value(env).ok().as_ref(),
+            )
+        })
+        .map(|env| {
+            let mut row = crate::api::odata::flat(crate::ops::resources::row(&env));
+            row[ROW_KEY] = Value::String(env.metadata.name.clone());
+            row[ETAG] = Value::String(env.etag());
+            row
+        })
+        .collect();
+    if rows.len() > MAX_ROWS {
+        return Err(too_many(name));
+    }
+    Ok(rows)
 }
 
 async fn collection_answer(
@@ -1257,6 +1408,9 @@ fn service_document(state: &AppState) -> Response {
     let mut value = vec![json!({ "name": PROJECTS, "kind": "EntitySet", "url": PROJECTS })];
     value
         .extend(kinds().map(|set| json!({ "name": set.set, "kind": "EntitySet", "url": set.set })));
+    value.extend(
+        org_kinds().map(|(set, ..)| json!({ "name": set, "kind": "EntitySet", "url": set })),
+    );
     for singleton in [ME, ORGANIZATION] {
         value.push(json!({ "name": singleton, "kind": "Singleton", "url": singleton }));
     }
@@ -1560,7 +1714,7 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
             &parts.headers,
             &query,
             rights(&state, &user, &org),
-            &visible_sets(&state, &user, &projects),
+            &visible_sets(&state, &user, &org, &projects),
             &offered,
         );
     }

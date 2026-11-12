@@ -2,6 +2,34 @@
   "$EntityContainer": "JoinedContext.Portal.Service",
   "$Version": "4.01",
   "JoinedContext.Portal": {
+    "AgentProfile": {
+      "$Key": [
+        "name"
+      ],
+      "$Kind": "EntityType",
+      "kind": {
+        "$Nullable": true
+      },
+      "name": {},
+      "notServing": {
+        "$Nullable": true
+      },
+      "phase": {
+        "$Nullable": true
+      },
+      "sourceUrl": {
+        "$Nullable": true
+      },
+      "space": {
+        "$Nullable": true
+      },
+      "title": {
+        "$Nullable": true
+      },
+      "url": {
+        "$Nullable": true
+      }
+    },
     "App": {
       "$Key": [
         "project",
@@ -62,6 +90,62 @@
         "$Nullable": true
       }
     },
+    "Blueprint": {
+      "$Key": [
+        "name"
+      ],
+      "$Kind": "EntityType",
+      "kind": {
+        "$Nullable": true
+      },
+      "name": {},
+      "notServing": {
+        "$Nullable": true
+      },
+      "phase": {
+        "$Nullable": true
+      },
+      "sourceUrl": {
+        "$Nullable": true
+      },
+      "space": {
+        "$Nullable": true
+      },
+      "title": {
+        "$Nullable": true
+      },
+      "url": {
+        "$Nullable": true
+      }
+    },
+    "Bundle": {
+      "$Key": [
+        "name"
+      ],
+      "$Kind": "EntityType",
+      "kind": {
+        "$Nullable": true
+      },
+      "name": {},
+      "notServing": {
+        "$Nullable": true
+      },
+      "phase": {
+        "$Nullable": true
+      },
+      "sourceUrl": {
+        "$Nullable": true
+      },
+      "space": {
+        "$Nullable": true
+      },
+      "title": {
+        "$Nullable": true
+      },
+      "url": {
+        "$Nullable": true
+      }
+    },
     "Change": {
       "$Key": [
         "project",
@@ -106,6 +190,34 @@
         "$Nullable": true
       },
       "project": {},
+      "sourceUrl": {
+        "$Nullable": true
+      },
+      "space": {
+        "$Nullable": true
+      },
+      "title": {
+        "$Nullable": true
+      },
+      "url": {
+        "$Nullable": true
+      }
+    },
+    "ContextBroker": {
+      "$Key": [
+        "name"
+      ],
+      "$Kind": "EntityType",
+      "kind": {
+        "$Nullable": true
+      },
+      "name": {},
+      "notServing": {
+        "$Nullable": true
+      },
+      "phase": {
+        "$Nullable": true
+      },
       "sourceUrl": {
         "$Nullable": true
       },
@@ -329,6 +441,62 @@
         "$Nullable": true
       }
     },
+    "DataSpaceParticipant": {
+      "$Key": [
+        "name"
+      ],
+      "$Kind": "EntityType",
+      "kind": {
+        "$Nullable": true
+      },
+      "name": {},
+      "notServing": {
+        "$Nullable": true
+      },
+      "phase": {
+        "$Nullable": true
+      },
+      "sourceUrl": {
+        "$Nullable": true
+      },
+      "space": {
+        "$Nullable": true
+      },
+      "title": {
+        "$Nullable": true
+      },
+      "url": {
+        "$Nullable": true
+      }
+    },
+    "DelegationPolicy": {
+      "$Key": [
+        "name"
+      ],
+      "$Kind": "EntityType",
+      "kind": {
+        "$Nullable": true
+      },
+      "name": {},
+      "notServing": {
+        "$Nullable": true
+      },
+      "phase": {
+        "$Nullable": true
+      },
+      "sourceUrl": {
+        "$Nullable": true
+      },
+      "space": {
+        "$Nullable": true
+      },
+      "title": {
+        "$Nullable": true
+      },
+      "url": {
+        "$Nullable": true
+      }
+    },
     "Endpoint": {
       "$Key": [
         "project",
@@ -422,6 +590,62 @@
         "$Nullable": true
       },
       "project": {},
+      "sourceUrl": {
+        "$Nullable": true
+      },
+      "space": {
+        "$Nullable": true
+      },
+      "title": {
+        "$Nullable": true
+      },
+      "url": {
+        "$Nullable": true
+      }
+    },
+    "Environment": {
+      "$Key": [
+        "name"
+      ],
+      "$Kind": "EntityType",
+      "kind": {
+        "$Nullable": true
+      },
+      "name": {},
+      "notServing": {
+        "$Nullable": true
+      },
+      "phase": {
+        "$Nullable": true
+      },
+      "sourceUrl": {
+        "$Nullable": true
+      },
+      "space": {
+        "$Nullable": true
+      },
+      "title": {
+        "$Nullable": true
+      },
+      "url": {
+        "$Nullable": true
+      }
+    },
+    "Group": {
+      "$Key": [
+        "name"
+      ],
+      "$Kind": "EntityType",
+      "kind": {
+        "$Nullable": true
+      },
+      "name": {},
+      "notServing": {
+        "$Nullable": true
+      },
+      "phase": {
+        "$Nullable": true
+      },
       "sourceUrl": {
         "$Nullable": true
       },
@@ -622,6 +846,34 @@
       "$Kind": "EntityType",
       "name": {},
       "title": {
+        "$Nullable": true
+      }
+    },
+    "OrganizationRole": {
+      "$Key": [
+        "name"
+      ],
+      "$Kind": "EntityType",
+      "kind": {
+        "$Nullable": true
+      },
+      "name": {},
+      "notServing": {
+        "$Nullable": true
+      },
+      "phase": {
+        "$Nullable": true
+      },
+      "sourceUrl": {
+        "$Nullable": true
+      },
+      "space": {
+        "$Nullable": true
+      },
+      "title": {
+        "$Nullable": true
+      },
+      "url": {
         "$Nullable": true
       }
     },
@@ -893,6 +1145,34 @@
         "$Nullable": true
       }
     },
+    "RoleBinding": {
+      "$Key": [
+        "name"
+      ],
+      "$Kind": "EntityType",
+      "kind": {
+        "$Nullable": true
+      },
+      "name": {},
+      "notServing": {
+        "$Nullable": true
+      },
+      "phase": {
+        "$Nullable": true
+      },
+      "sourceUrl": {
+        "$Nullable": true
+      },
+      "space": {
+        "$Nullable": true
+      },
+      "title": {
+        "$Nullable": true
+      },
+      "url": {
+        "$Nullable": true
+      }
+    },
     "ScopeDefinition": {
       "$Key": [
         "project",
@@ -928,6 +1208,10 @@
       "Organization": {
         "$Type": "JoinedContext.Portal.Organization"
       },
+      "agentprofiles": {
+        "$Collection": true,
+        "$Type": "JoinedContext.Portal.AgentProfile"
+      },
       "apps": {
         "$Collection": true,
         "$Type": "JoinedContext.Portal.App"
@@ -936,6 +1220,14 @@
         "$Collection": true,
         "$Type": "JoinedContext.Portal.AssistantDeployment"
       },
+      "blueprints": {
+        "$Collection": true,
+        "$Type": "JoinedContext.Portal.Blueprint"
+      },
+      "bundles": {
+        "$Collection": true,
+        "$Type": "JoinedContext.Portal.Bundle"
+      },
       "changes": {
         "$Collection": true,
         "$Type": "JoinedContext.Portal.Change"
@@ -943,6 +1235,10 @@
       "ckaninstances": {
         "$Collection": true,
         "$Type": "JoinedContext.Portal.CkanInstance"
+      },
+      "contextbrokers": {
+        "$Collection": true,
+        "$Type": "JoinedContext.Portal.ContextBroker"
       },
       "csrs": {
         "$Collection": true,
@@ -968,6 +1264,14 @@
         "$Collection": true,
         "$Type": "JoinedContext.Portal.DataSource"
       },
+      "dataspaceparticipants": {
+        "$Collection": true,
+        "$Type": "JoinedContext.Portal.DataSpaceParticipant"
+      },
+      "delegationpolicies": {
+        "$Collection": true,
+        "$Type": "JoinedContext.Portal.DelegationPolicy"
+      },
       "endpointList": {
         "$Collection": true,
         "$Type": "JoinedContext.Portal.EndpointRow"
@@ -979,6 +1283,14 @@
       "entities": {
         "$Collection": true,
         "$Type": "JoinedContext.Portal.Entity"
+      },
+      "environments": {
+        "$Collection": true,
+        "$Type": "JoinedContext.Portal.Environment"
+      },
+      "groups": {
+        "$Collection": true,
+        "$Type": "JoinedContext.Portal.Group"
       },
       "knowledgesources": {
         "$Collection": true,
@@ -1002,6 +1314,10 @@
       "mqttbrokers": {
         "$Collection": true,
         "$Type": "JoinedContext.Portal.MqttBroker"
+      },
+      "organizationRoles": {
+        "$Collection": true,
+        "$Type": "JoinedContext.Portal.OrganizationRole"
       },
       "pipelines": {
         "$Collection": true,
@@ -1050,6 +1366,10 @@
         },
         "$Type": "JoinedContext.Portal.Project"
       },
+      "rolebindings": {
+        "$Collection": true,
+        "$Type": "JoinedContext.Portal.RoleBinding"
+      },
       "roles": {
         "$Collection": true,
         "$Type": "JoinedContext.Portal.Role"
@@ -1077,6 +1397,10 @@
       "syncsources": {
         "$Collection": true,
         "$Type": "JoinedContext.Portal.SyncSource"
+      },
+      "uischemas": {
+        "$Collection": true,
+        "$Type": "JoinedContext.Portal.UiSchema"
       },
       "workspaces": {
         "$Collection": true,
@@ -1190,6 +1514,34 @@
         "$Nullable": true
       },
       "project": {},
+      "sourceUrl": {
+        "$Nullable": true
+      },
+      "space": {
+        "$Nullable": true
+      },
+      "title": {
+        "$Nullable": true
+      },
+      "url": {
+        "$Nullable": true
+      }
+    },
+    "UiSchema": {
+      "$Key": [
+        "name"
+      ],
+      "$Kind": "EntityType",
+      "kind": {
+        "$Nullable": true
+      },
+      "name": {},
+      "notServing": {
+        "$Nullable": true
+      },
+      "phase": {
+        "$Nullable": true
+      },
       "sourceUrl": {
         "$Nullable": true
       },

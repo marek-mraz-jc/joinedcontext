@@ -1569,3 +1569,147 @@ async fn plain_writes_are_405_and_actions_need_the_csrf_token() {
         .expect("response");
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
+
+/// Red first (T-6822): an Organization's own Roles, RoleBindings and groups were no set of the
+/// Organization service. Now each is a set keyed by name holding only that Organization's: a
+/// RoleBinding is the Organization's its scope reaches, the rest of the `org` namespace the
+/// installation's (hel). The other Organization's rows and keys answer nothing.
+#[tokio::test]
+async fn organization_sets_hold_only_the_organizations_own_rows() {
+    let state = state();
+    let m = &state.mirror;
+    m.upsert(envelope(
+        "Role",
+        "access-reader",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Project", "RoleBinding", "Role", "Group"], "verbs": ["read"] }] }),
+    ));
+    for org in ["hel", "ba"] {
+        m.upsert(envelope(
+            "RoleBinding",
+            &format!("{org}-access-{org}"),
+            ORG_NAMESPACE,
+            json!({ "subjects": [{ "user": format!("{org}-access@hel.fi") }],
+                    "role": "access-reader", "scope": { "organization": org } }),
+        ));
+    }
+    m.upsert(envelope(
+        "RoleBinding",
+        "air-reader-ba",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "ba-only@hel.fi" }], "role": "reader",
+                "scope": { "project": "bratislava" } }),
+    ));
+    m.upsert(envelope(
+        "Group",
+        "noise-team",
+        ORG_NAMESPACE,
+        json!({ "members": [{ "user": "hel-only@hel.fi" }] }),
+    ));
+    for mode in MODES {
+        let org = mode.org();
+        let (own, other) = if org == "hel" {
+            ("hel", "ba")
+        } else {
+            ("ba", "hel")
+        };
+        for who in ["root", &format!("{own}-access")] {
+            let bindings = get(&state, mode, who, "/api/v1/rolebindings?$select=name").await;
+            assert_eq!(
+                bindings.status,
+                StatusCode::OK,
+                "{who} {mode:?}: {}",
+                bindings.text
+            );
+            let names = names(&bindings.json(), "name");
+            assert!(
+                names.contains(&format!("{own}-access-{own}")),
+                "{who} {mode:?}: {names:?}"
+            );
+            assert!(
+                names.iter().all(|n| !n.ends_with(&format!("-{other}"))),
+                "{who} {mode:?} reads {other}'s bindings: {names:?}"
+            );
+            assert_eq!(
+                names.contains(&"air-reader-ba".to_owned()),
+                own == "ba",
+                "a project binding is its project's Organization's: {who} {mode:?}"
+            );
+            let foreign = format!("/api/v1/rolebindings('{other}-access-{other}')");
+            let foreign = get(&state, mode, who, &foreign).await;
+            assert_eq!(
+                foreign.status,
+                StatusCode::NOT_FOUND,
+                "{who} {mode:?}: {}",
+                foreign.text
+            );
+            let mine = format!("/api/v1/rolebindings('{own}-access-{own}')");
+            let mine = get(&state, mode, who, &mine).await;
+            assert_eq!(mine.status, StatusCode::OK, "{who} {mode:?}: {}", mine.text);
+            assert!(mine.json()["@odata.etag"].is_string(), "{}", mine.text);
+            let count = get(&state, mode, who, "/api/v1/rolebindings/$count").await;
+            assert_eq!(count.text, names.len().to_string(), "{who} {mode:?}");
+
+            let metadata = get(&state, mode, who, "/api/v1/$metadata").await;
+            for (set, path) in [
+                (
+                    "organizationRoles",
+                    "/api/v1/organizationRoles?$select=name",
+                ),
+                ("groups", "/api/v1/groups?$select=name"),
+            ] {
+                let answer = get(&state, mode, who, path).await;
+                let listed = metadata.text.contains(&format!("EntitySet Name=\"{set}\""));
+                if org == "hel" {
+                    assert_eq!(
+                        answer.status,
+                        StatusCode::OK,
+                        "{who} {mode:?} {set}: {}",
+                        answer.text
+                    );
+                    assert!(listed, "{who} {mode:?}: {set} not in $metadata");
+                } else {
+                    assert_eq!(
+                        answer.status,
+                        StatusCode::NOT_FOUND,
+                        "{who} {mode:?} {set}: {}",
+                        answer.text
+                    );
+                    assert!(!listed, "{who} {mode:?}: {set} in ba's $metadata");
+                }
+            }
+            assert!(
+                metadata.text.contains("EntitySet Name=\"rolebindings\""),
+                "{who} {mode:?}"
+            );
+        }
+        let roles = get(
+            &state,
+            Mode::Host("hel"),
+            "root",
+            "/api/v1/organizationRoles?$select=name",
+        )
+        .await;
+        let roles = names(&roles.json(), "name");
+        assert!(
+            roles.contains(&"reader".to_owned()) && roles.contains(&"access-reader".to_owned()),
+            "{roles:?}"
+        );
+        // A viewer whose Role reads no RoleBinding has no such set and its URL answers 404.
+        let viewer = get(
+            &state,
+            mode,
+            &format!("{own}-only"),
+            "/api/v1/rolebindings?$select=name",
+        )
+        .await;
+        assert_eq!(
+            viewer.status,
+            StatusCode::NOT_FOUND,
+            "{mode:?}: {}",
+            viewer.text
+        );
+        let metadata = get(&state, mode, &format!("{own}-only"), "/api/v1/$metadata").await;
+        assert!(!metadata.text.contains("\"rolebindings\""), "{mode:?}");
+    }
+}
