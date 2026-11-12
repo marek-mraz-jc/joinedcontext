@@ -2379,7 +2379,16 @@
       "policyRefsDrafted": "The read and write Policies drafted with this Endpoint are named for you; tick any other Policy of its space it should serve too."
     },
     "policyRefsNone": "The space {space} holds no Policy you may read, so this Endpoint would serve nobody. Add a Policy for the space first, then pick it here.",
-    "policyRefsAdd": "Open the policies"
+    "policyRefsAdd": "Open the policies",
+    "refused": {
+      "title": "You do not read this Endpoint's data",
+      "body": "Your Portal role lets you manage this Endpoint, but the gateway admits a reader by the Endpoint's project groups and Policies, and none of them names you. A Portal role never widens a Policy.",
+      "next": "Ask the space's owners for a read: request access on the Endpoint page.",
+      "action": "Request access",
+      "checking": "Checking whether the gateway admits you…",
+      "unavailable": "The Portal could not tell whether the gateway admits you; reload the page to try again.",
+      "short": "The count and the proof read through the Endpoint, and the gateway does not admit you; ask for a read under Request access below."
+    }
   },
   "datasources": {
     "title": "Data sources",

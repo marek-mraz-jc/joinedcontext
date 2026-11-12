@@ -13,6 +13,7 @@ import { classSlots } from "../models/linkml";
 import { constraintInWords } from "../policies/constraintWords";
 import type { ConstraintName } from "../policies/constraintWords";
 import { constraintText } from "../../api/access";
+import { EndpointRefused, useEndpointAdmission } from "../../components/endpoints/EndpointAdmission";
 import type { GrantDocument, GrantEntry } from "../../api/access";
 import { AdminGrid } from "../../components/grid/AdminGrid";
 import type { DataColumn } from "../../components/grid/AdminGrid";
@@ -389,10 +390,14 @@ export function EffectivePermissions({
   // Only an Endpoint the server listed for the caller can be opened by name.
   const named = published.find((one) => one.metadata.name === endpoint) ?? published[0];
   const selected = slug ?? (named?.spec as { slug?: string } | undefined)?.slug ?? null;
+  const selectedName = published.find((one) => (one.spec as { slug?: string }).slug === selected)?.metadata.name;
+  // The gateway refuses a person outside the Endpoint's project groups whatever their Portal role:
+  // ask the Portal first and read `/access` only when admitted (T-6802).
+  const admission = useEndpointAdmission(project, selectedName);
 
   const grants = useQuery({
     queryKey: ["access", project, selected],
-    enabled: selected !== null,
+    enabled: selected !== null && admission.data?.admitted === true,
     retry: false,
     queryFn: async (): Promise<GrantDocument> => {
       // The gateway's own surface, not a Portal route: one document, one implementation (EP-60).
@@ -439,6 +444,10 @@ export function EffectivePermissions({
         </Field>
       )}
 
+      {selectedName && admission.data?.admitted !== true ? (
+        <EndpointRefused project={project} name={selectedName} admission={admission} />
+      ) : null}
+
       {grants.isError ? (
         <p role="status" className="text-body text-fg-muted">
           {grants.error instanceof ApiError && grants.error.status === 403
@@ -447,7 +456,7 @@ export function EffectivePermissions({
         </p>
       ) : null}
 
-      {grants.isPending && selected !== null ? <p role="status">{t("app.loading")}</p> : null}
+      {grants.isPending && selected !== null && admission.data?.admitted === true ? <p role="status">{t("app.loading")}</p> : null}
 
       {grants.data && selected !== null ? <GrantDocumentView project={project} slug={selected} document={grants.data} /> : null}
     </section>

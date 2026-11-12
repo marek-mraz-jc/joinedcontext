@@ -57,6 +57,10 @@ fn endpoints() -> Vec<(&'static str, Value)> {
             ),
         ),
         (
+            "air-project",
+            spec("p7xq2mzk4tvh6nbw3rjs5cdafy", "project-list", json!({})),
+        ),
+        (
             "air-public",
             spec("k4y7pq2mzt6vhx3nbwrs5cjdaf", "public", json!({})),
         ),
@@ -178,6 +182,12 @@ async fn rig() -> Rig {
         "city",
         ORG_NAMESPACE,
         json!({ "organizationRef": "hel" }),
+    ));
+    state.mirror.upsert(envelope(
+        "Project",
+        "harbour",
+        ORG_NAMESPACE,
+        json!({ "organizationRef": "esp" }),
     ));
     state.mirror.upsert(envelope(
         "Role",
@@ -526,4 +536,76 @@ async fn a_person_the_gateways_door_refuses_is_refused_the_preview() {
         |_| Some("hel".to_owned()),
     )
     .is_err());
+}
+
+/// What `GET …/endpoints/{endpoint}/admission` answers `session`, its claims kept.
+async fn admission_of(r: &Rig, session: &Session, endpoint: &str) -> (StatusCode, Value) {
+    r.state.keep_session_claims(session);
+    let response = server::app(r.state.clone())
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v1/projects/city/endpoints/{endpoint}/admission"
+                ))
+                .header(header::COOKIE, session_cookie(&r.state.config, session))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status = response.status();
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("a body")
+        .to_bytes();
+    (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+}
+
+fn jana_in(groups: Value, jc_org: Value) -> Session {
+    session_of(
+        &json!({ "sub": "sub-jana", "iss": "https://kc.example/realms/jc",
+                        "exp": 4_102_444_800_i64, "azp": "portal-ui",
+                        "preferred_username": "jana", "groups": groups, "jc_org": jc_org }),
+    )
+}
+
+/// T-6802: a platform administrator whose groups name no project of a project-list Endpoint is
+/// refused at the gateway's door, so the Portal says so before the page reads; their Portal role
+/// widens nothing.
+#[tokio::test]
+async fn an_administrator_outside_the_projects_groups_is_not_admitted() {
+    let r = rig().await;
+    let admin = jana_in(json!(["/platform-admins"]), json!(["hel"]));
+    let (status, body) = admission_of(&r, &admin, "air-project").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "admitted": false }));
+}
+
+/// T-6802: a member of `{project}-readers` is admitted, as the gateway admits them (PF-87), and a
+/// public Endpoint admits everyone.
+#[tokio::test]
+async fn a_project_readers_member_is_admitted() {
+    let r = rig().await;
+    let reader = jana_in(json!(["/city-readers"]), json!([]));
+    let (status, body) = admission_of(&r, &reader, "air-project").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "admitted": true }));
+    let nobody = jana_in(json!([]), json!([]));
+    assert_eq!(
+        admission_of(&r, &nobody, "air-public").await.1,
+        json!({ "admitted": true })
+    );
+}
+
+/// T-6802: a person whose project is of another Organization meets the gateway's 404 here too,
+/// and the answer names no group or Policy of the Endpoint.
+#[tokio::test]
+async fn another_organizations_person_meets_a_not_found() {
+    let r = rig().await;
+    let outsider = jana_in(json!(["/harbour"]), json!(["esp"]));
+    let (status, body) = admission_of(&r, &outsider, "air-staff").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(!body.to_string().contains("analyst"));
 }

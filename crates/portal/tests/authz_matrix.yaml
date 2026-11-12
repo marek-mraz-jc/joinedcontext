@@ -357,6 +357,10 @@ routes:
     expect: [403, 404, 404, 404, 404, 404, 404, 404]
     body: {"type": "Car"}
     note: "the fixture's Endpoint names no Context Space, the 404 a non-member gets too (EP-85); a member meets 503 without a broker, a workload token 403 (tests/endpoint_preview_tests.rs)"
+  - route: GET /projects/{project}/endpoints/{name}/admission
+    rule: "space-read of the Endpoint's space, then a person"
+    expect: [401, 404, 404, 404, 404, 404, 404, 404]
+    note: "as the filter preview: the fixture's Endpoint names no Context Space, the 404 a non-member gets too; admitted or not per group in tests/endpoint_preview_subject_tests.rs"
   - route: POST /projects/{project}/endpoints/{name}/ical-preview
     rule: "space-read of the Endpoint's space, then a person"
     expect: [403, 404, 404, 404, 404, 404, 404, 404]

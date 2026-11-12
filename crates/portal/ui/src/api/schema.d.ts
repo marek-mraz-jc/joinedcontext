@@ -2822,6 +2822,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/endpoints/{name}/admission": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whether The Gateway Admits You
+         * @description Whether the gateway's door admits the signed-in person on this Endpoint, decided by the gateway's own rule from the session's groups and Organization and the Endpoint's audience and allowed projects (EP-14, EP-15, ADR-N-067 2.3). A Portal role never widens it. Names no group or Policy. Members of the Endpoint's Context Space only.
+         */
+        get: operations["endpoint_admission"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/endpoints/{name}/ical-preview": {
         parameters: {
             query?: never;
@@ -7717,6 +7737,14 @@ export interface components {
             role: string;
             /** @description One of the role's publish filters; required when the role publishes. */
             topic?: string | null;
+        };
+        /** @description Whether the signed-in person reads Endpoint `name` through the gateway. */
+        Admission: {
+            /**
+             * @description `false`: the gateway refuses the person at its door (no project group its audience
+             *     admits), whatever their Portal role, so the page reads nothing through the Endpoint.
+             */
+            admitted: boolean;
         };
         /**
          * @description Something the caller may or may not do that no rule expresses as a kind and a verb, with the
@@ -22266,6 +22294,63 @@ export interface operations {
             };
             /** @description No gateway, no realm admin client, or one of them did not answer */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    endpoint_admission: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Endpoint name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Admitted or not */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "admitted": false
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Admission"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A workload token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such Endpoint in a space the caller may read, or one of another Organization */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -76,6 +76,8 @@ function show(given: Given = {}) {
       const href = input instanceof Request ? input.url : String(input);
       const path = new URL(href, window.location.origin).pathname;
       asked.push(path);
+      // The gateway admits the reader (T-6802); tests/endpoint_admission.test.tsx holds the refusal.
+      if (path.endsWith("/admission")) return Promise.resolve(json({ admitted: true }));
       if (path.endsWith("/access")) {
         if (given.hang) return new Promise<Response>(() => {});
         return Promise.resolve(json(given.access ?? GRANTS, given.accessStatus ?? 200));
@@ -162,7 +164,8 @@ describe("the access matrix against the UI contract", () => {
   it("says it is waiting, rather than showing a table that is not there yet", async () => {
     show({ hang: true });
 
-    expect(await screen.findByRole("status")).toHaveTextContent(i18n.t("app.loading"));
+    // The admission answers first (T-6802), then the grant document hangs.
+    expect(await screen.findByText(i18n.t("app.loading"))).toHaveAttribute("role", "status");
     expect(screen.queryByRole("table")).toBeNull();
   });
 
