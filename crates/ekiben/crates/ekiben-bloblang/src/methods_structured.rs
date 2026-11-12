@@ -83,7 +83,15 @@ pub(crate) fn eval_structured_family(
             match target_val {
                 Value::String(s) => {
                     let (start, end) = calc_bounds(s.len() as i64)?;
-                    Ok(Value::String(s[start..end].to_string()))
+                    // Bounds are bytes, as in Go; one inside a character moves back to that
+                    // character's start rather than panicking the pipeline thread (T-6820).
+                    let floor = |mut i: usize| {
+                        while !s.is_char_boundary(i) {
+                            i -= 1;
+                        }
+                        i
+                    };
+                    Ok(Value::String(s[floor(start)..floor(end)].to_string()))
                 }
                 Value::Bytes(b) => {
                     let (start, end) = calc_bounds(b.len() as i64)?;
