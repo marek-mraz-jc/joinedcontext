@@ -2027,10 +2027,8 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
         Ok(user) => user,
         Err(rejected) => return as_odata_error(rejected.into_response()).await,
     };
-    let front = match Front::from_request_parts(&mut parts, &state).await {
-        Ok(front) => front,
-        Err(rejected) => return as_odata_error(rejected.into_response()).await,
-    };
+    // Front's rejection is Infallible.
+    let Ok(front) = Front::from_request_parts(&mut parts, &state).await;
     let Some(org) = organization(&state) else {
         return refused(not_found(
             "this address serves several Organizations; read one at /{org}/api/v1/",

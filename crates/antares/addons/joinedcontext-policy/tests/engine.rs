@@ -66,10 +66,8 @@ async fn exchange(
             .header("Content-Length", payload.len());
     }
     let req = b.body(Body::from(payload)).map_err(|e| e.to_string())?;
-    let resp = antares_api::router(st.clone())
-        .oneshot(req)
-        .await
-        .map_err(|e| e.to_string())?;
+    // Router::oneshot's error is Infallible.
+    let Ok(resp) = antares_api::router(st.clone()).oneshot(req).await;
     let status = resp.status();
     let headers = resp.headers().clone();
     let bytes = resp
@@ -1970,10 +1968,8 @@ async fn a_geojson_answer_is_stripped_too() -> Res {
         .header("x-jc-roles", "")
         .body(Body::empty())
         .map_err(|e| e.to_string())?;
-    let resp = antares_api::router(st.clone())
-        .oneshot(req)
-        .await
-        .map_err(|e| e.to_string())?;
+    // Router::oneshot's error is Infallible.
+    let Ok(resp) = antares_api::router(st.clone()).oneshot(req).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let bytes = resp
         .into_body()
