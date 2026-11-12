@@ -258,8 +258,13 @@ async fn admin() -> Result<Option<PgPool>, String> {
 
 /// A fresh relation holding `rows`, named after `test`.
 async fn relation(pool: &PgPool, test: &str, rows: &[Value]) -> Result<String, String> {
-    let name = format!("odata_table_{test}_{}", std::process::id());
+    // Its own schema: suites sharing the database (antares-sql pg_rls_pentest) list
+    // every RLS table of `public`, and a fixture table there breaks their count.
+    let name = format!("odata_table.{test}_{}", std::process::id());
     for stmt in [
+        "DO $$ BEGIN CREATE SCHEMA IF NOT EXISTS odata_table; \
+         EXCEPTION WHEN duplicate_schema OR unique_violation THEN NULL; END $$"
+            .to_owned(),
         format!("DROP TABLE IF EXISTS {name}"),
         format!(
             "CREATE TABLE {name} (id text PRIMARY KEY, org text, name text, size bigint, \
@@ -579,7 +584,7 @@ async fn a_pg_table_keeps_forced_row_level_security() -> Result<(), String> {
         "DO $$ BEGIN CREATE ROLE odata_table_app LOGIN PASSWORD 'app' NOSUPERUSER NOBYPASSRLS; \
          EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
             .to_owned(),
-        "GRANT USAGE ON SCHEMA public TO odata_table_app".to_owned(),
+        "GRANT USAGE ON SCHEMA odata_table TO odata_table_app".to_owned(),
         format!("GRANT SELECT ON {name} TO odata_table_app"),
         format!("ALTER TABLE {name} ENABLE ROW LEVEL SECURITY"),
         format!("ALTER TABLE {name} FORCE ROW LEVEL SECURITY"),
