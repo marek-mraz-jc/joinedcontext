@@ -279,22 +279,20 @@ fn a_credential_that_names_its_header_renders_that_header_without_a_scheme() {
     assert!(rendered(&source(&signed), "hsl-gbfs").contains("x-api-key: Token ${DS_HSL_GBFS_KEY}"));
 }
 
-const KAFKA: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+const NATS: &str = r#"apiVersion: joinedcontext.com/v1alpha1
 kind: DataSource
-metadata: { name: kafka-hel, namespace: bb-ovzdusie }
+metadata: { name: nats-hel, namespace: bb-ovzdusie }
 spec:
-  type: kafka
+  type: nats
   input:
-    addresses: ["kafka.hel.fi:9093"]
-    topics: ["sensors.air"]
-    consumer_group: jc-helsinki-air
+    urls: ["nats://nats.hel.fi:4222"]
+    subject: sensors.air
+    queue: jc-helsinki-air
     tls: { enabled: true }
-    sasl:
-      mechanism: SCRAM-SHA-512
-      user: hki-collector
-      password: "${DS_KAFKA_HEL_PASSWORD}"
+    auth:
+      user_jwt: "${DS_NATS_HEL_JWT}"
   secrets:
-    - { name: kafka-hel, key: password, envVar: DS_KAFKA_HEL_PASSWORD }
+    - { name: nats-hel, key: jwt, envVar: DS_NATS_HEL_JWT }
 "#;
 
 const HTTP_CLIENT_RUNNER: &str = r#"apiVersion: joinedcontext.com/v1alpha1
@@ -308,16 +306,16 @@ spec:
 "#;
 
 #[test]
-fn a_kafka_runner_source_renders_input_verbatim_with_no_prepended_processors() {
-    let src = source(KAFKA);
-    let out = render(AUTHORED, &src, &context("kafka-hel")).expect("renders");
+fn a_nats_runner_source_renders_input_verbatim_with_no_prepended_processors() {
+    let src = source(NATS);
+    let out = render(AUTHORED, &src, &context("nats-hel")).expect("renders");
     assert!(out.starts_with("input:"), "{out}");
-    assert!(out.contains("kafka:"), "renders kafka input block:\n{out}");
+    assert!(out.contains("nats:"), "renders nats input block:\n{out}");
     assert!(
-        out.contains("${DS_KAFKA_HEL_PASSWORD}"),
+        out.contains("${DS_NATS_HEL_JWT}"),
         "interpolation untouched:\n{out}"
     );
-    assert!(out.contains("kafka.hel.fi:9093"));
+    assert!(out.contains("nats://nats.hel.fi:4222"));
 
     let parsed: serde_norway::Value = serde_norway::from_str(&out).expect("parses");
     let processors = parsed
@@ -325,7 +323,7 @@ fn a_kafka_runner_source_renders_input_verbatim_with_no_prepended_processors() {
         .and_then(|p| p.get("processors"))
         .and_then(|p| p.as_sequence())
         .expect("processors");
-    // Kafka source contributes NO prepended processor, so only the author's mapping is present.
+    // A NATS source contributes NO prepended processor, so only the author's mapping is present.
     assert_eq!(
         processors.len(),
         1,
@@ -357,11 +355,11 @@ targetEndpoint: urn:ngsi-ld:Endpoint:example.org:helsinki:ep-writer
     )
     .expect("valid pipeline spec");
 
-    let src = source(KAFKA);
+    let src = source(NATS);
     let ctx = InputContext {
-        source: "kafka-hel",
+        source: "nats-hel",
         project: "bb-ovzdusie",
-        pipeline: "aq-kafka-ingest",
+        pipeline: "aq-nats-ingest",
         pipeline_spec: Some(&pipe),
     };
     let err = render(AUTHORED, &src, &ctx).unwrap_err();

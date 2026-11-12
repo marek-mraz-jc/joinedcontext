@@ -346,6 +346,8 @@ fn the_exported_processor_check_refuses_what_a_step_refuses() {
         serde_json::json!({ "mapping": "root = this", "bloblang": "root = this" }),
         serde_json::json!({ "label": "only-a-label" }),
         serde_json::json!("mapping"),
+        // T-6825: a processor the pipeline runner does not build.
+        serde_json::json!({ "redis": { "url": "redis://c:6379", "command": "get" } }),
     ] {
         assert!(
             validate_processor("pipeline.processors", &refused).is_err(),
@@ -355,7 +357,7 @@ fn the_exported_processor_check_refuses_what_a_step_refuses() {
     for fine in [
         serde_json::json!({ "mapping": "root = this" }),
         serde_json::json!({ "label": "enrich", "mapping": "root.d = env(\"JC_ORG_DOMAIN\")" }),
-        serde_json::json!({ "redis": { "url": "redis://c:6379", "command": "get" } }),
+        serde_json::json!({ "xml": { "operator": "to_json" } }),
     ] {
         validate_processor("pipeline.processors", &fine).expect("accepted");
     }
