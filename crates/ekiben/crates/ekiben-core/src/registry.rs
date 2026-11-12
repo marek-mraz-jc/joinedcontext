@@ -427,6 +427,30 @@ impl Registry {
         ctor(conf, ctx)
     }
 
+    /// The stream's `buffer`: `None` for Bento's default `none`, otherwise a registered buffer.
+    pub fn build_buffer(
+        &self,
+        conf: &ComponentConfig,
+        ctx: &StreamContext,
+    ) -> Result<Option<Arc<dyn Buffer>>, CoreError> {
+        if conf.component_type == "none" {
+            return Ok(None);
+        }
+        let ctor = self
+            .buffers
+            .read()
+            .unwrap()
+            .get(&conf.component_type)
+            .cloned()
+            .ok_or_else(|| {
+                CoreError::config(format!(
+                    "type '{}' was not recognised as a buffer",
+                    conf.component_type
+                ))
+            })?;
+        ctor(conf, ctx).map(Some)
+    }
+
     pub fn build_rate_limit(
         &self,
         conf: &ComponentConfig,
@@ -482,6 +506,15 @@ impl Registry {
         lint_blobl_fields(&conf.input, "input", &blobl_env, &mut report);
         for p in &conf.input.processors {
             self.lint_processor(p, &blobl_env, &mut seen_labels, &mut report);
+        }
+
+        if conf.buffer.component_type != "none"
+            && !self.buffers.read().unwrap().contains_key(&conf.buffer.component_type)
+        {
+            report.add_error(format!(
+                "buffer: type '{}' was not recognised",
+                conf.buffer.component_type
+            ));
         }
 
         // Check pipeline processors

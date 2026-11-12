@@ -167,7 +167,7 @@ impl Processor for CachedProcessor {
 }
 
 /// Go's `time.ParseDuration` error text for `input`.
-fn go_duration_error(input: &str, err: &str) -> String {
+pub(crate) fn go_duration_error(input: &str, err: &str) -> String {
     if err.starts_with("missing unit") {
         format!("time: missing unit in duration {input:?}")
     } else if err.starts_with("unknown unit") {

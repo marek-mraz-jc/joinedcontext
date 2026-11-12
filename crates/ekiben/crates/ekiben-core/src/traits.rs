@@ -234,6 +234,8 @@ pub trait RateLimit: Send + Sync {
 pub trait Buffer: Send + Sync {
     async fn push(&self, tx: Transaction) -> Result<(), CoreError>;
     async fn pop(&self, ctx: &StreamContext) -> Result<Transaction, CoreError>;
+    /// The input has ended: a buffer drains or releases what it holds (Bento's `EndOfInput`).
+    fn end_of_input(&self) {}
     async fn close(&self) -> Result<(), CoreError> {
         Ok(())
     }

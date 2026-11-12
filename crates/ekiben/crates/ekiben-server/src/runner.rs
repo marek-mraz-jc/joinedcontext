@@ -153,7 +153,10 @@ pub fn spawn_stream(
         shutdown_rx: shutdown_rx.clone(),
     };
 
-    let input = registry.build_input(&conf.input, &sctx)?;
+    let mut input = registry.build_input(&conf.input, &sctx)?;
+    if let Some(buffer) = registry.build_buffer(&conf.buffer, &sctx)? {
+        input = Box::new(ekiben_core::buffer::BufferedInput::new(input, buffer));
+    }
     let procs = registry.build_processor_list(&conf.pipeline.processors, &pctx)?;
     let output = registry.build_output(&conf.output, &sctx)?;
     let threads = conf.pipeline.threads;
