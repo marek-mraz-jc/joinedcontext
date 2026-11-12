@@ -2,8 +2,11 @@
 //! and the JSON-LD `@context`, the two artifacts the Portal's reconciler needs to write a Context
 //! Space's schema to Antares (`PUT /q/schemas/{tenant}`, T-3703). A port of the Python service's
 //! `/generate` (platform `tools/model-tools/src/service.py`, `gen_broker_schema.py`,
-//! `gen_context.py` and the loader checks of `common.py`); the other routes of the Python
-//! service (catalogue, Smart Data Models import, inference) are not here and answer 404.
+//! `gen_context.py` and the loader checks of `common.py`), plus the JSON Schema, the Markdown
+//! page, the example and `jc-types.ts` a save commits (`save.rs`). The Smart Data Models
+//! catalogue and its imports are the Portal's, read from the mirror the image carries
+//! (`JC_PORTAL_SDM_MIRROR_DIR`, T-6353): `/catalog` and `/import-sdm` here fetch nothing and
+//! only say a model is not in that mirror. Inference is not here and answers 404.
 //!
 //! The module has no public mount: it listens on a loopback port of its own, and `jc` hands
 //! the Portal that address (`JC_PORTAL_MODEL_TOOLS_URL`). Nothing it reads is fetched: a model
@@ -16,6 +19,7 @@ mod broker;
 mod checks;
 mod context;
 mod fields;
+mod save;
 mod schema;
 
 use axum::Router;
@@ -48,10 +52,10 @@ const WORK_SLOTS: usize = 4;
 /// How long a request waits for its compilation. The task itself runs on: its limits bound it.
 const COMPILE_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// The artifacts of the Python service this port leaves out; each is named in `errors`.
-pub const UNRENDERED: [&str; 4] = ["jsonSchema", "docs", "example", "typescript"];
-const NOT_RENDERED: &str = "not rendered by jc's Model Tools, which renders the broker schema and \
-                            the @context the views need";
+/// What `/import-sdm` answers: jc fetches no catalogue model, the Portal's mirror holds them.
+const NOT_MIRRORED: &str = "is not in the Smart Data Models mirror this jc image carries, and jc \
+                            fetches no model from the catalogue; jc_model_sdm_search lists the \
+                            models it holds";
 
 /// The version that rendered an artifact set (DM-19).
 #[must_use]
@@ -113,11 +117,38 @@ async fn dispatch(state: State, req: Request) -> Response {
             &json!({"status": "ok", "generatorVersion": generator_version()}),
         ),
         (&Method::POST, "/generate") => generate_route(state, req.into_body()).await,
+        // The Portal answers the catalogue from its mirror and asks here only without one.
+        (&Method::GET, "/catalog") => answer(
+            StatusCode::OK,
+            &json!({"subjects": [], "refreshedAt": null, "stale": true}),
+        ),
+        (&Method::POST, "/import-sdm") => import_sdm_route(req.into_body()).await,
         _ => errors(
             StatusCode::NOT_FOUND,
             &[format!("{method} {path} is not a Model Tools route")],
         ),
     }
+}
+
+/// `POST /import-sdm {model}`: the Portal asks only for a model its mirror lacks, and the
+/// answer is the wizard's message, a 200 with `errors` as service.py answers a failed fetch.
+async fn import_sdm_route(body: Body) -> Response {
+    let model = axum::body::to_bytes(body, MAX_BODY_BYTES)
+        .await
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|v| v.get("model").and_then(Value::as_str).map(str::to_owned));
+    let Some(model) = model else {
+        return errors(
+            StatusCode::BAD_REQUEST,
+            &["'model' must be a Smart Data Models catalogue identifier".to_owned()],
+        );
+    };
+    let shown: String = model.chars().take(128).collect();
+    answer(
+        StatusCode::OK,
+        &json!({"generatorVersion": generator_version(), "errors": [format!("{shown} {NOT_MIRRORED}")]}),
+    )
 }
 
 async fn generate_route(state: State, body: Body) -> Response {
@@ -297,22 +328,60 @@ fn artifacts(source: &str, imports: &BTreeMap<String, String>) -> Value {
         Some((_, fields)) => fields.push(field),
         None => failures.push((message, vec![field])),
     };
-    match context::context(&view, &version) {
+    let context = match context::context(&view, &version) {
         Ok(doc) => {
-            out.insert("context".to_owned(), doc);
+            out.insert("context".to_owned(), doc.clone());
+            Some(doc)
         }
-        Err(e) => fail("context", e),
-    }
-    match broker::broker_schema(&view).and_then(|schema| admitted(&schema).map(|()| schema)) {
-        Ok(schema) => {
+        Err(e) => {
+            fail("context", e);
+            None
+        }
+    };
+    let model = match broker::broker_schema(&view)
+        .and_then(|schema| admitted(&schema).map(|model| (schema, model)))
+    {
+        Ok((schema, model)) => {
             out.insert("brokerSchema".to_owned(), schema);
+            Some(model)
         }
-        Err(e) => fail("brokerSchema", e),
-    }
-    // The Portal saves a model only with every artifact it commits (DM-02): an empty JSON Schema,
-    // documentation or example would be committed and served as if generated.
-    for field in UNRENDERED {
-        fail(field, NOT_RENDERED.to_owned());
+        Err(e) => {
+            fail("brokerSchema", e);
+            None
+        }
+    };
+    // The Portal saves a model only with every artifact it commits (DM-02): each is rendered
+    // from the model the broker reads, or its field is named in `errors` and the save refused.
+    match &model {
+        Some(model) => {
+            match save::json_schema(model, &version) {
+                Ok(schema) => {
+                    out.insert("jsonSchema".to_owned(), schema);
+                }
+                Err(e) => fail("jsonSchema", e),
+            }
+            out.insert("docs".to_owned(), Value::String(save::docs(model)));
+            match &context {
+                Some(context) => match save::example(model, &view, context) {
+                    Ok(example) => {
+                        out.insert("example".to_owned(), example);
+                    }
+                    Err(e) => fail("example", e),
+                },
+                None => fail("example", "the @context did not render".to_owned()),
+            }
+            match save::typescript(model, &view, &version) {
+                Ok(types) => {
+                    out.insert("typescript".to_owned(), Value::String(types));
+                }
+                Err(e) => fail("typescript", e),
+            }
+        }
+        None => {
+            for field in ["jsonSchema", "docs", "example", "typescript"] {
+                fail(field, "the broker schema did not render".to_owned());
+            }
+        }
     }
     let errors: Vec<Value> = failures
         .into_iter()
@@ -324,10 +393,9 @@ fn artifacts(source: &str, imports: &BTreeMap<String, String>) -> Value {
 
 /// The broker reads a tenant's schema with `linkml-model` under its surface limits: a schema
 /// it would refuse is refused here, before the reconciler sends it.
-fn admitted(schema: &Value) -> Result<(), String> {
+fn admitted(schema: &Value) -> Result<linkml_model::Model, String> {
     let bytes = serde_json::to_vec(schema).map_err(|e| e.to_string())?;
     linkml_model::Model::read(&bytes, &linkml_model::SURFACE_LIMITS)
-        .map(|_| ())
         .map_err(|e| format!("the broker refuses this schema: {e}"))
 }
 
