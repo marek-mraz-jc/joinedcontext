@@ -89,6 +89,20 @@ def test_counts_parse_and_differ():
     assert suite.count_diff(c, {"public.a": 2}) == ["public.a: 3 -> 2", "public.b: 0 -> absent"]
 
 
+def test_a_restored_db_is_vacuumed_and_analyzed_before_the_copy_serves(tmp_path, monkeypatch):
+    dump = tmp_path / "antares.dump"
+    dump.write_bytes(b"dump")
+    ran = []
+
+    def fake_run(argv, **kw):
+        ran.append(argv[argv.index("rh-pg-copy") + 1:])
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+    monkeypatch.setattr(suite.subprocess, "run", fake_run)
+    suite.Pg("rh-pg-copy", 55461).restore("antares", dump)
+    assert [r[0] for r in ran] == ["pg_restore", "vacuumdb"]
+    assert ran[1] == ["vacuumdb", "--analyze", "-p", "55461", "-d", "antares"]
+
+
 class FakeOps:
     """docker, pg_dump and up.sh stood in for: writes results the way the inner suites would."""
 

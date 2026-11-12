@@ -214,7 +214,14 @@ command works on an empty and on a populated database:
 ```bash
 pg_dump  -U postgres -Fc antares > antares.dump
 pg_restore -U postgres -d antares --clean --if-exists antares.dump
+vacuumdb   -U postgres -d antares --analyze
 ```
+
+A dump carries no planner statistics and no visibility map, so run
+`vacuumdb --analyze` before the brokers serve the restored database: a
+restored copy without it answered `/types` of a 40-selector view in 5-8 s
+instead of 0.5-2 s and crossed the discovery deadline (199 partial answer,
+T-6800).
 
 Drill on a database holding four entities: `SELECT count(*) FROM entities`
 answers 4, `DELETE FROM entities` brings it to 0, `pg_restore` exits 0 and

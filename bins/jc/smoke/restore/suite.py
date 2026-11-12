@@ -325,6 +325,13 @@ class Pg:
                                stdin=f, capture_output=True, timeout=6 * 3600, check=False)
         if p.returncode:
             raise RuntimeError(f"pg_restore {db}: {p.stderr.decode(errors='replace').strip()[:300]}")
+        # pg_restore carries no planner statistics and no visibility map: the copy planned blind and
+        # every index-only scan read the heap, so its /types took 5-8 s against the source's 0.5-2 s
+        # and crossed the broker's discovery deadline (T-6800). The runbook's post-restore step.
+        p = subprocess.run(self.exec_argv("vacuumdb", "--analyze", "-p", str(self.port), "-d", db),
+                           capture_output=True, timeout=3600, check=False)
+        if p.returncode:
+            raise RuntimeError(f"vacuumdb {db}: {p.stderr.decode(errors='replace').strip()[:300]}")
 
     def image(self) -> str:
         return run(["docker", "inspect", "-f", "{{.Config.Image}}", self.container]).strip()
