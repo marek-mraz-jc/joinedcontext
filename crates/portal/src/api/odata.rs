@@ -50,7 +50,7 @@ use crate::ops::{self, Caller};
 use crate::resource::is_dns1123;
 use crate::state::AppState;
 
-const NAMESPACE: &str = "JoinedContext.Portal";
+pub(crate) const NAMESPACE: &str = "JoinedContext.Portal";
 
 /// The most rows one answer carries: a longer read pages on with `@odata.nextLink`.
 pub const MAX_TOP: u64 = 1000;
@@ -59,15 +59,15 @@ pub const MAX_TOP: u64 = 1000;
 /// sentence asking for a narrower list, never answered from a cut set.
 // ponytail: every row is read per request; the operations' own filters (space, kind) pushed
 // down when a project outgrows this.
-const MAX_ROWS: usize = 10_000;
+pub(crate) const MAX_ROWS: usize = 10_000;
 
 /// One entity set: the list operation that answers its rows and the input that names them.
-struct ListSet {
-    set: String,
-    type_name: String,
+pub(crate) struct ListSet {
+    pub(crate) set: String,
+    pub(crate) type_name: String,
     op: &'static str,
     input: Value,
-    key: &'static str,
+    pub(crate) key: &'static str,
     /// The input member a page's `next` goes back in, for an operation that pages.
     cursor: Option<&'static str>,
     /// Whether the rows are the Endpoints page's ([`endpoint_list::rows`]), not the operation's.
@@ -161,14 +161,14 @@ fn identifier(name: &str) -> bool {
 }
 
 /// The service, built once from the registry: the sets, their CSDL model and `$metadata`.
-struct Served {
-    sets: Vec<ListSet>,
-    service: Service,
+pub(crate) struct Served {
+    pub(crate) sets: Vec<ListSet>,
+    pub(crate) service: Service,
     model: Arc<Model>,
     metadata: Result<String, String>,
 }
 
-static SERVED: LazyLock<Served> = LazyLock::new(|| {
+pub(crate) static SERVED: LazyLock<Served> = LazyLock::new(|| {
     let sets = list_sets();
     let service = Service {
         namespace: NAMESPACE.into(),
@@ -274,7 +274,7 @@ fn actions_xml() -> (String, String) {
 }
 
 /// The CSDL XML of the service: odata-csdl's model of the entity sets, the actions beside it.
-fn metadata_xml(model: &Model) -> Result<String, String> {
+pub(crate) fn metadata_xml(model: &Model) -> Result<String, String> {
     let mut xml = Vec::new();
     odata_csdl::write_xml(model, &odata_csdl::Limits::strict(), &mut xml)
         .map_err(|e| e.to_string())?;
@@ -293,7 +293,7 @@ fn metadata_xml(model: &Model) -> Result<String, String> {
 }
 
 /// The parser's bounds: a request longer, deeper or wider than these is refused before it runs.
-fn limits() -> odata_url::Limits {
+pub(crate) fn limits() -> odata_url::Limits {
     odata_url::Limits {
         max_query_len: 4096,
         max_expr_depth: 16,
@@ -308,17 +308,21 @@ fn limits() -> odata_url::Limits {
 
 /// Why a query is not answered: the status, the OData error code and a sentence for a person.
 #[derive(Debug, PartialEq)]
-struct Refusal(StatusCode, &'static str, String);
+pub(crate) struct Refusal(
+    pub(crate) StatusCode,
+    pub(crate) &'static str,
+    pub(crate) String,
+);
 
-fn bad(message: impl Into<String>) -> Refusal {
+pub(crate) fn bad(message: impl Into<String>) -> Refusal {
     Refusal(StatusCode::BAD_REQUEST, "BadRequest", message.into())
 }
 
-fn not_found(message: impl Into<String>) -> Refusal {
+pub(crate) fn not_found(message: impl Into<String>) -> Refusal {
     Refusal(StatusCode::NOT_FOUND, "NotFound", message.into())
 }
 
-fn not_implemented(what: &str) -> Refusal {
+pub(crate) fn not_implemented(what: &str) -> Refusal {
     Refusal(
         StatusCode::NOT_IMPLEMENTED,
         "NotImplemented",
@@ -337,6 +341,8 @@ impl From<TableError> for Refusal {
                 "this entity set has no property {path}; $metadata lists its properties"
             )),
             TableError::BadRequest(why) => bad(why),
+            TableError::Forbidden(why) => Refusal(StatusCode::FORBIDDEN, "Forbidden", why),
+            TableError::Conflict(why) => Refusal(StatusCode::CONFLICT, "Conflict", why),
             // The source's own text stays in the log, never in the answer.
             TableError::Source(why) => {
                 tracing::warn!("an OData entity set did not read: {why}");
@@ -357,7 +363,7 @@ impl IntoResponse for Refusal {
     }
 }
 
-fn odata_headers(content_type: &'static str) -> [(header::HeaderName, HeaderValue); 2] {
+pub(crate) fn odata_headers(content_type: &'static str) -> [(header::HeaderName, HeaderValue); 2] {
     [
         (header::CONTENT_TYPE, HeaderValue::from_static(content_type)),
         (
@@ -404,7 +410,7 @@ fn flat(row: Value) -> Value {
 
 /// Every row of `set` the caller may read: its operation called through the registry door, page
 /// after page. The operation's refusal is the REST door's (ProblemDetails, 403 or 404).
-async fn rows_of(
+pub(crate) async fn rows_of(
     set: &ListSet,
     caller: &Caller,
     state: &AppState,
@@ -453,7 +459,7 @@ async fn rows_of(
 }
 
 /// The value of a key literal: a string or an integer.
-fn key_value(key: &Literal) -> Result<Value, Refusal> {
+pub(crate) fn key_value(key: &Literal) -> Result<Value, Refusal> {
     match key {
         Literal::String(s) => Ok(Value::String(s.clone())),
         Literal::Int(i) => Ok(json!(i)),

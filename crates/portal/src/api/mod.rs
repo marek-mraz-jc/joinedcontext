@@ -81,6 +81,7 @@ pub mod mqtt_test_publish;
 pub mod mutate;
 pub mod odata;
 pub mod odata_endpoints;
+pub mod odata_org;
 pub mod ops;
 pub mod organization_limits;
 pub mod organization_widgets;
