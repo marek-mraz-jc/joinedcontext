@@ -693,6 +693,62 @@ async fn resource_view_delete_never_skips_its_check() {
     assert_eq!(a.status, StatusCode::INTERNAL_SERVER_ERROR, "{}", a.body);
 }
 
+async fn read_from(app: &Router, origin: &str) -> Answer {
+    let headers = [("origin", origin)];
+    send(
+        app,
+        Method::GET,
+        "/api/3/action/status_show",
+        None,
+        &headers,
+        Body::empty(),
+    )
+    .await
+}
+
+/// The chart renderer's host page on `https://viz.{domain}` reads a published view anonymously
+/// (`credentials: "omit"`): the action API answers CORS for that one origin on a read, as CKAN's
+/// `ckan.cors.origin_whitelist` did (T-4641), and for no other origin or a write (T-6824).
+#[tokio::test]
+async fn ckan_reads_answer_cors_for_the_viz_origin_alone() {
+    let w = world().await;
+    let app = &w.app;
+    let a = read_from(app, "https://viz.city.test").await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    assert_eq!(
+        a.header("access-control-allow-origin"),
+        "https://viz.city.test"
+    );
+    assert_eq!(a.header("access-control-allow-credentials"), "");
+    assert!(a.header("vary").to_ascii_lowercase().contains("origin"));
+    for other in [
+        "https://evil.test",
+        "https://viz.city.test.evil.test",
+        "null",
+    ] {
+        let a = read_from(app, other).await;
+        assert_eq!(a.header("access-control-allow-origin"), "", "{other}");
+        assert!(a.header("vary").to_ascii_lowercase().contains("origin"));
+    }
+    let a = send(
+        app,
+        Method::POST,
+        "/api/3/action/status_show",
+        None,
+        &[
+            ("origin", "https://viz.city.test"),
+            ("content-type", "application/json"),
+        ],
+        Body::from("{}"),
+    )
+    .await;
+    assert_eq!(
+        a.header("access-control-allow-origin"),
+        "",
+        "a write gets no CORS answer"
+    );
+}
+
 #[tokio::test]
 async fn ckan_site_and_listing_actions() {
     let w = world().await;

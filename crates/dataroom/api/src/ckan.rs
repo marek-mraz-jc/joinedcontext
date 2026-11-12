@@ -9,17 +9,18 @@
 use crate::{dataset_shown, decision_error, DataroomState};
 use axum::body::Bytes;
 use axum::extract::{Path, RawQuery, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use chrono::Utc;
+use dataroom_core::branding::{origin_of, Address};
 use dataroom_core::ckan_compat::{
     ckan_license_list, dataset_to_ckan, distribution_from_ckan, distribution_to_ckan,
     resource_view_to_ckan,
 };
 use dataroom_core::{
-    text_in_lang, Action, DataroomError, DatasetFilter, ObjectTarget, Publisher, RecordState,
-    ResourceView, Visibility,
+    text_in_lang, Action, Catalogue, DataroomError, DatasetFilter, ObjectTarget, Publisher,
+    RecordState, RequestCtx, ResourceView, Visibility,
 };
 use dataroom_plugin::validate_view_payload;
 use dataroom_search::{apply_fq_to_filter, search_datasets};
@@ -129,6 +130,41 @@ async fn dispatch_ckan_action(
             return ckan_err(&base, &action, e);
         }
     };
+    let viz = is_get
+        .then(|| {
+            cat.effective_branding(Some(&state.branding_of(&cat)))
+                .address(Address::Viz)
+        })
+        .flatten();
+    let mut response = answer_ckan_action(state, ctx, cat, action, payload, is_get).await;
+    if is_get {
+        allow_viz_origin(&mut response, headers.get(header::ORIGIN), viz.as_deref());
+    }
+    response
+}
+
+/// Lets the chart renderer's host page (`https://viz.{domain}`) read the answer: it fetches a
+/// published `jc_visualization` view anonymously with `credentials: "omit"`, as it did from CKAN
+/// under `ckan.cors.origin_whitelist` (T-4641). That one origin alone, never with credentials;
+/// `Vary: Origin` keeps a shared cache from handing one origin's answer to another (T-6824).
+fn allow_viz_origin(response: &mut Response, origin: Option<&HeaderValue>, viz: Option<&str>) {
+    let headers = response.headers_mut();
+    headers.append(header::VARY, HeaderValue::from_static("Origin"));
+    if let (Some(origin), Some(viz)) = (origin, viz) {
+        if origin.as_bytes() == origin_of(viz).as_bytes() {
+            headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin.clone());
+        }
+    }
+}
+
+async fn answer_ckan_action(
+    state: DataroomState,
+    ctx: RequestCtx,
+    cat: Catalogue,
+    action: String,
+    payload: Value,
+    is_get: bool,
+) -> Response {
     let base = cat.base_url();
     let is_anon_get = is_get && ctx.subject.is_anonymous();
 
