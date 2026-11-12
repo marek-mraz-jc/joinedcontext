@@ -281,6 +281,102 @@ async fn remint_renames_history_and_relationships_resolves_old_ids_and_rolls_bac
     assert_eq!(status, 404, "the rollback leaves no map row behind");
 }
 
+/// The live form (T-6830): one transaction per range of Entity ids, so a
+/// writer waits on one range's locks, with the same rows at the end as the
+/// single-transaction remint. Relationships cross the ranges both ways, and
+/// the history (both parents) of Entities in the first and a middle range.
+#[tokio::test(flavor = "multi_thread")]
+async fn remint_batched_commits_each_range_and_ends_as_one_transaction_would() {
+    let Ok(url) = std::env::var("ANTARES_TEST_DATABASE_URL") else {
+        eprintln!("SKIP: ANTARES_TEST_DATABASE_URL not set");
+        return;
+    };
+    let pool = antares_sql::store::pg::connect(&url, 5)
+        .await
+        .expect("connect");
+    let store = antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(
+        pool.clone(),
+    ));
+    let st = AppState::with_store("antares1".into(), std::sync::Arc::new(store), "postgres");
+    let tenant = format!(
+        "remintb{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..12]
+    );
+    let t = tenant.as_str();
+    const N: usize = 1200;
+    let id = |i: usize| format!("urn:ngsi-ld:KPI:bbsk.sk:otvorene-data:e{:04}", i % N);
+    for chunk in (0..N).collect::<Vec<_>>().chunks(300) {
+        let batch: Vec<Value> = chunk.iter().map(|&i| kpi(&id(i), &id(i + 701))).collect();
+        assert_eq!(
+            post(&st, t, "/ngsi-ld/v1/entityOperations/create", &json!(batch)).await,
+            201
+        );
+    }
+    assert_eq!(
+        post(&st, t, "/ngsi-ld/v1/entities", &kpi(OTHER, &id(5))).await,
+        201
+    );
+    for i in [3, 700] {
+        let status = post(
+            &st,
+            t,
+            "/ngsi-ld/v1/temporal/entities",
+            &temporal(&id(i), &id(i + 1)),
+        )
+        .await;
+        assert!(matches!(status, 201 | 204), "temporal create: {status}");
+    }
+    assert!(move_to_keyed(&pool, t, &id(700)).await >= 3);
+    let history = temporal_of(&st, t, &id(700)).await;
+    let identity_before = digest(&pool, t, "bbsk.sk", "bbsk.sk").await;
+    let expected = digest(&pool, t, "bbsk.sk", "sk_bbsk").await;
+
+    // a work_mem far below the map's size, where 0033's IN-or-LIKE spilled
+    let mut conn = pool.acquire().await.expect("conn");
+    sqlx::query("SET work_mem = '64kB'")
+        .execute(&mut *conn)
+        .await
+        .expect("work_mem");
+    let report: Value =
+        sqlx::query_scalar("CALL antares_remint_batched($1, 'bbsk.sk', 'sk_bbsk', 250, NULL)")
+            .bind(t)
+            .fetch_one(&mut *conn)
+            .await
+            .expect("batched remint");
+    assert_eq!(report["batches"], 5, "1201 Entities by 250: {report}");
+    assert_eq!(report["ids"], N, "{report}");
+    assert_eq!(report["entities"], N + 1, "{report}");
+    assert_eq!(report["selectors_still_naming_from"], 0, "{report}");
+    let commits = "SELECT count(DISTINCT remapped_at) FROM entity_id_remap WHERE tenant_id = $1";
+    assert_eq!(count(&pool, commits, t).await, 5, "one transaction per range");
+
+    assert_eq!(digest(&pool, t, "sk_bbsk", "sk_bbsk").await, expected);
+    for sql in [
+        "SELECT count(*) FROM entities WHERE tenant_id = $1 AND entity::text LIKE '%bbsk.sk%'",
+        "SELECT count(*) FROM attr_instances WHERE tenant_id = $1 AND (entity_id || data::text) LIKE '%bbsk.sk%'",
+        "SELECT count(*) FROM attr_rows WHERE tenant_id = $1 AND data::text LIKE '%bbsk.sk%'",
+        "SELECT count(*) FROM iri_ids WHERE tenant_id = $1 AND iri LIKE '%bbsk.sk%'",
+        "SELECT count(*) FROM entity_values WHERE tenant_id = $1 AND (id LIKE '%bbsk.sk%' OR txt LIKE '%bbsk.sk%')",
+    ] {
+        assert_eq!(count(&pool, sql, t).await, 0, "{sql}");
+    }
+    let new = |i: usize| id(i).replace("bbsk.sk", "sk_bbsk");
+    let (status, e) = get(&st, t, &format!("/ngsi-ld/v1/entities/{}", id(1000))).await;
+    assert_eq!((status, &e["id"]), (200, &json!(new(1000))), "{e}");
+    assert_eq!(e["next"]["object"], new(1701));
+    assert_eq!(
+        temporal_of(&st, t, &new(700)).await,
+        history.replace("bbsk.sk", "sk_bbsk")
+    );
+
+    let back = call(&pool, "rollback", t).await.expect("rollback");
+    assert_eq!(back["ids"], N, "{back}");
+    assert_eq!(
+        digest(&pool, t, "bbsk.sk", "bbsk.sk").await,
+        identity_before
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn remint_refuses_a_clash_a_stray_rollback_and_the_broker_role() {
     let Ok(url) = std::env::var("ANTARES_TEST_DATABASE_URL") else {
@@ -327,6 +423,7 @@ async fn remint_refuses_a_clash_a_stray_rollback_and_the_broker_role() {
     for sql in [
         "SELECT antares_remint($1, 'bbsk.sk', 'sk_bbsk')",
         "SELECT remint_apply($1, 'bbsk.sk', 'sk_bbsk', true)",
+        "CALL antares_remint_batched($1, 'bbsk.sk', 'sk_bbsk', 1)",
     ] {
         let refused = as_role_without_bypass(&pool, sql, t).await;
         assert!(
@@ -360,7 +457,10 @@ async fn as_role_without_bypass(pool: &PgPool, sql: &str, tenant: &str) -> Strin
         format!("CREATE ROLE {role} NOSUPERUSER NOBYPASSRLS"),
         format!(
             "GRANT EXECUTE ON FUNCTION remint_guard(text, text, text), \
-             remint_apply(text, text, text, boolean), antares_remint(text, text, text) TO {role}"
+             remint_apply(text, text, text, boolean, text, text), antares_remint(text, text, text) TO {role}"
+        ),
+        format!(
+            "GRANT EXECUTE ON PROCEDURE antares_remint_batched(text, text, text, integer, jsonb) TO {role}"
         ),
         format!("SET LOCAL ROLE {role}"),
     ] {
