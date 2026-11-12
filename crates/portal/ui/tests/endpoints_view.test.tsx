@@ -112,6 +112,10 @@ function renderEndpoints(permissions?: unknown, entities?: () => Response) {
     if (path.endsWith("/auth/me")) {
       return json(IDENTITY);
     }
+    // The gateway admits this editor, so the edit form opens its schema, data and proof sections (T-6802).
+    if (path.endsWith("/admission")) {
+      return json({ admitted: true });
+    }
     if (permissions !== undefined && path.endsWith("/permissions/me")) {
       return json(permissions);
     }
@@ -557,6 +561,7 @@ describe("what an endpoint answers", () => {
           new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }),
         );
       if (url.pathname.endsWith("/auth/me")) return json(IDENTITY);
+      if (url.pathname.endsWith("/admission")) return json({ admitted: true });
       if (url.pathname.endsWith("/schema/index.json")) return json({ models: [{ version: 1 }] });
       if (url.pathname.endsWith("/schema/v1/json-schema")) return json(PUBLISHED);
       if (url.pathname.includes("/ngsi-ld/v1/entities")) return json(AIR_ROWS);

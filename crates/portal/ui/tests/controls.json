@@ -2382,6 +2382,7 @@
       "tests": [
         "edit_prefill.test.tsx",
         "editor_round_trip.test.ts",
+        "endpoint_admission.test.tsx",
         "endpoint_catalog.test.tsx",
         "endpoint_open_data.test.tsx",
         "endpoint_representations.test.ts",

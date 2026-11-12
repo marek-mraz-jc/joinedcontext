@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { EndpointPage } from "../src/pages/endpoints/EndpointPage";
+import { EndpointsPage } from "../src/routes/EndpointsPage";
 import { EffectivePermissions } from "../src/pages/access/EffectivePermissions";
 import { REQUEST_ACCESS_ANCHOR } from "../src/components/endpoints/EndpointAdmission";
 
@@ -26,8 +27,11 @@ const ENDPOINT = {
 };
 const list = (items: unknown[]) => ({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items });
 
-/** Every path the page asked, after a stubbed fetch that answers `admitted`. */
-function serve(admitted: boolean): string[] {
+/**
+ * Every path the page asked, after a stubbed fetch that answers `admitted`; `bootstrap` makes the
+ * person the project's administrator, who may edit the Endpoint.
+ */
+function serve(admitted: boolean, bootstrap = false): string[] {
   const asked: string[] = [];
   vi.stubGlobal(
     "fetch",
@@ -39,7 +43,7 @@ function serve(admitted: boolean): string[] {
       if (path.endsWith(`/endpoints/${NAME}/admission`)) return json({ admitted });
       if (path.endsWith(`/endpoints/${NAME}`)) return json(ENDPOINT);
       if (path.endsWith("/endpoints")) return json(list([ENDPOINT]));
-      if (path.endsWith("/permissions/me")) return json({ project: PROJECT, bootstrap: false, grants: [] });
+      if (path.endsWith("/permissions/me")) return json({ project: PROJECT, bootstrap, grants: [] });
       if (path.startsWith("/api/endpoint/")) return json({ title: "Forbidden", status: 403 }, 403);
       return json(list([]));
     }),
@@ -86,6 +90,27 @@ describe("the Endpoint page for a person the gateway does not admit", () => {
     const asked = serve(true);
     show(() => <EndpointPage project={PROJECT} name={NAME} />);
     await vi.waitFor(() => expect(gatewayReads(asked).length).toBeGreaterThan(0));
+    expect(screen.queryByText(en.endpoints.refused.title)).not.toBeInTheDocument();
+  });
+});
+
+describe("the Endpoint edit page for a person the gateway does not admit", () => {
+  it("shows the refused state in place of the schema and data, and reads nothing through the Endpoint", async () => {
+    const asked = serve(false, true);
+    show(() => <EndpointsPage project={PROJECT} edit={NAME} />);
+    expect(await screen.findByText(en.endpoints.refused.title)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: en.endpoints.refused.action })).toHaveAttribute(
+      "href",
+      `/projects/${PROJECT}/endpoints/${NAME}#${REQUEST_ACCESS_ANCHOR}`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(gatewayReads(asked)).toEqual([]);
+  });
+
+  it("reads the schema through the Endpoint once admitted", async () => {
+    const asked = serve(true, true);
+    show(() => <EndpointsPage project={PROJECT} edit={NAME} />);
+    await vi.waitFor(() => expect(asked).toContain(`/api/endpoint/${SLUG}/schema/index.json`));
     expect(screen.queryByText(en.endpoints.refused.title)).not.toBeInTheDocument();
   });
 });
