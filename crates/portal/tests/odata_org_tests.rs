@@ -837,6 +837,31 @@ async fn a_function_answers_as_mcp_tools_call_and_takes_aliases() {
     }
 }
 
+/// The org-admin's CSDL JSON the SDK's OData client is generated from (T-6816): a change of the
+/// service that moves it fails here until the snapshot is written again
+/// (`JC_WRITE_SNAPSHOT=1 cargo test --test odata_org_tests sdk_metadata`) and the client
+/// regenerated (`node sdk/scripts/odata-gen.mjs`), which CI checks has no diff.
+#[tokio::test]
+async fn sdk_metadata_snapshot_is_the_org_admins_metadata() {
+    const SNAPSHOT: &str = "sdk/odata/org-admin.metadata.json";
+    let state = state();
+    let answer = get(&state, Mode::Host("hel"), "root", "/api/v1/$metadata?$format=json").await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let pretty = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&answer.json()).expect("JSON")
+    );
+    if std::env::var_os("JC_WRITE_SNAPSHOT").is_some() {
+        std::fs::write(SNAPSHOT, &pretty).expect("write the snapshot");
+    }
+    let stored = std::fs::read_to_string(SNAPSHOT).unwrap_or_default();
+    assert!(
+        stored == pretty,
+        "{SNAPSHOT} is not the org-admin's $metadata: write it with JC_WRITE_SNAPSHOT=1 and \
+         regenerate the SDK client with node sdk/scripts/odata-gen.mjs"
+    );
+}
+
 /// The registry's actions: a Change-proposing one needs the project's `If-Match` (428, then 412
 /// with the current one) and then answers what the REST door answers; a dry run needs none; a
 /// project opens only in the Organization whose service was called.

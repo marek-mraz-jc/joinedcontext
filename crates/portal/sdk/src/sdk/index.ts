@@ -114,3 +114,8 @@ export { reportError } from "./report";
 // UN/CEFACT units (DM-06): the platform's code list, and a value written with its unit's symbol.
 export { UNITS, conversion, convertible, formatValue, unitLabel, unitOf, unitSymbol, unitTitle } from "./units";
 export type { Unit } from "./units";
+
+// The Portal's OData service per Organization, typed from its $metadata (ADR-N-070, T-6816).
+export { odata, ODataClient, ODataError, Query as ODataQuery } from "./odata/client";
+export type { KeyOf, ODataOptions, Page as ODataPage } from "./odata/client";
+export type * as ODataModel from "./odata/generated";
