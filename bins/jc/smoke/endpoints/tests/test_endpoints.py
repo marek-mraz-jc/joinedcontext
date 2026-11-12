@@ -49,7 +49,7 @@ spec:
 {pattern}"""
 
 
-def bundle(tmp: Path, now: str = "2026-11-08T12:00:00Z", synthetic: bool = False) -> Path:
+def bundle(tmp: Path, now: str = "2026-11-08T12:00:00Z", synthetic: bool = False, expires: bool = False) -> Path:
     files = tmp / "gitea" / "files" / "org" / "city" / "spaces" / "air"
     (files / "endpoints").mkdir(parents=True)
     (files / "policies").mkdir()
@@ -71,7 +71,8 @@ def bundle(tmp: Path, now: str = "2026-11-08T12:00:00Z", synthetic: bool = False
     for i, side in enumerate(["north", "north", "south"]):
         rows.append({"tenant": "city-air-pinned", "entity": {
             "id": f"urn:ngsi-ld:AirQualityObserved:{side}-{i}", "type": DC + "AirQualityObserved",
-            "https://uri.etsi.org/ngsi-ld/location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1, 2]}}}})
+            "https://uri.etsi.org/ngsi-ld/location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1, 2]}},
+            **({"expiresAt": "2099-01-01T00:00:00Z"} if expires else {})}})
     rows.append({"tenant": "city-air-pinned", "entity": {"id": "urn:ngsi-ld:Road:r1", "type": DC + "Road"}})
     (tmp / "antares" / "entities.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     (tmp / "antares" / "temporal.jsonl").write_text(json.dumps({
@@ -245,8 +246,8 @@ def serve():
         s.shutdown()
 
 
-def run(tmp_path, base, now, synthetic=False):
-    b = bundle(tmp_path / "x", now, synthetic)
+def run(tmp_path, base, now, synthetic=False, expires=False):
+    b = bundle(tmp_path / "x", now, synthetic, expires)
     out = tmp_path / "out"
     code = suite.main(["--base-url", base, "--export", str(b), "--out", str(out), "--workers", "1"])
     return code, json.loads((out / "results.json").read_text())
@@ -294,6 +295,18 @@ def test_a_synthetic_bundle_grown_by_its_pipelines_counts_the_seeded_rows(tmp_pa
     assert by["anon.count.seeded"]["actual"] == "count=2"
     assert by["anon.types.written"]["target"].endswith("WaterQualityObserved")
     assert "numberMatched=5" in by["anon.ogc.items"]["actual"]
+
+
+def test_a_type_of_expiring_entities_a_pipeline_writes_counts_at_least_the_seeded_rows(tmp_path, serve):
+    # smoke 43161732041: helsinki linked-events wrote Events (they expire) while the suite read
+    # them, 99 then 393 then 447 on one Endpoint; every surface failed against the bundle's 2.
+    code, res = run(tmp_path, serve(Fake("grown")), now_iso(), synthetic=True, expires=True)
+    fails = [r for r in res["checks"] if r["result"] == "fail"]
+    assert code == 0 and not fails, fails
+    by = {r["id"]: r for r in res["checks"]}
+    assert by["anon.count.seeded"]["expected"].startswith("<= 2") and by["anon.count.seeded"]["actual"] == "count=2"
+    assert by["anon.count"]["expected"] == ">= 2 (a Pipeline writes the type)" and by["anon.count"]["actual"] == "200 count=5"
+    assert "count=5" in by["anon.odata.query"]["actual"] and "rows=5" in by["anon.ogc.csv"]["actual"]
 
 
 @pytest.mark.parametrize("broken,synthetic,check", [
