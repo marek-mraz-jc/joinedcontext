@@ -2383,7 +2383,6 @@
     "refused": {
       "title": "Údaje tohto Endpointu nečítate",
       "body": "Vaša rola v Portáli vám dovoľuje Endpoint spravovať, no brána púšťa čitateľa podľa skupín projektu a Policies Endpointu a žiadna z nich vás nemenuje. Rola v Portáli Policy nikdy nerozširuje.",
-      "next": "Požiadajte vlastníkov priestoru o čítanie: požiadajte o prístup na stránke Endpointu.",
       "action": "Požiadať o prístup",
       "checking": "Overujem, či vás brána púšťa…",
       "unavailable": "Portál nezistil, či vás brána púšťa; obnovte stránku a skúste znova.",

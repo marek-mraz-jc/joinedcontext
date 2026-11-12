@@ -53,7 +53,7 @@ export function EndpointRefused({
     return <Alert tone="warning">{t("endpoints.refused.unavailable")}</Alert>;
   }
   if (admission.data.admitted) return null;
-  const linkClass = "text-primary-soft-fg underline hover:no-underline";
+  const linkClass = "focus-ring touch-size inline-flex items-center font-medium text-primary-soft-fg underline hover:no-underline";
   return (
     <Alert
       tone="info"
@@ -76,8 +76,7 @@ export function EndpointRefused({
         )
       }
     >
-      <p>{t("endpoints.refused.body")}</p>
-      <p>{t("endpoints.refused.next")}</p>
+      {t("endpoints.refused.body")}
     </Alert>
   );
 }
