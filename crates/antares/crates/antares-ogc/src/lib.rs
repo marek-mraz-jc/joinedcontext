@@ -51,7 +51,7 @@ use std::collections::BTreeMap;
 pub const PREFIX: &str = "/x/views";
 
 /// How many files (`f=parquet`, `csv`, `zip`) the surface writes at once, 1 to 64,
-/// default [`EXPORT_FILES`]; past it a file is `503` with `Retry-After` (T-4465 review).
+/// default [`EXPORT_FILES`]; past it a file is `429` with `Retry-After` (T-4465 review, T-6823).
 pub const EXPORT_FILES_ENV: &str = "ANTARES_EXPORT_FILES";
 
 /// The files the surface writes at once unless `ANTARES_EXPORT_FILES` names another
@@ -70,11 +70,16 @@ pub const EXPORT_FILE_BYTES_ENV: &str = "ANTARES_EXPORT_FILE_BYTES";
 /// first byte and cut after it (jc-ogc-stream).
 pub const EXPORT_FILE_SECONDS_ENV: &str = "ANTARES_EXPORT_FILE_SECONDS";
 
+/// The rows one file may read, 1 to 100,000,000 (a ZIP counts a collection once per member);
+/// a file the store counts past them is `413` before its first byte (T-6823).
+pub const EXPORT_FILE_ROWS_ENV: &str = "ANTARES_EXPORT_FILE_ROWS";
+
 /// The variables this surface reads.
 pub const ENV_KEYS: &[&str] = &[
     EXPORT_FILES_ENV,
     EXPORT_FILE_BYTES_ENV,
     EXPORT_FILE_SECONDS_ENV,
+    EXPORT_FILE_ROWS_ENV,
 ];
 
 /// The bounds a Tenant's schema is read under (threat LK7), as the `OData` surface reads it.
@@ -199,6 +204,7 @@ impl Surface for Ogc {
                 "exportFiles": export::files_of(std::env::var(EXPORT_FILES_ENV).ok().as_deref()),
                 "fileBytes": export::bytes_of(std::env::var(EXPORT_FILE_BYTES_ENV).ok().as_deref()),
                 "fileSeconds": export::seconds_of(std::env::var(EXPORT_FILE_SECONDS_ENV).ok().as_deref()),
+                "fileRows": export::rows_of(std::env::var(EXPORT_FILE_ROWS_ENV).ok().as_deref()),
             },
         })
     }
