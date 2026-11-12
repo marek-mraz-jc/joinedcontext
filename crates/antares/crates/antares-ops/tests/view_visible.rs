@@ -4,7 +4,7 @@
 //! with the names it is about.
 
 use antares_ops::policy::{
-    Decision, DecisionFuture, Filter, NotifyDecision, Operation, PolicyEngine, Subject,
+    Decision, DecisionFuture, Filter, Metadata, NotifyDecision, Operation, PolicyEngine, Subject,
 };
 use antares_ops::test_kit::TestBroker;
 use antares_ops::{Caller, OperationId, Ops, Surface};
@@ -87,6 +87,26 @@ impl PolicyEngine for Narrowing {
     }
 }
 
+/// Passes no metadata member of any Attribute, and narrows nothing else.
+struct NoMetadata;
+
+impl PolicyEngine for NoMetadata {
+    fn name(&self) -> &'static str {
+        "no-metadata"
+    }
+    fn decide<'a>(&'a self, _: &'a Subject, _: &'a Operation<'a>) -> DecisionFuture<'a> {
+        Box::pin(std::future::ready(Decision::Filter(std::sync::Arc::new(
+            Filter {
+                metadata: Some(Box::new(Metadata::default())),
+                ..Filter::default()
+            },
+        ))))
+    }
+    fn pre_notify(&self, _: &Subject, _: &Value, _: &mut Value) -> NotifyDecision {
+        NotifyDecision::Deliver
+    }
+}
+
 async fn get_json(app: &Router, uri: &str) -> Value {
     let req = Request::builder()
         .method(Method::GET)
@@ -162,6 +182,18 @@ async fn the_engine_narrows_or_refuses_what_it_is_asked_about() {
         get_json(&app, "/x/visible/cars/retrieve_entity_types").await,
         json!([true, true, true]),
         "an engine that allows leaves the view's rules as they are"
+    );
+}
+
+/// T-6768: `visible` serves no answer, so a narrowing of metadata members is nothing it has to
+/// strip; it is not refused as an answer nothing would strip (the facets read of a public
+/// Event view answered 403 under such a Policy).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_metadata_narrowing_does_not_refuse_what_is_visible() {
+    let app = broker(Some(Arc::new(NoMetadata))).await.expect("a broker");
+    assert_eq!(
+        get_json(&app, "/x/visible/cars/retrieve_entity_type_info").await,
+        json!([true, true, true])
     );
 }
 
