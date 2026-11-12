@@ -168,6 +168,14 @@ test.describe("an Endpoint the gateway does not admit you to (T-6802)", () => {
       // A phone scrolls the grid inside its own frame; the page itself never scrolls sideways.
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       await shot(page, `endpoint-granted-${width}`);
+      if (width < 640) {
+        // The phone grid scrolls sideways inside its frame (T-4242 edge shadow): its last column is reached.
+        const scroller = data.locator(".jc-grid-scroll").first();
+        expect(await scroller.evaluate((box) => box.scrollWidth > box.clientWidth)).toBe(true);
+        await scroller.evaluate((box) => box.scrollTo({ left: box.scrollWidth }));
+        await expect(data.getByRole("columnheader", { name: /PM10/ }).first()).toBeInViewport();
+        await data.screenshot({ path: join(process.env.JC_EVIDENCE_DIR ?? "test-results", `endpoint-granted-${width}-scrolled.png`) });
+      }
 
       await page.goto(`/projects/${PROJECT}/settings/access?lang=en`);
       await expect.poll(() => gateway).toContain(`/api/endpoint/${SLUG}/access`);
