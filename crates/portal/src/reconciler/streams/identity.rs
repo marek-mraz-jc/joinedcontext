@@ -17,7 +17,7 @@ pub(crate) const PIPELINE_ACCOUNT: &str = "pipelines";
 /// The runner environment variable that holds one project's pipeline client secret:
 /// `banskabystrica` becomes `JC_CLIENT_SECRET_BANSKABYSTRICA`. A project name is a DNS-1123
 /// label, so the only character to translate is the hyphen.
-fn client_secret_var(project: &str) -> String {
+pub(crate) fn client_secret_var(project: &str) -> String {
     let mut name = String::from("JC_CLIENT_SECRET_");
     for ch in project.chars() {
         name.push(if ch.is_ascii_alphanumeric() {

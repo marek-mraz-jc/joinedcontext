@@ -223,6 +223,10 @@ pub struct Syncer {
     /// The federated client of every ServiceAccount bound to a workload (PF-47). `None` without
     /// a login client: such an account then has no client, and its workload no identity.
     workload_clients: Option<Arc<super::workload_clients::WorkloadClientSync>>,
+    /// The pipeline credentials the last sync resolved for a host runner, kept so the workload
+    /// wave can hand a project pipeline client's new secret over in the same sync (T-6832).
+    /// Never logged.
+    host_runner_values: RwLock<BTreeMap<String, String>>,
     /// The pipelines' own Kubernetes ServiceAccounts and the namespace they live in (PL-19).
     pipeline_service_accounts: Option<(Arc<crate::apps::kube::KubeClient>, String)>,
     /// The Apps' job ServiceAccounts and the identities namespace they live in (AP-159).
@@ -386,6 +390,7 @@ impl Syncer {
             app_clients: None,
             app_client_secrets: Arc::default(),
             workload_clients: None,
+            host_runner_values: RwLock::default(),
             pipeline_service_accounts: None,
             app_job_service_accounts: None,
             hub_scopes: None,
@@ -2459,7 +2464,15 @@ impl Syncer {
             }
         }
         if let Some(clients) = self.workload_clients.as_ref() {
+            let held = clients.host_secrets();
             let outcomes = clients.converge(fresh_mirror, bentos).await;
+            // A project made since the last sync gets its client's secret on the runner now,
+            // not one sync later (T-6832).
+            if clients.host_secrets() != held {
+                if let Some(host) = crate::pipeline_secrets::host_runner() {
+                    self.hand_to_host(host.as_ref());
+                }
+            }
             // `*` is a failure before any account was looked at: it names no one to hold back.
             if let Some(streams) = self.streams.as_ref() {
                 streams.unbound(
@@ -2482,6 +2495,21 @@ impl Syncer {
                 }
             }
         }
+    }
+
+    /// Hands a host runner its whole environment: the pipelines' resolved credentials and the
+    /// secret of each project pipeline client the workload wave keeps (T-6832), which win, since
+    /// jc-core lets no `secretRef` name a `JC_` variable.
+    fn hand_to_host(&self, host: &dyn crate::pipeline_secrets::RunnerSecrets) {
+        let mut values = self
+            .host_runner_values
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        if let Some(clients) = self.workload_clients.as_ref() {
+            values.extend(clients.host_secrets());
+        }
+        host.replace(values);
     }
 
     async fn converge_hub_scopes(&self, fresh_mirror: &Mirror) {
@@ -3240,7 +3268,11 @@ impl Syncer {
         // A host that runs the runner in its own process takes the environment itself, an
         // empty one too, so a credential no pipeline names any more leaves the runner.
         if let Some(host) = crate::pipeline_secrets::host_runner() {
-            host.replace(runner.values().clone());
+            *self
+                .host_runner_values
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = runner.values().clone();
+            self.hand_to_host(host.as_ref());
             tracing::info!(
                 variables = runner.variables().count(),
                 "the pipeline runner's secrets are handed to the host runner"

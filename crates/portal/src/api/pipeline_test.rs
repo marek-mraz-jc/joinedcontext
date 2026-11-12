@@ -612,7 +612,10 @@ async fn create_and_trace(
         Ok((result, limited))
     } else if status.is_client_error() {
         let refused = TestTrace {
-            errors: lint_errors(&refusal),
+            errors: lint_errors(&refusal)
+                .into_iter()
+                .map(|error| without_client(error, project))
+                .collect(),
             ..TestTrace::default()
         };
         Ok((refused, false))
@@ -621,6 +624,25 @@ async fn create_and_trace(
         Err(ApiError::Unavailable(
             "the pipeline runner did not answer".into(),
         ))
+    }
+}
+
+/// A runner refusal for a pipeline client secret it does not hold, in words a person can act
+/// on (T-6832): a project's client reaches the runner within a sync of the project's first one,
+/// and until then the runner names an undefined `JC_CLIENT_SECRET_<PROJECT>`. Any other error is
+/// kept as it is.
+fn without_client(error: TestError, project: &str) -> TestError {
+    if !(error.message.contains("was not defined") && error.message.contains("'JC_CLIENT_SECRET_"))
+    {
+        return error;
+    }
+    TestError {
+        message: format!(
+            "project '{project}' has no pipeline client on the runner yet: the Portal creates it \
+             at the project's next sync, usually within a minute; try again then, and if it \
+             repeats ask an operator to check the Portal's log for 'workload client'"
+        ),
+        ..error
     }
 }
 
@@ -865,6 +887,33 @@ mod tests {
     use axum::body::Bytes;
     use axum::http::StatusCode;
     use serde_json::json;
+
+    /// T-6832: a project made after the runner started named an undefined variable; the answer
+    /// names the cause, and every other refusal stays as the runner wrote it.
+    #[test]
+    fn a_missing_project_client_is_named_and_other_refusals_are_kept() {
+        let error = |message: &str| TestError {
+            stage: "lint".into(),
+            step: None,
+            line: None,
+            message: message.into(),
+        };
+        let named = without_client(
+            error("environment variable 'JC_CLIENT_SECRET_DEMO_MCP_AIR' was not defined"),
+            "demo-mcp-air",
+        );
+        assert_eq!(named.stage, "lint");
+        assert!(named
+            .message
+            .starts_with("project 'demo-mcp-air' has no pipeline client on the runner yet"));
+        assert!(!named.message.contains("JC_CLIENT_SECRET"));
+        for kept in [
+            "environment variable 'MQTT_PASSWORD' was not defined",
+            "line 3 char 7: expected a mapping",
+        ] {
+            assert_eq!(without_client(error(kept), "p").message, kept);
+        }
+    }
 
     /// jc binds the internal listener on a free loopback port and sets no capture URL: the test
     /// route captures there; a setting wins, and an address off loopback is never guessed.
