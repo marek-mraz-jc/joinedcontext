@@ -1,7 +1,8 @@
 //! A pipeline runner in the Portal's own process (`jc`, ekiben beside the Portal) takes the
 //! pipeline credentials through `pipeline_secrets::hand_runner_secrets_to`, in place of the
 //! Kubernetes Secret, and each project's `secretRef` resolves only from that project's SOPS
-//! files (T-6227).
+//! files (T-6227). A project made after jc started gets its pipeline client from the workload
+//! wave and its secret on the runner in the same sync (T-6832).
 //!
 //! Its own binary: the sink is process-wide, and `reconciler_daemon_tests` checks that a Portal
 //! without a cluster or a host runner refuses a resolved credential.
@@ -19,7 +20,7 @@ use joinedcontext_portal::pipeline_secrets::{
 use joinedcontext_portal::reconciler::Syncer;
 use joinedcontext_portal::store::Mirror;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{method, path, path_regex, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const REVISION: &str = "c0ffee1234567890";
@@ -95,6 +96,9 @@ fn project(name: &str) -> Vec<(String, String)> {
     ]
 }
 
+/// The sink is process-wide: one test hands it its runner at a time.
+static SINK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// The runner's environment as the last sync handed it.
 #[derive(Default)]
 struct Recorded(Mutex<Vec<BTreeMap<String, String>>>);
@@ -123,6 +127,7 @@ fn condition(mirror: &Mirror, project: &str) -> (String, String) {
 
 #[tokio::test]
 async fn a_host_runner_gets_a_projects_own_secret_and_never_another_projects() {
+    let _sink = SINK.lock().await;
     let identity = age::x25519::Identity::generate();
     let encrypted = joinedcontext_portal::secret_files::encrypt(
         "golemio",
@@ -178,4 +183,133 @@ async fn a_host_runner_gets_a_projects_own_secret_and_never_another_projects() {
     let (reason, message) = condition(&mirror, "praha");
     assert_ne!(reason, "SecretUnresolved", "{message}");
     assert!(!message.contains(VALUE), "{message}");
+}
+
+/// A realm whose admin API holds, for each `{project}-pipelines` asked for, the client the
+/// workload wave derives (T-6832), with the secret `generated-{project}`.
+async fn realm() -> MockServer {
+    use joinedcontext_portal::reconciler::workload_clients::{desired_external, ClientCredential};
+    const REALM: &str = "/admin/realms/hel";
+    let keycloak = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/realms/hel/protocol/openid-connect/token"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "access_token": "admin-token", "expires_in": 60 })),
+        )
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/clients")))
+        .respond_with(|request: &wiremock::Request| {
+            let asked = request
+                .url
+                .query_pairs()
+                .find(|(k, _)| k == "clientId")
+                .map(|(_, v)| v.into_owned());
+            let found = asked
+                .and_then(|id| id.strip_suffix("-pipelines").map(str::to_owned))
+                .map(|project| {
+                    let mut client =
+                        desired_external(&project, "pipelines", &ClientCredential::Secret);
+                    client["id"] = json!(format!("uuid-{project}"));
+                    json!([client])
+                })
+                .unwrap_or_else(|| json!([]));
+            ResponseTemplate::new(200).set_body_json(found)
+        })
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex(format!(
+            "^{REALM}/clients/uuid-[a-z]+/client-secret$"
+        )))
+        .respond_with(|request: &wiremock::Request| {
+            let project = request
+                .url
+                .path()
+                .split("/uuid-")
+                .nth(1)
+                .and_then(|rest| rest.split('/').next())
+                .unwrap_or_default()
+                .to_owned();
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "type": "secret", "value": format!("generated-{project}") }))
+        })
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex(format!(
+            "^{REALM}/clients/[^/]+/default-client-scopes$"
+        )))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!([{ "id": "s-basic", "name": "basic" }])),
+        )
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex(format!(
+            "^{REALM}/clients/[^/]+/(optional-client-scopes|protocol-mappers/models)$"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&keycloak)
+        .await;
+    Mock::given(path_regex(format!("^{REALM}/clients/[^/]+(/.*)?$")))
+        .respond_with(ResponseTemplate::new(204))
+        .with_priority(10)
+        .mount(&keycloak)
+        .await;
+    keycloak
+}
+
+/// T-6832, the jc-dev failure of T-6829: projects made after the realm import (praha and brno,
+/// two Organizations' alike, neither declaring a `pipelines` account) had no client, so every
+/// sample, mapping test and stream of theirs met `JC_CLIENT_SECRET_<PROJECT> was not defined`.
+/// One sync now hands the runner each project's own client secret beside the pipelines'
+/// credentials, without a restart; no project's variable holds another's secret.
+#[tokio::test]
+async fn a_project_made_after_start_has_its_pipeline_client_secret_on_the_runner() {
+    let _sink = SINK.lock().await;
+    use joinedcontext_portal::config::ClientAuth;
+    use joinedcontext_portal::reconciler::workload_clients::WorkloadClientSync;
+    let mut files = vec![("org.yaml".to_owned(), ORGANIZATION.to_owned())];
+    files.extend(project("praha"));
+    files.extend(project("brno"));
+    let forge = forge(&files).await;
+    let keycloak = realm().await;
+    let clients = WorkloadClientSync::new(
+        &format!("{}/realms/hel", keycloak.uri()),
+        "portal-api".to_owned(),
+        ClientAuth::Secret("portal-api-credential".into()),
+    )
+    .expect("a realm issuer")
+    .with_host_runner(true);
+
+    let recorded = Arc::new(Recorded::default());
+    hand_runner_secrets_to(recorded.clone());
+    let client = Arc::new(
+        ShakoClient::new(
+            forge.uri().parse().expect("forge url"),
+            "test-owner",
+            "test-repo",
+            "token-xyz",
+        )
+        .expect("shako client"),
+    );
+    Syncer::new(client, Arc::new(Mirror::new()))
+        .with_workload_clients(Arc::new(clients))
+        .sync_once()
+        .await
+        .expect("the run loads");
+
+    let handed = recorded.0.lock().unwrap().last().cloned().expect("handed");
+    assert_eq!(
+        handed.get("JC_CLIENT_SECRET_PRAHA").map(String::as_str),
+        Some("generated-praha")
+    );
+    assert_eq!(
+        handed.get("JC_CLIENT_SECRET_BRNO").map(String::as_str),
+        Some("generated-brno")
+    );
+    assert_eq!(handed.len(), 2, "{:?}", handed.keys());
 }

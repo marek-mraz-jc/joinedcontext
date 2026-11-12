@@ -1591,6 +1591,225 @@ async fn an_external_accounts_client_is_deleted_with_the_account() {
     assert_eq!(outcomes[0].error, None);
 }
 
+/// The realm's answer to a read of the client `uuid`'s secret.
+async fn secret_of(keycloak: &MockServer, uuid: &str, value: &str) {
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/clients/{uuid}/client-secret")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({ "type": "secret", "value": value })),
+        )
+        .mount(keycloak)
+        .await;
+}
+
+/// The project pipeline client the wave derives for a host runner (T-6832), as the realm holds it.
+fn host_client(project: &str, uuid: &str) -> Value {
+    let mut held = desired_external(project, "pipelines", &ClientCredential::Secret);
+    held["id"] = json!(uuid);
+    held
+}
+
+/// T-6832: on jc (the runner in this process) a project made after the realm import, here over
+/// MCP with a Pipeline and no `pipelines` account, gets its client `{project}-pipelines` with a
+/// secret the realm generates, audienced to the Endpoint its Pipeline writes and the internal
+/// listener its tests report to; the secret reaches the runner as the variable its streams name.
+/// A second Organization's project gets its own client and its own variable, never the first's.
+#[tokio::test]
+async fn a_project_made_after_start_gets_its_pipeline_client_and_the_runner_its_secret() {
+    const OTHER: &str = "o4mt6xq2bz7nk3wd5vhj2rcya6";
+    let keycloak = realm(json!([])).await;
+    creates(
+        &keycloak,
+        "zilina-pipelines",
+        host_client("zilina", "uuid-zl"),
+    )
+    .await;
+    creates(
+        &keycloak,
+        "trnava-pipelines",
+        host_client("trnava", "uuid-tt"),
+    )
+    .await;
+    mappers(&keycloak, "uuid-zl", json!([])).await;
+    mappers(&keycloak, "uuid-tt", json!([])).await;
+    secret_of(&keycloak, "uuid-zl", "zilina-generated").await;
+    secret_of(&keycloak, "uuid-tt", "trnava-generated").await;
+    let mirror = mirror_with(vec![
+        drepo(),
+        endpoint("zilina", "zilina-uniza", "zilina-uniza", SLUG),
+        endpoint("trnava", "trnava-all", "trnava", OTHER),
+    ]);
+    let wave = sync(&keycloak).with_host_runner(true);
+    assert!(wave.host_secrets().is_empty());
+
+    let outcomes = wave.converge(&mirror, &Bentos::new()).await;
+
+    for app in ["trnava/pipelines", "zilina/pipelines"] {
+        let outcome = outcomes.iter().find(|o| o.app == app);
+        assert_eq!(outcome.map(|o| o.error.clone()), Some(None), "{outcomes:?}");
+    }
+    let created = bodies(&keycloak, "POST", &format!("{REALM}/clients")).await;
+    let zilina = created
+        .iter()
+        .find(|c| c["clientId"] == "zilina-pipelines")
+        .expect("zilina's client is created");
+    assert_eq!(zilina["clientAuthenticatorType"], "client-secret");
+    assert_eq!(zilina["serviceAccountsEnabled"], true);
+    assert_eq!(zilina["standardFlowEnabled"], false);
+    assert_eq!(zilina["attributes"][MANAGED_BY], MANAGED_VALUE);
+    assert_eq!(
+        zilina["attributes"]["joinedcontext.serviceaccount"],
+        "zilina/pipelines"
+    );
+    assert_eq!(zilina.get("secret"), None, "the realm generates the secret");
+    let mut want = vec![SLUG, "portal-internal"];
+    want.sort_unstable();
+    assert_eq!(audiences_of(&keycloak, "uuid-zl").await, want);
+    // trnava has no Pipeline yet: its client reaches the internal listener and no Endpoint.
+    assert_eq!(
+        audiences_of(&keycloak, "uuid-tt").await,
+        vec!["portal-internal"]
+    );
+    let secrets = wave.host_secrets();
+    assert_eq!(
+        secrets.keys().collect::<Vec<_>>(),
+        ["JC_CLIENT_SECRET_TRNAVA", "JC_CLIENT_SECRET_ZILINA"]
+    );
+    assert_eq!(secrets["JC_CLIENT_SECRET_ZILINA"], "zilina-generated");
+    assert_eq!(secrets["JC_CLIENT_SECRET_TRNAVA"], "trnava-generated");
+}
+
+/// T-6832: without a host runner (a cluster, whose runner mounts its Secret) a project gets no
+/// derived client and nothing is read; with one, a project that declares its `pipelines` account
+/// keeps it as declared, and an imported client of that id the wave did not create is served as
+/// it is: neither secret is read, since jc's client secrets directory or a person holds it.
+#[tokio::test]
+async fn a_declared_or_imported_pipeline_client_is_not_derived_and_its_secret_not_read() {
+    let keycloak = realm(json!([])).await;
+    let mut imported = desired_external("trnava", "pipelines", &ClientCredential::Secret);
+    imported["id"] = json!("uuid-imported");
+    imported["attributes"] = json!({});
+    client_lookup(&keycloak, "trnava-pipelines", json!([imported])).await;
+    let mirror = mirror_with(vec![
+        endpoint("trnava", "trnava-all", "trnava", SLUG),
+        external(
+            "zilina",
+            "pipelines",
+            json!([{ "kind": "oauth-client", "name": "main" }]),
+        ),
+    ]);
+
+    let off = sync(&keycloak).with_host_runner(false);
+    let outcomes = off.converge(&mirror, &Bentos::new()).await;
+    assert!(
+        outcomes.iter().all(|o| o.app != "trnava/pipelines"),
+        "{outcomes:?}"
+    );
+
+    let on = sync(&keycloak).with_host_runner(true);
+    let outcomes = on.converge(&mirror, &Bentos::new()).await;
+    let trnava = outcomes.iter().find(|o| o.app == "trnava/pipelines");
+    assert_eq!(trnava.map(|o| o.error.clone()), Some(None), "{outcomes:?}");
+    assert!(on.host_secrets().is_empty());
+    let asked: Vec<String> = keycloak
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(|r| r.url.path().to_owned())
+        .collect();
+    assert!(
+        !asked.iter().any(|p| p.ends_with("/client-secret")),
+        "no secret is read: {asked:?}"
+    );
+    assert!(
+        !wrote(&keycloak)
+            .await
+            .iter()
+            .any(|w| w.contains("uuid-imported")),
+        "the imported client is left alone"
+    );
+}
+
+/// T-6832: a deleted project's pipeline client goes with it, its tokens revoked by the wave's
+/// usual removal, and its secret leaves the runner in the same run.
+#[tokio::test]
+async fn a_deleted_projects_pipeline_client_and_runner_secret_go() {
+    let keycloak = realm(json!([host_client("zilina", "uuid-zl")])).await;
+    creates(
+        &keycloak,
+        "zilina-pipelines",
+        host_client("zilina", "uuid-zl"),
+    )
+    .await;
+    mappers(&keycloak, "uuid-zl", json!([])).await;
+    secret_of(&keycloak, "uuid-zl", "zilina-generated").await;
+    let wave = sync(&keycloak).with_host_runner(true);
+    let mirror = mirror_with(vec![endpoint(
+        "zilina",
+        "zilina-uniza",
+        "zilina-uniza",
+        SLUG,
+    )]);
+    wave.converge(&mirror, &Bentos::new()).await;
+    assert_eq!(wave.host_secrets().len(), 1);
+
+    let outcomes = wave.converge(&mirror_with(vec![]), &Bentos::new()).await;
+
+    assert!(wave.host_secrets().is_empty());
+    assert!(
+        wrote(&keycloak)
+            .await
+            .contains(&format!("DELETE {REALM}/clients/uuid-zl")),
+        "{outcomes:?}"
+    );
+}
+
+/// T-6832 review: a realm that fails the client lookup for one run (busy, 500) leaves the
+/// runner the secret it holds, so every running stream keeps its credential until the next good
+/// sync; the outcome names the failure, never the value.
+#[tokio::test]
+async fn a_realm_lookup_that_fails_keeps_the_runners_secret() {
+    let keycloak = realm(json!([host_client("zilina", "uuid-zl")])).await;
+    creates(
+        &keycloak,
+        "zilina-pipelines",
+        host_client("zilina", "uuid-zl"),
+    )
+    .await;
+    mappers(&keycloak, "uuid-zl", json!([])).await;
+    secret_of(&keycloak, "uuid-zl", "zilina-generated").await;
+    let wave = sync(&keycloak).with_host_runner(true);
+    let mirror = mirror_with(vec![endpoint(
+        "zilina",
+        "zilina-uniza",
+        "zilina-uniza",
+        SLUG,
+    )]);
+    wave.converge(&mirror, &Bentos::new()).await;
+    assert_eq!(wave.host_secrets().len(), 1);
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/clients")))
+        .and(query_param("clientId", "zilina-pipelines"))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&keycloak)
+        .await;
+
+    let outcomes = wave.converge(&mirror, &Bentos::new()).await;
+
+    let zilina = outcomes.iter().find(|o| o.app == "zilina/pipelines");
+    let error = zilina.and_then(|o| o.error.clone());
+    assert!(error.is_some(), "{outcomes:?}");
+    assert!(!error.unwrap_or_default().contains("zilina-generated"));
+    assert_eq!(
+        wave.host_secrets()
+            .get("JC_CLIENT_SECRET_ZILINA")
+            .map(String::as_str),
+        Some("zilina-generated")
+    );
+}
+
 /// T-5766: a Pipeline's token fits the smallest header limit on its hops beside a project of 455
 /// Endpoints on its one space, as Bratislava's is. Before T-5757 its `aud` named all 455 and the
 /// 22 KB token got 431 from the gateway and the Portal's internal listener, so no Bratislava
