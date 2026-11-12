@@ -2514,6 +2514,22 @@ async fn branding_logo_and_static_assets() {
         );
         assert!(!a.body.is_empty());
     }
+    // An SVG opened on its own runs nothing and is never sniffed into a page: since T-6772 an
+    // Organization admin's logoSvg reaches /logo.svg, guarded only by a deny-list (T-6801).
+    for uri in ["/jc-logo.svg", "/logo.svg"] {
+        let a = get(app, uri, None).await;
+        assert_eq!(
+            (
+                a.header("content-security-policy"),
+                a.header("x-content-type-options")
+            ),
+            (
+                "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+                "nosniff"
+            ),
+            "{uri}"
+        );
+    }
 
     // Login goes to the platform's identity; without a domain it goes home.
     let a = get(app, "/user/login", None).await;
