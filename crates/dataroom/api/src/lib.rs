@@ -1770,7 +1770,7 @@ async fn dispatch_ui_route(
             let dashboards = shown_dashboards(&state, &ctx, &cat, &publishers).await;
             let html = render_dashboard_list_page(
                 &cat,
-                Some(state.branding_of(&cat)),
+                Some(&state.branding_of(&cat)),
                 &dashboards,
                 &publishers,
                 &lang,
@@ -1802,7 +1802,7 @@ async fn dispatch_ui_route(
             datasets.retain(|d| !is_dashboard(d));
             let html = render_dashboard_page(
                 &cat,
-                Some(state.branding_of(&cat)),
+                Some(&state.branding_of(&cat)),
                 &ds,
                 &views,
                 &datasets,
