@@ -94,6 +94,10 @@ export const RULE_OF: Record<string, RegExp> = {
   asks_with_a_shared_dialog: /window\.confirm\(|window\.alert\(/,
   focus_is_not_stolen: /\bautoFocus\b/,
   check_is_not_suppressed: /@ts-ignore|@ts-expect-error|eslint-disable/,
+  // A data list is the shared grid (T-6739): `AdminGrid` (the SDK's DataGrid) for rows a page
+  // read, `PortalEntityGrid` for entities. The `Table` of components/ui stays for a two-column
+  // fact table, allowed here with that reason; `<Table` and a space, so `Promise<Table>` is no use.
+  data_table_is_the_grid: /<Table\s/,
 };
 
 /**

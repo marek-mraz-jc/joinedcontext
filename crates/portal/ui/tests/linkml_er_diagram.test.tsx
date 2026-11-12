@@ -202,6 +202,23 @@ describe("reading it without the picture", () => {
     ]);
   });
 
+  it("searches, sorts and arranges the relationship list on the shared grid (T-6753)", async () => {
+    const user = userEvent.setup();
+    renderPart(<LinkmlGraphView source={SCHOOLS} />);
+    const table = screen.getByRole("table", { name: en.models.graph.table });
+    const fields = () => within(table).getAllByRole("row").slice(1).map((row) => row.querySelectorAll("td, th")[1]?.textContent);
+    await user.type(screen.getByRole("searchbox", { name: en.dataGrid.searchRows }), "Course");
+    expect(fields()).toEqual(["Course.students", "Grade.course"]);
+    await user.clear(screen.getByRole("searchbox", { name: en.dataGrid.searchRows }));
+    await user.click(screen.getByRole("button", { name: `${en.entityGrid.columnMenu}: ${en.models.graph.tableField}` }));
+    await user.click(screen.getByRole("menuitemradio", { name: en.entityGrid.sortDesc }));
+    expect(fields()).toEqual(["School.pupils", "School.principal", "Grade.course", "Course.students"]);
+    await user.click(screen.getByRole("button", { name: en.entityGrid.arrangeColumns }));
+    const panel = screen.getByRole("dialog", { name: en.entityGrid.arrangeColumns });
+    await user.click(within(panel).getByRole("checkbox", { name: `${en.entityGrid.showColumn}: ${en.models.graph.tableMultiplicity}` }));
+    expect(within(table).queryByRole("columnheader", { name: new RegExp(en.models.graph.tableMultiplicity) })).toBeNull();
+  });
+
   it("zooms in, out and back to fit, and says the level", async () => {
     const user = userEvent.setup();
     const { container } = renderPart(<LinkmlGraphView source={SCHOOLS} />);

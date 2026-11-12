@@ -25,6 +25,7 @@ const GENRES = [
 
 async function serve(page: Page, opts: { facets: boolean }) {
   const asked: string[] = [];
+  let zvolenFailed = false;
   await page.route(`${ORIGIN}/**`, (route: Route) => {
     const url = new URL(route.request().url());
     if (url.pathname === "/sk/dataset/events") {
@@ -50,6 +51,20 @@ async function serve(page: Page, opts: { facets: boolean }) {
       const body = !attr
         ? { facets: opts.facets ? ["address.addressLocality", "eventCategory"] : [] }
         : { attr, values: attr === "eventCategory" ? GENRES : TOWNS, truncated: false };
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify(body) });
+    }
+    if (url.pathname.endsWith("/ngsi-ld/v1/entities")) {
+      // The events of one town, located: Sliač's two venues and a stray one; Banská Bystrica's none.
+      const q = url.searchParams.get("q") ?? "";
+      // Zvolen's first read fails, as a gateway that answers 503 for a moment.
+      if (q === 'address[addressLocality]=="Zvolen"' && !zvolenFailed) {
+        zvolenFailed = true;
+        return route.fulfill({ status: 503, body: "" });
+      }
+      const point = (lon: number, lat: number) => ({ id: `urn:ngsi-ld:Event:${lon}`, type: "Event", location: { type: "Point", coordinates: [lon, lat] } });
+      const body = q === 'address[addressLocality]=="Sliač"' && url.searchParams.get("attrs") === "location"
+        ? [point(19.15, 48.64), point(19.16, 48.65), point(17.1, 48.1)]
+        : q === 'address[addressLocality]=="Zvolen"' ? [point(19.13, 48.58)] : [];
       return route.fulfill({ contentType: "application/json", body: JSON.stringify(body) });
     }
     if (url.pathname.endsWith(".ics")) {
@@ -128,6 +143,70 @@ for (const viewport of VIEWPORTS) {
     await expect(page.locator(".jc-subscribe-query > .jc-subscribe-links")).toBeHidden();
     await expect(page.locator("#jc-subscribe-preview-status")).toContainText("odkaz sa nezobrazí");
     await page.screenshot({ path: `${SHOTS}/builder-refused-${viewport.width}.png`, fullPage: true });
+  });
+
+  test(`a genre within 5 km of a town builds one link (${viewport.width}px)`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const asked = await serve(page, { facets: true });
+    await page.goto(`${ORIGIN}/sk/dataset/events`);
+    await page.locator(".jc-subscribe > summary").click();
+    const place = page.getByLabel("V okolí obce", { exact: true });
+    await expect(place).toBeVisible();
+    await expect(page.getByLabel("Vzdialenosť", { exact: true })).toHaveValue("5");
+    await expect(page.locator("#jc-subscribe-near-hint")).toContainText("Napríklad Zvolen");
+    await page.getByLabel("Žáner", { exact: true }).fill("Hudba");
+    await place.fill("sliač");
+    const base = "https://api.dev.joinedcontext.com/api/endpoint/esbxdrr7snorjsp7uus2luihr6vl5vv6";
+    // The centre is the median of the town's located events: the stray venue does not move it.
+    const query = new URLSearchParams();
+    query.set("q", 'eventCategory=="Hudba"');
+    query.set("georel", "near;maxDistance==5000");
+    query.set("geometry", "Point");
+    query.set("coordinates", "[19.15,48.64]");
+    const url = page.locator("#jc-subscribe-mine-url");
+    // The link waits for the town's centre: it names the distance once the centre is read.
+    await expect(url).toHaveValue(new RegExp(`^${base.replace(/[.]/g, "\\.")}/feeds/[^/]*georel=[^/]+/vsetky\\.ics$`));
+    const segment = (await url.inputValue()).split("/feeds/")[1].split("/")[0];
+    // The path form and the ? form carry one query: the same names and values, in one segment.
+    expect(segment).not.toMatch(/[/;|()"\[\],]/);
+    expect([...new URLSearchParams(segment)]).toEqual([...query]);
+    await expect(page.locator("#jc-subscribe-mine-csv")).toHaveAttribute("href", `${base}/entities.csv?${segment}`);
+    await expect.poll(() => asked).toContain(`/api/endpoint/esbxdrr7snorjsp7uus2luihr6vl5vv6/feeds/${segment}/vsetky.ics`);
+    expect(asked.some((a) => a.startsWith("/api/endpoint/esbxdrr7snorjsp7uus2luihr6vl5vv6/ngsi-ld/v1/entities?"))).toBe(true);
+    await page.screenshot({ path: `${SHOTS}/builder-near-${viewport.width}.png`, fullPage: true });
+
+    await page.getByLabel("Vzdialenosť", { exact: true }).selectOption("25");
+    await expect(url).toHaveValue(/georel=near%3BmaxDistance%3D%3D25000&/);
+
+    // A town without a located event cannot be a centre: no link until the field changes.
+    await place.fill("Banská Bystrica");
+    await expect(place).toHaveAttribute("aria-invalid", "true");
+    await expect(page.locator("#jc-subscribe-near-hint")).toContainText("Banská Bystrica");
+    await expect(page.locator(".jc-subscribe-query > .jc-subscribe-copy")).toBeHidden();
+    await page.screenshot({ path: `${SHOTS}/builder-near-unknown-${viewport.width}.png`, fullPage: true });
+    await place.fill("");
+    await expect(place).not.toHaveAttribute("aria-invalid", "true");
+    await expect(url).not.toHaveValue(/georel/);
+  });
+
+  test(`a failed location read says so and reads again on the next change (${viewport.width}px)`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await serve(page, { facets: true });
+    await page.goto(`${ORIGIN}/sk/dataset/events`);
+    await page.locator(".jc-subscribe > summary").click();
+    const place = page.getByLabel("V okolí obce", { exact: true });
+    await place.fill("Zvolen");
+    // The read failed: the field says so instead of waiting for ever, and there is no link.
+    await expect(place).toHaveAttribute("aria-invalid", "true");
+    await expect(page.locator("#jc-subscribe-near-hint")).toContainText("nepodarilo načítať");
+    // The footer names no unlisted value: the field's own hint says what went wrong.
+    await expect(page.locator("#jc-subscribe-preview-status")).not.toContainText("mimo zoznamu");
+    await expect(page.locator(".jc-subscribe-query > .jc-subscribe-copy")).toBeHidden();
+    await page.screenshot({ path: `${SHOTS}/builder-near-failed-${viewport.width}.png`, fullPage: true });
+    // Changing the distance reads the town again; this time it answers.
+    await page.getByLabel("Vzdialenosť", { exact: true }).selectOption("10");
+    await expect(page.locator("#jc-subscribe-mine-url")).toHaveValue(/georel=near%3BmaxDistance%3D%3D10000&geometry=Point&coordinates=%5B19\.13%2C48\.58%5D/);
+    await expect(place).not.toHaveAttribute("aria-invalid", "true");
   });
 
   test(`no facets: dates still narrow the calendar (${viewport.width}px)`, async ({ page }) => {

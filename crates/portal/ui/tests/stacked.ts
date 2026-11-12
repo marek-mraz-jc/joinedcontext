@@ -6,7 +6,8 @@
 import { expect } from "vitest";
 
 export function expectStacked(table: HTMLElement, labels: string[]): void {
-  expect(table).toHaveClass("table-stack");
+  // The ui `Table` stacks by its `table-stack` class, the shared data grid by its frame's (T-6739).
+  expect(table.classList.contains("table-stack") || table.closest(".jc-data-grid--stack") !== null).toBe(true);
   const rows = [...table.querySelectorAll("tbody > tr")];
   expect(rows.length).toBeGreaterThan(0);
   for (const row of rows) {

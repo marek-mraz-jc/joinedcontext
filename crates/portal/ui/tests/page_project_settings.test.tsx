@@ -151,15 +151,15 @@ describe("Project settings", () => {
     );
     expect(named).toEqual([en.projectSettings.access.title, en.access.matrix.title]);
     // Each grant a card on a phone (jc-ui-tables): the From column was past the edge at 400 px.
-    const yours = screen.getByRole("table", { name: en.projectSettings.access.caption.replace("{project}", PROJECT) });
-    expect(yours).toHaveClass("table-stack");
+    const yours = screen.getByRole("table", { name: en.projectSettings.access.caption.replace("{project}", PROJECT) }).closest(".jc-data-grid") as HTMLElement;
+    expect(yours).toHaveClass("jc-data-grid--stack");
   });
 
   // The loading state: a skeleton, and a table that says it is still loading rather than
   // claiming the project holds nobody.
   it("says the lists are loading rather than showing them empty", async () => {
     renderSettings({ pending: true });
-    const loading = await screen.findAllByText(en.app.loading);
+    const loading = await screen.findAllByText(en.entityGrid.loading);
     expect(loading.length).toBeGreaterThan(0);
     expect(screen.queryByText(en.access.roles.empty)).not.toBeInTheDocument();
   });
@@ -198,7 +198,8 @@ describe("Project settings", () => {
       expect(table).not.toHaveAttribute("aria-busy", "true");
     });
     const body = table.querySelector("tbody");
-    expect(body?.querySelectorAll("tr")).toHaveLength(Math.max(rows, 1));
+    // The grid pages a long list: 25 rows to a page.
+    expect(body?.querySelectorAll("tr")).toHaveLength(Math.min(Math.max(rows, 1), 25));
     expectHeadingOutline(container);
   });
 

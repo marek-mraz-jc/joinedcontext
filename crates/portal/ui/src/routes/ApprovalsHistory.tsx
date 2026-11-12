@@ -9,7 +9,8 @@ import { ChangeNotice } from "../components/ChangeNotice";
 import { changeSentence } from "./changeWords";
 import { ChangedFields } from "../components/ResourceHistory";
 import { download } from "../pages/models/diagramExport";
-import { ResourceList } from "../components/ResourceList";
+import { AdminGrid } from "../components/grid/AdminGrid";
+import type { DataColumn } from "../components/grid/AdminGrid";
 import { LifecycleBadge } from "../components/status/LifecycleBadge";
 import {
   Alert,
@@ -19,13 +20,7 @@ import {
   Input,
   PermissionGuard,
   Select,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
 } from "../components/ui";
-
-const COLUMNS = 6;
 
 interface Filter {
   kind: string;
@@ -167,6 +162,124 @@ export function ApprovalsHistory({
     setFilter(NO_FILTER);
   };
 
+  type Change = (typeof items)[number];
+  const sentenceOf = (change: Change) => changeSentence(change as Parameters<typeof changeSentence>[0], t);
+  const closedOf = (change: Change) => change.decision?.at ?? change.createdAt;
+  const columns: DataColumn<Change>[] = [
+    {
+      key: "summary",
+      label: t("approvals.summary"),
+      text: sentenceOf,
+      cell: (change) => (
+        <>
+          <Link
+            data-row-link=""
+            to="/projects/$project/approvals/$id"
+            params={{ project, id: change.metadata.name }}
+            className="focus-ring rounded-sm text-primary-soft-fg hover:underline"
+          >
+            {sentenceOf(change)}
+          </Link>
+          <div className="mt-0.5 font-mono text-caption text-fg-subtle">{change.metadata.name}</div>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="mt-1"
+            aria-expanded={opened === change.metadata.name}
+            onClick={() => setOpened(opened === change.metadata.name ? null : change.metadata.name)}
+          >
+            {t("approvals.history.whatChanged")}
+          </Button>
+          {opened === change.metadata.name ? <ChangedFields project={project} id={change.metadata.name} /> : null}
+        </>
+      ),
+    },
+    {
+      key: "outcome",
+      label: t("approvals.history.outcome"),
+      text: (change) => change.status.phase,
+      cell: (change) => <LifecycleBadge kind="phase" value={change.status.phase} />,
+    },
+    { key: "proposedBy", label: t("approvals.history.proposedBy"), text: (change) => change.author.name },
+    {
+      key: "decidedBy",
+      label: t("approvals.history.decidedBy"),
+      text: (change) => change.decision?.by ?? t("approvals.history.inForge"),
+      cell: (change) =>
+        change.decision ? (
+          <>
+            {change.decision.by}
+            {change.decision.reason ? (
+              <div className="mt-0.5 text-caption text-fg-muted">
+                {t("approvals.history.reason", { reason: change.decision.reason })}
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <span className="text-fg-muted">{t("approvals.history.inForge")}</span>
+        ),
+    },
+    {
+      key: "closed",
+      label: t("approvals.history.closed"),
+      kind: "date",
+      text: closedOf,
+      cell: (change) => (
+        <span className="whitespace-nowrap text-fg-muted">{dateFormatter.format(new Date(closedOf(change)))}</span>
+      ),
+    },
+    {
+      key: "actions",
+      label: t("approvals.actions"),
+      text: () => "",
+      actions: true,
+      align: "right",
+      cell: (change) => (
+        <>
+          {change.status.phase === "Merged" &&
+          change.summary.key === "change.summary.delete" ? (
+            <PermissionGuard
+              project={project}
+              kind={String((change.summary.params as Record<string, unknown>).kind ?? "")}
+              verb="propose"
+            >
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={restore.isPending && restore.variables === change.metadata.name}
+                aria-label={t("approvals.history.restoreOf", {
+                  name: String((change.summary.params as Record<string, unknown>).name ?? change.metadata.name),
+                })}
+                onClick={() => restore.mutate(change.metadata.name)}
+              >
+                {t("approvals.history.restore")}
+              </Button>
+            </PermissionGuard>
+          ) : null}
+          {change.status.phase === "Merged" && change.summary.key === "change.summary.update" ? (
+            <PermissionGuard
+              project={project}
+              kind={String((change.summary.params as Record<string, unknown>).kind ?? "")}
+              verb="propose"
+            >
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={undo.isPending && undo.variables === change.metadata.name}
+                aria-label={t("approvals.history.undoOf", {
+                  name: String((change.summary.params as Record<string, unknown>).name ?? change.metadata.name),
+                })}
+                onClick={() => undo.mutate(change.metadata.name)}
+              >
+                {t("approvals.history.undo")}
+              </Button>
+            </PermissionGuard>
+          ) : null}
+        </>
+      ),
+    },
+  ];
+
   return (
     <div className="flex flex-col gap-4">
       {proposed ? <ChangeNotice change={proposed} project={project} /> : null}
@@ -245,25 +358,14 @@ export function ApprovalsHistory({
           {t("approvals.history.exportCut")}
         </Alert>
       ) : null}
-      <ResourceList
+      <AdminGrid
         query={history}
         caption={t("approvals.history.caption")}
-        head={
-          <TableHead>
-            <TableHeaderCell>{t("approvals.summary")}</TableHeaderCell>
-            <TableHeaderCell>{t("approvals.history.outcome")}</TableHeaderCell>
-            <TableHeaderCell>
-              {t("approvals.history.proposedBy")}
-            </TableHeaderCell>
-            <TableHeaderCell>
-              {t("approvals.history.decidedBy")}
-            </TableHeaderCell>
-            <TableHeaderCell>{t("approvals.history.closed")}</TableHeaderCell>
-            <TableHeaderCell align="right">{t("approvals.actions")}</TableHeaderCell>
-          </TableHead>
-        }
-        columns={COLUMNS}
-        count={items.length}
+        rows={items}
+        rowKey={(change) => change.metadata.name}
+        columns={columns}
+        storageKey={`${project}:approvals-history`}
+        stack
         empty={
           <EmptyState
             bare
@@ -278,102 +380,7 @@ export function ApprovalsHistory({
             description={filtered || history.hasNextPage ? undefined : t("approvals.history.emptyHint")}
           />
         }
-      >
-        {items.map((change) => (
-          <TableRow key={change.metadata.name}>
-            <TableCell primary>
-              <Link
-                to="/projects/$project/approvals/$id"
-                params={{ project, id: change.metadata.name }}
-                className="focus-ring rounded-sm text-primary-soft-fg hover:underline"
-              >
-                {changeSentence(change as Parameters<typeof changeSentence>[0], t)}
-              </Link>
-              <div className="mt-0.5 font-mono text-caption text-fg-subtle">
-                {change.metadata.name}
-              </div>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="mt-1"
-                aria-expanded={opened === change.metadata.name}
-                onClick={() => setOpened(opened === change.metadata.name ? null : change.metadata.name)}
-              >
-                {t("approvals.history.whatChanged")}
-              </Button>
-              {opened === change.metadata.name ? <ChangedFields project={project} id={change.metadata.name} /> : null}
-            </TableCell>
-            <TableCell>
-              <LifecycleBadge kind="phase" value={change.status.phase} />
-            </TableCell>
-            <TableCell>{change.author.name}</TableCell>
-            <TableCell>
-              {change.decision ? (
-                <>
-                  {change.decision.by}
-                  {change.decision.reason ? (
-                    <div className="mt-0.5 text-caption text-fg-muted">
-                      {t("approvals.history.reason", {
-                        reason: change.decision.reason,
-                      })}
-                    </div>
-                  ) : null}
-                </>
-              ) : (
-                <span className="text-fg-muted">
-                  {t("approvals.history.inForge")}
-                </span>
-              )}
-            </TableCell>
-            <TableCell className="whitespace-nowrap text-fg-muted">
-              {dateFormatter.format(
-                new Date(change.decision?.at ?? change.createdAt),
-              )}
-            </TableCell>
-            <TableCell align="right">
-              {change.status.phase === "Merged" &&
-              change.summary.key === "change.summary.delete" ? (
-                <PermissionGuard
-                  project={project}
-                  kind={String((change.summary.params as Record<string, unknown>).kind ?? "")}
-                  verb="propose"
-                >
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    loading={restore.isPending && restore.variables === change.metadata.name}
-                    aria-label={t("approvals.history.restoreOf", {
-                      name: String((change.summary.params as Record<string, unknown>).name ?? change.metadata.name),
-                    })}
-                    onClick={() => restore.mutate(change.metadata.name)}
-                  >
-                    {t("approvals.history.restore")}
-                  </Button>
-                </PermissionGuard>
-              ) : null}
-              {change.status.phase === "Merged" && change.summary.key === "change.summary.update" ? (
-                <PermissionGuard
-                  project={project}
-                  kind={String((change.summary.params as Record<string, unknown>).kind ?? "")}
-                  verb="propose"
-                >
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    loading={undo.isPending && undo.variables === change.metadata.name}
-                    aria-label={t("approvals.history.undoOf", {
-                      name: String((change.summary.params as Record<string, unknown>).name ?? change.metadata.name),
-                    })}
-                    onClick={() => undo.mutate(change.metadata.name)}
-                  >
-                    {t("approvals.history.undo")}
-                  </Button>
-                </PermissionGuard>
-              ) : null}
-            </TableCell>
-          </TableRow>
-        ))}
-      </ResourceList>
+      />
       <p className="text-caption text-fg-muted">{t("approvals.history.dataWrites")}</p>
       {history.hasNextPage ? (
         <div>

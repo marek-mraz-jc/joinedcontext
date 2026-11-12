@@ -16,7 +16,8 @@ import { useTranslation } from "react-i18next";
 import { api, unwrap } from "../../api/client";
 import type { components } from "../../api/schema";
 import { localized } from "../../api/manifest";
-import { Badge, Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "../../components/ui";
+import { Badge } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
 import { fieldWord, useFieldWords } from "../../components/entities/fieldTypes";
 import { classSlots, isAnyClass, unitCode, valueClasses } from "./linkml";
 import type { LinkmlModel, LinkmlSlot } from "./linkml";
@@ -79,11 +80,16 @@ export function ModelFields({ project, model, space }: { project: string; model:
                 at: new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(report.observedAt)),
               });
 
+  // The share of the space's entities that carry the field: what the column sorts by.
+  const shareOf = (own: TypeReport | undefined, name: string): number | undefined =>
+    report === undefined || own === undefined || own.count === 0
+      ? undefined
+      : (own.attributes.find((one) => one.name === name)?.present ?? 0) / own.count;
   const facts = (own: TypeReport | undefined, name: string): JSX.Element | string => {
     if (report === undefined) return "—";
     if (own === undefined || own.count === 0) return t("models.fields.noEntities");
     const attribute = own.attributes.find((one) => one.name === name);
-    const share = (attribute?.present ?? 0) / own.count;
+    const share = shareOf(own, name) ?? 0;
     // The rules the run found broken on this field, e.g. MinInclusive on pm10.
     const broken = report.rules.filter((rule) => rule.path === name);
     return (
@@ -139,64 +145,101 @@ export function ModelFields({ project, model, space }: { project: string; model:
             {fields.length === 0 ? (
               <p className="text-body text-fg-muted">{t("models.page.noFields")}</p>
             ) : (
-              <Table caption={t("models.fields.caption", { type: title })}>
-                <TableHead>
-                  <TableHeaderCell>{t("models.slot")}</TableHeaderCell>
-                  <TableHeaderCell>{t("models.range")}</TableHeaderCell>
-                  <TableHeaderCell>{t("models.fields.allowed")}</TableHeaderCell>
-                  <TableHeaderCell>{t("models.fields.description")}</TableHeaderCell>
-                  <TableHeaderCell>{t("models.fields.inSpace")}</TableHeaderCell>
-                  <TableHeaderCell>{t("models.fields.query")}</TableHeaderCell>
-                </TableHead>
-                <TableBody>
-                  {fields.map((slot) => {
-                    const allowed = allowedOf(slot, model, i18n.language);
-                    const label = localized(slot.title, i18n.language, slot.name);
-                    return (
-                      <TableRow key={slot.name}>
-                        <TableCell primary>
+              <AdminGrid<LinkmlSlot>
+                caption={t("models.fields.caption", { type: title })}
+                storageKey="models:fields"
+                stack
+                rows={fields}
+                rowKey={(slot) => slot.name}
+                columns={[
+                  {
+                    key: "slot",
+                    label: t("models.slot"),
+                    text: (slot) => localized(slot.title, i18n.language, slot.name),
+                    cell: (slot) => {
+                      const label = localized(slot.title, i18n.language, slot.name);
+                      return (
+                        <>
                           {label}
                           {label !== slot.name ? <span className="block font-mono text-caption text-fg-muted">{slot.name}</span> : null}
-                        </TableCell>
-                        <TableCell>
-                          {word(fieldWord(slot, model))}
-                          {slot.required ? <span className="text-fg-muted"> · {t("models.required")}</span> : null}
-                          {slot.multivalued ? <span className="text-fg-muted"> · {t("models.multivalued")}</span> : null}
-                        </TableCell>
-                        <TableCell>
-                          {allowed.length === 0 ? (
-                            // A link's target type is in the Type column already.
-                            <span className="text-fg-muted">{fieldWord(slot, model).type === "relationship" ? "—" : t("models.fields.anyValue")}</span>
-                          ) : (
-                            <span className="flex flex-col gap-0.5 [overflow-wrap:anywhere]">
-                              {allowed.map((one) => (
-                                <span key={one}>{one}</span>
-                              ))}
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell className="max-w-prose text-caption">{slot.description ?? "—"}</TableCell>
-                        <TableCell>{facts(own, slot.name)}</TableCell>
-                        <TableCell>
-                          {space !== undefined ? (
-                            <Link
-                              to="/projects/$project/explore"
-                              params={{ project }}
-                              search={{ space, type: klass.name, q: slot.name }}
-                              aria-label={t("models.fields.queryLabel", { type: title, field: label })}
-                              className="focus-ring text-primary-soft-fg underline underline-offset-2"
-                            >
-                              {t("models.fields.queryAction")}
-                            </Link>
-                          ) : (
-                            "—"
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+                        </>
+                      );
+                    },
+                  },
+                  {
+                    key: "range",
+                    label: t("models.range"),
+                    text: (slot) =>
+                      [
+                        word(fieldWord(slot, model)),
+                        slot.required ? t("models.required") : "",
+                        slot.multivalued ? t("models.multivalued") : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" · "),
+                    cell: (slot) => (
+                      <>
+                        {word(fieldWord(slot, model))}
+                        {slot.required ? <span className="text-fg-muted"> · {t("models.required")}</span> : null}
+                        {slot.multivalued ? <span className="text-fg-muted"> · {t("models.multivalued")}</span> : null}
+                      </>
+                    ),
+                  },
+                  {
+                    key: "allowed",
+                    label: t("models.fields.allowed"),
+                    text: (slot) => allowedOf(slot, model, i18n.language).join(", "),
+                    cell: (slot) => {
+                      const allowed = allowedOf(slot, model, i18n.language);
+                      return allowed.length === 0 ? (
+                        // A link's target type is in the Type column already.
+                        <span className="text-fg-muted">{fieldWord(slot, model).type === "relationship" ? "—" : t("models.fields.anyValue")}</span>
+                      ) : (
+                        <span className="flex flex-col gap-0.5 [overflow-wrap:anywhere]">
+                          {allowed.map((one) => (
+                            <span key={one}>{one}</span>
+                          ))}
+                        </span>
+                      );
+                    },
+                  },
+                  {
+                    key: "description",
+                    label: t("models.fields.description"),
+                    text: (slot) => slot.description ?? "—",
+                    cell: (slot) => <span className="block max-w-prose text-caption">{slot.description ?? "—"}</span>,
+                  },
+                  {
+                    key: "inSpace",
+                    label: t("models.fields.inSpace"),
+                    kind: "number",
+                    filter: false,
+                    text: (slot) => String(shareOf(own, slot.name) ?? ""),
+                    cell: (slot) => facts(own, slot.name),
+                  },
+                  {
+                    key: "query",
+                    label: t("models.fields.query"),
+                    actions: true,
+                    text: () => "",
+                    cell: (slot) =>
+                      space !== undefined ? (
+                        <Link
+                          to="/projects/$project/explore"
+                          params={{ project }}
+                          search={{ space, type: klass.name, q: slot.name }}
+                          aria-label={t("models.fields.queryLabel", { type: title, field: localized(slot.title, i18n.language, slot.name) })}
+                          className="focus-ring text-primary-soft-fg underline underline-offset-2"
+                        >
+                          {t("models.fields.queryAction")}
+                        </Link>
+                      ) : (
+                        "—"
+                      ),
+                  },
+                ]}
+                empty={<p className="text-body text-fg-muted">{t("models.page.noFields")}</p>}
+              />
             )}
           </div>
         );

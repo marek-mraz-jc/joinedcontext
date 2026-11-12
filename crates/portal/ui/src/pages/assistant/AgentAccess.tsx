@@ -17,16 +17,11 @@ import { Field } from "../../components/ui/Field";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { ListFailed } from "../../components/forms/widgets/ListFailed";
 import { Textarea } from "../../components/ui/Input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-} from "../../components/ui/Table";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 
 type ProfileAccess = components["schemas"]["ProfileAccess"];
+type Operation = ProfileAccess["operations"][number];
 
 /**
  * What each agent profile lets a run you start do (UI-56, AG-70): per operation the profile's
@@ -144,6 +139,23 @@ function ProfileCard({ project, profile }: { project: string; profile: ProfileAc
 
   const available = profile.operations.filter((op) => op.profile && op.person).length;
   const heading = `access-${profile.name}`;
+  const yesNo = (value: boolean) => (value ? t("assistantPage.access.yes") : t("assistantPage.access.no"));
+  const operationColumns: DataColumn<Operation>[] = [
+    {
+      key: "operation",
+      label: t("assistantPage.access.operation"),
+      text: (op) => op.name,
+      cell: (op) => <span className="font-mono text-caption">{op.name}</span>,
+    },
+    { key: "profile", label: t("assistantPage.access.profile"), text: (op) => yesNo(op.profile) },
+    { key: "you", label: t("assistantPage.access.you"), text: (op) => yesNo(op.person) },
+    {
+      key: "reason",
+      label: t("assistantPage.access.reason"),
+      text: (op) => op.reason ?? "",
+      cell: (op) => <span className="text-caption text-fg-muted">{op.reason ?? ""}</span>,
+    },
+  ];
 
   return (
     <article aria-labelledby={heading} className="space-y-3 rounded-md border border-border p-4">
@@ -174,24 +186,16 @@ function ProfileCard({ project, profile }: { project: string; profile: ProfileAc
         <summary className="focus-ring cursor-pointer rounded-sm text-caption font-medium text-primary-soft-fg">
           {t("assistantPage.access.showOperations", { count: profile.operations.length })}
         </summary>
-      <Table caption={t("assistantPage.access.caption", { name: profile.name })}>
-        <TableHead>
-          <TableHeaderCell>{t("assistantPage.access.operation")}</TableHeaderCell>
-          <TableHeaderCell>{t("assistantPage.access.profile")}</TableHeaderCell>
-          <TableHeaderCell>{t("assistantPage.access.you")}</TableHeaderCell>
-          <TableHeaderCell>{t("assistantPage.access.reason")}</TableHeaderCell>
-        </TableHead>
-        <TableBody>
-          {profile.operations.map((op) => (
-            <TableRow key={op.name}>
-              <TableCell className="font-mono text-caption">{op.name}</TableCell>
-              <TableCell>{op.profile ? t("assistantPage.access.yes") : t("assistantPage.access.no")}</TableCell>
-              <TableCell>{op.person ? t("assistantPage.access.yes") : t("assistantPage.access.no")}</TableCell>
-              <TableCell className="text-caption text-fg-muted">{op.reason ?? ""}</TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+        <AdminGrid
+          stack
+          storageKey={`agent-access:${profile.name}`}
+          query={{ isPending: false, isError: false, error: null, refetch: () => undefined }}
+          caption={t("assistantPage.access.caption", { name: profile.name })}
+          rows={profile.operations}
+          columns={operationColumns}
+          rowKey={(op) => op.name}
+          empty={<EmptyState bare title={t("assistantPage.access.noOperations")} description={t("assistantPage.access.noOperationsHint")} />}
+        />
       </details>
 
       {change ? <ChangeNotice change={change} project={ORG_NAMESPACE} /> : null}

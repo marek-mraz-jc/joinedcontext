@@ -11,7 +11,8 @@ import type { Change, Manifest, ResourceProposal } from "../api/manifest";
 import { ChangeNotice } from "../components/ChangeNotice";
 import { LifecycleBadge } from "../components/status/LifecycleBadge";
 import { ResourceFormDialog } from "../components/ResourceFormDialog";
-import { ResourceList } from "../components/ResourceList";
+import { AdminGrid } from "../components/grid/AdminGrid";
+import type { DataColumn } from "../components/grid/AdminGrid";
 import { ResourceRowActions } from "../components/ResourceRowActions";
 import { REGISTRATION_TARGETS, registrationSchema, registrationUiSchema } from "../schemas/kinds";
 import type { RegistrationTarget } from "../schemas/kinds";
@@ -21,10 +22,6 @@ import {
   Icon,
   PageHeader,
   RadioGroup,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
   Term,
 } from "../components/ui";
 import { PermissionGuard } from "../components/ui/PermissionGuard";
@@ -175,8 +172,6 @@ function useNames(project: string, plural: string): string[] {
   return asManifests(list.data?.items ?? []).map((item) => item.metadata.name);
 }
 
-const COLUMNS = 6;
-
 /**
  * The context source registrations of one project: which space's broker answers with whose data
  * (MF-36, PF-48, SP-09, UI-01).
@@ -260,6 +255,82 @@ export function RegistrationsPage({ project, edit }: { project: string; edit?: s
   );
 
   const registrations = asManifests(list.data?.items ?? []);
+  const titleOf = (registration: Manifest) => localized(registration.metadata.title, locale, registration.metadata.name);
+  const typesOf = (registration: Manifest) => [
+    ...new Set(fromRegistrationEnvelope(registration).information.flatMap((entry) => (entry.entities ?? []).map((one) => one.type))),
+  ];
+  const sourceOf = (registration: Manifest) => {
+    const shape = fromRegistrationEnvelope(registration);
+    return (targetOf(shape) === "endpoint" ? shape.endpoint : shape.endpointRef) || "";
+  };
+  const columns: DataColumn<Manifest>[] = [
+    {
+      key: "name",
+      label: t("registrations.field.name"),
+      text: titleOf,
+      cell: (registration) => (
+        <RecordLink project={project} plural="csrs" name={registration.metadata.name}>
+          {titleOf(registration)}
+        </RecordLink>
+      ),
+    },
+    {
+      key: "space",
+      label: t("registrations.field.space"),
+      heading: <Term name="contextSpace">{t("registrations.field.space")}</Term>,
+      text: (registration) => fromRegistrationEnvelope(registration).contextSpaceRef ?? "",
+      cell: (registration) => (
+        <span className="font-mono text-caption">{fromRegistrationEnvelope(registration).contextSpaceRef || "—"}</span>
+      ),
+    },
+    {
+      key: "source",
+      label: t("registrations.column.source"),
+      text: sourceOf,
+      cell: (registration) => (
+        <>
+          <div className="text-caption text-fg-muted">{t(`registrations.targetKind.${targetOf(fromRegistrationEnvelope(registration))}`)}</div>
+          <div className="break-all font-mono text-caption">{sourceOf(registration) || "—"}</div>
+        </>
+      ),
+    },
+    {
+      key: "covers",
+      label: t("registrations.column.covers"),
+      text: (registration) => typesOf(registration).join(", "),
+      cell: (registration) => <span className="font-mono text-caption">{typesOf(registration).join(", ") || "—"}</span>,
+    },
+    {
+      key: "phase",
+      label: t("resourceList.phase"),
+      text: (registration) => registration.status?.phase ?? "",
+      cell: (registration) => <LifecycleBadge kind="phase" value={registration.status?.phase} />,
+    },
+    {
+      key: "actions",
+      label: t("approvals.actions"),
+      text: () => "",
+      actions: true,
+      align: "right",
+      cell: (registration) => {
+        const shape = fromRegistrationEnvelope(registration);
+        return (
+          <ResourceRowActions
+            project={project}
+            target={{ project, kind: KIND, plural: PLURAL, name: registration.metadata.name, label: titleOf(registration) }}
+            form={{
+              schema: schemaFor(targetOf(shape), shape.operations ?? []),
+              uiSchema,
+              fromManifest: (manifest) =>
+                fromRegistrationEnvelope(manifest) as unknown as Record<string, unknown>,
+              toManifest: (edited, stored) =>
+                toRegistrationEnvelope(project, edited as unknown as RegistrationForm, stored),
+            }}
+          />
+        );
+      },
+    },
+  ];
 
   return (
     <div className="flex flex-col gap-section">
@@ -272,23 +343,14 @@ export function RegistrationsPage({ project, edit }: { project: string; edit?: s
 
       {change ? <ChangeNotice change={change} project={project} /> : null}
 
-      <ResourceList
+      <AdminGrid<Manifest>
         query={list}
         caption={t("registrations.title")}
-        head={
-          <TableHead>
-            <TableHeaderCell>{t("registrations.field.name")}</TableHeaderCell>
-            <TableHeaderCell>
-              <Term name="contextSpace">{t("registrations.field.space")}</Term>
-            </TableHeaderCell>
-            <TableHeaderCell>{t("registrations.column.source")}</TableHeaderCell>
-            <TableHeaderCell>{t("registrations.column.covers")}</TableHeaderCell>
-            <TableHeaderCell>{t("resourceList.phase")}</TableHeaderCell>
-            <TableHeaderCell align="right">{t("approvals.actions")}</TableHeaderCell>
-          </TableHead>
-        }
-        columns={COLUMNS}
-        count={registrations.length}
+        storageKey={`${project}:csrs`}
+        stack
+        rows={registrations}
+        rowKey={(registration) => registration.metadata.name}
+        columns={columns}
         empty={
           <EmptyState
             bare
@@ -297,54 +359,7 @@ export function RegistrationsPage({ project, edit }: { project: string; edit?: s
             action={addButton}
           />
         }
-      >
-        {registrations.map((registration: Manifest) => {
-          const shape = fromRegistrationEnvelope(registration);
-          const title = localized(registration.metadata.title, locale, registration.metadata.name);
-          const types = [
-            ...new Set(shape.information.flatMap((entry) => (entry.entities ?? []).map((one) => one.type))),
-          ];
-          const branch = targetOf(shape);
-          return (
-            <TableRow key={registration.metadata.name}>
-              <TableCell primary>
-                <RecordLink project={project} plural="csrs" name={registration.metadata.name}>
-                  {title}
-                </RecordLink>
-              </TableCell>
-              <TableCell>
-                <span className="font-mono text-caption">{shape.contextSpaceRef || "—"}</span>
-              </TableCell>
-              <TableCell>
-                <div className="text-caption text-fg-muted">{t(`registrations.targetKind.${branch}`)}</div>
-                <div className="break-all font-mono text-caption">
-                  {(branch === "endpoint" ? shape.endpoint : shape.endpointRef) || "—"}
-                </div>
-              </TableCell>
-              <TableCell>
-                <span className="font-mono text-caption">{types.join(", ") || "—"}</span>
-              </TableCell>
-              <TableCell>
-                <LifecycleBadge kind="phase" value={registration.status?.phase} />
-              </TableCell>
-              <TableCell align="right">
-                <ResourceRowActions
-                  project={project}
-                  target={{ project, kind: KIND, plural: PLURAL, name: registration.metadata.name, label: title }}
-                  form={{
-                    schema: schemaFor(branch, shape.operations ?? []),
-                    uiSchema,
-                    fromManifest: (manifest) =>
-                      fromRegistrationEnvelope(manifest) as unknown as Record<string, unknown>,
-                    toManifest: (edited, stored) =>
-                      toRegistrationEnvelope(project, edited as unknown as RegistrationForm, stored),
-                  }}
-                />
-              </TableCell>
-            </TableRow>
-          );
-        })}
-      </ResourceList>
+      />
 
       <ResourceFormDialog<RegistrationForm>
         kind={KIND}

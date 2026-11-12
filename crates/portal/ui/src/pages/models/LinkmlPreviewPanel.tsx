@@ -9,15 +9,10 @@ import { CodeBlock,
   Alert,
   Button,
   Skeleton,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
   Tabs,
   tabPanelProps,
 } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
 import {
   DEFAULT_KIND,
   parseModel,
@@ -295,26 +290,26 @@ export function LinkmlPreviewPanel({
               )
             ) : null}
             {tab === "options" ? (
-              <Table caption={t("models.tab.options")}>
-                <TableHead>
-                  <TableHeaderCell>{t("models.slot")}</TableHeaderCell>
-                  <TableHeaderCell>{t("models.affordanceLabel")}</TableHeaderCell>
-                  <TableHeaderCell>{t("models.dimensionLabel")}</TableHeaderCell>
-                </TableHead>
-                <TableBody>
-                  {model.slots.map((slot) => (
-                    <TableRow key={slot.name}>
-                      <TableCell primary>{slot.name}</TableCell>
-                      <TableCell>
-                        {t(`models.affordance.${slotAffordance(slot, enumNames)}`)}
-                      </TableCell>
-                      <TableCell>
-                        {slotDimension(slotAffordance(slot, enumNames)) ?? "—"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <AdminGrid<LinkmlSlot>
+                caption={t("models.tab.options")}
+                storageKey="models:options"
+                rows={model.slots}
+                rowKey={(slot) => slot.name}
+                columns={[
+                  { key: "slot", label: t("models.slot"), text: (slot) => slot.name },
+                  {
+                    key: "affordance",
+                    label: t("models.affordanceLabel"),
+                    text: (slot) => t(`models.affordance.${slotAffordance(slot, enumNames)}`),
+                  },
+                  {
+                    key: "dimension",
+                    label: t("models.dimensionLabel"),
+                    text: (slot) => slotDimension(slotAffordance(slot, enumNames)) ?? "—",
+                  },
+                ]}
+                empty={<p className="text-body text-fg-muted">{t("models.page.noFields")}</p>}
+              />
             ) : null}
             {tab === "docs" ? (
               artifacts?.docs ? (

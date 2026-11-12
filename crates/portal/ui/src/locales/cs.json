@@ -3927,7 +3927,8 @@
       "source": "Odkud",
       "grants": "{count, plural, one {# oprávnění} few {# oprávnění} other {# oprávnění}}",
       "noSource": "oprávnění tohoto prostoru",
-      "noSourceHint": "Tomuto oprávnění neodpovídá žádná politika, kterou smíte číst."
+      "noSourceHint": "Tomuto oprávnění neodpovídá žádná politika, kterou smíte číst.",
+      "emptyHint": "Požádejte správce projektu o Policy, která vám povolí čtení typu v prostoru tohoto endpointu."
     },
     "panel": {
       "title": "Váš přístup",
@@ -4158,7 +4159,8 @@
         "ended": "{grant} skončilo {when}",
         "starts": "{grant} začíná {when}",
         "noGrant": "Žádné oprávnění to neuvádí"
-      }
+      },
+      "gatewayOnlyHint": "Aby mohl měnit prostředky Portálu, přidělte účtu roli Portálu v části Vazby rolí."
     },
     "words": {
       "verb": {
@@ -4500,7 +4502,8 @@
       "readUrl": "Přečíst adresu",
       "urlInvalid": "Zadejte celou adresu začínající na https:// nebo http://.",
       "urlCredential": "Adresa obsahuje jméno, heslo nebo klíč. Zadejte ji bez nich, nebo zdroj připojte jako zdroj dat, jehož přihlašovací údaj je secret.",
-      "enterAddress": "Nejprve zadejte adresu souboru."
+      "enterAddress": "Nejprve zadejte adresu souboru.",
+      "noColumns": "Soubor nemá žádný sloupec, ze kterého by vzniklo pole: zkontrolujte, že první řádek pojmenovává sloupce."
     },
     "source": {
       "loading": "Načítá se zdroj modelu…",
@@ -4644,7 +4647,8 @@
         "nothingToApply": "Nejprve něco změňte."
       },
       "zoomMin": "Už je nejmenší přiblížení.",
-      "zoomMax": "Už je největší přiblížení."
+      "zoomMax": "Už je největší přiblížení.",
+      "noRelationships": "Mezi těmito třídami zatím není žádný vztah."
     },
     "field": {
       "name": "Název",
@@ -6837,13 +6841,15 @@
       "cancel": "Zrušit",
       "yamlError": "Neplatný YAML, opravte ho: {message}",
       "showOperations": "Zobrazit jeho operace ({count})",
+      "noOperations": "Tento profil nedeklaruje žádné operace.",
       "profileTitles": {
         "chat": "Konverzace s asistentem",
         "app-builder": "Sestavovač aplikací",
         "app-from-prompt": "Aplikace ze zadání"
       },
       "packageHosts": "balíčky pro stavbu aplikací",
-      "ids": "Profil {name}, role {role}"
+      "ids": "Profil {name}, role {role}",
+      "noOperationsHint": "Profil agenta v projektu org uvádí operace, které běh smí použít; doplní je tam správce organizace."
     },
     "states": {
       "failed": "Nedokončilo se",
@@ -8238,6 +8244,9 @@
       "range": "Povolený rozsah",
       "perProject": "Kvóta na projekt",
       "perProjectLead": "Z čí kvóty každý projekt běží a co využívá; projekty, které nemůžete číst, zde nejsou.",
+      "noSettings": "V této části není žádné nastavení.",
+      "noSettingsHint": "Nastavení se tu objeví, jakmile je instalace definuje.",
+      "noProjectsHint": "Požádejte správce organizace, aby vás přidal do projektu v části Přístup, Skupiny.",
       "project": "Projekt",
       "whose": "Kvóta od",
       "noProjects": "Žádný projekt, který můžete číst.",
@@ -8495,7 +8504,8 @@
         "alertMe": "Upozornit mě…",
         "alertMeHint": "Dostanete oznámení do schránky, když má tento agent nával odmítnutí, blíží se limitu tokenů nebo zapisuje mimo pracovní dobu.",
         "alertMeNone": "Neschvalujete změny v žádném projektu a běhy všech lidí vidí jen schvalovatel. Požádejte správce projektu o roli schvalovatele."
-      }
+      },
+      "emptyAction": "Otevřít projekty"
     },
     "connectors": {
       "title": "Konektory",
@@ -8594,6 +8604,7 @@
       "allows": "Dovoluje",
       "from": "Odkud",
       "none": "Žádná vazba vám zde nic nedává.",
+      "noneHint": "Požádejte správce projektu, aby vás v části Členové přiřadil k roli.",
       "binding": "vazba {binding}, {scope}",
       "approveOthers": "Schvalujete změny, které navrhnou jiní; vaše vlastní změny čekají na jiného schvalovatele, protože na tyto druhy nemáte také právo mazat."
     },
@@ -9574,7 +9585,8 @@
       "tokensOut": "Napsané tokeny",
       "duplicate": "Duplikovat",
       "duplicateOf": "Duplikovat {name}",
-      "noPrivacyContact": "Chybí kontakt pro osobní údaje"
+      "noPrivacyContact": "Chybí kontakt pro osobní údaje",
+      "noUsageHint": "Každý den, kdy se někdo asistenta na něco zeptá, se tu zobrazí jako jeden řádek."
     },
     "chat": {
       "ask": "Zeptat se",
@@ -9597,6 +9609,7 @@
       "liveData": "Živá data",
       "sourceNumber": "Zdroj {n}",
       "data": "Data, která odpověď přečetla",
+      "noRows": "Čtení nevrátilo žádné řádky. Zeptejte se znovu širší otázkou.",
       "dataset": "Otevřít dataset",
       "download": "Stáhnout data",
       "again": "Zkusit znovu",
@@ -9706,7 +9719,8 @@
       "omittedTitle": "Vynechané endpointy: {count}",
       "omitted": "Jeden asistent čte nejvýše 100 endpointů; zužte výběr nebo některé vylučte. Vynechané: {slugs}",
       "noSources": "Žádný zdroj znalostí: odpovídá jen z živých dat.",
-      "sources": "Zdroje znalostí"
+      "sources": "Zdroje znalostí",
+      "noEndpointsHint": "Uveďte v nasazení asistenta endpoint, aby odpovídal i z živých dat."
     },
     "trySearch": {
       "title": "Vyzkoušet vyhledávání",
@@ -10452,7 +10466,8 @@
       "brokerError": "Broker {broker} je v chybě; otevřete ho a přečtěte si proč",
       "unread": "Žádná pipeline ho nečte",
       "noEndpoint": "V projektu není Endpoint {endpoint}",
-      "noPolicy": "V projektu není Policy {policy}"
+      "noPolicy": "V projektu není Policy {policy}",
+      "emptyHint": "Otevřete broker a přidejte zařízení v části Připojit zařízení; jeho cesta k endpointu se zobrazí zde."
     },
     "capture": {
       "kept": "Uchovává posledních {count} zpráv na téma po dobu {window} pro sestavení mapování."
@@ -10689,7 +10704,8 @@
         "noRightHint": "Požádejte správce projektu {project} o přístup ke čtení jeho MQTT brokerů a pak otevřete tuto stránku znovu.",
         "missing": "Žádný MQTT broker se nejmenuje {name}",
         "missingHint": "Mohl být odstraněn nebo přejmenován. Vyberte broker ze seznamu."
-      }
+      },
+      "noDevicesHint": "Účet zařízení je servisní účet, kterým se skupina zařízení přihlašuje k brokeru."
     },
     "edit": {
       "accessLead": "Zařízení se přihlásí tokenem svého servisního účtu a smí používat témata každé role, kterou jeho účet drží. Přidáním účtu sem mu udělíte roli; změna se navrhne spolu s brokerem.",
@@ -12180,7 +12196,9 @@
       "published": "Publikováno",
       "signed": "Podepsaný",
       "yes": "Povolen",
-      "no": "Zakázán"
+      "no": "Zakázán",
+      "noProtectionHint": "Chráněná větev přijímá změny jen přes zkontrolovaný merge; nastavuje ji vlastník repozitáře ve forge.",
+      "noPackagesHint": "Balíček, který sestavení tohoto repozitáře zveřejní, se tu zobrazí s verzí."
     },
     "refused": {
       "list": "Repozitáře projektu {project} vám nejsou přístupné. Přístup ke čtení vám udělí ten, kdo projekt spravuje.",
@@ -12467,5 +12485,11 @@
   "hiddenSection": {
     "title": "Dashboardy nejsou součástí této instalace",
     "body": "Otevřená adresa patří dashboardům, které tento Portál nenabízí, proto jste v kontextových prostorech projektu."
+  },
+  "dataGrid": {
+    "searchRows": "Hledat v seznamu",
+    "searchRowsHint": "Napište část libovolné hodnoty, např. název nebo prostor.",
+    "noMatch": "Hledání ani filtrům neodpovídá žádný řádek.",
+    "rowCount": "Řádků: {n}"
   }
 }

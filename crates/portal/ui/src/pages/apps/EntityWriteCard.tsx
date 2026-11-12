@@ -3,7 +3,8 @@ import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
 import { readCsrfToken } from "../../api/client";
 import { Button } from "../../components/ui/Button";
-import { Card, Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow, TableRowHeaderCell } from "../../components/ui";
+import { Card } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
 import { isRecord, localId, textOf } from "./QueryResultCard";
 
 /**
@@ -109,33 +110,36 @@ export function EntityWriteCard({ write, live }: { write: EntityWrite; live: boo
       <p className="font-medium">
         {t("agentRun.write.lead", { count: write.entities.length, endpoint: write.endpoint })}
       </p>
-      <Table caption={t("agentRun.write.title")}>
-        <TableHead>
-          <TableHeaderCell>{t("agentRun.write.entity")}</TableHeaderCell>
-          <TableHeaderCell>{t("agentRun.write.attribute")}</TableHeaderCell>
-          <TableHeaderCell>{t("agentRun.write.before")}</TableHeaderCell>
-          <TableHeaderCell>{t("agentRun.write.after")}</TableHeaderCell>
-        </TableHead>
-        <TableBody>
-          {write.entities.flatMap((entity) =>
-            entity.changes.map((change, index) => (
-              <TableRow key={`${entity.id}-${change.attribute}`}>
-                {/* The entity names its row, and names it once: the rows after the first
-                    belong to the same entity and say so by being empty, which is what the
-                    `scope` the hand-made header never carried is for. */}
-                <TableRowHeaderCell title={entity.id}>
-                  {index === 0 ? localId(entity.id) : ""}
-                </TableRowHeaderCell>
-                <TableCell>{change.attribute}</TableCell>
-                <TableCell className="text-fg-muted">
-                  {textOf(change.before) || t("agentRun.write.empty")}
-                </TableCell>
-                <TableCell primary>{textOf(change.after)}</TableCell>
-              </TableRow>
-            )),
-          )}
-        </TableBody>
-      </Table>
+      <AdminGrid
+        caption={t("agentRun.write.title")}
+        rows={write.entities.flatMap((entity) => entity.changes.map((change) => ({ id: entity.id, ...change })))}
+        rowKey={(row) => `${row.id}-${row.attribute}`}
+        storageKey="agentRun.write"
+        empty={t("agentRun.write.empty")}
+        noSearch
+        columns={[
+          {
+            // Every row names its entity, so a sort or a filter never leaves a change without one.
+            key: "entity",
+            label: t("agentRun.write.entity"),
+            text: (row) => localId(row.id),
+            cell: (row) => <span title={row.id}>{localId(row.id)}</span>,
+          },
+          { key: "attribute", label: t("agentRun.write.attribute"), text: (row) => row.attribute },
+          {
+            key: "before",
+            label: t("agentRun.write.before"),
+            text: (row) => textOf(row.before) || t("agentRun.write.empty"),
+            cell: (row) => <span className="text-fg-muted">{textOf(row.before) || t("agentRun.write.empty")}</span>,
+          },
+          {
+            key: "after",
+            label: t("agentRun.write.after"),
+            text: (row) => textOf(row.after),
+            cell: (row) => <span className="font-medium text-fg">{textOf(row.after)}</span>,
+          },
+        ]}
+      />
       {state.kind === "applied" ? (
         <div role="status" className="flex flex-col gap-1">
           {changed > 0 ? <p>{t("agentRun.write.applied", { count: changed })}</p> : null}

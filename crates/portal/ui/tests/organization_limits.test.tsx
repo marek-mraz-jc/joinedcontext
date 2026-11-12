@@ -135,7 +135,7 @@ describe("Organization settings: policies and limits", () => {
     expect(within(helsinki).getAllByText(en.organization.limits.noLimit).length).toBeGreaterThan(0);
     // A card per project on a phone, each quota under its own name: ten columns were cut off.
     const quota = helsinki.closest("table") as HTMLElement;
-    const named = [...quota.querySelectorAll("thead th")].slice(1).map((header) => header.textContent);
+    const named = [...quota.querySelectorAll("thead th")].slice(1).map((header) => header.textContent?.replace("⋮", ""));
     expectStacked(quota, named as string[]);
   });
 

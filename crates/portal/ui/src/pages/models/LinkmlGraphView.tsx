@@ -11,13 +11,8 @@ import {
   MenuItem,
   MenuTrigger,
   Select,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
 } from "../../components/ui";
+import { AdminGrid } from "../../components/grid/AdminGrid";
 import { useDiagramEditing } from "./DiagramEditing";
 import { download, mermaidErDiagram, svgFile } from "./diagramExport";
 import { layered } from "./diagramLayout";
@@ -1123,26 +1118,29 @@ export function LinkmlGraphView({
         </div>
         {editing?.dialogs}
         {pairs.length > 0 && !canvas ? (
-          <Table caption={t("models.graph.table")}>
-            <TableHead>
-              <TableHeaderCell>{t("models.graph.tableRelationship")}</TableHeaderCell>
-              <TableHeaderCell>{t("models.graph.tableField")}</TableHeaderCell>
-              <TableHeaderCell>{t("models.graph.tableInverse")}</TableHeaderCell>
-              <TableHeaderCell>{t("models.graph.tableMultiplicity")}</TableHeaderCell>
-            </TableHead>
-            <TableBody>
-              {pairs.map((edge) => (
-                <TableRow key={`${edge.from}.${edge.label ?? ""}`}>
-                  <TableCell primary>
-                    {t(`models.relationships.sentence.${edge.cardinality ?? "one-to-one"}`, { source: edge.from, target: edge.to })}
-                  </TableCell>
-                  <TableCell>{`${edge.from}.${edge.label ?? ""}`}</TableCell>
-                  <TableCell>{`${edge.to}.${edge.inverse ?? ""}`}</TableCell>
-                  <TableCell>{`${edge.from} ${edge.fromMultiplicity ?? ""} — ${edge.toMultiplicity ?? ""} ${edge.to}`}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <AdminGrid<GraphEdge>
+            caption={t("models.graph.table")}
+            storageKey="models:graph"
+            stack
+            rows={pairs}
+            rowKey={(edge) => `${edge.from}.${edge.label ?? ""}`}
+            columns={[
+              {
+                key: "relationship",
+                label: t("models.graph.tableRelationship"),
+                text: (edge) =>
+                  t(`models.relationships.sentence.${edge.cardinality ?? "one-to-one"}`, { source: edge.from, target: edge.to }),
+              },
+              { key: "field", label: t("models.graph.tableField"), text: (edge) => `${edge.from}.${edge.label ?? ""}` },
+              { key: "inverse", label: t("models.graph.tableInverse"), text: (edge) => `${edge.to}.${edge.inverse ?? ""}` },
+              {
+                key: "multiplicity",
+                label: t("models.graph.tableMultiplicity"),
+                text: (edge) => `${edge.from} ${edge.fromMultiplicity ?? ""} — ${edge.toMultiplicity ?? ""} ${edge.to}`,
+              },
+            ]}
+            empty={<p className="text-body text-fg-muted">{t("models.graph.noRelationships")}</p>}
+          />
         ) : null}
       </div>
     </div>

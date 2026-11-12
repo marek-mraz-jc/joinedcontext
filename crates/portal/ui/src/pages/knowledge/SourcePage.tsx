@@ -18,12 +18,6 @@ import {
   Input,
   PageHeader,
   PermissionGuard,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
   Tabs,
   tabPanelProps,
 } from "../../components/ui";
@@ -43,6 +37,8 @@ import {
   uploadedFile,
 } from "./knowledge";
 import type { DocumentRow, InclusionCounts, PageRow } from "./knowledge";
+import { AdminGrid } from "../../components/grid/AdminGrid";
+import type { DataColumn } from "../../components/grid/AdminGrid";
 import { useUrlParam } from "../../navigation/urlState";
 import { UploadedFiles } from "./UploadedFiles";
 import { IndexStatus } from "./IndexStatus";
@@ -376,76 +372,115 @@ function Documents({
     queryKey: knowledgeKeys.documents(project, source),
     queryFn: () => listDocuments(project, source),
   });
-  if (documents.isLoading) return <p role="status">{t("app.loading")}</p>;
-  if (documents.isError) {
-    return (
-      <PageFailed error={documents.error} onRetry={() => void documents.refetch()} />
-    );
-  }
   const rows: DocumentRow[] = documents.data ?? [];
-  if (rows.length === 0) {
-    return <EmptyState title={t("knowledge.source.noDocuments")} description={t("knowledge.source.noDocumentsHint")} icon="search" />;
-  }
+  const included = (row: DocumentRow): string =>
+    row.included
+      ? t("knowledge.included")
+      : t(row.excludedBy === "administrator" ? "knowledge.excludedByAdministrator" : "knowledge.excludedByPattern");
+  const columns: DataColumn<DocumentRow>[] = [
+    {
+      key: "document",
+      label: t("knowledge.column.document"),
+      text: (row) => `${row.title ?? ""} ${row.url}`.trim(),
+      cell: (row) => (
+        <div className="flex items-start gap-2">
+          <Checkbox
+            label={<span className="sr-only">{t("knowledge.source.selectDocument", { url: row.url })}</span>}
+            checked={selected.has(row.id)}
+            onChange={() => onSelect(row.id)}
+          />
+          <div className="min-w-0">
+            <Titled row={row} />
+            {row.offDomain ? (
+              <Badge tone="warning" className="ml-2">
+                {t("knowledge.source.offDomain")}
+              </Badge>
+            ) : null}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: "size",
+      label: t("knowledge.column.size"),
+      kind: "number",
+      align: "right",
+      text: (row) => (row.bytes === null ? "" : String(row.bytes)),
+      cell: (row) => bytesText(row.bytes, i18n.language),
+    },
+    {
+      key: "pages",
+      label: t("knowledge.column.pdfPages"),
+      kind: "number",
+      align: "right",
+      text: (row) => (row.pages === null ? "" : String(row.pages)),
+      cell: (row) => row.pages ?? "—",
+    },
+    {
+      key: "modified",
+      label: t("knowledge.column.modified"),
+      kind: "date",
+      text: (row) => row.modified ?? "",
+      cell: (row) => timeText(row.modified, i18n.language),
+    },
+    {
+      key: "state",
+      label: t("knowledge.column.state"),
+      text: (row) => (row.status !== "fetched" ? `${included(row)} ${t(`knowledge.status.${row.status}`)}` : included(row)),
+      cell: (row) => (
+        <>
+          <InclusionBadge included={row.included} excludedBy={row.excludedBy} />
+          {row.status !== "fetched" ? (
+            <Badge tone={row.status === "failed" ? "danger" : "neutral"} className="ml-2">
+              {t(`knowledge.status.${row.status}`)}
+            </Badge>
+          ) : null}
+        </>
+      ),
+    },
+    {
+      key: "passages",
+      label: t("knowledge.column.passages"),
+      kind: "number",
+      align: "right",
+      text: (row) => String(row.passages),
+    },
+    {
+      key: "actions",
+      label: t("approvals.actions"),
+      actions: true,
+      align: "right",
+      text: () => "",
+      cell: (row) => (
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label={t("knowledge.source.passagesOf", { url: row.url })}
+          onClick={() => onOpen({ what: "passages", title: row.url, document: row.id })}
+        >
+          {t("knowledge.source.passages")}
+        </Button>
+      ),
+    },
+  ];
   return (
-    <Table data-records="" caption={t("knowledge.source.documents")}>
-      <TableHead>
-        <TableHeaderCell>
-          <span className="sr-only">{t("knowledge.source.select")}</span>
-        </TableHeaderCell>
-        <TableHeaderCell>{t("knowledge.column.document")}</TableHeaderCell>
-        <TableHeaderCell align="right">{t("knowledge.column.size")}</TableHeaderCell>
-        <TableHeaderCell align="right">{t("knowledge.column.pdfPages")}</TableHeaderCell>
-        <TableHeaderCell>{t("knowledge.column.modified")}</TableHeaderCell>
-        <TableHeaderCell>{t("knowledge.column.state")}</TableHeaderCell>
-        <TableHeaderCell align="right">{t("knowledge.column.passages")}</TableHeaderCell>
-        <TableHeaderCell align="right">
-          <span className="sr-only">{t("approvals.actions")}</span>
-        </TableHeaderCell>
-      </TableHead>
-      <TableBody>
-        {rows.map((row) => (
-          <TableRow key={row.id}>
-            <TableCell>
-              <Checkbox
-                label={<span className="sr-only">{t("knowledge.source.selectDocument", { url: row.url })}</span>}
-                checked={selected.has(row.id)}
-                onChange={() => onSelect(row.id)}
-              />
-            </TableCell>
-            <TableCell>
-              <Titled row={row} />
-              {row.offDomain ? (
-                <Badge tone="warning" className="ml-2">
-                  {t("knowledge.source.offDomain")}
-                </Badge>
-              ) : null}
-            </TableCell>
-            <TableCell align="right">{bytesText(row.bytes, i18n.language)}</TableCell>
-            <TableCell align="right">{row.pages ?? "—"}</TableCell>
-            <TableCell>{timeText(row.modified, i18n.language)}</TableCell>
-            <TableCell>
-              <InclusionBadge included={row.included} excludedBy={row.excludedBy} />
-              {row.status !== "fetched" ? (
-                <Badge tone={row.status === "failed" ? "danger" : "neutral"} className="ml-2">
-                  {t(`knowledge.status.${row.status}`)}
-                </Badge>
-              ) : null}
-            </TableCell>
-            <TableCell align="right">{row.passages}</TableCell>
-            <TableCell align="right">
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label={t("knowledge.source.passagesOf", { url: row.url })}
-                onClick={() => onOpen({ what: "passages", title: row.url, document: row.id })}
-              >
-                {t("knowledge.source.passages")}
-              </Button>
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <AdminGrid<DocumentRow>
+      query={documents}
+      caption={t("knowledge.source.documents")}
+      rows={rows}
+      columns={columns}
+      rowKey={(row) => String(row.id)}
+      storageKey={`${project}:${source}:documents`}
+      stack
+      empty={
+        <EmptyState
+          bare
+          title={t("knowledge.source.noDocuments")}
+          description={t("knowledge.source.noDocumentsHint")}
+          icon="search"
+        />
+      }
+    />
   );
 }
 

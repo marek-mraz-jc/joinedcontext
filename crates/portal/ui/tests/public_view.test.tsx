@@ -4,7 +4,7 @@
  * `/v/{slug}` that reads that Endpoint anonymously.
  */
 // covers (T-2137, the module gate in gate_modules.test.ts): src/pages/spaces/PublicView.tsx.
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
@@ -135,12 +135,16 @@ describe("the public link", () => {
     renderPage(<PublicViewPage slug="abc" />, publicEndpoint(reads));
     const table = await screen.findByRole("table", { name: "Bike hire docking station" });
     expect(await screen.findByRole("heading", { level: 1, name: "Bike stations" })).toBeInTheDocument();
-    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual([en.entityGrid.id, "Name", "Available bike number"]);
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent?.replace(/⋮$/, ""))).toEqual([en.entityGrid.id, "Name", "Available bike number"]);
     expect(within(table).getByText("Kamppi")).toBeInTheDocument();
     expect(within(table).getByText("1")).toHaveAttribute("title", "urn:ngsi-ld:BikeHireDockingStation:hsl:1");
     expect(table.textContent).not.toContain("urn:");
     expect(screen.getByTestId("public-view").textContent).not.toContain("abc");
     expect(screen.getByText("2 entities.")).toBeInTheDocument();
+    // The rows are on the shared grid (T-6752): its search narrows what the read returned.
+    fireEvent.change(within(screen.getByTestId("public-view")).getByRole("searchbox", { name: en.dataGrid.searchRows }), { target: { value: "Töölö" } });
+    expect(within(table).queryByText("Kamppi")).toBeNull();
+    expect(within(table).getByText("Töölö")).toBeInTheDocument();
     expect(reads.every((request) => request.credentials === "omit")).toBe(true);
     const entities = reads.find((request) => new URL(request.url).pathname.endsWith("/entities"));
     expect(new URL(entities?.url ?? "http://x").searchParams.get("options")).toBe("keyValues");
