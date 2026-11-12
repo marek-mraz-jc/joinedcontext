@@ -163,6 +163,8 @@ test.describe("an Endpoint the gateway does not admit you to (T-6802)", () => {
       await page.goto(`/projects/${PROJECT}/endpoints/${NAME}/edit?lang=en`);
       const editRefused = page.locator("[data-endpoint-refused]");
       await expect(editRefused.getByText("You do not read this Endpoint's data")).toBeVisible();
+      // The form loads beside the note; shoot once it is there, not its skeleton.
+      await expect(page.getByText("What it publishes").first()).toBeVisible();
       await editRefused.scrollIntoViewIfNeeded();
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       await shot(page, `endpoint-edit-refused-${width}`);
