@@ -256,7 +256,7 @@ async fn two_organizations_publish_and_read_only_their_own_catalogue() {
         }
     }
 
-    // Links follow the request: plain http here (gap 7), the forwarded scheme behind a proxy.
+    // Links name the catalogue's canonical base: plain http here (gap 7).
     let (_, body) = get(addr, alpha, "/catalog.jsonld").await;
     assert!(body.contains("http://opendata.alpha.test/"), "{body}");
     assert!(!body.contains("https://opendata.alpha.test"), "{body}");
@@ -296,13 +296,15 @@ async fn two_organizations_publish_and_read_only_their_own_catalogue() {
         forwarded: Some((alpha, "https")),
         ..Call::on(beta)
     };
+    // Its ids stay the catalogue's canonical ones (T-6797): the forwarded scheme moves none.
     let (_, body) = send(addr, call, "/catalog.jsonld").await;
-    assert!(body.contains("https://opendata.alpha.test/"), "{body}");
+    assert!(body.contains("http://opendata.alpha.test/"), "{body}");
+    assert!(!body.contains("https://opendata.alpha.test"), "{body}");
     assert!(!body.contains("opendata.beta.test"), "{body}");
 
-    // A host no Organization holds: the router answers 404 before any catalogue.
+    // A host no Organization holds is outside the registry: 421 before any catalogue.
     let (status, _) = get(addr, "opendata.gamma.test", "/api/3/action/package_list").await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(status, StatusCode::MISDIRECTED_REQUEST);
 
     jc.running.stop().await.expect("clean stop");
 }

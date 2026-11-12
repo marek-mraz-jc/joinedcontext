@@ -14,7 +14,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use jc_router::{JcRouterBuilder, Mount, MountSpec, RouterError};
+use jc_router::{HostTable, JcRouterBuilder, Mount, MountSpec, RouterError};
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -231,11 +231,51 @@ pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
     check_organization_hosts(cfg, &plans)?;
     // Dry run of the router table: overlap is refused before any module state exists.
     let mut dry = JcRouterBuilder::new(cfg.scheme.clone(), cfg.base_host.clone());
+    if let Some(table) = host_table(cfg, &plans)? {
+        dry = dry.hosts(table);
+    }
     for spec in plans.iter().flat_map(MountPlan::specs) {
         dry = dry.mount(spec.clone(), Router::new());
     }
     dry.build()?;
     Ok(plans)
+}
+
+/// The host registry of a deployment with Organizations (docs/API/15-addresses-v1.md §2): each
+/// `[[organizations]]` host and `[[hosts]]` row bound to its Organization; the base host, every
+/// other host a module is mounted on and the loopback names shared. `None` without
+/// Organizations: a one-Organization deployment answers every host as before.
+fn host_table(cfg: &Config, plans: &[MountPlan]) -> Result<Option<HostTable>, RouterError> {
+    if cfg.organizations.is_empty() {
+        return Ok(None);
+    }
+    let mut table = HostTable::new();
+    let mut bound = std::collections::BTreeSet::new();
+    for org in &cfg.organizations {
+        table = table.organization(&org.name)?;
+        for (_, host) in org.hosts.by_module() {
+            table = table.bound(host, &org.name, "/")?;
+            bound.insert(host.split(':').next().unwrap_or(host).to_owned());
+        }
+    }
+    for row in &cfg.hosts {
+        table = table.bound(
+            &row.host,
+            &row.organization,
+            row.root.as_deref().unwrap_or("/"),
+        )?;
+        bound.insert(row.host.split(':').next().unwrap_or(&row.host).to_owned());
+    }
+    let mounted = plans
+        .iter()
+        .flat_map(MountPlan::specs)
+        .filter_map(|spec| spec.host.as_deref());
+    for host in mounted.chain([cfg.base_host.as_str(), "localhost", "127.0.0.1", "[::1]"]) {
+        if !bound.contains(host.split(':').next().unwrap_or(host)) {
+            table = table.shared(host)?;
+        }
+    }
+    Ok(Some(table))
 }
 
 /// The entries of `module` on the `[[organizations]]` hosts: each answers its whole host, and
@@ -440,6 +480,9 @@ pub async fn build_router(
     }
     for identity in &cfg.trusted_proxy_identities {
         builder = builder.trust_identity(identity.clone());
+    }
+    if let Some(table) = host_table(cfg, &plans)? {
+        builder = builder.hosts(table);
     }
     let mut portal = None;
     let mut gateway = None;
@@ -1411,6 +1454,100 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// docs/API/15-addresses-v1.md §2 over jc's own mount plan: the Organization hosts and a
+    /// `[[hosts]]` row are bound, the base host shared with the Organization as its first path
+    /// segment, any other host 421, another Organization's prefix 404; each module learns the
+    /// Organization from the router alone.
+    #[tokio::test]
+    async fn the_host_registry_decides_the_organization_of_every_request() {
+        let file = format!(
+            "mode = \"slug\"\nbase_host = \"city.test\"\n{TWO_ORGS}\n[[hosts]]\nhost = \"data.alpha.example\"\norganization = \"alpha\"\nroot = \"/opendata\"\n"
+        );
+        let cfg = dev_config("kaisatsu,portal,dataroom,gateway", &file);
+        let plans = plan_mounts(&cfg).unwrap();
+        let mut builder = JcRouterBuilder::new("https", "city.test")
+            .hosts(host_table(&cfg, &plans).unwrap().expect("a registry"));
+        for plan in &plans {
+            let name = plan.module.name();
+            let router = Router::new().fallback(
+                move |org: Option<axum::Extension<jc_router::Organization>>,
+                      axum::Extension(mount): axum::Extension<Mount>,
+                      uri: axum::http::Uri| async move {
+                    let org = org.map_or_else(|| "-".to_owned(), |o| o.0.0);
+                    format!("{name} {org} {} {}", mount.public_base(), uri.path())
+                },
+            );
+            builder = mount_all(builder, plan, &router);
+        }
+        let jc = builder.build().unwrap();
+        for (host, path, want) in [
+            (
+                "data.alpha.example",
+                "/dataset/x",
+                "200 dataroom alpha https://data.alpha.example /dataset/x",
+            ),
+            (
+                "opendata.beta.test",
+                "/dataset/x",
+                "200 dataroom beta https://opendata.beta.test /dataset/x",
+            ),
+            (
+                "city.test",
+                "/alpha/opendata/dataset/x",
+                "200 dataroom alpha https://city.test/alpha/opendata /dataset/x",
+            ),
+            (
+                "city.test",
+                "/opendata/dataset/x",
+                "200 dataroom - https://city.test/opendata /dataset/x",
+            ),
+            (
+                "localhost:42301",
+                "/beta/api/endpoints",
+                "200 gateway beta https://localhost:42301/beta/api/endpoints /api/endpoints",
+            ),
+            (
+                "data.alpha.example",
+                "/beta/opendata/dataset/x",
+                "404 unmounted path",
+            ),
+            (
+                "api.beta.test",
+                "/alpha/api/endpoints",
+                "404 unmounted path",
+            ),
+            ("portal.alpha.test", "/beta/projects", "404 unmounted path"),
+            (
+                "evil.test",
+                "/alpha/opendata/dataset/x",
+                "421 this host is not served here",
+            ),
+        ] {
+            let req = Request::builder()
+                .uri(path)
+                .header(header::HOST, host)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let resp = jc.dispatch(req, None).await;
+            let status = resp.status().as_u16();
+            let body = axum::body::to_bytes(resp.into_body(), 1 << 16)
+                .await
+                .unwrap();
+            let got = format!("{status} {}", String::from_utf8_lossy(&body));
+            assert_eq!(got, want, "{host}{path}");
+        }
+        // Without Organizations there is no registry: every host answers as before.
+        let one = dev_config(
+            "kaisatsu,portal",
+            "mode = \"slug\"\nbase_host = \"city.test\"\n",
+        );
+        assert!(
+            host_table(&one, &plan_mounts(&one).unwrap())
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

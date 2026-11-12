@@ -273,7 +273,18 @@ pub async fn build(
     .spawn();
     #[cfg(feature = "portal")]
     let configured = by_catalogue.clone();
+    // Each Organization's catalogue, by the name jc's host registry decides, and its canonical
+    // address: the Organization's open data host, whichever registered host reads it.
+    let mut by_organization = BTreeMap::new();
+    let mut bases = BTreeMap::new();
+    for org in organizations {
+        let id = CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| err(&e))?;
+        by_organization.insert(org.name.clone(), id);
+        bases.insert(id, format!("{}://{}", mount.scheme, org.hosts.opendata));
+    }
     let state = DataroomState::new(store, authorizer, org_id, catalogue_id)
+        .with_organization_catalogues(by_organization)
+        .with_catalogue_bases(bases)
         .with_tokens(bindings)
         .with_installation_branding(installation_branding(&own, &live, assistant_widget))
         .with_catalogue_branding(by_catalogue)

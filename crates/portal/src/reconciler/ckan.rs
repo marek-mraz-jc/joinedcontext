@@ -174,12 +174,21 @@ impl CkanSync {
 
     /// `target` as its Organization's own catalogue takes it: that catalogue's URL, the CKAN
     /// organisation of the Organization's name. A project of an Organization with no catalogue
-    /// of its own keeps what its `CkanInstance` says.
+    /// of its own keeps its `CkanInstance`'s catalogue; on a repository of several
+    /// Organizations it still publishes into the CKAN organisation of its own Organization's
+    /// name (ADR-N-058 §2.6), never the instance's `organizationDefault` or the Endpoint's
+    /// choice, so no dataset lands in another Organization's organisation. Only a
+    /// one-Organization repository follows `organizationDefault`.
     fn routed(&self, repo: &Repository, mut target: Target) -> Target {
         let project = target.id.namespace.clone().unwrap_or_default();
-        let Some(catalogue) = organization_in(repo, &project)
-            .and_then(|org| self.organizations.iter().find(|c| c.organization == org))
-        else {
+        let Some(org) = organization_in(repo, &project) else {
+            return target;
+        };
+        let Some(catalogue) = self.organizations.iter().find(|c| c.organization == org) else {
+            if organization_count(repo) > 1 {
+                target.instance.organization_default = Some(org.clone());
+                target.publication.organization = Some(org);
+            }
             return target;
         };
         target.instance.url = catalogue.url.as_str().trim_end_matches('/').to_owned();
@@ -1221,6 +1230,19 @@ fn project_token(
 /// The Organization that owns `project` in `repo`, as `permissions::organization_of` reads it
 /// in the mirror: its Project's `spec.organizationRef`, else the installation's (the only
 /// Organization, or the only one that sets `spec.installation`).
+/// How many Organizations the repository declares.
+fn organization_count(repo: &Repository) -> usize {
+    repo.iter()
+        .filter(|(id, _)| {
+            id.kind == "Organization"
+                && id
+                    .namespace
+                    .as_deref()
+                    .is_none_or(|n| n == crate::api::blueprints::ORG_NAMESPACE)
+        })
+        .count()
+}
+
 fn organization_in(repo: &Repository, project: &str) -> Option<String> {
     let org_level = |id: &ResourceId| {
         id.namespace
@@ -1615,9 +1637,42 @@ mod tests {
         };
         assert!(err.contains("ba's catalogue"), "{err}");
         assert!(!err.contains("hel-token"), "{err}");
-        // A Portal without Organization catalogues keeps the instance's.
-        let plain = CkanSync::new("portal.example").routed(&repo, target("bratislava"));
-        assert_eq!(plain.instance.url, "https://data.example.fi");
+        // A Portal without Organization catalogues keeps the instance's catalogue, and each
+        // Organization's Endpoint still lands in its own Organization's CKAN organisation.
+        let plain = CkanSync::new("portal.example");
+        for (project, org) in [
+            ("bratislava", "ba"),
+            ("helsinki", "hel"),
+            ("unowned", "hel"),
+        ] {
+            let mut asked = target(project);
+            // The Endpoint asks for another Organization's organisation: refused by routing.
+            asked.publication.organization = Some("hel-fi".to_owned());
+            let routed = plain.routed(&repo, asked);
+            assert_eq!(routed.instance.url, "https://data.example.fi", "{project}");
+            assert_eq!(routed.publication.organization.as_deref(), Some(org));
+            assert_eq!(routed.instance.organization_default.as_deref(), Some(org));
+        }
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ADR-N-058 §2.6: only a repository of one Organization follows the instance's
+    /// `organizationDefault` (and the Endpoint's own choice).
+    #[test]
+    fn one_organization_keeps_the_instances_organization_default() {
+        let repo = Repository::from_manifests(
+            vec![
+                manifest("Organization", "hel", json!({ "installation": true })),
+                manifest("Project", "helsinki", json!({ "organizationRef": "hel" })),
+            ],
+            None,
+        )
+        .expect("a repository");
+        let routed = CkanSync::new("portal.example").routed(&repo, target("helsinki"));
+        assert_eq!(
+            routed.instance.organization_default.as_deref(),
+            Some("hel-fi")
+        );
+        assert_eq!(routed.publication.organization, None);
     }
 }

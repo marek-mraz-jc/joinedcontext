@@ -12,12 +12,13 @@ role org-admin, scope organization O) and `mo-O-member` (role viewer, scope O). 
 paired with a control: the same call by the owner Organization's admin must answer 200, so a 404
 that means "no such route" never passes for isolation.
 
-Host mode (--jc-config <jc.toml> naming [[organizations]]): each Organization's people sign in and
+Host mode (--hosts <jc.toml> naming [[organizations]], alias --jc-config): each Organization's people sign in and
 call on its own Portal host, every request sent to --base-url with the Host header of the address
 (as APISIX passes it); kaisatsu stays on the base host. `check_hosts` adds what only hosts can
 show: a person of A signed in on B's host (SSO) gets 403, A's cookie on B's host is no session,
 the platform admin on a host sees that Organization alone, the gateway and open data hosts of one
-link and list nothing of another."""
+link and list nothing of another, a host outside the registry is 421, B's prefix on A's host is a
+404 and A's own prefixed form answers in place (API) or 308 (page)."""
 import argparse
 import base64
 import hashlib
@@ -791,11 +792,37 @@ class Suite:
                          "200, links only its own hosts, names no foreign project",
                          f"{st}, foreign links {theirs[:3]}, foreign projects {names[:3]}",
                          st == 200 and not theirs and not names)
-        # Host mode answers the router's 404; a Portal mounted at path "" (the rehearsal) catches
-        # every host as the deployment's own, unpinned Portal: no session there, 401.
-        st, _, _ = HostHttp(self.base, "nobody.localhost", ["nobody.localhost"]).call("GET", "/api/v1/projects")
+            self.check_prefixes(org, orgs)
+        # A host outside the registry is 421 and names no Organization (docs/API/15-addresses-v1.md §2).
+        st, _, raw = HostHttp(self.base, "nobody.localhost", ["nobody.localhost"]).call("GET", "/api/v1/projects")
+        text = raw.decode(errors="replace")
+        named = sorted(o for o in orgs if o in text)
         self.row("hosts.unknown", "-", "GET /api/v1/projects on a host nobody serves",
-                 "404, or 401 from the unpinned Portal of a path mount", st, st in (401, 404))
+                 "421, no Organization named", f"{st}, names {named}", st == 421 and not named)
+
+    def check_prefixes(self, org: str, orgs: list):
+        """The prefixed form on `org`'s own bound hosts: the API answers in place, a page is 308 to
+        the prefix-less form; another Organization's prefix there is the 404 of an unknown path."""
+        data = self.client(org, "opendata")
+        st, _, raw = data.call("GET", f"/{org}/api/3/action/package_list", headers={"Accept": "application/json"})
+        st_c, _, raw_c = data.call("GET", "/api/3/action/package_list", headers={"Accept": "application/json"})
+        self.row(f"hosts.prefix.{org}.api", org, f"GET {{opendata}}/{org}/api/3/action/package_list",
+                 "200 in place, the same list as the prefix-less form", f"{st}, control {st_c}",
+                 st == 200 and st_c == 200 and raw == raw_c)
+        st, hdrs, _ = data.call("GET", f"/{org}/dataset?q=x", headers={"Accept": "text/html"})
+        location = (hdrs or {}).get("location") or (hdrs or {}).get("Location")
+        self.row(f"hosts.prefix.{org}.page", org, f"GET {{opendata}}/{org}/dataset?q=x as a page",
+                 "308 to /dataset?q=x", f"{st} {location}", st == 308 and location == "/dataset?q=x")
+        for other in orgs:
+            if other == org:
+                continue
+            for kind, path in (("opendata", f"/{other}/api/3/action/package_list"),
+                               ("api", f"/{other}/api/endpoints"), ("portal", f"/{other}/api/v1/projects")):
+                st, _, raw = self.client(org, kind).call("GET", path, headers={"Accept": "application/json"})
+                text = raw.decode(errors="replace")
+                self.row(f"hosts.prefix.{org}.{kind}.{other}", f"{other}->{org}", f"GET {{{kind}}}{path} on {org}'s host",
+                         "404 of an unknown path, naming nothing", f"{st} {text[:60]}",
+                         st == 404 and other not in text)
 
     GLOBAL_READS = ["/api/v1/endpoints", "/api/v1/shared-apps", "/api/v1/connectors", "/api/v1/connectors/pending",
                     "/api/v1/blueprints", "/api/v1/alerts", "/api/v1/alerts/notices", "/api/v1/notifications",
@@ -1035,7 +1062,8 @@ def main(argv):
     ap.add_argument("--only", help="comma list of check groups: projects,hosts,project_reads,writes,people,mcp,connectors,data,catalogue,dashboards,global,ui")
     ap.add_argument("--shots", action="store_true", help="browser shots 1440/400 per persona (Playwright)")
     ap.add_argument("--sync-timeout", type=int, default=180)
-    ap.add_argument("--jc-config", help="the jc.toml: its [[organizations]] switch on host mode")
+    ap.add_argument("--jc-config", "--hosts", dest="jc_config",
+                    help="the jc.toml (or its [[organizations]] fragment): host mode, each Organization on its own hosts")
     a = ap.parse_args(argv)
     R.loopback_only(a.base_url)
     s = Suite(a)

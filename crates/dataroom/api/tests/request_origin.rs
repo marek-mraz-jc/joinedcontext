@@ -124,6 +124,235 @@ async fn the_mount_names_the_catalogue_and_the_links_not_the_raw_host() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// A request as jc's router hands it over: its `Mount`, and the Organization its host registry
+/// decided (a bound host's row or a shared host's first segment).
+async fn call(
+    state: DataroomState,
+    at: jc_router::Mount,
+    organization: Option<&str>,
+    method: &str,
+    path: &str,
+    token: Option<&str>,
+    body: Option<serde_json::Value>,
+) -> (StatusCode, String) {
+    let mut req = Request::builder()
+        .method(method)
+        .uri(path)
+        .header(header::HOST, "raw.header.test")
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(t) = token {
+        req = req.header(header::AUTHORIZATION, t);
+    }
+    let mut req = req
+        .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
+        .unwrap();
+    req.extensions_mut().insert(at);
+    if let Some(org) = organization {
+        req.extensions_mut()
+            .insert(jc_router::Organization(org.to_owned()));
+    }
+    let resp = router(state).oneshot(req).await.unwrap();
+    let status = resp.status();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    (status, String::from_utf8_lossy(&body).into_owned())
+}
+
+/// Two Organizations, `com_alpha` on the default catalogue and `com_beta` on the other, each
+/// with its canonical base: the default one https under a prefix, the other http on its host.
+async fn two_organizations() -> DataroomState {
+    let (a, b) = (
+        CatalogueId::from_uuid(Uuid::from_u128(DEFAULT)),
+        CatalogueId::from_uuid(Uuid::from_u128(OTHER)),
+    );
+    state()
+        .await
+        .with_public_base("https://data.city.test/opendata")
+        .with_organization_catalogues(
+            [("com_alpha".to_owned(), a), ("com_beta".to_owned(), b)].into(),
+        )
+        .with_catalogue_bases([(b, "http://other.city.test".to_owned())].into())
+}
+
+/// T-6797: every absolute id and link names the catalogue's canonical base, whichever
+/// registered host (bound or shared with the Organization's prefix) and scheme read it; the
+/// Host header never reaches an id.
+#[tokio::test]
+async fn ids_and_help_links_name_the_canonical_base_on_every_host() {
+    let reads = [
+        // (mount, decided Organization, canonical base)
+        (
+            mount("http", "other.city.test", ""),
+            Some("com_beta"),
+            "http://other.city.test",
+        ),
+        (
+            mount("https", "city.test", "/com_beta/opendata"),
+            Some("com_beta"),
+            "http://other.city.test",
+        ),
+        (
+            mount("http", "localhost:42301", "/com_beta/opendata"),
+            Some("com_beta"),
+            "http://other.city.test",
+        ),
+        (
+            mount("http", "data.city.test", "/opendata"),
+            None,
+            "https://data.city.test/opendata",
+        ),
+        (
+            mount("https", "city.test", "/com_alpha/opendata"),
+            Some("com_alpha"),
+            "https://data.city.test/opendata",
+        ),
+    ];
+    for (at, org, base) in reads {
+        let seen = at.public_base();
+        let (status, help) = call(
+            two_organizations().await,
+            at.clone(),
+            org,
+            "GET",
+            "/api/3/action/package_search?q=",
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{seen}: {help}");
+        assert!(
+            help.contains(&format!("\"help\":\"{base}/api/3/action/help_show")),
+            "{seen}: {help}"
+        );
+        let (status, dcat) = call(
+            two_organizations().await,
+            at,
+            org,
+            "GET",
+            "/catalog.jsonld",
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{seen}: {dcat}");
+        assert!(dcat.contains(&format!("{base}/")), "{seen}: {dcat}");
+        for foreign in [
+            "raw.header.test",
+            "localhost",
+            "https://other.city.test",
+            "http://data.city.test",
+        ] {
+            assert!(
+                !dcat.contains(foreign) && !help.contains(foreign),
+                "{seen} names {foreign}"
+            );
+        }
+        if seen.contains("/com_") {
+            assert!(
+                !dcat.contains("city.test/com_"),
+                "{seen}: an id follows the request"
+            );
+        }
+    }
+}
+
+/// T-6796: each Organization's datasets sit in its own catalogue's organisation alone, and an
+/// Organization the router never decided reads as nothing, its name not echoed.
+#[tokio::test]
+async fn organization_show_of_one_organization_lists_no_dataset_of_another() {
+    let org = OrgId::from_uuid(Uuid::from_u128(ORG));
+    let (a, b) = (
+        CatalogueId::from_uuid(Uuid::from_u128(DEFAULT)),
+        CatalogueId::from_uuid(Uuid::from_u128(OTHER)),
+    );
+    let (token_a, token_b) = ("a".repeat(40), "b".repeat(40));
+    let (bind_a, grant_a) = portal_publisher_on(&token_a, org, a, "com_alpha").unwrap();
+    let (bind_b, grant_b) = portal_publisher_on(&token_b, org, b, "com_beta").unwrap();
+    let state = two_organizations().await.with_tokens(vec![bind_a, bind_b]);
+    let state = DataroomState {
+        authorizer: Arc::new(PolicyAuthorizer::new(vec![grant_a, grant_b])),
+        ..state
+    };
+    let on = |org: &str| mount("https", "city.test", &format!("/{org}/opendata"));
+    for (who, token) in [("com_alpha", &token_a), ("com_beta", &token_b)] {
+        let (status, body) = call(
+            state.clone(),
+            on(who),
+            Some(who),
+            "POST",
+            "/api/3/action/organization_create",
+            Some(token),
+            Some(serde_json::json!({ "name": who, "title": who })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{who}: {body}");
+        let (status, body) = call(
+            state.clone(),
+            on(who),
+            Some(who),
+            "POST",
+            "/api/3/action/package_create",
+            Some(token),
+            Some(serde_json::json!({
+                "name": format!("{who}-budget"), "title": "Budget", "notes": "Budget",
+                "owner_org": who, "license_id": "cc-by",
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{who}: {body}");
+    }
+    for (who, other) in [("com_alpha", "com_beta"), ("com_beta", "com_alpha")] {
+        let (status, body) = call(
+            state.clone(),
+            on(who),
+            Some(who),
+            "GET",
+            &format!("/api/3/action/organization_show?id={who}&include_datasets=true"),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{who}: {body}");
+        assert!(body.contains("\"package_count\":1"), "{who}: {body}");
+        assert!(!body.contains(other), "{who} names {other}: {body}");
+        let (_, list) = call(
+            state.clone(),
+            on(who),
+            Some(who),
+            "GET",
+            &format!("/api/3/action/package_search?fq=organization:{who}"),
+            None,
+            None,
+        )
+        .await;
+        assert!(list.contains(&format!("{who}-budget")), "{who}: {list}");
+        assert!(!list.contains(other), "{who} lists {other}: {list}");
+        // The other Organization's organisation is not in this catalogue at all.
+        let (status, _) = call(
+            state.clone(),
+            on(who),
+            Some(who),
+            "GET",
+            &format!("/api/3/action/organization_show?id={other}"),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{who} shows {other}");
+    }
+    let (status, body) = call(
+        state,
+        on("com_gamma"),
+        Some("com_gamma"),
+        "GET",
+        "/api/3/action/package_list",
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(!body.contains("com_gamma"), "{body}");
+}
+
 #[tokio::test]
 async fn a_loopback_name_reads_the_default_catalogue_only_with_one_catalogue() {
     for host in ["localhost:42301", "127.0.0.1"] {
