@@ -437,6 +437,13 @@ fn host_pipeline_accounts(mirror: &Mirror, bentos: &Bentos) -> Vec<BoundAccount>
     accounts
 }
 
+/// Whether `account` is a project pipeline client whose secret a host runner takes
+/// ([`host_pipeline_accounts`]).
+fn host_derived(account: &BoundAccount) -> bool {
+    account.name == crate::reconciler::streams::PIPELINE_ACCOUNT
+        && matches!(account.auth, Auth::External(ClientCredential::Secret))
+}
+
 /// The slugs of the Endpoints a Pipeline names (T-5757): its outputs' and its Endpoint source's,
 /// as [`jc_core::kinds::pipeline_identity::derive`] resolves them, and each slug of `slugs` (its
 /// project's Endpoints by name) that `mapping`, its manifest and `bento.yaml` text, calls as
@@ -860,6 +867,9 @@ impl WorkloadClientSync {
             if let Some(reason) = refused.get(&account.label()) {
                 let mut outcome = ClientOutcome::of(&account.label());
                 outcome.error = Some(reason.clone());
+                if host {
+                    self.keep_host_secret(account, &mut secrets);
+                }
                 outcomes.push(outcome);
                 continue;
             }
@@ -874,9 +884,14 @@ impl WorkloadClientSync {
                 Reach::Internal => vec![crate::auth::internal::INTERNAL_AUDIENCE.to_owned()],
             };
             let mut outcome = self.converge_one(&token, account, &audiences).await;
-            if host && outcome.error.is_none() && matches!(account.reach, Reach::Pipeline(_)) {
-                self.read_host_secret(&token, account, &mut secrets, &mut outcome)
-                    .await;
+            if host && matches!(account.reach, Reach::Pipeline(_)) {
+                if outcome.error.is_none() {
+                    self.read_host_secret(&token, account, &mut secrets, &mut outcome)
+                        .await;
+                } else {
+                    // A realm busy for one run keeps the runner's credential.
+                    self.keep_host_secret(account, &mut secrets);
+                }
             }
             outcomes.push(outcome);
         }
@@ -976,9 +991,7 @@ impl WorkloadClientSync {
         secrets: &mut BTreeMap<String, String>,
         outcome: &mut ClientOutcome,
     ) {
-        if account.name != crate::reconciler::streams::PIPELINE_ACCOUNT
-            || !matches!(account.auth, Auth::External(ClientCredential::Secret))
-        {
+        if !host_derived(account) {
             return;
         }
         let variable = crate::reconciler::streams::client_secret_var(&account.project);
@@ -1019,14 +1032,24 @@ impl WorkloadClientSync {
                 secrets.insert(variable, secret);
             }
             failed => {
-                if let Some(last) = self.host_secrets().remove(&variable) {
-                    secrets.insert(variable, last);
-                }
+                self.keep_host_secret(account, secrets);
                 outcome.error = Some(match failed {
                     Err(err) => format!("reading the secret of {id}: {err}"),
                     _ => format!("the realm holds no secret for {id}"),
                 });
             }
+        }
+    }
+
+    /// Carries the last secret of a project pipeline client into `secrets` for a run that could
+    /// not converge or read it, so the runner keeps its credential until the realm answers.
+    fn keep_host_secret(&self, account: &BoundAccount, secrets: &mut BTreeMap<String, String>) {
+        if !host_derived(account) {
+            return;
+        }
+        let variable = crate::reconciler::streams::client_secret_var(&account.project);
+        if let Some(last) = self.host_secrets().remove(&variable) {
+            secrets.insert(variable, last);
         }
     }
 

@@ -1765,6 +1765,51 @@ async fn a_deleted_projects_pipeline_client_and_runner_secret_go() {
     );
 }
 
+/// T-6832 review: a realm that fails the client lookup for one run (busy, 500) leaves the
+/// runner the secret it holds, so every running stream keeps its credential until the next good
+/// sync; the outcome names the failure, never the value.
+#[tokio::test]
+async fn a_realm_lookup_that_fails_keeps_the_runners_secret() {
+    let keycloak = realm(json!([host_client("zilina", "uuid-zl")])).await;
+    creates(
+        &keycloak,
+        "zilina-pipelines",
+        host_client("zilina", "uuid-zl"),
+    )
+    .await;
+    mappers(&keycloak, "uuid-zl", json!([])).await;
+    secret_of(&keycloak, "uuid-zl", "zilina-generated").await;
+    let wave = sync(&keycloak).with_host_runner(true);
+    let mirror = mirror_with(vec![endpoint(
+        "zilina",
+        "zilina-uniza",
+        "zilina-uniza",
+        SLUG,
+    )]);
+    wave.converge(&mirror, &Bentos::new()).await;
+    assert_eq!(wave.host_secrets().len(), 1);
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/clients")))
+        .and(query_param("clientId", "zilina-pipelines"))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&keycloak)
+        .await;
+
+    let outcomes = wave.converge(&mirror, &Bentos::new()).await;
+
+    let zilina = outcomes.iter().find(|o| o.app == "zilina/pipelines");
+    let error = zilina.and_then(|o| o.error.clone());
+    assert!(error.is_some(), "{outcomes:?}");
+    assert!(!error.unwrap_or_default().contains("zilina-generated"));
+    assert_eq!(
+        wave.host_secrets()
+            .get("JC_CLIENT_SECRET_ZILINA")
+            .map(String::as_str),
+        Some("zilina-generated")
+    );
+}
+
 /// T-5766: a Pipeline's token fits the smallest header limit on its hops beside a project of 455
 /// Endpoints on its one space, as Bratislava's is. Before T-5757 its `aud` named all 455 and the
 /// 22 KB token got 431 from the gateway and the Portal's internal listener, so no Bratislava
