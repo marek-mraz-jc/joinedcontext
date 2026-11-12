@@ -14,6 +14,7 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum::response::IntoResponse;
 use axum_extra::extract::cookie::PrivateCookieJar;
+use base64::Engine;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -26,6 +27,7 @@ use joinedcontext_portal::auth::csrf::{self, CSRF_COOKIE};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::ClientAuth;
 use joinedcontext_portal::config::Config;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::organization_host::{self, OrganizationHost, RequestOrganization};
 use joinedcontext_portal::people::People;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
@@ -1588,6 +1590,177 @@ fn member_type(text: &str) -> &str {
         .find("</EntityType>")
         .map_or(text.len(), |n| start + n);
     &text[start..end]
+}
+
+/// ADR-N-070 section 2.4, PF-52, PF-58 (T-6826): an Organization's own RoleBindings and Roles
+/// take `propose_update` and `propose_delete`, run through the REST door of `org`, so its rights,
+/// its red lane and its four-eyes rule are that door's. `$metadata` offers them only to a caller
+/// who may propose on the kind at the Organization; another Organization's row is 404; an
+/// administrator's own access change waits for a second person (PF-58); 401 without a session.
+#[tokio::test]
+async fn organization_rows_take_red_lane_actions_through_the_rest_door() {
+    let shako = common::forge().await;
+    let client = ShakoClient::new(
+        shako.uri().parse().expect("mock url"),
+        "test-owner",
+        "test-repo",
+        "token-xyz",
+    )
+    .expect("client");
+    let state = state().with_shako(Arc::new(client));
+    // The forge holds the binding's file, as a real proposal reads it before it removes it.
+    let file = serde_norway::to_string(&envelope(
+        "RoleBinding",
+        "hel-only-hel",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "hel-only@hel.fi" }], "role": "reader",
+                "scope": { "organization": "hel" } }),
+    ))
+    .expect("yaml");
+    Mock::given(method("GET"))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "sha-binding",
+            "Content": base64::engine::general_purpose::STANDARD.encode(file),
+        })))
+        .with_priority(1)
+        .mount(&shako)
+        .await;
+    let m = &state.mirror;
+    m.upsert(envelope(
+        "Role",
+        "access-admin",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Project", "RoleBinding", "Role", "Group"],
+                            "verbs": ["read", "propose", "approve", "delete"] }] }),
+    ));
+    m.upsert(envelope(
+        "Role",
+        "binding-reader",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Project", "RoleBinding"], "verbs": ["read"] }] }),
+    ));
+    for (name, user, role) in [
+        ("hel-admins", "sub-adm", "access-admin"),
+        ("hel-bindings", "sub-acc", "binding-reader"),
+    ] {
+        m.upsert(envelope(
+            "RoleBinding",
+            name,
+            ORG_NAMESPACE,
+            json!({ "subjects": [{ "user": user }], "role": role,
+                    "scope": { "organization": "hel" } }),
+        ));
+    }
+    let tag = |kind: &str, name: &str| m.get(ORG_NAMESPACE, kind, name).expect(name).etag();
+    let binding = "/api/v1/rolebindings('hel-only-hel')/JoinedContext.Portal.";
+    let dry = json!({ "dryRun": true });
+
+    let admin = get(&state, Mode::Host("hel"), "adm", "/api/v1/$metadata").await;
+    let offered = |text: &str, ty: &str| {
+        text.contains(&format!(
+            r#"<Action Name="propose_delete" IsBound="true"><Parameter Name="bindingParameter" Type="JoinedContext.Portal.{ty}""#
+        ))
+    };
+    for ty in ["RoleBinding", "OrganizationRole", "Group"] {
+        assert!(offered(&admin.text, ty), "{ty}: {}", admin.text);
+    }
+    let reader = get(&state, Mode::Host("hel"), "acc", "/api/v1/$metadata").await;
+    assert!(!offered(&reader.text, "RoleBinding"), "{}", reader.text);
+
+    // A dry run answers the plan, in the red lane, and writes nothing.
+    let etag = tag("RoleBinding", "hel-only-hel");
+    for (action, body) in [
+        ("propose_delete", dry.clone()),
+        (
+            "propose_update",
+            json!({ "patch": { "spec": { "role": "editor" } }, "dryRun": true }),
+        ),
+    ] {
+        let plan = act(
+            &state,
+            "adm",
+            &format!("{binding}{action}"),
+            Some(&etag),
+            body,
+        )
+        .await;
+        assert_eq!(plan.status, StatusCode::OK, "{action}: {}", plan.text);
+        assert_eq!(plan.json()["lane"], "red", "{action}: {}", plan.text);
+    }
+    let role = "/api/v1/organizationRoles('reader')/JoinedContext.Portal.propose_delete";
+    let plan = act(
+        &state,
+        "adm",
+        role,
+        Some(&tag("Role", "reader")),
+        dry.clone(),
+    )
+    .await;
+    assert_eq!(plan.status, StatusCode::OK, "{}", plan.text);
+    assert_eq!(plan.json()["lane"], "red", "{}", plan.text);
+
+    let delete = format!("{binding}propose_delete");
+    let missing = act(&state, "adm", &delete, None, dry.clone()).await;
+    assert_eq!(
+        missing.status,
+        StatusCode::PRECONDITION_REQUIRED,
+        "{}",
+        missing.text
+    );
+    // A reader of the row without propose: the REST door's 403.
+    let reader = act(&state, "acc", &delete, Some(&etag), dry.clone()).await;
+    assert_eq!(reader.status, StatusCode::FORBIDDEN, "{}", reader.text);
+    // Who reads no RoleBinding, and ba's row read from hel: not there.
+    let viewer = act(&state, "hel-only", &delete, Some(&etag), dry.clone()).await;
+    assert_eq!(viewer.status, StatusCode::NOT_FOUND, "{}", viewer.text);
+    let foreign = act(
+        &state,
+        "adm",
+        "/api/v1/rolebindings('ba-only-ba')/JoinedContext.Portal.propose_delete",
+        Some(&tag("RoleBinding", "ba-only-ba")),
+        dry.clone(),
+    )
+    .await;
+    assert_eq!(foreign.status, StatusCode::NOT_FOUND, "{}", foreign.text);
+
+    // PF-58: the administrator's own access change is proposed and waits for a second person.
+    let proposed = act(&state, "adm", &delete, Some(&etag), json!({})).await;
+    assert_eq!(proposed.status, StatusCode::ACCEPTED, "{}", proposed.text);
+    let change = proposed.json();
+    assert_eq!(change["status"]["lane"], "red", "{}", proposed.text);
+    assert_eq!(
+        change["status"]["phase"], "PendingApproval",
+        "{}",
+        proposed.text
+    );
+    assert!(
+        m.get(ORG_NAMESPACE, "RoleBinding", "hel-only-hel")
+            .is_some(),
+        "nothing is removed before a second person approves"
+    );
+
+    // No session (the CSRF pair present, so the guard lets it by): 401, whatever the action.
+    let csrf_token = organization_host::scope(host("hel"), async { csrf::Token::mint() }).await;
+    let response = server::app(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&delete)
+                .header(header::HOST, HEL)
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::IF_MATCH, &etag)
+                .header(
+                    header::COOKIE,
+                    format!("{CSRF_COOKIE}={}", csrf_token.as_str()),
+                )
+                .header(csrf::CSRF_HEADER, csrf_token.as_str())
+                .body(Body::from(dry.to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 /// [`get`] as an OData request, which a plain read without a `$` option is not.

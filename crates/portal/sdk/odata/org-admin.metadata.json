@@ -4433,6 +4433,215 @@
           {
             "$Name": "bindingParameter",
             "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Blueprint"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.AgentProfile"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.DataSpaceParticipant"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Bundle"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.UiSchema"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.RoleBinding"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Group"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.DelegationPolicy"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.ContextBroker"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Environment"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.OrganizationRole"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
             "$Type": "JoinedContext.Portal.ContextSpace"
           },
           {
@@ -4922,6 +5131,325 @@
       }
     ],
     "propose_update": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Blueprint"
+          },
+          {
+            "$Name": "manifest",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "patch",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.AgentProfile"
+          },
+          {
+            "$Name": "manifest",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "patch",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.DataSpaceParticipant"
+          },
+          {
+            "$Name": "manifest",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "patch",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Bundle"
+          },
+          {
+            "$Name": "manifest",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "patch",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.UiSchema"
+          },
+          {
+            "$Name": "manifest",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "patch",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.RoleBinding"
+          },
+          {
+            "$Name": "manifest",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "patch",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Group"
+          },
+          {
+            "$Name": "manifest",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "patch",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.DelegationPolicy"
+          },
+          {
+            "$Name": "manifest",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "patch",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.ContextBroker"
+          },
+          {
+            "$Name": "manifest",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "patch",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Environment"
+          },
+          {
+            "$Name": "manifest",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "patch",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.OrganizationRole"
+          },
+          {
+            "$Name": "manifest",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "patch",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
       {
         "$IsBound": true,
         "$Kind": "Action",

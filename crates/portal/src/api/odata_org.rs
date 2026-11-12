@@ -1735,10 +1735,12 @@ fn service_document(state: &AppState) -> Response {
 }
 
 /// What the caller may do anywhere in the Organization: what their `$metadata` offers.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct Rights {
     propose: bool,
     approve: bool,
+    /// The Organization sets whose rows the caller may propose a Change to (T-6826).
+    org_propose: BTreeSet<&'static str>,
     /// A member's personal properties ([`people_admin`]).
     people: bool,
 }
@@ -1748,6 +1750,21 @@ fn rights(state: &AppState, user: &CurrentUser, org: &str) -> Rights {
         people: people_admin(state, user, org),
         ..Rights::default()
     };
+    rights.org_propose = org_kinds()
+        .filter(|(.., set)| {
+            manifest_kind(set)
+                && org_set_readable(state, user, org, set)
+                && crate::permissions::holds_at_organization(
+                    state,
+                    &user.0.identity,
+                    org,
+                    &set.type_name,
+                    jc_core::kinds::Verb::Propose,
+                    None,
+                )
+        })
+        .map(|(name, ..)| name)
+        .collect();
     for project in state.mirror.namespaces() {
         if readable(state, user, org, &project) {
             let effective = crate::permissions::for_request(state, &user.0.identity, &project);
@@ -1773,8 +1790,13 @@ type Binding = (String, Option<(&'static ListSet, String)>);
 /// The bound actions `rights` allow: `propose_create` on a project, `propose_update` and
 /// `propose_delete` on each manifest kind, `approve` and `reject` on a Change. Each is
 /// (name, binding type, parameters).
-fn bound_actions(rights: Rights, visible: &BTreeSet<String>) -> Vec<BoundAction> {
+fn bound_actions(rights: &Rights, visible: &BTreeSet<String>) -> Vec<BoundAction> {
     let mut out = Vec::new();
+    for (_, type_name, _) in org_kinds().filter(|(name, ..)| rights.org_propose.contains(name)) {
+        let ty = format!("{NAMESPACE}.{type_name}");
+        out.push(("propose_update", ty.clone(), &UPDATE_PARAMETERS[..]));
+        out.push(("propose_delete", ty, &[("dryRun", "Edm.Boolean")][..]));
+    }
     if rights.propose {
         out.push((
             "propose_create",
@@ -1783,15 +1805,7 @@ fn bound_actions(rights: Rights, visible: &BTreeSet<String>) -> Vec<BoundAction>
         ));
         for set in kinds().filter(|set| manifest_kind(set) && visible.contains(&set.set)) {
             let ty = format!("{NAMESPACE}.{}", set.type_name);
-            out.push((
-                "propose_update",
-                ty.clone(),
-                &[
-                    ("manifest", "Edm.Untyped"),
-                    ("patch", "Edm.Untyped"),
-                    ("dryRun", "Edm.Boolean"),
-                ][..],
-            ));
+            out.push(("propose_update", ty.clone(), &UPDATE_PARAMETERS[..]));
             out.push(("propose_delete", ty, &[("dryRun", "Edm.Boolean")][..]));
         }
     }
@@ -1805,6 +1819,12 @@ fn bound_actions(rights: Rights, visible: &BTreeSet<String>) -> Vec<BoundAction>
     out
 }
 
+const UPDATE_PARAMETERS: [(&str, &str); 3] = [
+    ("manifest", "Edm.Untyped"),
+    ("patch", "Edm.Untyped"),
+    ("dryRun", "Edm.Boolean"),
+];
+
 fn manifest_kind(set: &ListSet) -> bool {
     !set.endpoint_list && crate::resource::by_kind(&set.type_name).is_some()
 }
@@ -1812,7 +1832,7 @@ fn manifest_kind(set: &ListSet) -> bool {
 /// The CSDL XML of the caller: the bound actions they may call inside the schema.
 fn xml_for(
     base: &str,
-    rights: Rights,
+    rights: &Rights,
     visible: &BTreeSet<String>,
     offered: &[&'static crate::ops::Operation],
 ) -> String {
@@ -1839,7 +1859,7 @@ fn xml_for(
 /// The CSDL JSON of the caller: each action's overloads under its name.
 fn json_for(
     base: &str,
-    rights: Rights,
+    rights: &Rights,
     visible: &BTreeSet<String>,
     offered: &[&'static crate::ops::Operation],
 ) -> String {
@@ -1874,7 +1894,7 @@ fn json_for(
 fn metadata(
     headers: &HeaderMap,
     query: &str,
-    rights: Rights,
+    rights: &Rights,
     visible: &BTreeSet<String>,
     offered: &[&'static crate::ops::Operation],
 ) -> Response {
@@ -2032,7 +2052,7 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
         return metadata(
             &parts.headers,
             &query,
-            rights(&state, &user, &org),
+            &rights(&state, &user, &org),
             &visible_sets(&state, &user, &org, &projects),
             &offered,
         );
@@ -2185,6 +2205,13 @@ fn bound_to(entity: &str) -> Result<Binding, Refused> {
             let name = key_value(name).map_err(no)?;
             Ok((text(single_key(project)?), Some((set, text(name)))))
         }
+        [Segment::EntitySet(s), Segment::Key(key)] if org_set(s).is_some() => {
+            let set = org_set(s).ok_or_else(|| no(not_found(format!("no entity set {s}"))))?;
+            match single_key(key)? {
+                Value::String(name) => Ok((ORG_NAMESPACE.to_owned(), Some((set, name)))),
+                _ => Err(no(bad(format!("{s} is keyed by name, e.g. {s}('x')")))),
+            }
+        }
         [Segment::EntitySet(s), Segment::Key(Key::Compound(pairs))] => {
             let set = kind(s).ok_or_else(|| no(not_found(format!("no entity set {s}"))))?;
             match (compound(pairs, PROJECT), compound(pairs, set.key)) {
@@ -2193,7 +2220,7 @@ fn bound_to(entity: &str) -> Result<Binding, Refused> {
             }
         }
         _ => Err(no(not_found(
-            "an action is bound to a project, an entity or a Change",
+            "an action is bound to a project, an entity, an Organization's own manifest or a Change",
         ))),
     }
 }
@@ -2229,7 +2256,9 @@ async fn act_inner(call: Call<'_>, entity: &str, name: &str) -> Result<Response,
         body,
     } = call;
     let (project, bound) = bound_to(entity)?;
-    if !readable(state, &user, org, &project) {
+    // An Organization set's row (T-6826): its namespace is `org`, read as `org_rows` reads it.
+    let at_org = project == ORG_NAMESPACE && bound.is_some();
+    if !at_org && !readable(state, &user, org, &project) {
         return Err(no(not_found(format!("no project {project} you may read"))));
     }
     let json = |value: &Value| {
@@ -2279,23 +2308,27 @@ async fn act_inner(call: Call<'_>, entity: &str, name: &str) -> Result<Response,
         ));
     };
     // The entity first: one the caller may not read answers 404 whatever the precondition.
-    let caller = caller_of(user.clone(), front);
-    let rows = kind_rows(set, &caller, state, &project).await?;
-    let row_key = format!("{project}/{key}");
-    let row = rows
-        .iter()
-        .find(|row| row.get(ROW_KEY).and_then(Value::as_str) == Some(row_key.as_str()))
-        .ok_or_else(|| {
-            no(not_found(format!(
-                "no {} {key} you may read",
-                set.type_name
-            )))
-        })?;
-    let current = row
-        .get(ETAG)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
+    let unread = || {
+        no(not_found(format!(
+            "no {} {key} you may read",
+            set.type_name
+        )))
+    };
+    let current = if at_org {
+        org_row_etag(state, &user, org, set, &key).ok_or_else(unread)?
+    } else {
+        let caller = caller_of(user.clone(), front);
+        let rows = kind_rows(set, &caller, state, &project).await?;
+        let row_key = format!("{project}/{key}");
+        let row = rows
+            .iter()
+            .find(|row| row.get(ROW_KEY).and_then(Value::as_str) == Some(row_key.as_str()))
+            .ok_or_else(unread)?;
+        row.get(ETAG)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
     let plural = set.set.clone();
     match name {
         "propose_update" | "propose_delete" if manifest_kind(set) => {
@@ -2354,6 +2387,30 @@ async fn act_inner(call: Call<'_>, entity: &str, name: &str) -> Result<Response,
             set.type_name
         )))),
     }
+}
+
+/// The `ETag` of the Organization's own manifest `key` of `set`, when the caller reads it as
+/// [`org_rows`] does: the set, the row's Organization and the caller's right on that row.
+fn org_row_etag(
+    state: &AppState,
+    user: &CurrentUser,
+    org: &str,
+    set: &ListSet,
+    key: &str,
+) -> Option<String> {
+    let kind = set.type_name.as_str();
+    let manifest = state.mirror.get(ORG_NAMESPACE, kind, key)?;
+    (org_set_readable(state, user, org, set)
+        && owned_by(state, org, kind, key)
+        && crate::permissions::holds_at_organization(
+            state,
+            &user.0.identity,
+            org,
+            kind,
+            jc_core::kinds::Verb::Read,
+            serde_json::to_value(&manifest).ok().as_ref(),
+        ))
+    .then(|| manifest.etag())
 }
 
 /// The Organization's projects the caller may read.
