@@ -37,7 +37,15 @@ from common import Http, Results, as_json, jwt_claims, loopback_only, read_token
 LD = "application/ld+json"
 GEO = "application/geo+json"
 OUTSIDE = "SmokeOutsidePolicy"
-FILE_TRIES = 5
+# A file past the broker's ANTARES_EXPORT_FILES places is 429 with Retry-After: 6 (T-6823; 503
+# before): a place frees within ANTARES_EXPORT_FILE_SECONDS (240 s), so a busy file is asked again
+# for up to FILE_WAIT seconds, at most FILE_TRIES times.
+FILE_TRIES, FILE_WAIT = 60, 300.0
+# The rows one file may read (antares-ogc export.rs FILE_ROWS, ANTARES_EXPORT_FILE_ROWS unset in
+# jc): past them a file is 413 before its first byte. A ZIP reads a collection for its CSV and its
+# Parquet, so it counts twice.
+FILE_ROWS = 300_000
+FILE_413 = b"the file would hold more rows than a file may"
 BUSY_TRIES, BUSY_WAIT = 3, 5.0  # the gateway's busy 503 (Suite.get)
 # A file's cell holds a whole geometry: a NoiseZone polygon passes csv's default 128 KiB field.
 csv.field_size_limit(64 * 1024 * 1024)
@@ -234,13 +242,20 @@ class Suite:
         what the bundle holds, and every surface must agree with the live count instead.
         A type of expiring entities keeps changing while the suite reads it (helsinki linked-events
         wrote 100 Events every few seconds in smoke 43161732041: 99, 393, 447 within one Endpoint):
-        its seeded rows count at most the bundle's, and each surface shows at least those."""
+        its seeded rows count at most the bundle's, and each surface shows at least those.
+        A Pipeline goes on writing while the suite reads the type (linked-events wrote 100 new
+        Events between the live count 98 and the OData and OGC reads 198 in smoke 43192355831,
+        and its first page landed after a live count of 2 in smoke 43202171779): a type some
+        Policy of the space grants a write to is checked here whatever the live count reads, and
+        once the seeded rows match, each surface shows at least the live count read here."""
         for t, count in want.items():
             if count is None:
                 continue
             live = self.live_count(e, token, t)
-            if live is None or live <= count:
+            writable = bool(e.written & {t, "*"}) and not tenant[t].get("expires")
+            if not writable and (live is None or live <= count):
                 continue
+            live = max(live or 0, count)
             seeded = self.live_count(e, token, t, ex.seeded_ids(t))
             path = f"GET /api/endpoint/{e.slug}/ngsi-ld/v1/entities?type={q(t)}&idPattern={q(ex.seeded_ids(t))}&count=true"
             if tenant[t].get("expires"):
@@ -252,10 +267,12 @@ class Suite:
                     self.moving[(e.slug, t)] = seeded
                 continue
             self.r.check(f"{who}.count.seeded", f"{e.slug} {t}", path,
-                         f"{count} (the bundle's rows; {live - count} more written by the rehearsal's Pipelines)",
+                         f"{count} (the bundle's rows; {live - count} more written by the rehearsal's Pipelines"
+                         + (", which may write more while the suite reads)" if writable else ")"),
                          f"count={seeded}", seeded == count)
             if seeded == count:
                 want[t] = live
+                self.moving[(e.slug, t)] = live
 
     def written(self, e, token, who, grants, extra: list) -> set:
         """Of the listed types the bundle holds no row of, those a granting Policy names and the
@@ -314,7 +331,7 @@ class Suite:
         if count is None:
             self.r.add(f"{who}.count", target, f"GET {path}", "a count (not comparable: " + (narrowed or "overlapping idPatterns") + ")",
                        f"{st} count={actual}", "pass" if st == 200 and actual is not None else "fail")
-        elif slot.get("expires"):
+        elif slot.get("expires") or (e.slug, t) in self.moving:
             ok = st == 200 and actual is not None and self.agrees(e, t, int(actual), count)
             floor = self.moving.get((e.slug, t))
             self.r.check(f"{who}.count", target, f"GET {path}",
@@ -477,34 +494,50 @@ class Suite:
                          st == 200 and raw.lstrip().startswith(b"BEGIN:VCALENDAR"))
 
     def file(self, path, token):
-        """GET a file; the broker writes ANTARES_EXPORT_FILES (default 6) files at once and answers
-        503 past it, so a busy answer is asked again a few times before it counts."""
+        """GET a file; the broker writes ANTARES_EXPORT_FILES (jc: 2) files at once and answers 429
+        (503 before T-6823) past it, so a busy answer is asked again after its Retry-After until a
+        place frees: FILE_TRIES tries within FILE_WAIT seconds."""
+        end = time.monotonic() + FILE_WAIT
         for _ in range(FILE_TRIES - 1):
             st, h, raw = self.get(path, token, "*/*")
-            if st != 503:
+            if st not in (429, 503) or time.monotonic() >= end:
                 return st, h, raw
             time.sleep(min(float(h.get("retry-after") or 2), 10))
         return self.get(path, token, "*/*")
+
+    def refused_rows(self, id, target, path, st, raw, count, reads) -> bool:
+        """A file of `count` rows read `reads` times past FILE_ROWS: the broker's 413 before its
+        first byte is the documented answer (T-6823), and the row says so. False when the file is
+        within the ceiling, so the caller judges it as a file."""
+        if count is None or count * reads <= FILE_ROWS:
+            return False
+        self.r.check(id, target, f"GET {path}", f"413 past {FILE_ROWS} rows ({count} x {reads} reads)",
+                     f"{st} {short(raw, 120)}", st == 413 and FILE_413 in raw)
+        return True
 
     def files(self, e, token, who, base, t, count):
         """OGC items of `t` as a CSV and a Parquet file, and /collections narrowed to `t` as a ZIP,
         as prod's broker writes them (features `tabular` and `parquet`)."""
         items = f"{base}/ogc/features/collections/{q(t)}/items"
         st, h, raw = self.file(f"{items}?f=csv", token)
-        rows = list(csv.reader(io.StringIO(raw.decode("utf-8", "replace")))) if st == 200 else []
-        n = len(rows) - 1
-        ok = st == 200 and h.get("content-type", "").startswith("text/csv") and bool(rows) and "id" in rows[0]
-        if ok and count is not None:
-            ok = self.agrees(e, t, n, count)
-        self.r.check(f"{who}.ogc.csv", f"{e.slug} {t}", f"GET {items}?f=csv", f"200 text/csv, {count} rows",
-                     f"{st} {h.get('content-type', '')} rows={n} {short(raw, 80) if st != 200 else ''}", ok)
+        if not self.refused_rows(f"{who}.ogc.csv", f"{e.slug} {t}", f"{items}?f=csv", st, raw, count, 1):
+            rows = list(csv.reader(io.StringIO(raw.decode("utf-8", "replace")))) if st == 200 else []
+            n = len(rows) - 1
+            ok = st == 200 and h.get("content-type", "").startswith("text/csv") and bool(rows) and "id" in rows[0]
+            if ok and count is not None:
+                ok = self.agrees(e, t, n, count)
+            self.r.check(f"{who}.ogc.csv", f"{e.slug} {t}", f"GET {items}?f=csv", f"200 text/csv, {count} rows",
+                         f"{st} {h.get('content-type', '')} rows={n} {short(raw, 80) if st != 200 else ''}", ok)
         st, h, raw = self.file(f"{items}?f=parquet", token)
-        ok = st == 200 and h.get("content-type", "").startswith("application/vnd.apache.parquet") \
-            and raw[:4] == b"PAR1" and raw[-4:] == b"PAR1"
-        self.r.check(f"{who}.ogc.parquet", f"{e.slug} {t}", f"GET {items}?f=parquet", "200 Parquet (PAR1 ... PAR1)",
-                     f"{st} {h.get('content-type', '')} {len(raw)} bytes {short(raw, 80) if st != 200 else ''}", ok)
+        if not self.refused_rows(f"{who}.ogc.parquet", f"{e.slug} {t}", f"{items}?f=parquet", st, raw, count, 1):
+            ok = st == 200 and h.get("content-type", "").startswith("application/vnd.apache.parquet") \
+                and raw[:4] == b"PAR1" and raw[-4:] == b"PAR1"
+            self.r.check(f"{who}.ogc.parquet", f"{e.slug} {t}", f"GET {items}?f=parquet", "200 Parquet (PAR1 ... PAR1)",
+                         f"{st} {h.get('content-type', '')} {len(raw)} bytes {short(raw, 80) if st != 200 else ''}", ok)
         path = f"{base}/ogc/features/collections?f=zip&collections={q(t)}"
         st, h, raw = self.file(path, token)
+        if self.refused_rows(f"{who}.ogc.zip", f"{e.slug} {t}", path, st, raw, count, 2):
+            return
         try:
             names = zipfile.ZipFile(io.BytesIO(raw)).namelist() if st == 200 else []
         except zipfile.BadZipFile:

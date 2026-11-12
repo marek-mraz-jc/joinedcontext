@@ -49,7 +49,8 @@ spec:
 {pattern}"""
 
 
-def bundle(tmp: Path, now: str = "2026-11-08T12:00:00Z", synthetic: bool = False, expires: bool = False) -> Path:
+def bundle(tmp: Path, now: str = "2026-11-08T12:00:00Z", synthetic: bool = False, expires: bool = False,
+           writer: bool = False) -> Path:
     files = tmp / "gitea" / "files" / "org" / "city" / "spaces" / "air"
     (files / "endpoints").mkdir(parents=True)
     (files / "policies").mkdir()
@@ -66,6 +67,11 @@ def bundle(tmp: Path, now: str = "2026-11-08T12:00:00Z", synthetic: bool = False
         + ("        - type: WaterQualityObserved\n" if synthetic else "")))
     (files / "policies" / "staff-read.yaml").write_text(POLICY.format(
         name="staff-read", assignee="{kind: group, id: staff}", pattern=""))
+    if writer:  # the rehearsal's Pipelines write the space through a Policy no Endpoint here binds
+        (files / "policies" / "pipelines-write.yaml").write_text(
+            "kind: Policy\nmetadata: {name: pipelines-write, namespace: city}\n"
+            "spec:\n  contextSpaceRef: {kind: ContextSpace, name: air}\n"
+            "  assignee: {kind: serviceAccount, id: pipelines}\n  operations: [upsertBatch, createBatch, queryBatch]\n")
     (tmp / "antares").mkdir()
     rows = []
     for i, side in enumerate(["north", "north", "south"]):
@@ -115,6 +121,20 @@ class Fake:
         self.broken = broken
         self.temporal = temporal  # whether the open Endpoint's view serves a temporal read
         self.busy_seen = False  # "busy-once" answers 503 to the first file only
+        self.live_seen: set = set()  # "grown-more": the Endpoints whose first live count was answered
+
+    def grown_rows(self, slug: str) -> int:
+        """The live rows of the granted type: the bundle's 2 and 3 a Pipeline wrote; under
+        "grown-more" the Pipeline writes 100 more right after the suite's first live count."""
+        if self.broken == "grown-late":
+            # smoke 43202171779: the first page landed after the suite's live count read the bundle's 2
+            first = slug not in self.live_seen
+            self.live_seen.add(slug)
+            return 2 if first else 102
+        if self.broken != "grown-more" or slug not in self.live_seen:
+            self.live_seen.add(slug)
+            return 5
+        return 105
 
     def answer(self, method, path, headers):
         u = urllib.parse.urlparse(path)
@@ -158,7 +178,7 @@ class Fake:
                 # a rehearsal Pipeline wrote 3 rows of the granted type and 4 of one the bundle lacks
                 seeded = "rehearsal-" in (qs.get("idPattern") or [""])[0]
                 n = 4 if qs.get("type") == ["WaterQualityObserved"] else \
-                    (1 if self.broken == "grown-lost" else 2) if seeded else 5
+                    (1 if self.broken == "grown-lost" else 2) if seeded else self.grown_rows(slug)
             return 200, {"NGSILD-Results-Count": str(n)}, []
         if rest == "ngsi-ld/v1/entities":
             return 200, {}, {"type": "FeatureCollection", "features": []}
@@ -167,6 +187,9 @@ class Fake:
                 return 404, {}, {"title": "ResourceNotFound"}
             eid = urllib.parse.unquote(rest.split("/", 3)[3])
             return 200, {}, {"id": eid, "type": "AirQualityObserved"}
+        if self.broken == "too-many-rows" and qs.get("f") in (["csv"], ["parquet"], ["zip"]):
+            return 413, {}, {"title": "Payload Too Large",
+                             "detail": "the file would hold more rows than a file may: narrow it (bbox, datetime, filter)"}
         if rest == "ogc/features/collections" and qs.get("f") == ["zip"]:
             if self.broken == "no-files":
                 return 400, {}, {"title": "unknown parameter f"}
@@ -183,26 +206,26 @@ class Fake:
         if rest.endswith("/items") and qs.get("f") == ["csv"]:
             if self.broken == "no-files":
                 return 400, {}, {"title": "unknown parameter f"}
-            rows = 3 if self.broken == "csv-rows" else 5 if self.broken.startswith("grown") else 2
+            rows = 3 if self.broken == "csv-rows" else self.grown_rows(slug) if self.broken.startswith("grown") else 2
             # A polygon of a few thousand points is one cell past csv's default 128 KiB field.
             shape = "[0,0]," * 30_000 if self.broken == "wide-cell" else ""
             body = "id,geometry\n" + "".join(f'urn:x:{i},"{{""type"":""Point"",""c"":[{shape}0]}}"\n'
                                              for i in range(rows))
             return 200, {"Content-Type": "text/csv; charset=utf-8; header=present"}, body.encode()
         if rest.endswith("/items") and qs.get("f") == ["parquet"]:
-            if self.broken in ("busy", "busy-once") and not self.busy_seen:
-                self.busy_seen = self.broken == "busy-once"
-                return 503, {"Retry-After": "0"}, {"title": "busy"}
+            if self.broken in ("busy", "busy-once", "busy-429-once") and not self.busy_seen:
+                self.busy_seen = self.broken != "busy"
+                return (429 if self.broken == "busy-429-once" else 503), {"Retry-After": "0"}, {"title": "busy"}
             if self.broken == "no-files":
                 return 400, {}, {"title": "unknown parameter f"}
             return 200, {"Content-Type": "application/vnd.apache.parquet"}, b"PAR1" + b"\0" * 8 + b"PAR1"
         if rest.startswith("ogc/features/collections/"):
-            n = 5 if self.broken.startswith("grown") else 2
+            n = self.grown_rows(slug) if self.broken.startswith("grown") else 2
             return 200, {}, {"type": "FeatureCollection", "numberMatched": n, "features": []}
         if rest == "odata/v4/$metadata":
             return 200, {"Content-Type": "application/xml"}, b'<EntitySet Name="AirQualityObserved"/>'
         if rest.startswith("odata/v4/"):
-            return 200, {}, {"@odata.count": 5 if self.broken.startswith("grown") else 2, "value": []}
+            return 200, {}, {"@odata.count": self.grown_rows(slug) if self.broken.startswith("grown") else 2, "value": []}
         if rest.startswith("ical/v1/") and self.broken == "feed-413":
             return 413, {"Content-Type": "application/problem+json"}, {
                 "status": 413, "title": "the query selects as many events as one feed reads or more: narrow it with q"}
@@ -246,8 +269,8 @@ def serve():
         s.shutdown()
 
 
-def run(tmp_path, base, now, synthetic=False, expires=False):
-    b = bundle(tmp_path / "x", now, synthetic, expires)
+def run(tmp_path, base, now, synthetic=False, expires=False, writer=False):
+    b = bundle(tmp_path / "x", now, synthetic, expires, writer)
     out = tmp_path / "out"
     code = suite.main(["--base-url", base, "--export", str(b), "--out", str(out), "--workers", "1"])
     return code, json.loads((out / "results.json").read_text())
@@ -307,6 +330,36 @@ def test_a_type_of_expiring_entities_a_pipeline_writes_counts_at_least_the_seede
     assert by["anon.count.seeded"]["expected"].startswith("<= 2") and by["anon.count.seeded"]["actual"] == "count=2"
     assert by["anon.count"]["expected"] == ">= 2 (a Pipeline writes the type)" and by["anon.count"]["actual"] == "200 count=5"
     assert "count=5" in by["anon.odata.query"]["actual"] and "rows=5" in by["anon.ogc.csv"]["actual"]
+
+
+def test_a_type_a_pipeline_keeps_writing_during_the_run_counts_at_least_the_live_rows(tmp_path, serve):
+    # smoke 43192355831 (T-6819): helsinki linked-events wrote 100 new Events between the suite's
+    # live count (98) and its OData and OGC reads (198) on three Endpoints; the seeded 2 held.
+    code, res = run(tmp_path, serve(Fake("grown-more")), now_iso(), synthetic=True)
+    fails = [r for r in res["checks"] if r["result"] == "fail"]
+    assert code == 0 and not fails, fails
+    by = {r["id"]: r for r in res["checks"]}
+    assert by["anon.count.seeded"]["actual"] == "count=2"
+    assert by["anon.count"]["expected"] == ">= 5 (a Pipeline writes the type)" and by["anon.count"]["actual"] == "200 count=105"
+    assert "count=105" in by["anon.odata.query"]["actual"] and "rows=105" in by["anon.ogc.csv"]["actual"]
+
+
+def test_a_type_a_policy_lets_a_pipeline_write_counts_at_least_the_bundle_before_the_first_page(tmp_path, serve):
+    # smoke 43202171779 (T-6819): the live count read the bundle's 2 Events, then linked-events'
+    # first page landed and OData, OGC items and CSV read 96 on three Endpoints.
+    code, res = run(tmp_path, serve(Fake("grown-late")), now_iso(), synthetic=True, writer=True)
+    fails = [r for r in res["checks"] if r["result"] == "fail"]
+    assert code == 0 and not fails, fails
+    by = {r["id"]: r for r in res["checks"]}
+    assert by["anon.count.seeded"]["actual"] == "count=2"
+    assert by["anon.count"]["expected"] == ">= 2 (a Pipeline writes the type)"
+    assert "count=102" in by["anon.odata.query"]["actual"] and "rows=102" in by["anon.ogc.csv"]["actual"]
+
+
+def test_rows_appearing_mid_run_with_no_policy_that_writes_the_type_stay_red(tmp_path, serve):
+    code, res = run(tmp_path, serve(Fake("grown-late")), now_iso(), synthetic=True)
+    red = {r["id"] for r in res["checks"] if r["result"] == "fail"}
+    assert code == 1 and {"anon.odata.query", "anon.ogc.items", "anon.ogc.csv"} <= red, red
 
 
 @pytest.mark.parametrize("broken,synthetic,check", [
@@ -442,6 +495,41 @@ def test_a_query_only_grant_answers_an_id_404_as_prod_does(tmp_path, serve, monk
 def test_a_busy_file_is_asked_again(tmp_path, serve):
     code, res = run(tmp_path, serve(Fake("busy-once")), now_iso())
     assert code == 0, [r for r in res["checks"] if r["result"] == "fail"]
+
+
+def test_a_file_the_broker_refuses_with_429_is_asked_again(tmp_path, serve):
+    """T-6823: past its places the broker answers 429 with Retry-After; the file is asked again."""
+    code, res = run(tmp_path, serve(Fake("busy-429-once")), now_iso())
+    assert code == 0, [r for r in res["checks"] if r["result"] == "fail"]
+
+
+def test_a_busy_file_is_asked_again_within_its_wait(monkeypatch):
+    """Busy every time: asked again until FILE_WAIT has passed, then the busy answer counts."""
+    s = suite.Suite.__new__(suite.Suite)
+    calls = []
+
+    def get(path, token=None, accept=None):
+        calls.append(path)
+        return 429, {"retry-after": "0"}, b"busy"
+    s.get = get
+    monkeypatch.setattr(suite, "FILE_WAIT", 0.0)
+    assert s.file("/f", None)[0] == 429 and len(calls) == 1
+    monkeypatch.setattr(suite, "FILE_WAIT", 60.0)
+    calls.clear()
+    assert s.file("/f", None)[0] == 429 and len(calls) == suite.FILE_TRIES
+
+
+def test_a_file_past_the_row_ceiling_passes_only_as_its_413(tmp_path, serve, monkeypatch):
+    """T-6823: a file whose bundle count passes FILE_ROWS is refused before its first byte; that 413
+    is the documented answer, and a 200 for it means the ceiling is gone."""
+    monkeypatch.setattr(suite, "FILE_ROWS", 1)
+    code, res = run(tmp_path / "refused", serve(Fake("too-many-rows")), now_iso())
+    files = [r for r in res["checks"] if r["id"].endswith((".ogc.csv", ".ogc.parquet", ".ogc.zip"))]
+    assert files and all(r["result"] == "pass" for r in files), files
+    assert code == 0, [r for r in res["checks"] if r["result"] == "fail"]
+    _, res = run(tmp_path / "written", serve(Fake()), now_iso())
+    files = [r for r in res["checks"] if r["id"].endswith((".ogc.csv", ".ogc.parquet", ".ogc.zip"))]
+    assert files and all(r["result"] == "fail" for r in files), files
 
 
 def test_a_stopped_gateway_fails_and_never_passes(tmp_path):

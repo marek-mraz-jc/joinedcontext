@@ -18,6 +18,7 @@ pub mod data_model;
 pub mod data_source;
 pub mod dataspace;
 pub mod delegation_policy;
+pub mod ekiben_components;
 pub mod endpoint;
 pub mod endpoint_deprecation;
 pub mod environment;

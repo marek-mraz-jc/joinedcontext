@@ -445,6 +445,15 @@ or sent on (MF-24, T-5971).
 
 What to do: Enter the credential in the Portal's secret form, never in a chat or a manifest, and name it by secretRef.
 
+### `precondition-required` {#precondition-required}
+
+**Precondition Required**, status 428.
+
+A bound OData action (propose, approve, reject) changes an entity, and the request carried no
+`If-Match`; nothing was changed (API/13 §2b).
+
+What to do: Read the entity, then send the action again with its @odata.etag in If-Match.
+
 ### `quota` {#quota}
 
 **Quota Used**, status 429.

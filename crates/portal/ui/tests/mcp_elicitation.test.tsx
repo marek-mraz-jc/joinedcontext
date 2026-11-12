@@ -14,6 +14,8 @@ import en from "../src/locales/en.json";
 import { McpConfirmationPage, McpElicitationPage } from "../src/pages/mcp/McpElicitationPage";
 import { expectNoViolations } from "./checks";
 import { InRouter } from "./pageHarness";
+import { EXACT_PROJECTS } from "./exactProjects";
+import { App } from "../src/App";
 
 const ID = "eli-0a1b2c3d4e5f6a7b";
 const PAGE = `/api/v1/projects/city/mcp-elicitations/${ID}`;
@@ -151,6 +153,73 @@ const showBroker = () =>
       </I18nextProvider>
     </QueryClientProvider>,
   );
+
+/**
+ * T-6829: `jc_project_create` asks under the project it is about to open, so the page's address
+ * names a project the person cannot open yet; a new Organization's administrator opens none.
+ */
+function renderRouteAt(projects: string[]) {
+  const question = {
+    id: ID,
+    operation: "jc_project_create",
+    message: "Open A Project in project 'demo-air' (yellow lane).",
+    resource: "/projects/demo-air",
+    expiresAt: 1_900_000_000,
+    decision: null,
+  };
+  const posted: unknown[] = [];
+  window.history.pushState({}, "", `/projects/demo-air/mcp-elicitations/${ID}`);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const request = input as Request;
+      const url = new URL(request.url ?? String(input), "http://localhost");
+      const reply = (body: unknown) =>
+        new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url.pathname.endsWith("/auth/me")) return reply({ subject: "b7c1e0f4", username: "org.admin", roles: [] });
+      if (url.pathname === "/api/v1/projects") {
+        // The list as the server gives it: the test setup must not add the page's project.
+        const listed = reply({ kind: "List", items: projects.map((name) => ({ name })) });
+        listed.headers.set(EXACT_PROJECTS, "1");
+        return listed;
+      }
+      if (url.pathname === `/api/v1/projects/demo-air/mcp-elicitations/${ID}`) return reply(question);
+      if (url.pathname === `/api/v1/projects/demo-air/mcp-elicitations/${ID}/decision`) {
+        posted.push(await request.json());
+        return reply({ ...question, decision: "accept" });
+      }
+      return reply({ kind: "List", items: [] });
+    }),
+  );
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <I18nextProvider i18n={i18n}>
+        <App />
+      </I18nextProvider>
+    </QueryClientProvider>,
+  );
+  return posted;
+}
+
+describe("the MCP question of a project that does not exist yet (T-6829)", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  for (const projects of [[], ["helsinki"]]) {
+    it(`is decided by a person who opens ${projects.length ? "another project" : "no project"}`, async () => {
+      const posted = renderRouteAt(projects);
+      expect(await screen.findByTestId("mcp-elicitation-message")).toHaveTextContent("Open A Project in project 'demo-air'");
+      expect(screen.queryByText(en.form.projectHidden)).toBeNull();
+      await userEvent.click(screen.getByRole("button", { name: en.mcpElicitation.accept }));
+      expect(await screen.findByText(en.mcpElicitation.accepted)).toBeInTheDocument();
+      expect(posted).toEqual([{ decision: "accept" }]);
+    });
+  }
+});
 
 describe("the broker MCP write page (T-5829)", () => {
   beforeEach(async () => {

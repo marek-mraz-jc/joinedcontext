@@ -296,7 +296,10 @@ fn url(path: &str, row: &Row) -> (bool, String) {
     if let Some(query) = &row.query {
         filled = format!("{filled}?{query}");
     }
-    if filled.starts_with("/internal/") {
+    // The front door `GET /` is the page, not `/api/v1/` (the OData service document since T-6810).
+    if filled == "/" {
+        (false, filled)
+    } else if filled.starts_with("/internal/") {
         (true, filled)
     } else if ["/apps/", "/metrics", "/.well-known/", "/c/"]
         .iter()

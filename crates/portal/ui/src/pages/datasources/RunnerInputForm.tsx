@@ -4,6 +4,7 @@ import { SchemaForm } from "../../components/forms/SchemaForm";
 import type { ErrorSchema } from "@rjsf/utils";
 import type { CatalogInput } from "../../schemas/kinds";
 import { runnerInputSchema } from "../../schemas/kinds";
+import { offeredInput } from "../../schemas/runner";
 import { SecretRefContext } from "../../components/forms/widgets/SecretRef";
 import type { SecretRefValue } from "../../components/forms/widgets/SecretRef";
 
@@ -14,7 +15,8 @@ export interface BentoCatalog {
 
 let cachedCatalog: BentoCatalog | undefined;
 
-/** Lazily imports the Bento inputs catalog (~280 KB) so initial page bundle is small. */
+/** Lazily imports the Bento inputs catalog (~280 KB) so initial page bundle is small, kept to
+ * the inputs the runner builds (T-6825). */
 export function useBentoInputs(): BentoCatalog | undefined {
   const [catalog, setCatalog] = useState<BentoCatalog | undefined>(cachedCatalog);
 
@@ -22,7 +24,9 @@ export function useBentoInputs(): BentoCatalog | undefined {
     if (cachedCatalog) return;
     let active = true;
     void import("../../schemas/bento-inputs.json").then((mod) => {
-      cachedCatalog = mod.default as BentoCatalog;
+      const bento = mod.default as BentoCatalog;
+      // Only the inputs the server accepts: the runner builds it and the platform does not refuse it.
+      cachedCatalog = { ...bento, inputs: bento.inputs.filter(({ name }) => offeredInput(name)) };
       if (active) {
         setCatalog(cachedCatalog);
       }

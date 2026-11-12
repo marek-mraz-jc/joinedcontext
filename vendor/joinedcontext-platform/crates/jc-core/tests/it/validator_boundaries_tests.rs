@@ -167,25 +167,25 @@ fn a_credential_query_parameter_is_refused_in_any_case() {
 // DataSourceSpec::validate_runner (a runner-typed DataSource)
 // -------------------------------------------------------------------------------------------------
 
-const KAFKA: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+const NATS: &str = r#"apiVersion: joinedcontext.com/v1alpha1
 kind: DataSource
 metadata:
-  name: kafka-sensors
+  name: nats-sensors
   namespace: bb-ovzdusie
 spec:
-  type: kafka
+  type: nats
   input:
-    addresses: ["kafka.banskabystrica.sk:9092"]
-    topics: ["sensors.aq"]
-    sasl:
-      password: ${DS_KAFKA_PASSWORD}
+    urls: ["nats://nats.banskabystrica.sk:4222"]
+    subject: sensors.aq
+    auth:
+      user_jwt: ${DS_NATS_JWT}
   secrets:
-    - name: kafka-secret
-      key: password
-      envVar: DS_KAFKA_PASSWORD
+    - name: nats-secret
+      key: jwt
+      envVar: DS_NATS_JWT
 "#;
 
-fn kafka(yaml: &str) -> Result<(), String> {
+fn runner(yaml: &str) -> Result<(), String> {
     let source: ResourceEnvelope<DataSourceSpec> =
         ResourceEnvelope::from_yaml(yaml).map_err(|err| err.to_string())?;
     source.validate().map_err(|err| err.to_string())
@@ -195,21 +195,22 @@ fn kafka(yaml: &str) -> Result<(), String> {
 /// `${VAR}` of an entry of `spec.secrets` whose `envVar` is an environment variable name.
 #[test]
 fn a_runner_input_names_each_secret_by_one_declared_variable() {
-    kafka(KAFKA).expect("the example validates");
+    runner(NATS).expect("the example validates");
     let cases = [
-        ("an empty input", KAFKA.replace(
-            "  input:\n    addresses: [\"kafka.banskabystrica.sk:9092\"]\n    topics: [\"sensors.aq\"]\n    sasl:\n      password: ${DS_KAFKA_PASSWORD}\n",
+        ("an empty input", NATS.replace(
+            "  input:\n    urls: [\"nats://nats.banskabystrica.sk:4222\"]\n    subject: sensors.aq\n    auth:\n      user_jwt: ${DS_NATS_JWT}\n",
             "  input: {}\n",
         )),
-        ("a variable nobody declared", KAFKA.replace("password: ${DS_KAFKA_PASSWORD}", "password: ${DS_OTHER}")),
-        ("a variable inside a longer value", KAFKA.replace("password: ${DS_KAFKA_PASSWORD}", "password: \"x${DS_KAFKA_PASSWORD}\"")),
-        ("an empty value", KAFKA.replace("password: ${DS_KAFKA_PASSWORD}", "password: \"\"")),
-        ("a lowercase envVar", KAFKA.replace("envVar: DS_KAFKA_PASSWORD", "envVar: ds_kafka_password")),
-        ("no envVar", KAFKA.replace("      envVar: DS_KAFKA_PASSWORD\n", "")),
+        ("a variable nobody declared", NATS.replace("user_jwt: ${DS_NATS_JWT}", "user_jwt: ${DS_OTHER}")),
+        ("a variable inside a longer value", NATS.replace("user_jwt: ${DS_NATS_JWT}", "user_jwt: \"x${DS_NATS_JWT}\"")),
+        ("an empty value", NATS.replace("user_jwt: ${DS_NATS_JWT}", "user_jwt: \"\"")),
+        ("a lowercase envVar", NATS.replace("envVar: DS_NATS_JWT", "envVar: ds_nats_jwt")),
+        ("no envVar", NATS.replace("      envVar: DS_NATS_JWT\n", "")),
+        ("an input the pipeline runner does not build (T-6825)", NATS.replace("type: nats", "type: kafka")),
     ];
     for (what, yaml) in cases {
-        assert_ne!(yaml, KAFKA, "{what}: the example changed under the test");
-        assert!(kafka(&yaml).is_err(), "{what} was accepted");
+        assert_ne!(yaml, NATS, "{what}: the example changed under the test");
+        assert!(runner(&yaml).is_err(), "{what} was accepted");
     }
 }
 

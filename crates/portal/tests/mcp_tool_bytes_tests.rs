@@ -61,8 +61,11 @@ fn the_tool_definitions_a_model_reads_stay_under_their_byte_ratchet() {
 /// jc_repository_commits 1,004, _pulls 777, _tree 755, _file 748, _list 654, _commit 638,
 /// _pull 604, _get 490, _settings 490, _refs 457. Each bounds a repository name, a ref, a path or
 /// a sha by pattern, which is most of their bytes; the assistant's own turn lists none of them
-/// (tools_registry.rs).
-const RATCHET: usize = 73_063;
+/// (tools_registry.rs); 78,711 once the 28 tools that may ask the person first list the
+/// `elicitation` answer in their closed input (T-6829, 202 bytes each, bounds only, its meaning
+/// said once in `initialize`): Claude Code fills only arguments, and a closed schema without it
+/// told the model it could not answer the question.
+const RATCHET: usize = 78_712;
 
 /// The cut never opens a schema: every MCP input stays closed, and `project` stays bounded.
 #[test]

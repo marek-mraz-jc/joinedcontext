@@ -11,6 +11,7 @@ import { TypePicker } from "../../components/pickers/TypePicker";
 import { CodeBlock, Button, Field, Input, Select, Tabs, tabPanelProps, Textarea } from "../../components/ui";
 import processorCatalogue from "../../schemas/bento-processors.json";
 import { COMPUTE_KINDS, OUTPUT_MODES, YamlFieldError } from "../../schemas/kinds";
+import { RUNNER_PROCESSORS } from "../../schemas/runner";
 import type { OutputForm, PipelineForm, RouteForm, SourceForm, StepForm } from "./PipelineEditor";
 import { spaceOf } from "../spaces/spaceFacts";
 import { sourceKindOf } from "./PipelineStudio";
@@ -27,17 +28,21 @@ export interface Processor {
   summary: string;
 }
 
+/** The palette: the Bento catalogue kept to the processors the runner builds (T-6825). A step
+ * already written with another one still draws, and the server refuses it on save. */
+const paletteProcessors = (processorCatalogue as Processor[]).filter(({ name }) => RUNNER_PROCESSORS.has(name));
+
 /** The runner's processors by category, in the catalogue's order (PL-56). */
 export const PROCESSOR_GROUPS: { category: string; processors: Processor[] }[] = (() => {
   const groups = new Map<string, Processor[]>();
-  for (const processor of processorCatalogue as Processor[]) {
+  for (const processor of paletteProcessors) {
     groups.set(processor.category, [...(groups.get(processor.category) ?? []), processor]);
   }
   return [...groups].map(([category, processors]) => ({ category, processors }));
 })();
 
 const PROCESSOR_NAMES = new Set((processorCatalogue as Processor[]).map(({ name }) => name));
-const PROCESSOR_COUNT = PROCESSOR_NAMES.size;
+const PROCESSOR_COUNT = paletteProcessors.length;
 
 /** The runner's summary as plain words: its Markdown links keep their text and lose the target. */
 export const plainSummary = (summary: string): string =>
@@ -732,7 +737,7 @@ export function PipelineFlow({
   };
   const needle = query.trim().toLowerCase();
   const found = needle
-    ? (processorCatalogue as Processor[]).filter(
+    ? paletteProcessors.filter(
         ({ name, category, summary }) =>
           name.toLowerCase().includes(needle) ||
           category.toLowerCase().includes(needle) ||
@@ -1447,7 +1452,7 @@ export function PipelineFlow({
       </Field>
       {needle ? (
         found.length === 0 ? (
-          <p className="text-caption text-fg-muted">{t("pipelines.flow.searchNone", { query: query.trim() })}</p>
+          <p role="status" className="rounded-md border border-border bg-surface-subtle p-3 text-sm text-fg">{t("pipelines.flow.searchNone", { query: query.trim() })}</p>
         ) : (
           <ul className="flex flex-col gap-1" aria-label={t("pipelines.flow.searchFound", { count: found.length })}>
             {found.map((processor) => (

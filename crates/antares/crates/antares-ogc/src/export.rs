@@ -96,6 +96,21 @@ pub(crate) const FILE_BYTES: usize = 512 << 20;
 /// can refuse other files for this long.
 pub(crate) const FILE_SECONDS: u64 = 240;
 
+/// The rows one file may read unless `ANTARES_EXPORT_FILE_ROWS` names another (T-6823): a ZIP
+/// reads a collection once per member (CSV, Parquet), so its rows count once per member. The jc
+/// instance (the only host of this copy) wrote 377,000 rows of jc-dev's 421,438-row Garden CSV
+/// in [`FILE_SECONDS`] (0.64 s a page of 1,000) and cut the rest; 300,000 rows take 192 s at
+/// that rate. A file the store counts past it is `413` before its first byte instead of a
+/// download cut at its time; a host with a faster store raises it with its time.
+pub(crate) const FILE_ROWS: u64 = 300_000;
+
+/// The rows a file may read: `raw` when it is 1 to 100,000,000, else [`FILE_ROWS`].
+pub(crate) fn rows_of(raw: Option<&str>) -> u64 {
+    raw.and_then(|v| v.parse().ok())
+        .filter(|n| (1..=100_000_000).contains(n))
+        .unwrap_or(FILE_ROWS)
+}
+
 /// The bytes a file may hold: `raw` when it is 1 MiB to 4 GiB less one byte (a ZIP member
 /// past 4 GiB needs ZIP64), else [`FILE_BYTES`].
 pub(crate) fn bytes_of(raw: Option<&str>) -> usize {
@@ -145,9 +160,11 @@ mod file {
     /// export holds one store page at a time.
     const EXPORT_PAGE: u64 = 1000;
 
-    /// The refusal past the cap of files written at once.
+    /// The refusal past the cap of files written at once: `429` with `Retry-After`, so a client
+    /// (and the gateway, which passes a `4xx` on) reads it as "ask again", never as a broker
+    /// failure (T-6823).
     pub(crate) const BUSY: Problem = Problem(
-        StatusCode::SERVICE_UNAVAILABLE,
+        StatusCode::TOO_MANY_REQUESTS,
         "the broker is writing as many files as it writes at once: try again later",
     );
 
@@ -155,6 +172,12 @@ mod file {
     pub(crate) const TOO_SLOW: Problem = Problem(
         StatusCode::SERVICE_UNAVAILABLE,
         "the file took longer than a file may take to write: narrow it (bbox, datetime, filter)",
+    );
+
+    /// The refusal of a file whose rows the store counts past [`Gate::rows`].
+    pub(crate) const TOO_MANY_ROWS: Problem = Problem(
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "the file would hold more rows than a file may: narrow it (bbox, datetime, filter)",
     );
 
     /// Why a file ended before its last byte when no other reason reached its body.
@@ -170,6 +193,8 @@ mod file {
         cap: usize,
         pub(crate) bytes: usize,
         pub(crate) time: Duration,
+        /// The rows one file may read (`ANTARES_EXPORT_FILE_ROWS`).
+        pub(crate) rows: u64,
     }
 
     /// A file being written; dropping it frees its place.
@@ -216,6 +241,7 @@ mod file {
                 cap,
                 bytes,
                 time,
+                rows: super::FILE_ROWS,
             }
         }
 
@@ -234,17 +260,20 @@ mod file {
     impl Default for Gate {
         fn default() -> Self {
             let var = |name| std::env::var(name).ok();
-            Self::with_limits(
-                super::files_of(var(crate::EXPORT_FILES_ENV).as_deref()),
-                super::bytes_of(var(crate::EXPORT_FILE_BYTES_ENV).as_deref()),
-                Duration::from_secs(super::seconds_of(
-                    var(crate::EXPORT_FILE_SECONDS_ENV).as_deref(),
-                )),
-            )
+            Self {
+                rows: super::rows_of(var(crate::EXPORT_FILE_ROWS_ENV).as_deref()),
+                ..Self::with_limits(
+                    super::files_of(var(crate::EXPORT_FILES_ENV).as_deref()),
+                    super::bytes_of(var(crate::EXPORT_FILE_BYTES_ENV).as_deref()),
+                    Duration::from_secs(super::seconds_of(
+                        var(crate::EXPORT_FILE_SECONDS_ENV).as_deref(),
+                    )),
+                )
+            }
         }
     }
 
-    /// The refusal of a file before its first byte; a `503` of the gate says when to ask again.
+    /// The refusal of a file before its first byte; the gate's `429` says when to ask again.
     pub(crate) fn refusal(refused: Problem) -> Reply {
         let mut reply = refused.reply();
         if refused == BUSY {
@@ -322,6 +351,31 @@ mod file {
     pub(crate) trait Pages: Send {
         /// The next page of Features, `None` after the last.
         fn next(&mut self) -> BoxFuture<'_, Result<Option<Vec<Value>>, Problem>>;
+
+        /// The Features every page holds together as the store counts them before the first
+        /// page, `None` when it cannot say.
+        fn matched(&mut self) -> BoxFuture<'_, Result<Option<u64>, Problem>> {
+            Box::pin(async { Ok(None) })
+        }
+    }
+
+    /// [`TOO_MANY_ROWS`] when the rows `pages` read together pass `rows`; a file whose count
+    /// the store cannot state is written and held to its bytes and time.
+    pub(crate) async fn within_rows(
+        pages: &mut [&mut dyn Pages],
+        rows: u64,
+    ) -> Result<(), Problem> {
+        let mut read = 0u64;
+        for p in pages.iter_mut() {
+            match p.matched().await? {
+                Some(n) => read = read.saturating_add(n),
+                None => return Ok(()),
+            }
+        }
+        if read > rows {
+            return Err(TOO_MANY_ROWS);
+        }
+        Ok(())
     }
 
     /// The pages of `items` of one collection, read as `items` reads them: each page is a Query
@@ -367,6 +421,30 @@ mod file {
                     None => self.done = true,
                 }
                 Ok(Some(page.features))
+            })
+        }
+
+        /// One Feature read with its count, before the first page (T-6823).
+        fn matched(&mut self) -> BoxFuture<'_, Result<Option<u64>, Problem>> {
+            Box::pin(async move {
+                let (limit, uncounted) = (self.p.limit, self.p.uncounted);
+                (self.p.limit, self.p.uncounted) = (1, false);
+                let refs = items::Refs {
+                    profile: self.p.profile,
+                    base: &self.base,
+                    alternate: false,
+                };
+                let read = crate::features::page(
+                    &self.view,
+                    &self.caller,
+                    &self.c,
+                    &self.p,
+                    self.digest,
+                    refs,
+                );
+                let page = Box::pin(antares_ops::at_call_depth(self.depth, read)).await;
+                (self.p.limit, self.p.uncounted) = (limit, uncounted);
+                Ok(page?.matched)
             })
         }
     }
@@ -596,10 +674,13 @@ mod file {
                 let provenance = self.provenance(&[c.id.as_str()], pairs, 0);
                 Ok((slot, self.read(c, p, pairs), sink, provenance))
             });
-            let (slot, pages, sink, provenance) = match started {
+            let (slot, mut pages, sink, provenance) = match started {
                 Ok(started) => started,
                 Err(refused) => return refusal(refused),
             };
+            if let Err(refused) = within_rows(&mut [&mut pages], self.budget.gate.rows).await {
+                return refusal(refused);
+            }
             let sent = Sent {
                 media,
                 name: &name,
@@ -663,7 +744,7 @@ mod file {
 #[cfg(feature = "tabular")]
 mod bundle {
     use super::file::{
-        columns, refusal, send, streamed, tally_rows, with_rows, Chunk, Pages, Sent,
+        columns, refusal, send, streamed, tally_rows, with_rows, within_rows, Chunk, Pages, Sent,
     };
     use crate::model::Collection;
     use crate::{items, Here, Problem, Reply};
@@ -733,10 +814,15 @@ mod bundle {
                 let slot = self.budget.gate.take()?;
                 Ok((slot, self.members(&filters, &chosen, pairs)?, chosen))
             });
-            let (slot, members, chosen) = match started {
+            let (slot, mut members, chosen) = match started {
                 Ok(started) => started,
                 Err(refused) => return refusal(refused),
             };
+            let mut reads: Vec<&mut dyn Pages> =
+                members.iter_mut().map(|m| m.pages.as_mut() as _).collect();
+            if let Err(refused) = within_rows(&mut reads, self.budget.gate.rows).await {
+                return refusal(refused);
+            }
             let ids: Vec<&str> = chosen.iter().map(|c| c.id.as_str()).collect();
             let provenance = self.provenance(&ids, pairs, 0);
             let view = self.id.to_owned();
@@ -945,6 +1031,65 @@ mod tests {
     }
 
     #[test]
+    fn a_file_reads_1_to_100_million_rows() {
+        assert_eq!(rows_of(None), FILE_ROWS);
+        assert_eq!(rows_of(Some("1")), 1);
+        assert_eq!(rows_of(Some("100000000")), 100_000_000);
+        for wrong in ["0", "100000001", "-1", "many", ""] {
+            assert_eq!(rows_of(Some(wrong)), FILE_ROWS, "{wrong}");
+        }
+    }
+
+    /// Pages that state a count and read nothing.
+    #[cfg(any(feature = "parquet", feature = "tabular"))]
+    struct Counted(Option<u64>);
+
+    #[cfg(any(feature = "parquet", feature = "tabular"))]
+    impl file::Pages for Counted {
+        fn next(
+            &mut self,
+        ) -> futures_util::future::BoxFuture<
+            '_,
+            Result<Option<Vec<serde_json::Value>>, crate::Problem>,
+        > {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn matched(
+            &mut self,
+        ) -> futures_util::future::BoxFuture<'_, Result<Option<u64>, crate::Problem>> {
+            let n = self.0;
+            Box::pin(async move { Ok(n) })
+        }
+    }
+
+    /// T-6823: the rows of every read of a file count together; one past the ceiling is `413`,
+    /// a read the store cannot count lets the file be written.
+    #[cfg(any(feature = "parquet", feature = "tabular"))]
+    #[tokio::test]
+    async fn the_rows_of_every_read_count_against_the_ceiling() {
+        let (mut csv, mut parquet) = (Counted(Some(150)), Counted(Some(150)));
+        assert_eq!(
+            file::within_rows(&mut [&mut csv, &mut parquet], 300).await,
+            Ok(())
+        );
+        let (mut csv, mut parquet) = (Counted(Some(150)), Counted(Some(151)));
+        assert_eq!(
+            file::within_rows(&mut [&mut csv, &mut parquet], 300).await,
+            Err(file::TOO_MANY_ROWS)
+        );
+        assert_eq!(
+            file::refusal(file::TOO_MANY_ROWS).status(),
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE
+        );
+        let (mut csv, mut unknown) = (Counted(Some(301)), Counted(None));
+        assert_eq!(
+            file::within_rows(&mut [&mut unknown, &mut csv], 300).await,
+            Ok(())
+        );
+    }
+
+    #[test]
     fn the_cap_of_files_is_one_to_64_else_two() {
         assert_eq!(files_of(None), crate::EXPORT_FILES);
         assert_eq!(files_of(Some("5")), 5);
@@ -964,7 +1109,7 @@ mod tests {
         let third = gate.take().err();
         assert_eq!(third, Some(file::BUSY));
         let reply = file::refusal(file::BUSY);
-        assert_eq!(reply.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(reply.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(
             reply.headers().get(axum::http::header::RETRY_AFTER),
             Some(&HeaderValue::from_static("6"))

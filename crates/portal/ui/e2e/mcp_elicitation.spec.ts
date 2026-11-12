@@ -11,28 +11,36 @@ const ID = "eli-0a1b2c3d4e5f6a7b";
 const QUESTION = {
   id: ID,
   operation: "jc_resource_delete",
-  message: "Delete Resource in project 'helsinki' (red lane). Nothing has run: open the Portal page this question names, look at what this would change and decide there, then send this call again with the `elicitationId`.",
+  message: "Delete Resource in project 'helsinki' (red lane).",
   resource: "/projects/helsinki/endpoints/helsinki-bikes",
   expiresAt: Math.floor(Date.now() / 1000) + 600,
   decision: null as string | null,
 };
+// T-6829: jc_project_create asks under the project it is about to open, which the person's
+// project list does not hold yet; the page opens in the member frame, which names no other
+// project. The page shows the person what the call does, not the client's instructions.
+const NEW_PROJECT_QUESTION = {
+  operation: "jc_project_create",
+  message: "Create Project in project 'demo-mcp-air' (red lane).",
+  resource: "/projects/demo-mcp-air/home",
+};
 const SHOTS = "test-results/mcp-elicitation";
 
-async function stubApi(page: Page, gone = false): Promise<string[]> {
+async function stubApi(page: Page, gone = false, project = "helsinki", readable = ["helsinki"]): Promise<string[]> {
   const decided: string[] = [];
-  let question = { ...QUESTION };
+  let question = project === "helsinki" ? { ...QUESTION } : { ...QUESTION, ...NEW_PROJECT_QUESTION };
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     const json = (body: unknown, status = 200) =>
       route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
     if (path.endsWith("/auth/me")) return json(IDENTITY);
-    if (path === "/api/v1/projects") return json({ kind: "ProjectList", items: [{ name: "helsinki" }] });
-    if (path === `/api/v1/projects/helsinki/mcp-elicitations/${ID}`) {
+    if (path === "/api/v1/projects") return json({ kind: "ProjectList", items: readable.map((name) => ({ name })) });
+    if (path === `/api/v1/projects/${project}/mcp-elicitations/${ID}`) {
       if (gone) return json({ type: "about:blank", title: "Not Found", status: 404, detail: "no open question" }, 404);
       return json(question);
     }
-    if (path === `/api/v1/projects/helsinki/mcp-elicitations/${ID}/decision` && request.method() === "POST") {
+    if (path === `/api/v1/projects/${project}/mcp-elicitations/${ID}/decision` && request.method() === "POST") {
       const { decision } = request.postDataJSON() as { decision: string };
       decided.push(decision);
       question = { ...question, decision };
@@ -56,16 +64,43 @@ for (const width of [1440, 400]) {
         "href",
         "/projects/helsinki/endpoints/helsinki-bikes",
       );
-      await page.screenshot({ path: `${SHOTS}/question-${width}.png`, fullPage: true });
+      await page.screenshot({ path: `${SHOTS}/question-${width}.png`, fullPage: true, animations: "disabled" });
 
       await page.getByRole("button", { name: "Accept the call" }).click();
       await expect(page.getByText("You accepted this call")).toBeVisible();
-      await page.screenshot({ path: `${SHOTS}/accepted-${width}.png`, fullPage: true });
+      await page.screenshot({ path: `${SHOTS}/accepted-${width}.png`, fullPage: true, animations: "disabled" });
 
       await page.getByRole("button", { name: "Decline the call" }).click();
       await expect(page.getByText("You declined this call")).toBeVisible();
-      await page.screenshot({ path: `${SHOTS}/declined-${width}.png`, fullPage: true });
+      await expect(page.getByRole("button", { name: "Decline the call" })).toHaveAttribute("aria-pressed", "true");
+      await page.screenshot({ path: `${SHOTS}/declined-${width}.png`, fullPage: true, animations: "disabled" });
       expect(decided).toEqual(["accept", "decline"]);
+    });
+
+    test("a question about a project not yet open opens in the member frame, not a refusal", async ({ page }) => {
+      const decided = await stubApi(page, false, "demo-mcp-air");
+      await page.goto(`/projects/demo-mcp-air/mcp-elicitations/${ID}?lang=en`);
+      await expect(page.getByRole("heading", { level: 1, name: "Decide an AI client's call" })).toBeVisible();
+      await expect(page.getByTestId("mcp-elicitation-message")).toContainText("Create Project in project 'demo-mcp-air'");
+      await expect(page.getByText("This project is not open to you")).toHaveCount(0);
+      await expect(page.getByText("helsinki")).toHaveCount(0);
+      await expect(page.getByRole("link", { name: "Back to the Portal" })).toHaveAttribute("href", "/");
+      await page.screenshot({ path: `${SHOTS}/new-project-${width}.png`, fullPage: true, animations: "disabled" });
+      await page.getByRole("button", { name: "Accept the call" }).click();
+      await expect(page.getByText("You accepted this call")).toBeVisible();
+      await page.screenshot({ path: `${SHOTS}/new-project-accepted-${width}.png`, fullPage: true, animations: "disabled" });
+      expect(decided).toEqual(["accept"]);
+    });
+
+    test("a person who reads no project yet decides it in the member frame", async ({ page }) => {
+      const decided = await stubApi(page, false, "demo-mcp-air", []);
+      await page.goto(`/projects/demo-mcp-air/mcp-elicitations/${ID}?lang=en`);
+      await expect(page.getByRole("heading", { level: 1, name: "Decide an AI client's call" })).toBeVisible();
+      await expect(page.getByText("This project is not open to you")).toHaveCount(0);
+      await page.screenshot({ path: `${SHOTS}/no-project-${width}.png`, fullPage: true, animations: "disabled" });
+      await page.getByRole("button", { name: "Accept the call" }).click();
+      await expect(page.getByText("You accepted this call")).toBeVisible();
+      expect(decided).toEqual(["accept"]);
     });
 
     test("a question that is no longer open says what to do next", async ({ page }) => {
@@ -74,7 +109,7 @@ for (const width of [1440, 400]) {
       await expect(page.getByRole("heading", { name: "This question is no longer open" })).toBeVisible();
       await expect(page.getByText("Ask your AI client to send its call again")).toBeVisible();
       await expect(page.getByRole("button", { name: "Accept the call" })).toHaveCount(0);
-      await page.screenshot({ path: `${SHOTS}/gone-${width}.png`, fullPage: true });
+      await page.screenshot({ path: `${SHOTS}/gone-${width}.png`, fullPage: true, animations: "disabled" });
     });
   });
 }

@@ -678,6 +678,20 @@ const mcpElicitationRoute = createRoute({
   path: "/projects/$project/mcp-elicitations/$id",
   component: function McpElicitationRoute() {
     const { project, id } = mcpElicitationRoute.useParams();
+    const projects = useProjects();
+    if (projects.isPending) {
+      return <main aria-busy="true" className="min-h-screen bg-bg" />;
+    }
+    // A call that opens a project asks under the project it is about to open (T-6829): the
+    // member frame names no other project beside it; the question's own read still answers 404
+    // to anyone but the person who asked.
+    if (!projects.data?.includes(project)) {
+      return (
+        <MemberFrame>
+          <McpElicitationPage project={project} id={id} open={false} />
+        </MemberFrame>
+      );
+    }
     return (
       <Shell project={project}>
         <McpElicitationPage project={project} id={id} />

@@ -16,6 +16,8 @@ export interface JcRequest {
    * `JC-Record: version`, so the replaced value is kept as a version (T-6333).
    */
   reason?: string;
+  /** Headers the call needs beside the transport's own, e.g. `If-Match` or `OData-Version`. */
+  headers?: Record<string, string>;
 }
 
 export interface JcResponse {
@@ -49,6 +51,7 @@ export function originTransport(fetchImpl?: typeof fetch, doc?: Document): Trans
     }
     const headers: Record<string, string> = {
       Accept: "application/json",
+      ...request.headers,
     };
 
     if (request.method !== "GET") {

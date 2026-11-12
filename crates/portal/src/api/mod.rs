@@ -79,6 +79,10 @@ pub mod mqtt_devices;
 pub mod mqtt_measured;
 pub mod mqtt_test_publish;
 pub mod mutate;
+pub mod odata;
+pub mod odata_endpoints;
+pub mod odata_ops;
+pub mod odata_org;
 pub mod ops;
 pub mod organization_limits;
 pub mod organization_widgets;
@@ -154,6 +158,7 @@ pub fn router() -> Router<AppState> {
         .merge(forms::router())
         .merge(import::router())
         .merge(resources::router())
+        .merge(odata::router())
         .merge(ops::router())
         .merge(permissions::router())
         .merge(people::router())

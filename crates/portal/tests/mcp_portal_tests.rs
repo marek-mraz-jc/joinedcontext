@@ -1426,14 +1426,27 @@ async fn a_long_call_answers_a_task_the_caller_polls_and_a_short_one_answers_inl
             .find(|tool| tool["name"] == name)
             .map(|tool| tool["execution"]["taskSupport"].clone())
     };
-    assert_eq!(support("jc_pipeline_test"), Some(json!("required")));
+    // A client without tasks still calls it (Claude Code, T-6829): optional, never required.
+    assert_eq!(support("jc_pipeline_test"), Some(json!("optional")));
     assert_eq!(support("jc_catalog_search"), Some(json!("forbidden")));
 
-    // A pipeline test waits on the project's runner: the call answers a task at once.
+    let pipeline_test = json!({ "project": "ovzdusie", "pipeline": { "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Pipeline", "metadata": { "name": "bikes" }, "spec": {} }, "sample": "{}" });
+
+    // A client that asks for no task gets the tool's own answer: a task it never asked for is a
+    // result it cannot read (MCP 2025-11-25 tasks; Claude Code refused it, T-6829).
+    let answered = send(json!({
+        "jsonrpc": "2.0", "id": 7, "method": "tools/call",
+        "params": { "name": "jc_pipeline_test", "project": "ovzdusie", "arguments": pipeline_test }
+    }))
+    .await;
+    assert!(answered["result"].get("task").is_none(), "{answered}");
+    assert!(answered["result"]["content"].is_array(), "{answered}");
+
+    // A pipeline test waits on the project's runner: a client that asks for a task gets one at once.
     let started = send(json!({
         "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-        "params": { "name": "jc_pipeline_test", "project": "ovzdusie",
-                    "arguments": { "project": "ovzdusie", "pipeline": { "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Pipeline", "metadata": { "name": "bikes" }, "spec": {} }, "sample": "{}" } }
+        "params": { "name": "jc_pipeline_test", "project": "ovzdusie", "task": {},
+                    "arguments": pipeline_test }
     }))
     .await;
     let task_id = started["result"]["task"]["taskId"]

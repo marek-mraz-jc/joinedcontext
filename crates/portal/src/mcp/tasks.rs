@@ -36,7 +36,7 @@ pub const LONG_RUNNING: [&str; 6] = [
     "jc_datasource_check",
 ];
 
-/// Whether a `tools/call` for this operation is served as a task.
+/// Whether a `tools/call` for this operation may be served as a task (`taskSupport: optional`).
 pub fn is_long(name: &str) -> bool {
     LONG_RUNNING.contains(&name)
 }
