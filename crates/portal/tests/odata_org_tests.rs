@@ -843,29 +843,115 @@ async fn a_function_answers_as_mcp_tools_call_and_takes_aliases() {
 /// regenerated (`node sdk/scripts/odata-gen.mjs`), which CI checks has no diff.
 #[tokio::test]
 async fn sdk_metadata_snapshot_is_the_org_admins_metadata() {
-    const SNAPSHOT: &str = "sdk/odata/org-admin.metadata.json";
+    // One snapshot per role (T-6821): the SDK client is generated from the org-admin's.
     let state = state();
-    let answer = get(
-        &state,
-        Mode::Host("hel"),
-        "root",
-        "/api/v1/$metadata?$format=json",
-    )
-    .await;
-    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
-    let pretty = format!(
-        "{}\n",
-        serde_json::to_string_pretty(&answer.json()).expect("JSON")
-    );
-    if std::env::var_os("JC_WRITE_SNAPSHOT").is_some() {
-        std::fs::write(SNAPSHOT, &pretty).expect("write the snapshot");
+    let mut stale = Vec::new();
+    for (role, who) in [
+        ("org-admin", "root"),
+        ("editor", "hel-editor"),
+        ("viewer", "hel-only"),
+        ("anonymous", ""),
+    ] {
+        let snapshot = format!("sdk/odata/{role}.metadata.json");
+        let cookie = if who.is_empty() {
+            String::new()
+        } else {
+            cookies(&state.config, person(who, groups_of(who)), "hel").await
+        };
+        let answer = send(
+            &state,
+            Mode::Host("hel"),
+            &cookie,
+            "/api/v1/$metadata?$format=json",
+            &[],
+        )
+        .await;
+        let expected = if who.is_empty() {
+            StatusCode::UNAUTHORIZED
+        } else {
+            StatusCode::OK
+        };
+        assert_eq!(answer.status, expected, "{role}: {}", answer.text);
+        let pretty = format!(
+            "{}\n",
+            serde_json::to_string_pretty(&answer.json()).expect("JSON")
+        );
+        if std::env::var_os("JC_WRITE_SNAPSHOT").is_some() {
+            std::fs::write(&snapshot, &pretty).expect("write the snapshot");
+        }
+        if std::fs::read_to_string(&snapshot).unwrap_or_default() != pretty {
+            stale.push(snapshot);
+        }
     }
-    let stored = std::fs::read_to_string(SNAPSHOT).unwrap_or_default();
     assert!(
-        stored == pretty,
-        "{SNAPSHOT} is not the org-admin's $metadata: write it with JC_WRITE_SNAPSHOT=1 and \
+        stale.is_empty(),
+        "{stale:?} are not their role's $metadata: write them with JC_WRITE_SNAPSHOT=1 and \
          regenerate the SDK client with node sdk/scripts/odata-gen.mjs"
     );
+}
+
+/// Red first (T-6821): a viewer's `$metadata` named every kind's set, the ones whose reads
+/// answer 404 included. Now a set is in a caller's `$metadata` exactly when they read it in a
+/// project of theirs, and a bound action names no type the caller cannot see.
+#[tokio::test]
+async fn metadata_names_only_the_sets_the_caller_reads() {
+    let state = state();
+    let mode = Mode::Host("hel");
+    let sets: Vec<String> = joinedcontext_portal::resource::kinds()
+        .filter(|info| !matches!(info.scope, jc_core::Scope::Organization))
+        .map(|info| info.plural.to_owned())
+        .chain(["changes".to_owned(), "workspaces".to_owned()])
+        .collect();
+    let mut wrong = Vec::new();
+    for who in ["hel-only", "hel-editor"] {
+        let doc = get(&state, mode, who, "/api/v1/$metadata?$format=json")
+            .await
+            .json();
+        let container = &doc["JoinedContext.Portal"]["Service"];
+        let xml = get(&state, mode, who, "/api/v1/$metadata").await.text;
+        for set in &sets {
+            let listed = container.get(set).is_some();
+            let read = get(&state, mode, who, &format!("/api/v1/projects('helsinki')/{set}")).await;
+            // A refusal is 401, 403 or 404; anything else (a 503 of the test's absent change
+            // store) is a read the caller was let in to.
+            let refused = matches!(read.status.as_u16(), 401 | 403 | 404);
+            if listed == refused {
+                wrong.push(format!("{who} {set}: listed {listed}, read {}", read.status));
+            }
+            let in_xml = xml.contains(&format!("<EntitySet Name=\"{set}\""));
+            if listed != in_xml {
+                wrong.push(format!("{who} {set}: JSON {listed}, XML {in_xml}"));
+            }
+        }
+        assert!(container.get("projects").is_some(), "{who}: {container}");
+        // Every type an action is bound to is a type of this caller's model.
+        for (name, member) in doc["JoinedContext.Portal"].as_object().into_iter().flatten() {
+            for overload in member.as_array().into_iter().flatten() {
+                if let Some(ty) = overload["$Parameter"][0]["$Type"].as_str() {
+                    let short = ty.trim_start_matches("JoinedContext.Portal.");
+                    if doc["JoinedContext.Portal"].get(short).is_none() {
+                        wrong.push(format!("{who}: {name} is bound to the hidden {ty}"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    // The viewer reads four kinds, not every one: the model is theirs, not the org-admin's.
+    let viewer = get(&state, mode, "hel-only", "/api/v1/$metadata?$format=json")
+        .await
+        .json();
+    let admin = get(&state, mode, "root", "/api/v1/$metadata?$format=json")
+        .await
+        .json();
+    let count = |doc: &Value| {
+        doc["JoinedContext.Portal"]["Service"]
+            .as_object()
+            .map_or(0, serde_json::Map::len)
+    };
+    assert!(count(&viewer) < count(&admin), "{viewer}");
+    assert!(viewer["JoinedContext.Portal"]["Service"].get("roles").is_none());
+    assert!(viewer["JoinedContext.Portal"].get("Role").is_none());
 }
 
 /// The names a REST list answers, whatever its envelope.

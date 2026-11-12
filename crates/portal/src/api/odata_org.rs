@@ -21,6 +21,7 @@
 //! `OData-MaxVersion`, a `$` option, `$metadata`, the service document or a key predicate here,
 //! every other one to the REST routes, and marks both `Vary: OData-Version, OData-MaxVersion`.
 
+use std::collections::BTreeSet;
 use std::sync::{Arc, LazyLock};
 
 use axum::body::Body;
@@ -88,8 +89,6 @@ struct OrgServed {
     public: Arc<Model>,
     service: Service,
     evaluated: Arc<Model>,
-    metadata: Result<String, String>,
-    metadata_json: Result<String, String>,
 }
 
 fn project_fields() -> Vec<Field> {
@@ -176,20 +175,10 @@ static ORG: LazyLock<OrgServed> = LazyLock::new(|| {
         }
         .model(),
     ));
-    let metadata = {
-        let mut xml = Vec::new();
-        odata_csdl::write_xml(&public, &odata_csdl::Limits::strict(), &mut xml)
-            .map_err(|e| e.to_string())
-            .and_then(|()| String::from_utf8(xml).map_err(|e| e.to_string()))
-            .map(|xml| with_singletons_xml(&xml))
-    };
-    let metadata_json = metadata_json(&public);
     OrgServed {
         public,
         service,
         evaluated,
-        metadata,
-        metadata_json,
     }
 });
 
@@ -252,6 +241,60 @@ fn public_model(mut model: Model) -> Model {
         }
     }
     model
+}
+
+/// The public model with only the sets in `visible`: a kind the caller reads in none of their
+/// projects is no entity set, no entity type and no navigation of `Project` (API/13 §2a).
+fn visible_model(visible: &BTreeSet<String>) -> Model {
+    let hidden: Vec<(&str, &str)> = kinds()
+        .filter(|set| !visible.contains(&set.set))
+        .map(|set| (set.set.as_str(), set.type_name.as_str()))
+        .collect();
+    let mut model = (*ORG.public).clone();
+    for schema in &mut model.schemas {
+        schema
+            .entity_types
+            .retain(|ty| !hidden.iter().any(|(_, name)| ty.name == *name));
+        for ty in &mut schema.entity_types {
+            ty.navigation_properties
+                .retain(|nav| !hidden.iter().any(|(set, _)| nav.name == *set));
+        }
+        if let Some(container) = schema.entity_container.as_mut() {
+            container
+                .entity_sets
+                .retain(|set| !hidden.iter().any(|(name, _)| set.name == *name));
+            for set in &mut container.entity_sets {
+                set.bindings
+                    .retain(|b| !hidden.iter().any(|(name, _)| b.path == *name));
+            }
+        }
+    }
+    model
+}
+
+/// The sets the caller reads in at least one of `projects`: `projects` always, each kind by its
+/// door's own read check ([`ListSet::readable`]).
+fn visible_sets(state: &AppState, user: &CurrentUser, projects: &[String]) -> BTreeSet<String> {
+    let mut visible: BTreeSet<String> = kinds()
+        .filter(|set| {
+            projects
+                .iter()
+                .any(|project| set.readable(state, &user.0.identity, project))
+        })
+        .map(|set| set.set.clone())
+        .collect();
+    visible.insert(PROJECTS.into());
+    visible
+}
+
+/// CSDL XML of `model`, the singletons added to its container.
+fn metadata_xml(model: &Model) -> Result<String, String> {
+    let mut xml = Vec::new();
+    odata_csdl::write_xml(model, &odata_csdl::Limits::strict(), &mut xml)
+        .map_err(|e| e.to_string())?;
+    String::from_utf8(xml)
+        .map_err(|e| e.to_string())
+        .map(|xml| with_singletons_xml(&xml))
 }
 
 /// The singletons in CSDL XML, beside odata-csdl's container, which has no singleton yet.
@@ -1257,7 +1300,7 @@ type Binding = (String, Option<(&'static ListSet, String)>);
 /// The bound actions `rights` allow: `propose_create` on a project, `propose_update` and
 /// `propose_delete` on each manifest kind, `approve` and `reject` on a Change. Each is
 /// (name, binding type, parameters).
-fn bound_actions(rights: Rights) -> Vec<BoundAction> {
+fn bound_actions(rights: Rights, visible: &BTreeSet<String>) -> Vec<BoundAction> {
     let mut out = Vec::new();
     if rights.propose {
         out.push((
@@ -1265,7 +1308,7 @@ fn bound_actions(rights: Rights) -> Vec<BoundAction> {
             format!("{NAMESPACE}.Project"),
             &[("manifest", "Edm.Untyped"), ("dryRun", "Edm.Boolean")][..],
         ));
-        for set in kinds().filter(|set| manifest_kind(set)) {
+        for set in kinds().filter(|set| manifest_kind(set) && visible.contains(&set.set)) {
             let ty = format!("{NAMESPACE}.{}", set.type_name);
             out.push((
                 "propose_update",
@@ -1280,7 +1323,7 @@ fn bound_actions(rights: Rights) -> Vec<BoundAction> {
         }
     }
     if rights.approve {
-        if let Some(change) = kind(CHANGES) {
+        if let Some(change) = kind(CHANGES).filter(|_| visible.contains(CHANGES)) {
             let ty = format!("{NAMESPACE}.{}", change.type_name);
             out.push(("approve", ty.clone(), &[("confirm", "Edm.String")][..]));
             out.push(("reject", ty, &[("reason", "Edm.String")][..]));
@@ -1294,9 +1337,14 @@ fn manifest_kind(set: &ListSet) -> bool {
 }
 
 /// The CSDL XML of the caller: the bound actions they may call inside the schema.
-fn xml_for(base: &str, rights: Rights, offered: &[&'static crate::ops::Operation]) -> String {
+fn xml_for(
+    base: &str,
+    rights: Rights,
+    visible: &BTreeSet<String>,
+    offered: &[&'static crate::ops::Operation],
+) -> String {
     let mut actions = odata_ops::xml(offered);
-    for (name, binding, parameters) in bound_actions(rights) {
+    for (name, binding, parameters) in bound_actions(rights, visible) {
         actions.push_str(&format!(
             r#"<Action Name="{name}" IsBound="true"><Parameter Name="bindingParameter" Type="{binding}" Nullable="false"/>"#
         ));
@@ -1316,7 +1364,12 @@ fn xml_for(base: &str, rights: Rights, offered: &[&'static crate::ops::Operation
 }
 
 /// The CSDL JSON of the caller: each action's overloads under its name.
-fn json_for(base: &str, rights: Rights, offered: &[&'static crate::ops::Operation]) -> String {
+fn json_for(
+    base: &str,
+    rights: Rights,
+    visible: &BTreeSet<String>,
+    offered: &[&'static crate::ops::Operation],
+) -> String {
     let Ok(mut doc) = serde_json::from_str::<Value>(base) else {
         return base.to_owned();
     };
@@ -1324,7 +1377,7 @@ fn json_for(base: &str, rights: Rights, offered: &[&'static crate::ops::Operatio
         for (name, overload) in odata_ops::json(offered) {
             schema.insert(name.to_owned(), Value::Array(vec![overload]));
         }
-        for (name, binding, parameters) in bound_actions(rights) {
+        for (name, binding, parameters) in bound_actions(rights, visible) {
             let mut params =
                 vec![json!({ "$Name": "bindingParameter", "$Type": binding, "$Nullable": false })];
             params.extend(
@@ -1349,6 +1402,7 @@ fn metadata(
     headers: &HeaderMap,
     query: &str,
     rights: Rights,
+    visible: &BTreeSet<String>,
     offered: &[&'static crate::ops::Operation],
 ) -> Response {
     let json_asked = query.split('&').any(|p| {
@@ -1362,17 +1416,18 @@ fn metadata(
         .get(header::ACCEPT)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|a| a.starts_with("application/json"));
+    let model = visible_model(visible);
     let (body, content_type) = if json_asked {
-        (&ORG.metadata_json, "application/json")
+        (metadata_json(&model), "application/json")
     } else {
-        (&ORG.metadata, "application/xml")
+        (metadata_xml(&model), "application/xml")
     };
     match body {
         Ok(text) => {
             let text = if json_asked {
-                json_for(text, rights, offered)
+                json_for(&text, rights, visible, offered)
             } else {
-                xml_for(text, rights, offered)
+                xml_for(&text, rights, visible, offered)
             };
             (StatusCode::OK, headers_for(content_type), text).into_response()
         }
@@ -1505,6 +1560,7 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
             &parts.headers,
             &query,
             rights(&state, &user, &org),
+            &visible_sets(&state, &user, &projects),
             &offered,
         );
     }
@@ -2105,13 +2161,12 @@ mod tests {
             .navigation_properties
             .iter()
             .any(|n| n.name == "endpoints"));
+        let xml = metadata_xml(model);
         assert!(
-            ORG.metadata
-                .as_ref()
+            xml.as_ref()
                 .is_ok_and(|xml| xml.contains("<Singleton Name=\"me\"")),
-            "{:?}",
-            ORG.metadata
+            "{xml:?}"
         );
-        assert!(ORG.metadata_json.is_ok());
+        assert!(metadata_json(model).is_ok());
     }
 }
