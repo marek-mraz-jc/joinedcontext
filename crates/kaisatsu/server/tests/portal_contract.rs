@@ -1269,6 +1269,17 @@ async fn bearer_and_connector_tokens_verify_and_exchange_for_one_endpoint() {
         .verify(&tokens(&session_answer).access_token, "mcp-hub", "Bearer")
         .unwrap_or_else(|e| panic!("the session's exchanged token: {e}"));
     assert_eq!(claims["sub"], json!(ana.id));
+    // portal-api stays on the sign-in token, which only the Portal holds: the exchanged token
+    // the gateway receives names the hub alone, so the gateway cannot replay it at the Portal.
+    assert_eq!(claims["aud"], json!("mcp-hub"), "{claims}");
+    let signed_in_claims = bearer
+        .verify(&signed_in.access_token, "portal-api", "Bearer")
+        .unwrap_or_else(|e| panic!("the sign-in token: {e}"));
+    assert_eq!(
+        signed_in_claims["azp"],
+        json!("portal-api"),
+        "{signed_in_claims}"
+    );
 
     // A client the realm grants no exchange (portal-reconciler) is refused, with Keycloak's text,
     // whatever it asks.
