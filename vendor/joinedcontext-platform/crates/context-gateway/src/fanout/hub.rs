@@ -7,6 +7,7 @@
 //! filters only narrow it further.
 
 use super::{changed, compile, created, FilterId, Index};
+use crate::auth::subject::Subject;
 use crate::pdp::projection;
 use crate::resolver::Endpoint;
 use antares_jsonld::{expand_entity, Context, ExpandOpts};
@@ -19,6 +20,10 @@ use std::time::{Duration, Instant};
 pub const MAX_FILTERS: usize = 64;
 /// Unread notifications one connection may have queued (API/07 §3).
 pub const MAX_QUEUED: usize = 256;
+/// Reads of the view a change of the readable scope owes (T-6776): one at the upstream's next
+/// tick and one at the tick after, so a broker that loads the Policy a tick after the gateway is
+/// read too (API/07 §1).
+pub const RESCOPE_READS: u8 = 2;
 /// How long a closed connection can be resumed (API/07 §4).
 pub const RESUME_WINDOW: Duration = Duration::from_secs(30);
 /// Notifications kept per connection for a resume.
@@ -63,6 +68,14 @@ pub enum Out {
     },
     /// Changes were lost (the upstream lost its place); the client reads again over REST.
     Gap,
+    /// A change of the Endpoint's readable scope took this entity out of what the caller reads
+    /// (T-6776): the subscriptions of the connection it matched.
+    OutOfScope {
+        /// The entity id.
+        entity: String,
+        /// The client's subscription ids it matched.
+        subscriptions: Vec<String>,
+    },
     /// The connection ends with this `x-closing` reason.
     Closing(&'static str),
     /// The broker refused the hub's upstream subscription: the connection ends with 1011.
@@ -88,6 +101,12 @@ impl Queue {
     pub fn push(&self, out: Out) {
         {
             let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Out::OutOfScope { entity, .. } = &out {
+                // A notification of it still queued holds what the caller no longer reads.
+                state.items.retain(
+                    |item| !matches!(item, Out::Notification { entity: e, .. } if e == entity),
+                );
+            }
             if let Out::Notification {
                 subscription,
                 entity,
@@ -144,8 +163,8 @@ struct Sub {
 struct Conn {
     endpoint: Arc<Endpoint>,
     principal: String,
-    /// The Keycloak client its token was issued to (`azp`), which a reload may stop admitting.
-    client: Option<String>,
+    /// The caller as admitted at the upgrade; its `client` (`azp`) a reload may stop admitting.
+    subject: Subject,
     queue: Arc<Queue>,
     subs: BTreeMap<u32, Sub>,
     next: u32,
@@ -251,6 +270,10 @@ struct State {
     /// The table is to be read from the view before it judges a change: never read, lost by a
     /// gap, or dropped with the last filter.
     due: bool,
+    /// Reads of the view still owed to a change of the readable scope (T-6776).
+    rescope: u8,
+    /// A rescope read is running.
+    rescoping: bool,
 }
 
 impl Hub {
@@ -269,6 +292,8 @@ impl Hub {
                 idle_since: Some(Instant::now()),
                 refused: None,
                 due: true,
+                rescope: 0,
+                rescoping: false,
             }),
             wanted: tokio::sync::Notify::new(),
         }
@@ -283,7 +308,7 @@ impl Hub {
         &self,
         endpoint: Arc<Endpoint>,
         principal: String,
-        client: Option<String>,
+        subject: Subject,
     ) -> (u64, Arc<Queue>) {
         let queue = Arc::new(Queue::default());
         let mut state = self.state();
@@ -295,7 +320,7 @@ impl Hub {
             Conn {
                 endpoint,
                 principal,
-                client,
+                subject,
                 queue: Arc::clone(&queue),
                 subs: BTreeMap::new(),
                 next: 1,
@@ -514,26 +539,41 @@ impl Hub {
         self.state().conns.get(&conn).map_or(0, |c| c.subs.len())
     }
 
-    /// Follows every connection's Endpoint through a reload (T-4874): a connection whose Endpoint
-    /// is gone or no longer serves the WebSocket ends with `view-removed`; one whose Endpoint
-    /// record changed in any way (audience, roles, grants, Policies, hidden attributes) or whose
-    /// token's client `admits` no longer passes ends with `endpoint-changed`, so no decision
-    /// taken at the upgrade outlives a change and the client reconnects under the new record.
-    /// The reason names no detail of the change. Answers the connections it closes.
-    pub fn recheck(&self, now: Option<&Arc<Endpoint>>, admits: impl Fn(&str) -> bool) -> Vec<u64> {
+    /// Follows every connection's Endpoint through a reload (T-4874, T-6776): a connection whose
+    /// Endpoint is gone or no longer serves the WebSocket ends with `view-removed`; one whose token's
+    /// client `admits` no longer passes, or whose Endpoint changed in anything but its readable
+    /// scope ([`scope_only`]), ends with `endpoint-changed`, so no admission decided at the upgrade
+    /// outlives a change. A change of the readable scope alone keeps the connection when `reads`
+    /// says the caller still reads something under the new record, and owes the hub
+    /// [`RESCOPE_READS`] reads of the view ([`Hub::rescope_now`], [`Hub::rescope`]). The reason
+    /// names no detail of the change. Answers the connections it closes.
+    pub fn recheck(
+        &self,
+        now: Option<&Arc<Endpoint>>,
+        admits: impl Fn(&str) -> bool,
+        reads: impl Fn(&Subject, &Endpoint) -> bool,
+    ) -> Vec<u64> {
         let mut state = self.state();
         let mut gone = Vec::new();
+        let mut rescope = false;
         for (id, conn) in &mut state.conns {
+            let admitted = conn.subject.client.as_deref().is_none_or(&admits);
             let reason = match now {
                 Some(endpoint) if !endpoint.serves(jc_core::kinds::Representation::WebSocket) => {
                     "view-removed"
                 }
-                Some(endpoint)
-                    if **endpoint == *conn.endpoint
-                        && conn.client.as_deref().is_none_or(&admits) =>
-                {
+                Some(endpoint) if admitted && **endpoint == *conn.endpoint => {
                     // The same record in a new table: nothing to judge again.
                     conn.endpoint = Arc::clone(endpoint);
+                    continue;
+                }
+                Some(endpoint)
+                    if admitted
+                        && scope_only(&conn.endpoint, endpoint)
+                        && reads(&conn.subject, endpoint) =>
+                {
+                    conn.endpoint = Arc::clone(endpoint);
+                    rescope = true;
                     continue;
                 }
                 Some(_) => "endpoint-changed",
@@ -541,6 +581,9 @@ impl Hub {
             };
             conn.queue.push(Out::Closing(reason));
             gone.push(*id);
+        }
+        if rescope {
+            state.rescope = RESCOPE_READS;
         }
         // A closing connection leaves the index now: no change applied after this sends it more.
         for id in &gone {
@@ -552,6 +595,79 @@ impl Hub {
         }
         state.forget_unwatched();
         gone
+    }
+
+    /// Whether the upstream reads the view now for a change of the readable scope: one is owed,
+    /// none runs, and the hub holds a table to compare it with. The caller runs the read and
+    /// hands it to [`Hub::rescope`].
+    pub fn rescope_now(&self) -> bool {
+        let mut state = self.state();
+        if state.rescoping || state.rescope == 0 {
+            return false;
+        }
+        if state.due || state.index.is_empty() {
+            // No table: the next snapshot reads the new scope whole.
+            state.rescope = 0;
+            return false;
+        }
+        state.rescope -= 1;
+        state.rescoping = true;
+        true
+    }
+
+    /// A rescope read that failed: every connection ends with `endpoint-changed`, as before
+    /// T-6776, since the hub cannot tell what left the caller's scope.
+    pub fn rescope_failed(&self) {
+        let mut state = self.state();
+        state.rescoping = false;
+        state.rescope = 0;
+        let ids: Vec<u64> = state.conns.keys().copied().collect();
+        for id in ids {
+            if let Some(conn) = state.conns.get_mut(&id) {
+                conn.queue.push(Out::Closing("endpoint-changed"));
+                for (_, sub) in std::mem::take(&mut conn.subs) {
+                    state.index.remove(sub.filter);
+                }
+            }
+        }
+        state.forget_unwatched();
+    }
+
+    /// The view read again after a change of the readable scope (T-6776), compared with the
+    /// table: an entity it no longer holds sends `x-out-of-scope` to each connection a filter of
+    /// which matched it, an entity that differs is sent again as a change, a new one as created.
+    /// The table is the read afterwards, so no row of the old scope outlives it.
+    pub fn rescope(&self, fresh: Vec<Value>, at: chrono::DateTime<chrono::Utc>) {
+        let mut state = self.state();
+        let state = &mut *state;
+        state.rescoping = false;
+        if state.due || state.index.is_empty() {
+            return;
+        }
+        let before = std::mem::take(&mut state.table);
+        let mut after = Vec::with_capacity(fresh.len());
+        for mut entity in fresh {
+            without_sys_attrs(&mut entity);
+            if let Some(id) = entity.get("id").and_then(Value::as_str).map(str::to_owned) {
+                after.push((id, entity));
+            }
+        }
+        let held: BTreeSet<&str> = after.iter().map(|(id, _)| id.as_str()).collect();
+        for (id, (_, old)) in &before {
+            if !held.contains(id.as_str()) {
+                state.out_of_scope(id, old);
+            }
+        }
+        for (id, entity) in after {
+            let previous = before.get(&id).map(|(_, e)| e);
+            if previous == Some(&entity) {
+                state.keep(id, entity);
+                continue;
+            }
+            let created = previous.is_none();
+            state.keep(id.clone(), entity.clone());
+            state.fan_out(&id, &entity, &entity, previous, created, at);
+        }
     }
 
     /// How many connections it holds.
@@ -645,26 +761,40 @@ impl Hub {
         } else {
             state.keep(id.clone(), entity.clone())
         };
-        let Some(full) = expanded(&entity) else {
+        state.fan_out(&id, &entity, &stamped, previous.as_ref(), created, at);
+    }
+}
+
+impl State {
+    /// Sends each connection with a filter that fires on this change of entity `id` what its
+    /// filters make of it (ADR-N-049 §2.5): `entity` without the upstream's stamps, `stamped`
+    /// with them for a subscription that asks `sysAttrs`.
+    fn fan_out(
+        &mut self,
+        id: &str,
+        entity: &Value,
+        stamped: &Value,
+        previous: Option<&Value>,
+        created: bool,
+        at: chrono::DateTime<chrono::Utc>,
+    ) {
+        let Some(full) = expanded(entity) else {
             return;
         };
         let mut by_conn: BTreeMap<u64, Vec<FilterId>> = BTreeMap::new();
-        for filter in state.index.candidates(&full, core()) {
+        for filter in self.index.candidates(&full, core()) {
             by_conn.entry(filter >> SUB_BITS).or_default().push(filter);
         }
         if by_conn.is_empty() {
             return;
         }
-        let delta = changed(previous.as_ref().and_then(expanded).as_ref(), &full);
+        let delta = changed(previous.and_then(expanded).as_ref(), &full);
         for (conn_id, filters) in by_conn {
-            let Some(conn) = state.conns.get(&conn_id) else {
+            let Some(conn) = self.conns.get(&conn_id) else {
                 continue;
             };
             for filter in filters {
-                if !state
-                    .index
-                    .decides(filter, &full, (&delta, created), core())
-                {
+                if !self.index.decides(filter, &full, (&delta, created), core()) {
                     continue;
                 }
                 let Some(sub) = conn.subs.values().find(|s| s.filter == filter) else {
@@ -679,18 +809,46 @@ impl Hub {
                 }
                 conn.queue.push(Out::Notification {
                     subscription: sub.id.clone(),
-                    entity: id.clone(),
+                    entity: id.to_owned(),
                     body: notification(&sub.id, data, at),
                 });
-                if let Some(held) = state.index.get_mut(filter) {
+                if let Some(held) = self.index.get_mut(filter) {
                     held.sent(at);
                 }
             }
         }
     }
-}
 
-impl State {
+    /// Tells each connection a filter of which matches `old`, the entity's last state the caller
+    /// read, that entity `id` left its scope; the filters' triggers aside, since a client that
+    /// watches it learns it left whatever it watches.
+    fn out_of_scope(&self, id: &str, old: &Value) {
+        let Some(full) = expanded(old) else {
+            return;
+        };
+        let mut by_conn: BTreeMap<u64, Vec<FilterId>> = BTreeMap::new();
+        for filter in self.index.candidates(&full, core()) {
+            if self.index.matches(filter, &full, core()) {
+                by_conn.entry(filter >> SUB_BITS).or_default().push(filter);
+            }
+        }
+        for (conn_id, filters) in by_conn {
+            let Some(conn) = self.conns.get(&conn_id) else {
+                continue;
+            };
+            let subscriptions = conn
+                .subs
+                .values()
+                .filter(|s| filters.contains(&s.filter))
+                .map(|s| s.id.clone())
+                .collect();
+            conn.queue.push(Out::OutOfScope {
+                entity: id.to_owned(),
+                subscriptions,
+            });
+        }
+    }
+
     /// Drops the table once no filter is left: nothing judges a change against it, and the next
     /// filter reads it again (T-5182).
     fn forget_unwatched(&mut self) {
@@ -724,6 +882,19 @@ impl State {
         }
         previous
     }
+}
+
+/// Whether `now` differs from `before` only in what a caller reads (T-6776): its Policies, their
+/// names, its hidden attributes and its projection. Every other field takes part in admitting a
+/// connection or in what the socket is, so its change closes the connection (fail closed: a field
+/// added to [`Endpoint`] later closes too).
+pub fn scope_only(before: &Endpoint, now: &Endpoint) -> bool {
+    let mut same = now.clone();
+    same.policies.clone_from(&before.policies);
+    same.policy_names.clone_from(&before.policy_names);
+    same.hidden_attributes.clone_from(&before.hidden_attributes);
+    same.projection.clone_from(&before.projection);
+    same == *before
 }
 
 /// Whether a client's subscription asks `notification.sysAttrs` (TS 104 175 Table 5.2.14-1).
@@ -890,7 +1061,7 @@ mod tests {
     }
 
     fn open(hub: &Hub) -> (u64, Arc<Queue>) {
-        hub.open(endpoint(), "anonymous".into(), None)
+        hub.open(endpoint(), "anonymous".into(), Subject::default())
     }
 
     /// A connection whose upgrade failed leaves the hub with its guard; a taken one stays.
@@ -916,35 +1087,241 @@ mod tests {
     fn a_reload_closes_what_changed_and_nothing_follows_the_close() {
         let at = chrono::DateTime::UNIX_EPOCH;
         let same = |_: &str| true;
+        let reads = |_: &Subject, _: &Endpoint| true;
         let hub = Hub::new("s", 10);
         let (kept, kept_queue) = open(&hub);
         subscribe(&hub, kept, json!({}));
         assert!(
-            hub.recheck(Some(&endpoint()), same).is_empty(),
+            hub.recheck(Some(&endpoint()), same, reads).is_empty(),
             "equal record, new Arc"
         );
 
         let mut narrowed = (*endpoint()).clone();
         narrowed.audience = jc_core::kinds::Audience::ProjectList;
-        assert_eq!(hub.recheck(Some(&Arc::new(narrowed)), same), [kept]);
+        assert_eq!(hub.recheck(Some(&Arc::new(narrowed)), same, reads), [kept]);
         hub.apply(bus("urn:ngsi-ld:Vehicle:1", 1.0, "x"), at);
         let (items, _) = kept_queue.take();
         assert_eq!(items, [Out::Closing("endpoint-changed")]);
         assert!(hub.state().index.is_empty(), "its filters left at once");
 
-        let (app, _) = hub.open(endpoint(), "user:jana".into(), Some("app-x".into()));
+        let app_x = Subject {
+            client: Some("app-x".into()),
+            ..Subject::default()
+        };
+        let (app, _) = hub.open(endpoint(), "user:jana".into(), app_x);
         assert!(hub
-            .recheck(Some(&endpoint()), |azp| azp != "app-x")
+            .recheck(Some(&endpoint()), |azp| azp != "app-x", reads)
             .contains(&app));
 
         let (_, gone_queue) = open(&hub);
-        hub.recheck(None, same);
+        hub.recheck(None, same, reads);
         assert_eq!(gone_queue.take().0, [Out::Closing("view-removed")]);
         let mut quiet = (*endpoint()).clone();
         quiet.representations.clear();
         let (off, off_queue) = open(&hub);
-        assert!(hub.recheck(Some(&Arc::new(quiet)), same).contains(&off));
+        assert!(hub
+            .recheck(Some(&Arc::new(quiet)), same, reads)
+            .contains(&off));
         assert_eq!(off_queue.take().0, [Out::Closing("view-removed")]);
+    }
+
+    fn hiding(name: &str) -> Arc<Endpoint> {
+        let mut narrowed = (*endpoint()).clone();
+        narrowed.hidden_attributes.insert(name.into());
+        Arc::new(narrowed)
+    }
+
+    /// A hub with one subscribed connection whose table holds `rows`, as after its snapshot.
+    fn seeded(rows: &[Value]) -> (Hub, u64, Arc<Queue>, String) {
+        let hub = Hub::new("s", 100);
+        let (conn, queue) = open(&hub);
+        let sub = subscribe(&hub, conn, json!({}));
+        assert!(hub.snapshot_now());
+        rows.iter().cloned().for_each(|row| hub.seed(row));
+        (hub, conn, queue, sub)
+    }
+
+    /// T-6776 (a): a Policy, a hidden attribute or a projection that narrows what the caller
+    /// reads keeps the connection, and owes the hub its reads of the view; only a change of what
+    /// admitted the connection closes it.
+    #[test]
+    fn a_narrowed_scope_keeps_the_connection() {
+        let (hub, conn, queue, _) = seeded(&[bus("urn:ngsi-ld:Vehicle:1", 1.0, "x")]);
+        let reads = |_: &Subject, _: &Endpoint| true;
+        assert!(hub
+            .recheck(Some(&hiding("secret")), |_| true, reads)
+            .is_empty());
+        assert!(queue.take().0.is_empty());
+        assert_eq!(hub.subscriptions(conn), 1);
+        assert!(hub.rescope_now(), "the first read is owed");
+        assert!(!hub.rescope_now(), "one read at a time");
+        hub.rescope(
+            vec![bus("urn:ngsi-ld:Vehicle:1", 1.0, "x")],
+            chrono::Utc::now(),
+        );
+        assert!(hub.rescope_now(), "and one more a tick later");
+        hub.rescope(
+            vec![bus("urn:ngsi-ld:Vehicle:1", 1.0, "x")],
+            chrono::Utc::now(),
+        );
+        assert!(!hub.rescope_now());
+        assert!(queue.take().0.is_empty(), "an unchanged read sends nothing");
+    }
+
+    /// T-6776 (b): the suspected stale row is refuted for a close (the last filter leaving drops
+    /// the table) and held for a rescope: the table is the new read, so a later client is judged
+    /// against no row of the old scope.
+    #[test]
+    fn no_row_of_the_old_scope_outlives_a_change() {
+        let one = bus("urn:ngsi-ld:Vehicle:1", 1.0, "x");
+        let two = bus("urn:ngsi-ld:Vehicle:2", 2.0, "y");
+        let (hub, _, _, _) = seeded(&[one.clone(), two.clone()]);
+        let mut moved = (*endpoint()).clone();
+        moved.audience = jc_core::kinds::Audience::ProjectList;
+        hub.recheck(Some(&Arc::new(moved)), |_| true, |_, _| true);
+        assert_eq!(hub.entities(), 0, "a close empties the table");
+
+        let (hub, _, _, _) = seeded(&[one.clone(), two]);
+        hub.recheck(Some(&hiding("secret")), |_| true, |_, _| true);
+        assert!(hub.rescope_now());
+        hub.rescope(vec![one], chrono::Utc::now());
+        let state = hub.state();
+        assert_eq!(
+            state.table.keys().collect::<Vec<_>>(),
+            ["urn:ngsi-ld:Vehicle:1"]
+        );
+    }
+
+    /// T-6776 (c): an entity the new scope no longer holds sends one `x-out-of-scope` per
+    /// connection, never a deletion, and its notification still queued is dropped.
+    #[test]
+    fn an_entity_out_of_scope_is_named_once_and_its_queued_change_dropped() {
+        let one = bus("urn:ngsi-ld:Vehicle:1", 1.0, "x");
+        let two = bus("urn:ngsi-ld:Vehicle:2", 2.0, "y");
+        let (hub, conn, queue, sub) = seeded(&[one.clone(), two.clone()]);
+        subscribe(&hub, conn, json!({"q": "speed>1"}));
+        hub.apply(bus("urn:ngsi-ld:Vehicle:2", 3.0, "y"), chrono::Utc::now());
+        hub.recheck(Some(&hiding("secret")), |_| true, |_, _| true);
+        assert!(hub.rescope_now());
+        hub.rescope(vec![one], chrono::Utc::now());
+        let (items, overflowed) = queue.take();
+        assert!(!overflowed);
+        let names = |items: &[Out]| -> Vec<(String, Vec<String>)> {
+            items
+                .iter()
+                .filter_map(|item| match item {
+                    Out::OutOfScope {
+                        entity,
+                        subscriptions,
+                    } => Some((entity.clone(), subscriptions.clone())),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(items.len(), 1, "the queued change of 2 is gone: {items:?}");
+        let (entity, mut subs) = names(&items).remove(0);
+        subs.sort();
+        assert_eq!(entity, "urn:ngsi-ld:Vehicle:2");
+        assert_eq!(subs.len(), 2, "both filters matched it: {subs:?}");
+        assert!(subs.contains(&sub));
+        assert_eq!(hub.subscriptions(conn), 2, "the connection stays");
+    }
+
+    /// T-6776 (d): an entity read with fewer attributes is sent again without them.
+    #[test]
+    fn an_attribute_narrowing_sends_the_entity_again_without_it() {
+        let (hub, _, queue, _) = seeded(&[bus("urn:ngsi-ld:Vehicle:1", 1.0, "x")]);
+        hub.recheck(Some(&hiding("secret")), |_| true, |_, _| true);
+        assert!(hub.rescope_now());
+        let mut cut = bus("urn:ngsi-ld:Vehicle:1", 1.0, "x");
+        cut.as_object_mut().map(|e| e.remove("secret"));
+        hub.rescope(vec![cut], chrono::Utc::now());
+        let sent = data(&queue);
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert!(sent[0].get("secret").is_none(), "{sent:?}");
+        assert_eq!(sent[0]["speed"]["value"], 1.0);
+    }
+
+    /// T-6776 (e): an entity the new scope adds arrives as created.
+    #[test]
+    fn a_widening_sends_the_new_entity() {
+        let one = bus("urn:ngsi-ld:Vehicle:1", 1.0, "x");
+        let (hub, _, queue, _) = seeded(std::slice::from_ref(&one));
+        hub.recheck(Some(&hiding("other")), |_| true, |_, _| true);
+        assert!(hub.rescope_now());
+        hub.rescope(
+            vec![one, bus("urn:ngsi-ld:Vehicle:3", 3.0, "z")],
+            chrono::Utc::now(),
+        );
+        let sent = data(&queue);
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert_eq!(sent[0]["id"], "urn:ngsi-ld:Vehicle:3");
+        assert_eq!(hub.entities(), 2);
+    }
+
+    /// T-6776 (f): a scope change under which the caller reads nothing, a client the accounts
+    /// stop admitting, a change of the audience, and a read that fails each still close with
+    /// `endpoint-changed`.
+    #[test]
+    fn a_revoked_grant_or_admission_still_closes() {
+        let (hub, conn, queue, _) = seeded(&[]);
+        assert_eq!(
+            hub.recheck(Some(&hiding("secret")), |_| true, |_, _| false),
+            [conn]
+        );
+        assert_eq!(queue.take().0, [Out::Closing("endpoint-changed")]);
+        assert!(!hub.rescope_now(), "nothing left to read for");
+
+        let hub = Hub::new("s", 10);
+        let app_x = Subject {
+            client: Some("app-x".into()),
+            ..Subject::default()
+        };
+        let (app, app_queue) = hub.open(endpoint(), "user:jana".into(), app_x);
+        let (anon, anon_queue) = open(&hub);
+        assert_eq!(
+            hub.recheck(Some(&hiding("secret")), |azp| azp != "app-x", |_, _| true),
+            [app]
+        );
+        assert_eq!(app_queue.take().0, [Out::Closing("endpoint-changed")]);
+        assert!(anon_queue.take().0.is_empty());
+
+        let (hub, _, queue, _) = seeded(&[bus("urn:ngsi-ld:Vehicle:1", 1.0, "x")]);
+        hub.recheck(Some(&hiding("secret")), |_| true, |_, _| true);
+        assert!(hub.rescope_now());
+        hub.rescope_failed();
+        assert_eq!(queue.take().0, [Out::Closing("endpoint-changed")]);
+        assert!(hub.state().index.is_empty());
+        let _ = anon;
+    }
+
+    /// T-6776 (g): two callers have two hubs; a narrowing read by one leaves the other's table
+    /// and connection alone.
+    #[test]
+    fn a_narrowing_for_one_hub_leaves_the_other() {
+        let one = bus("urn:ngsi-ld:Vehicle:1", 1.0, "x");
+        let two = bus("urn:ngsi-ld:Vehicle:2", 2.0, "y");
+        let (narrowed, _, narrowed_queue, _) = seeded(&[one.clone(), two.clone()]);
+        let (other, other_conn, other_queue, _) = seeded(&[one.clone(), two]);
+        narrowed.recheck(Some(&hiding("secret")), |_| true, |_, _| true);
+        other.recheck(Some(&hiding("secret")), |_| true, |_, _| true);
+        assert!(narrowed.rescope_now());
+        narrowed.rescope(vec![one], chrono::Utc::now());
+        assert_eq!(narrowed_queue.take().0.len(), 1);
+        assert!(other_queue.take().0.is_empty());
+        assert_eq!((other.entities(), other.subscriptions(other_conn)), (2, 1));
+    }
+
+    /// The fields a scope change may touch, and one it may not.
+    #[test]
+    fn only_policies_hidden_attributes_and_projection_are_scope() {
+        let before = endpoint();
+        let mut now = (*before).clone();
+        now.hidden_attributes.insert("secret".into());
+        now.policy_names.push("open".into());
+        assert!(scope_only(&before, &now));
+        now.allowed_projects.push("other".into());
+        assert!(!scope_only(&before, &now));
     }
 
     fn subscribe(hub: &Hub, conn: u64, extra: Value) -> String {
@@ -967,7 +1344,7 @@ mod tests {
             .into_iter()
             .filter_map(|out| match out {
                 Out::Notification { body, .. } => Some(body["data"][0].clone()),
-                Out::Gap | Out::Closing(_) | Out::Refused => None,
+                Out::Gap | Out::Closing(_) | Out::Refused | Out::OutOfScope { .. } => None,
             })
             .collect()
     }

@@ -152,7 +152,7 @@ impl Hubs {
                 hub
             }
         };
-        let (conn, queue) = hub.open(endpoint, principal, subject.client);
+        let (conn, queue) = hub.open(endpoint, principal, subject);
         Ok(hub::Joined::new(hub, conn, queue))
     }
 
@@ -244,12 +244,29 @@ impl Rate {
 /// [`Hub::recheck`] of `hub` against the gateway's current tables.
 fn recheck(gateway: &Gateway, hub: &Hub) {
     let accounts = gateway.accounts.load();
-    let closed = hub.recheck(gateway.resolver.resolve(&hub.slug).as_ref(), |azp| {
-        accounts.admits_on(azp, &hub.slug)
-    });
+    let closed = hub.recheck(
+        gateway.resolver.resolve(&hub.slug).as_ref(),
+        |azp| accounts.admits_on(azp, &hub.slug),
+        |subject, endpoint| still_reads(gateway, subject, endpoint),
+    );
     if !closed.is_empty() {
         tracing::info!(slug = %hub.slug, closed = closed.len(), "WebSocket connections closed by a reload");
     }
+}
+
+/// Whether `subject` is still served the WebSocket of `endpoint` after a change of its readable
+/// scope (T-6776): the PDP lets it read something there, as [`crate::auth::subject::discoverable`]
+/// asks for a space, and the Endpoint serves no personal attribute in public, as the upgrade
+/// asks (`admit`, DM-122).
+fn still_reads(gateway: &Gateway, subject: &Subject, endpoint: &Endpoint) -> bool {
+    let verdict = gateway.pdp.decide(
+        subject,
+        jc_core::kinds::Operation::QueryEntity,
+        &crate::query::requested(&[]),
+        endpoint,
+    );
+    endpoint.public_personal_attributes().is_empty()
+        && !matches!(verdict, crate::pdp::evaluator::Verdict::Deny)
 }
 
 type Upstream =
@@ -430,6 +447,9 @@ async fn run(
                 // The reload rechecks at once (Hubs::recheck); this tick catches a connection
                 // that joined on the old table while the reload ran.
                 recheck(gateway, hub);
+                if hub.rescope_now() {
+                    tokio::spawn(rescope(Arc::clone(gateway), Arc::clone(hub), headers.clone()));
+                }
                 // ponytail: an Endpoint with several identities' hubs reports the last one's
                 // table; a sum over the registry when a dashboard needs the Endpoint's total.
                 metrics::gauge!("jc_gateway_ws_entities", "endpoint" => hub.slug.clone())
@@ -564,19 +584,44 @@ fn read_if_wanted(gateway: &Arc<Gateway>, hub: &Arc<Hub>, headers: &HeaderMap) {
 /// Reads the view's entities once, page by page, into the table (ADR-N-049 §2.2), at most
 /// [`SNAPSHOTS`] hubs at a time.
 async fn snapshot(gateway: Arc<Gateway>, hub: Arc<Hub>, headers: HeaderMap) {
+    read_view(&gateway, &hub.slug, headers, |entity| hub.seed(entity)).await;
+}
+
+/// Reads the view again after a change of its readable scope and hands the read to
+/// [`Hub::rescope`] (T-6776); a read that fails ends every connection, as a change did before.
+/// ponytail: the read is held whole beside the table (up to twice the table's bound for a
+/// moment); a paged merge by id when a view near the bound changes its Policy often.
+async fn rescope(gateway: Arc<Gateway>, hub: Arc<Hub>, headers: HeaderMap) {
+    let mut fresh = Vec::new();
+    if read_view(&gateway, &hub.slug, headers, |entity| fresh.push(entity)).await {
+        let before = hub.entities();
+        hub.rescope(fresh, chrono::Utc::now());
+        tracing::info!(slug = %hub.slug, before, after = hub.entities(), "the fan-out read its view again under a changed scope");
+    } else {
+        tracing::warn!(slug = %hub.slug, "the fan-out could not read its view again; its connections close");
+        hub.rescope_failed();
+    }
+}
+
+/// Reads the view's entities page by page into `each`, at most [`SNAPSHOTS`] hubs at a time;
+/// `false` when a page was refused, failed or could not be read.
+async fn read_view(
+    gateway: &Gateway,
+    slug: &str,
+    headers: HeaderMap,
+    mut each: impl FnMut(Value),
+) -> bool {
     static TURNS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(SNAPSHOTS);
     let Ok(_turn) = TURNS.acquire().await else {
-        return;
+        return false;
     };
     let mut offset = 0;
     let mut limit = PAGE;
     while offset < bound() {
         let mut headers = headers.clone();
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
-        let path = format!(
-            "/x/views/{}/ngsi-ld/v1/entities?type=*&limit={limit}&offset={offset}",
-            hub.slug
-        );
+        let path =
+            format!("/x/views/{slug}/ngsi-ld/v1/entities?type=*&limit={limit}&offset={offset}");
         let answer = match gateway
             .broker
             .send(Method::GET, &path, headers, Body::empty())
@@ -584,12 +629,12 @@ async fn snapshot(gateway: Arc<Gateway>, hub: Arc<Hub>, headers: HeaderMap) {
         {
             Ok(answer) if answer.status().is_success() => answer,
             Ok(answer) => {
-                tracing::warn!(slug = %hub.slug, status = %answer.status(), "the fan-out snapshot was refused");
-                return;
+                tracing::warn!(slug, status = %answer.status(), "the fan-out snapshot was refused");
+                return false;
             }
             Err(error) => {
-                tracing::warn!(slug = %hub.slug, %error, "the fan-out snapshot failed");
-                return;
+                tracing::warn!(slug, %error, "the fan-out snapshot failed");
+                return false;
             }
         };
         // A page is held to the gateway's own body cap; one past it is read again in smaller
@@ -599,21 +644,24 @@ async fn snapshot(gateway: Arc<Gateway>, hub: Arc<Hub>, headers: HeaderMap) {
                 limit = (limit / 4).max(SMALLEST_PAGE);
                 continue;
             }
-            tracing::warn!(slug = %hub.slug, limit, "a fan-out snapshot page is larger than the body cap");
-            return;
+            tracing::warn!(
+                slug,
+                limit,
+                "a fan-out snapshot page is larger than the body cap"
+            );
+            return false;
         };
         let Ok(Value::Array(page)) = serde_json::from_slice::<Value>(&bytes) else {
-            return;
+            return false;
         };
         let read = page.len();
-        for entity in page {
-            hub.seed(entity);
-        }
+        page.into_iter().for_each(&mut each);
         if read < limit {
-            return;
+            return true;
         }
         offset += read;
     }
+    true
 }
 
 /// How a session ended.
@@ -740,6 +788,18 @@ pub async fn session(
                         Out::Gap => {
                             seq += 1;
                             outgoing.push(gap(seq, seq));
+                        }
+                        Out::OutOfScope { entity, subscriptions } => {
+                            seq += 1;
+                            let text = json!({"metadata": {
+                                "x-op": "x-out-of-scope", "x-seq": seq,
+                                "Content-Type": "application/json"},
+                                "body": {"id": entity, "subscriptionIds": subscriptions}}).to_string();
+                            if sent.len() >= KEPT {
+                                sent.pop_front();
+                            }
+                            sent.push_back((seq, text.clone()));
+                            outgoing.push(text);
                         }
                         Out::Closing(reason) => {
                             // Nothing queued behind a close is sent (T-4874).
@@ -993,10 +1053,14 @@ mod tests {
     fn hub_with_closed(sent: &[u64]) -> (Hub, u64) {
         let hub = Hub::new("s", 10);
         let endpoint = crate::fanout::hub::tests_support::endpoint();
-        let (old, _) = hub.open(Arc::clone(&endpoint), "anonymous".into(), None);
+        let (old, _) = hub.open(
+            Arc::clone(&endpoint),
+            "anonymous".into(),
+            Subject::default(),
+        );
         let held: VecDeque<(u64, String)> = sent.iter().map(|n| (*n, format!("n{n}"))).collect();
         hub.close(old, "name", "token", held);
-        let (new, _) = hub.open(endpoint, "anonymous".into(), None);
+        let (new, _) = hub.open(endpoint, "anonymous".into(), Subject::default());
         (hub, new)
     }
 
@@ -1076,7 +1140,11 @@ mod tests {
         let endpoint = crate::fanout::hub::tests_support::endpoint();
         let busy = |slug: &str| {
             let hub = Arc::new(Hub::new(slug, 10));
-            hub.open(Arc::clone(&endpoint), "anonymous".into(), None);
+            hub.open(
+                Arc::clone(&endpoint),
+                "anonymous".into(),
+                Subject::default(),
+            );
             hub
         };
         let mut hubs: HashMap<String, (String, Arc<Hub>)> = HashMap::new();
@@ -1224,7 +1292,7 @@ mod tests {
                 up.on_upgrade(|client| async move {
                     let hub = Arc::new(Hub::new("s", 10));
                     let endpoint = crate::fanout::hub::tests_support::endpoint();
-                    let (conn, queue) = hub.open(endpoint, "anonymous".into(), None);
+                    let (conn, queue) = hub.open(endpoint, "anonymous".into(), Subject::default());
                     let lifetime = Duration::from_secs(60);
                     session(client, hub, conn, queue, "anonymous".into(), lifetime).await;
                 })
