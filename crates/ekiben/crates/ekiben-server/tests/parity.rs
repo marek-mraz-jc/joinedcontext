@@ -92,10 +92,20 @@ fn same_as_bento(case: &Value) -> (bool, String) {
 
 #[test]
 fn every_recorded_case_keeps_its_verdict_against_bento() {
+    replay("tests/parity/cases.json");
+}
+
+/// The one-to-one component ports (T-6835..T-6843): `scripts/parity/components.py record` writes them.
+#[test]
+fn every_component_case_keeps_its_verdict_against_bento() {
+    replay("tests/parity/components.json");
+}
+
+fn replay(file: &str) {
     let doc: Value = serde_json::from_slice(
-        &std::fs::read(repo().join("tests/parity/cases.json")).expect("tests/parity/cases.json"),
+        &std::fs::read(repo().join(file)).unwrap_or_else(|e| panic!("{file}: {e}")),
     )
-    .expect("cases.json is JSON");
+    .unwrap_or_else(|e| panic!("{file} is not JSON: {e}"));
     let cases: Vec<&Value> = doc["cases"]
         .as_array()
         .expect("cases")

@@ -1,0 +1,22 @@
+input:
+  stdin: {}
+buffer:
+  system_window:
+    timestamp_mapping: root = now()
+    size: 5s
+pipeline:
+  threads: 1
+  processors:
+    - group_by_value:
+        value: '${! json("traffic_light") }'
+    - mapping: |
+        root = if batch_index() == 0 {
+          {
+            "traffic_light": this.traffic_light,
+            "has_window_end": metadata("window_end_timestamp") != null,
+            "total_cars": json("registration_plate").from_all().unique().length(),
+            "passengers": json("passengers").from_all().sum(),
+          }
+        } else { deleted() }
+output:
+  stdout: {}

@@ -1,0 +1,12 @@
+input:
+  stdin:
+    scanner:
+      re_match:
+        pattern: split
+        max_buffer_size: 200
+pipeline:
+  threads: 1
+  processors:
+    - mapping: 'root = {"b": content().string(), "m": @, "i": batch_index(), "n": batch_size()}'
+output:
+  stdout: {}
