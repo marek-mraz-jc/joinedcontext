@@ -290,6 +290,15 @@ routes:
   - route: GET /organization/setup
     rule: "org-admin (approve and delete on RoleBinding, PF-03)"
     expect: [401, 403, 403, 403, 403, allow, 403, 403]
+  - route: GET /organization/widgets
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+    note: "the request's Organization's home page Dashboards, each re-read under the caller's rights: one the caller may not read, or another Organization's, is left out (T-6779, UIX-16)"
+  - route: GET /organization/widgets/options
+    rule: "signed-in"
+    query: "organization=org"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+    note: "the Organization form's choices: only the Dashboards the caller may read in that Organization's projects; an Organization the caller reads nothing in answers an empty list (T-6779)"
   - route: GET /projects/{project}/endpoints/{name}/access/attributes
     rule: "project-read, then read of the Endpoint in its space"
     expect: [401, allow, allow, allow, allow, allow, 404, allow]

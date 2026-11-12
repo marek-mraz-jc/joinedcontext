@@ -158,13 +158,14 @@ pub fn refused_check(err: &ApiError, manifest: &serde_json::Value) -> Option<Dry
     })
 }
 
-/// A sentence that starts with the member it is about, `spec.outputs.0.targetEndpoint: …`, as that
-/// path and the sentence after it, so the form marks the field (UI-45, T-5040).
+/// A sentence that starts with the member it is about, `spec.outputs.0.targetEndpoint: …` or
+/// `spec.appearance.homeWidgets[0]: …`, as that path and the sentence after it, so the form marks
+/// the field (UI-45, T-5040, T-6779).
 fn led_by_its_member(entry: &str) -> Option<(&str, &str)> {
     let (path, message) = entry.split_once(": ")?;
     let member = path
         .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '[' | ']'));
     (member && (path.starts_with("spec.") || path.starts_with("metadata.")))
         .then_some((path, message))
 }
@@ -304,6 +305,7 @@ mod tests {
                 "spec.outputs.0.targetEndpoint: Pipeline stations output 1 writes as pl-stations"
                     .into(),
                 "Policy sensors-write grants a write: name it in a policyRef".into(),
+                "spec.appearance.homeWidgets[1]: must name a Dashboard you may read".into(),
             ],
         };
         let refused = refused_check(&err, &serde_json::json!({})).expect("a red verdict");
@@ -318,6 +320,7 @@ mod tests {
             findings[1].message,
             "Policy sensors-write grants a write: name it in a policyRef"
         );
+        assert_eq!(findings[2].path, "spec.appearance.homeWidgets[1]");
     }
 
     #[tokio::test]

@@ -1364,10 +1364,13 @@ async fn a_lifetime_naming_no_slot_of_the_spaces_model_is_refused_before_a_chang
     let finding = verdict["verdict"]["findings"][0]["message"]
         .as_str()
         .unwrap_or_default();
+    assert_eq!(
+        verdict["verdict"]["findings"][0]["path"],
+        json!("spec.lifetime[0].attributes[0].names"),
+        "{body}"
+    );
     assert!(
-        finding.starts_with(
-            "spec.lifetime[0].attributes[0].names: `pm25` is not a slot of `AirQualityObserved`"
-        ),
+        finding.starts_with("`pm25` is not a slot of `AirQualityObserved`"),
         "{body}"
     );
     assert!(

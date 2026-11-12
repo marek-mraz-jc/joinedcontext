@@ -314,6 +314,48 @@ async fn the_page_names_the_configured_organization_and_no_demo() {
     assert!(!html.to_lowercase().contains("demo"), "{html}");
 }
 
+/// An Organization's own block, keyed by its Portal host (UIX-16, T-6777): a sign-in that
+/// returns there shows its name, colour and logo over the realm's; another host keeps the
+/// realm's (the test above).
+#[tokio::test]
+async fn a_sign_in_from_an_organizations_portal_shows_its_own_block() {
+    let (app, store) = app("City of Example").await;
+    let realm_id = store.get_realm("dev").await.unwrap().unwrap().id;
+    let host = url::Url::parse(CALLBACK)
+        .unwrap()
+        .host_str()
+        .unwrap()
+        .to_owned();
+    let own = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle r="5" fill="#0b5394"/></svg>"##;
+    let mut block = BrandingBlock {
+        realm_id,
+        org_id: Some(host.clone()),
+        organisation: "Banskobystrický kraj".into(),
+        logo_svg: own.into(),
+        ..BrandingBlock::default()
+    };
+    block.colours.primary = "#0b5394".into();
+    store.upsert_branding(block).await.unwrap();
+    let (_, _, html) = sign_in_page(&app, "en").await;
+    assert_eq!(title(&html), "Sign in to the Portal · Banskobystrický kraj");
+    assert!(html.contains("#0b5394"), "its colour: {html}");
+    let logo = format!("/realms/dev/login-resources/logo.svg?org={host}");
+    assert!(html.contains(&logo), "its logo: {html}");
+    let (st, h, body) = send(&app, Method::GET, &logo, None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(h[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+    assert_eq!(body, own);
+    let (_, _, realms) = send(
+        &app,
+        Method::GET,
+        "/realms/dev/login-resources/logo.svg?org=elsewhere.example",
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(realms, LOGO, "an unknown key serves the realm's logo");
+}
+
 #[tokio::test]
 async fn the_logo_is_served_as_an_image_that_runs_nothing() {
     let (app, _) = app("joinedcontext demo").await;

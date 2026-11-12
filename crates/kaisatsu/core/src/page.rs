@@ -35,10 +35,18 @@ pub fn css_url(path_prefix: &str) -> String {
     format!("{path_prefix}/resources/kaisatsu/{LOGIN_CSS_VERSION:016x}/login.css")
 }
 
-/// Where a realm's logo is served (only when its branding block holds one).
+/// Where a realm's logo is served (only when its branding block holds one); an
+/// organization's own block names itself in `org`, so its page shows its own logo.
 #[must_use]
-pub fn logo_url(path_prefix: &str, realm: &str) -> String {
-    format!("{path_prefix}/realms/{realm}/login-resources/logo.svg")
+pub fn logo_url(path_prefix: &str, realm: &str, org: Option<&str>) -> String {
+    let base = format!("{path_prefix}/realms/{realm}/login-resources/logo.svg");
+    match org {
+        Some(org) => format!(
+            "{base}?org={}",
+            url::form_urlencoded::byte_serialize(org.as_bytes()).collect::<String>()
+        ),
+        None => base,
+    }
 }
 
 // Font Awesome Free 5 paths (CC BY 4.0), as PatternFly's React icons draw them.
@@ -237,21 +245,27 @@ pub struct Shell<'a> {
 
 impl Shell<'_> {
     /// The organization above the card: the realm's display name, else the branding block's
-    /// organisation or instance name (jc's own realm carries none), else "this platform".
+    /// organisation or instance name (jc's own realm carries none), else "this platform". An
+    /// organization's own block names it before the realm does.
     #[must_use]
     pub fn org(&self) -> String {
-        [
-            self.realm.display_name.as_str(),
+        let realm = self.realm.display_name.as_str();
+        let own = [
             self.branding.organisation.as_str(),
             self.branding.instance_name.as_str(),
-        ]
-        .into_iter()
-        .map(str::trim)
-        .find(|s| !s.is_empty())
-        .map_or_else(
-            || self.bundle.get("jcOrganizationFallback").to_owned(),
-            str::to_owned,
-        )
+        ];
+        let names = match self.branding.org_id {
+            Some(_) => [own[0], own[1], realm],
+            None => [realm, own[0], own[1]],
+        };
+        names
+            .into_iter()
+            .map(str::trim)
+            .find(|s| !s.is_empty())
+            .map_or_else(
+                || self.bundle.get("jcOrganizationFallback").to_owned(),
+                str::to_owned,
+            )
     }
 
     /// A page with the shell filled: a sign-in page (`page_id` in [`SIGN_IN_PAGES`]) with an app
@@ -277,7 +291,11 @@ impl Shell<'_> {
         let logo_url = if self.branding.logo_svg.is_empty() {
             String::new()
         } else {
-            logo_url(self.path_prefix, &self.realm.realm)
+            logo_url(
+                self.path_prefix,
+                &self.realm.realm,
+                self.branding.org_id.as_deref(),
+            )
         };
         Page {
             lang: self.bundle.locale.to_owned(),

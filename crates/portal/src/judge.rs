@@ -50,10 +50,11 @@ type Check = fn(&Ground<'_>, &str, &ResourceEnvelope) -> Result<(), ApiError>;
 
 /// Every check, by name, in the order a proposal meets them. A deletion is never judged here:
 /// the propose door checks what a deletion leaves behind itself.
-pub const CHECKS: [(&str, Check); 17] = [
+pub const CHECKS: [(&str, Check); 18] = [
     ("literal-secret", literal_secret),
     ("kind", kind),
     ("endpoint-representations", endpoint_representations),
+    ("organization-appearance", organization_appearance),
     ("spec", spec),
     ("organization-bounds", organization_bounds),
     ("public-app", public_app),
@@ -228,6 +229,30 @@ fn endpoint_representations(
         "Endpoint" => mutate::check_representation_shape(&envelope.spec),
         _ => Ok(()),
     }
+}
+
+/// An Organization's appearance, member by member (UIX-16, T-6772): a 422 naming the member a
+/// form shows the finding beside, before the kind's own parse folds it into one sentence.
+fn organization_appearance(
+    _: &Ground<'_>,
+    _: &str,
+    envelope: &ResourceEnvelope,
+) -> Result<(), ApiError> {
+    let appearance = match (envelope.kind.as_str(), envelope.spec.get("appearance")) {
+        ("Organization", Some(appearance)) => appearance,
+        _ => return Ok(()),
+    };
+    let refused = |line: String| ApiError::Unprocessable {
+        detail: line.clone(),
+        errors: vec![line],
+    };
+    serde_json::from_value::<jc_core::kinds::OrganizationAppearance>(appearance.clone())
+        .map_err(|e| refused(format!("spec.appearance: {e}")))?
+        .validate()
+        .map_err(|e| match e {
+            jc_core::Error::Invalid { field, reason } => refused(format!("{field}: {reason}")),
+            other => refused(format!("spec.appearance: {other}")),
+        })
 }
 
 /// An Organization's limits inside the operator's bounds (PF-97).
@@ -623,6 +648,13 @@ mod tests {
                 air(endpoint(
                     json!({ "representations": { "notAnOutput": {} } }),
                 )),
+            ),
+            "organization-appearance" => (
+                vec![],
+                org(
+                    json!({ "domain": "hel.fi", "locales": ["en"], "defaultLocale": "en",
+                    "appearance": { "colours": { "primary": "red;}body{x}" } } }),
+                ),
             ),
             "organization-bounds" => (
                 vec![],

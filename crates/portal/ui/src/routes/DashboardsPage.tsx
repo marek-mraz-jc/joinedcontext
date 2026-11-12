@@ -170,7 +170,10 @@ function MapPlaceholder({ label }: { label: string }): JSX.Element {
 export function DashboardsPage({ project }: { project: string }): JSX.Element {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage ?? i18n.language ?? "sk";
-  const [selected, setSelected] = useState<string | null>(null);
+  // A home page widget links here with `?dashboard=<name>` (T-6779); an unknown name shows the first.
+  const [selected, setSelected] = useState<string | null>(() =>
+    typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("dashboard"),
+  );
   const selectId = useId();
   const pagesId = useId();
   // The viewport after the reader moved the map, and the layers switched off in the legend.

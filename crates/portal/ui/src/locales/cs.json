@@ -194,6 +194,12 @@
     "dns1123": "Jen malá písmena, číslice a spojovníky, začíná písmenem nebo číslicí, nejvýše 63 znaků.",
     "entityType": "Typ NGSI-LD: velké písmeno, pak písmena a číslice, nejvýše 64 znaků.",
     "requiredCount": "{filled} z {total} povinných polí vyplněno",
+    "svgPreview": "Náhled: {label}",
+    "svgPreviewNote": "Vykresleno jako obrázek: nic v SVG se nespustí.",
+    "fixCount": "Pole k opravě: {count}.",
+    "fixFirst": "Ukázat první pole k opravě",
+    "fixFirstInGroup": "První: {field}, ve skupině {group}.",
+    "fixFirstNamed": "První: {field}.",
     "askAboutField": "Zeptat se na toto pole",
     "askAboutFieldQuestion": "Ve formuláři {kind}: co patří do „{label}“ a co se stane, když to zůstane prázdné?",
     "fillFromSentence": "Vyplnit z jedné věty",
@@ -222,7 +228,8 @@
     "mapLanguage": "Jazyk",
     "mapAddLanguage": "Přidat jazyk",
     "advancedFields": "Rozšířené",
-    "advancedFieldsHint": "Nastavení spouštěče, která většina zdrojů nechává výchozí."
+    "advancedFieldsHint": "Nastavení spouštěče, která většina zdrojů nechává výchozí.",
+    "chosenOf": "Vybráno: {chosen} z {max}"
   },
   "approvals": {
     "lead": "Každá změna projektu je zde návrhem, dokud ji schvalovatel nesloučí.",
@@ -7684,6 +7691,30 @@
         "agentRunsPerDay": "Běhy asistenta za den",
         "entitiesPerSpace": "Entity v prostoru",
         "requestsPerMinute": "Požadavky za minutu na koncový bod"
+      },
+      "appearance": {
+        "title": "Vzhled",
+        "instanceName": "Název",
+        "shortName": "Krátký název",
+        "city": "Město nebo region",
+        "publisher": "Vydavatel",
+        "contactEmail": "Kontaktní e-mail",
+        "licenseDefault": "Výchozí licence",
+        "colours": "Barvy",
+        "logoSvg": "Logo (SVG)",
+        "faviconSvg": "Ikona stránky (SVG)",
+        "colour": {
+          "primary": "Hlavní",
+          "secondary": "Doplňková",
+          "accent": "Zvýraznění",
+          "background": "Pozadí",
+          "text": "Text"
+        },
+        "homeWidgets": "Nástěnky na domovské stránce",
+        "homeWidgetsNone": "Zatím není nástěnka na výběr. Otevřete projekt této organizace, přejděte na Nástěnky a vytvořte ji; příště se nabídne zde.",
+        "homeWidgetsProjects": "Otevřít projekty organizace",
+        "opendataWidgets": "Nástěnky na portálu otevřených dat",
+        "opendataWidgetsNone": "Zatím není veřejná nástěnka na výběr: nejprve nastavte nástěnku v projektu této organizace jako veřejnou."
       }
     },
     "contactRole": {
@@ -7736,7 +7767,8 @@
       "creationGroup": "Projekty otevírají členové skupiny {group}.",
       "creationAdmin": "Projekty otevírá jen administrátor organizace.",
       "cooldown": "{days} dní",
-      "noQuota": "Pro nový projekt není stanoven žádný limit."
+      "noQuota": "Pro nový projekt není stanoven žádný limit.",
+      "fromInstallation": "výchozí z instalace"
     },
     "members": {
       "title": "Členové",
@@ -10082,6 +10114,12 @@
       "empty": "Zatím s vámi nikdo nic nesdílí. Když jiný projekt sdílí aplikaci s celou organizací, objeví se zde.",
       "from": "Z projektu {project}",
       "newTab": "(otevře se na nové kartě)"
+    },
+    "widgets": {
+      "title": "Nástěnky na domovské stránce",
+      "lead": "Vybrala je vaše organizace; vidíte ty, které smíte otevřít.",
+      "open": "Otevřít",
+      "pages": "{count, plural, one {# strana} few {# strany} other {# stran}}"
     }
   },
   "alerts": {

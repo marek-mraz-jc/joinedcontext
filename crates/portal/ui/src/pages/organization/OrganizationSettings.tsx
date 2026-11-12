@@ -1,13 +1,15 @@
 import { PageFailed } from "../../components/ui/PageState";
-import type { JSX } from "react";
+import { Fragment } from "react";
+import type { JSX, ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, queryKeys, unwrap } from "../../api/client";
-import { asManifests, ORG_NAMESPACE } from "../../api/manifest";
+import { asManifests, localized, ORG_NAMESPACE } from "../../api/manifest";
 import { useChosenOrganizationName } from "../../api/projects";
 import { EditResourceAction } from "../../components/EditResourceDialog";
 import type { EditableForm } from "../../components/EditResourceDialog";
 import { EmptyState, Skeleton } from "../../components/ui";
+import { Swatch, svgImageUrl } from "../../components/forms/widgets/AppearanceWidgets";
 import { APP_SERVICES_UI, organizationSchema } from "../../schemas/kinds";
 import { OrganizationDomain } from "../access/OrganizationDomain";
 import { OrganizationLimitsView } from "./OrganizationLimitsView";
@@ -37,6 +39,14 @@ interface OrganizationSpec {
   contacts?: Contact[];
   projects?: ProjectsPolicy;
   policies?: { apps?: { public?: string; services?: string[] }; agents?: { models?: string[] } };
+  /** What its Portal, open data portal and sign-in page show (UIX-16). */
+  appearance?: {
+    instanceName?: string;
+    shortName?: string;
+    colours?: Partial<Record<"primary" | "secondary" | "accent" | "background" | "text", string>>;
+    logoSvg?: string;
+    faviconSvg?: string;
+  };
 }
 
 /** What the form edits: the spec without `gitRepositoryUrl`, which is the installation's. */
@@ -63,7 +73,66 @@ export function toOrganization(form: Record<string, unknown>, stored: unknown): 
     delete apps.services;
     next.policies = { ...next.policies, apps };
   }
+  // An empty list of models is "every model", which jc-core writes as no list at all.
+  const models = next.policies?.agents?.models?.filter((model) => typeof model === "string" && model.trim() !== "");
+  if (next.policies?.agents && (models === undefined || models.length === 0)) {
+    const agents = { ...next.policies.agents };
+    delete agents.models;
+    next.policies = { ...next.policies, agents };
+  } else if (next.policies?.agents && models) {
+    next.policies = { ...next.policies, agents: { ...next.policies.agents, models } };
+  }
   return { ...manifest, spec: next };
+}
+
+const COLOURS = ["primary", "secondary", "accent", "background", "text"] as const;
+
+/** A pasted SVG drawn as an image (never inline markup), else the installation's. */
+function SvgShown({ svg, label }: { svg?: string; label: string }): JSX.Element {
+  const { t } = useTranslation();
+  const url = svgImageUrl(svg);
+  if (!url) return <>{t("organization.settings.fromInstallation")}</>;
+  return <img src={url} alt={label} className="h-10 max-w-40 rounded border border-border bg-surface object-contain p-1" />;
+}
+
+/** `spec.appearance` member by member, each unset one named as the installation's (UIX-16). */
+function AppearanceSummary({ appearance }: { appearance?: OrganizationSpec["appearance"] }): JSX.Element {
+  const { t } = useTranslation();
+  const installation = t("organization.settings.fromInstallation");
+  const row = (label: string, value: ReactNode) => (
+    <>
+      <dt className="text-fg-muted">{label}</dt>
+      <dd className="min-w-0">{value}</dd>
+    </>
+  );
+  return (
+    <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1">
+      {row(t("organization.field.appearance.instanceName"), appearance?.instanceName || installation)}
+      {row(t("organization.field.appearance.shortName"), appearance?.shortName || installation)}
+      {COLOURS.map((name) => {
+        const value = appearance?.colours?.[name];
+        return (
+          <Fragment key={name}>
+            {row(
+              t(`organization.field.appearance.colour.${name}`),
+              <span className="inline-flex items-center gap-2">
+                <Swatch colour={value} className="h-control-xs w-control-xs" />
+                {value ?? installation}
+              </span>,
+            )}
+          </Fragment>
+        );
+      })}
+      {row(
+        t("organization.field.appearance.logoSvg"),
+        <SvgShown svg={appearance?.logoSvg} label={t("organization.field.appearance.logoSvg")} />,
+      )}
+      {row(
+        t("organization.field.appearance.faviconSvg"),
+        <SvgShown svg={appearance?.faviconSvg} label={t("organization.field.appearance.faviconSvg")} />,
+      )}
+    </dl>
+  );
 }
 
 /** `projects.creation` in words (PF-65). */
@@ -81,7 +150,7 @@ function creationOf(t: (key: string, options?: Record<string, unknown>) => strin
  * verification below it (PF-41).
  */
 export function OrganizationSettings(): JSX.Element {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const organizations = useQuery({
     queryKey: queryKeys.list(ORG_NAMESPACE, "organizations"),
     queryFn: async () =>
@@ -106,9 +175,40 @@ export function OrganizationSettings(): JSX.Element {
     all[0];
   const spec = (organization?.spec ?? {}) as OrganizationSpec;
   const policy = spec.projects ?? {};
+  // The home page's choices: the Organization's Dashboards this person may read (T-6779).
+  const organizationName = organization?.metadata.name;
+  const widgetOptions = useQuery({
+    queryKey: ["organization", "widget-options", organizationName],
+    enabled: organizationName !== undefined,
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/api/v1/organization/widgets/options", {
+          params: { query: { organization: organizationName ?? "" } },
+        }),
+      ),
+  });
+  const widgets = (widgetOptions.data?.options ?? []).map((option) => ({
+    reference: option.reference,
+    public: option.public,
+    // The title a person knows it by, and the `project/name` a refusal names it by.
+    label: `${localized(option.title as string | Record<string, string> | null, i18n.language, option.name)} (${option.reference})`,
+  }));
   const form: EditableForm = {
-    schema: withMqttDefault(organizationSchema(t, limits.data?.entries ?? []), t),
-    uiSchema: { policies: { apps: { services: APP_SERVICES_UI } }, limits: { mqtt: ALLOWANCE_UI } },
+    schema: withMqttDefault(organizationSchema(t, limits.data?.entries ?? [], widgets), t),
+    uiSchema: {
+      policies: { apps: { services: APP_SERVICES_UI } },
+      limits: { mqtt: ALLOWANCE_UI },
+      // One box per Dashboard the server offers; with none offered, the field says what to do first.
+      appearance: {
+        homeWidgets:
+          widgets.length > 0
+            ? { "ui:widget": "checkboxes", "ui:options": { stacked: true } }
+            : { "ui:field": "noChoices", "ui:help": t("organization.field.appearance.homeWidgetsNone") },
+        opendataWidgets: widgets.some((widget) => widget.public === true)
+          ? { "ui:widget": "checkboxes", "ui:options": { stacked: true } }
+          : { "ui:field": "noChoices", "ui:help": t("organization.field.appearance.opendataWidgetsNone") },
+      },
+    },
     fromManifest: fromOrganization,
     toManifest: toOrganization,
   };
@@ -175,6 +275,10 @@ export function OrganizationSettings(): JSX.Element {
                   ))}
                 </ul>
               )}
+            </dd>
+            <dt className="font-medium text-fg">{t("organization.field.appearance.title")}</dt>
+            <dd className="text-fg">
+              <AppearanceSummary appearance={spec.appearance} />
             </dd>
             <dt className="font-medium text-fg">{t("organization.field.creation")}</dt>
             <dd className="text-fg">{creationOf(t, policy.creation)}</dd>

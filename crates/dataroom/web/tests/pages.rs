@@ -1535,6 +1535,32 @@ fn b4_noindex_reaches_every_page_but_the_framed_map() {
     assert!(!open.contains(meta));
 }
 
+/// T-6780: the public Dashboards the host hands over are drawn as cards with their pages and
+/// sources, escaped; none hands over no section.
+#[test]
+fn the_home_draws_the_public_dashboards_it_is_given() {
+    let c = catalogue(json!(null));
+    let boards = [DashboardCard {
+        title: "Doprava <b>v kraji</b>".into(),
+        pages: vec!["Mapa".into(), "Nehody".into()],
+        sources: vec!["mhd-public".into()],
+    }];
+    let html = render_home_page_mounted(&c, None, &[], &[], &boards, "", "sk", false, "", NONCE);
+    assert_safe_page("home-dashboards", &html, "sk");
+    assert!(
+        html.contains("id=\"jc-dashboards-title\">Dashboardy</h2>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("v kraji") && !html.contains("<b>v kraji"),
+        "the title is escaped"
+    );
+    assert!(html.contains("Mapa · Nehody"));
+    assert!(html.contains("<span class=\"jc-chip\">mhd-public</span>"));
+    let none = render_home_page_mounted(&c, None, &[], &[], &[], "", "sk", false, "", NONCE);
+    assert!(!none.contains("jc-dashboards-title"));
+}
+
 #[test]
 fn installation_branding_and_mount_prefix_reach_the_chrome() {
     let mut inst = BrandingBlock::default();
@@ -1542,7 +1568,18 @@ fn installation_branding_and_mount_prefix_reach_the_chrome() {
         &json!({ "domain": DOMAIN, "logo": "/brand/logo.svg", "favicon": "fav.ico" }),
     );
     let c = catalogue(json!(null));
-    let html = render_home_page_mounted(&c, Some(&inst), &[], &[], "", "cs", true, "/data/", NONCE);
+    let html = render_home_page_mounted(
+        &c,
+        Some(&inst),
+        &[],
+        &[],
+        &[],
+        "",
+        "cs",
+        true,
+        "/data/",
+        NONCE,
+    );
     assert_safe_page("home-mounted", &html, "cs");
     assert!(
         html.contains("href=\"/data/fav.ico\""),
@@ -1611,7 +1648,18 @@ fn a_host_widget_replaces_the_domain_widget_and_an_empty_one_shows_no_launcher()
     inst.apply_override_json(&json!({ "domain": DOMAIN }));
     let c = catalogue(json!(null));
     let page = |inst: &BrandingBlock| {
-        render_home_page_mounted(&c, Some(inst), &[], &[], "", "sk", false, "/data/", NONCE)
+        render_home_page_mounted(
+            &c,
+            Some(inst),
+            &[],
+            &[],
+            &[],
+            "",
+            "sk",
+            false,
+            "/data/",
+            NONCE,
+        )
     };
     inst.assistant_widget = Some("https://city.example/d/data/widget".into());
     let on = page(&inst);

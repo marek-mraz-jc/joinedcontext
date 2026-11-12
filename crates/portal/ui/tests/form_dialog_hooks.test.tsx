@@ -9,7 +9,7 @@ import validator from "../src/components/forms/validator";
 import type { JsonSchema } from "../src/components/forms/types";
 import type { Draft, Verdict } from "../src/api/drafts";
 import { forPeople } from "../src/api/client";
-import { controlOf } from "../src/components/forms/resourceForm";
+import { controlOf, fieldPath } from "../src/components/forms/resourceForm";
 import { useDryRunCheck } from "../src/components/forms/useDryRunCheck";
 import { useResourceDraft } from "../src/components/forms/useResourceDraft";
 import { useYamlSubmitQueue } from "../src/components/forms/useYamlSubmitQueue";
@@ -139,6 +139,19 @@ describe("useDryRunCheck", () => {
     // The form holds the spec's fields at its top level, so `spec.source.url` is `source.url`.
     expect(result.current.shownErrors).toEqual({ source: { url: { __errors: [forPeople(message)] } } });
     expect(controlOf("source.url")).toBe(input);
+  });
+
+  it("marks_a_refused_choice_of_a_multi_select_on_the_list_it_is_one_widget_of", () => {
+    // T-6779: `homeWidgets` is one select of the server's choices; `roles` is a list of objects.
+    const schema = {
+      type: "object",
+      properties: {
+        appearance: { type: "object", properties: { homeWidgets: { type: "array", items: { type: "string", oneOf: [{ const: "a/b" }] } } } },
+        roles: { type: "array", items: { type: "object", properties: { name: { type: "string" } } } },
+      },
+    } as never;
+    expect(fieldPath("spec.appearance.homeWidgets[1]", schema)).toEqual(["appearance", "homeWidgets"]);
+    expect(fieldPath("spec.roles[0].name", schema)).toEqual(["roles", "0", "name"]);
   });
 
   it("names_and_focuses_the_empty_required_field_without_asking_the_server", () => {

@@ -210,6 +210,52 @@ impl Branding {
         }
     }
 
+    /// The file name the branding answers for a logo or favicon an Organization carries inline:
+    /// the UI only asks whether one is set, and `GET /api/v1/branding/{asset}` serves the SVG.
+    pub const INLINE_SVG: &'static str = "organization.svg";
+
+    /// This branding with an Organization's appearance over it, member by member, and its
+    /// locales as the switcher's (UIX-16, T-6772). A member the Organization leaves out keeps
+    /// the installation's value; the result is sanitised like the file, so the colour rule and
+    /// the computed foregrounds hold for it too.
+    pub fn with_organization(mut self, spec: &jc_core::kinds::OrganizationSpec) -> Self {
+        let look = &spec.appearance;
+        let over = |target: &mut String, value: &Option<String>| {
+            if let Some(value) = value {
+                value.clone_into(target);
+            }
+        };
+        over(&mut self.instance_name, &look.instance_name);
+        if look.instance_name.is_some() && look.short_name.is_none() {
+            self.short_name = self.instance_name.clone();
+        }
+        over(&mut self.short_name, &look.short_name);
+        over(&mut self.city, &look.city);
+        over(&mut self.organisation, &look.publisher);
+        over(&mut self.contact_email, &look.contact_email);
+        over(&mut self.license_default, &look.license_default);
+        let colours = &look.colours;
+        over(&mut self.colours.primary, &colours.primary);
+        over(&mut self.colours.secondary, &colours.secondary);
+        over(&mut self.colours.accent, &colours.accent);
+        over(&mut self.colours.background, &colours.background);
+        over(&mut self.colours.text, &colours.text);
+        if look.logo_svg.is_some() {
+            Self::INLINE_SVG.clone_into(&mut self.logo);
+        }
+        if look.favicon_svg.is_some() {
+            Self::INLINE_SVG.clone_into(&mut self.favicon);
+        }
+        spec.domain.clone_into(&mut self.org_domain);
+        if !spec.locales.is_empty() {
+            self.languages = Languages {
+                default: spec.default_locale.clone(),
+                offered: spec.locales.clone(),
+            };
+        }
+        self.sanitised()
+    }
+
     /// Replaces every value the UI must not be handed with its neutral default.
     pub fn sanitised(mut self) -> Self {
         let fallback = Self::default();

@@ -5,6 +5,7 @@ import validator from "./validator";
 import { TranslatableString, deepEquals, englishStringTranslator, retrieveSchema } from "@rjsf/utils";
 import type { ErrorSchema, RJSFSchema, RJSFValidationError } from "@rjsf/utils";
 import { useTranslation } from "react-i18next";
+import { Button, Icon } from "../ui";
 import { requiredProgress } from "./uischema";
 import type { JsonSchema, UiSchema } from "./types";
 import {
@@ -77,6 +78,31 @@ const BUTTON_WORDS: Partial<Record<TranslatableString, string>> = {
   [TranslatableString.CopyButton]: "form.button.copy",
 };
 
+/** The first error of each field, in the order the validator reports them. */
+function onePerField(errors: RJSFValidationError[]): RJSFValidationError[] {
+  const seen = new Set<string | undefined>();
+  return errors.filter((error) => !seen.has(error.property) && Boolean(seen.add(error.property)));
+}
+
+/** "First: Primary, in How it looks": the field's title and the group of its top-level name. */
+function refusedName(
+  error: RJSFValidationError,
+  schema: unknown,
+  uiSchema: Record<string, unknown>,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  const path = (error.property ?? "").replace(/^\./, "").split(".");
+  // rjsf leaves `title` empty for a field below the root: the schema's own title names it.
+  let node = schema as JsonSchema | undefined;
+  for (const segment of path) {
+    node = /^\d+$/.test(segment) ? (node?.items as JsonSchema | undefined) : (node?.properties?.[segment] as JsonSchema | undefined);
+  }
+  const field = error.title || (typeof node?.title === "string" ? node.title : "") || (path[path.length - 1] ?? "");
+  const groups = (uiSchema["ui:options"] as { groups?: { title?: string; fields: string[] }[] } | undefined)?.groups;
+  const group = groups?.find((candidate) => candidate.fields.includes(path[0] ?? ""))?.title;
+  return group ? t("form.fixFirstInGroup", { field, group }) : t("form.fixFirstNamed", { field });
+}
+
 export function SchemaForm<T>(props: SchemaFormProps<T>): React.JSX.Element {
   const {
     schema,
@@ -117,6 +143,23 @@ export function SchemaForm<T>(props: SchemaFormProps<T>): React.JSX.Element {
   if (!checked && hasAnyError(extraErrors)) {
     setChecked(true);
   }
+  // The fields a refused submit left to fix (T-6772): the footer names how many and leads to the
+  // first, where "3 of 3 required fields filled" said nothing was wrong.
+  const [refused, setRefused] = React.useState<RJSFValidationError[]>([]);
+  const formBox = React.useRef<HTMLDivElement>(null);
+  const firstRefused = refused[0];
+  const showFirstRefused = React.useCallback(() => {
+    const box = formBox.current;
+    const path = firstRefused?.property?.replace(/^\./, "").split(".").join("_");
+    const named = path ? box?.querySelector<HTMLElement>(`[id="root_${path}"]`) : null;
+    const field = named ?? box?.querySelector<HTMLElement>('[aria-invalid="true"]');
+    if (!field) return;
+    for (let fold = field.closest("details"); fold; fold = fold.parentElement?.closest("details") ?? null) {
+      fold.open = true;
+    }
+    field.scrollIntoView({ block: "center" });
+    field.focus();
+  }, [firstRefused]);
   const touched = React.useMemo(() => ({ all: checked, ids: touchedIds }), [checked, touchedIds]);
   const touch = React.useCallback((id: string | undefined) => {
     if (id) {
@@ -169,7 +212,19 @@ export function SchemaForm<T>(props: SchemaFormProps<T>): React.JSX.Element {
       value={
         actions || progress.total > 0 ? (
           <>
-            {progress.total > 0 ? (
+            {/* A polite status: the refused field's own error is the alert. */}
+            {checked && refused.length > 0 ? (
+              <span role="status" className="mr-auto flex flex-wrap items-center gap-2 text-body font-medium text-danger">
+                <Icon name="error" className="size-4" />
+                <span>
+                  {t("form.fixCount", { count: refused.length })}
+                  {firstRefused ? ` ${refusedName(firstRefused, schema, effectiveUiSchema, t)}` : null}
+                </span>
+                <Button type="button" variant="secondary" size="sm" onClick={showFirstRefused}>
+                  {t("form.fixFirst")}
+                </Button>
+              </span>
+            ) : progress.total > 0 ? (
               <span
                 data-testid="required-count"
                 // The form's left edge, whatever wraps beside it: the footer's lines end flush right.
@@ -191,6 +246,7 @@ export function SchemaForm<T>(props: SchemaFormProps<T>): React.JSX.Element {
           <FormProjectContext.Provider value={project}>
           <FormDataContext.Provider value={held ?? shown}>
           <TouchedContext.Provider value={touched}>
+          <div ref={formBox} className="contents">
           <Form<T>
             validator={validator}
             schema={schema}
@@ -214,15 +270,18 @@ export function SchemaForm<T>(props: SchemaFormProps<T>): React.JSX.Element {
               onSubmit(data.formData as T);
             }}
             onBlur={touch}
-            onError={() => {
+            onError={(errors) => {
               setChecked(true);
+              setRefused(onePerField(errors));
             }}
             onChange={(data, id) => {
+              setRefused(onePerField(data.errors));
               touch(id);
               setHeld(data.formData);
               onChange?.(data.formData as T | undefined);
             }}
           />
+          </div>
           </TouchedContext.Provider>
           </FormDataContext.Provider>
           </FormProjectContext.Provider>

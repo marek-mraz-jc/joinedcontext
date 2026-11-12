@@ -9,7 +9,7 @@ import type { components } from "./schema";
 /** What a dry run answers, as far as the check before a proposal reads it. */
 type CheckAnswer = {
   valid?: boolean;
-  verdict?: { ok?: boolean; findings?: { message?: string }[] };
+  verdict?: { ok?: boolean; findings?: { message?: string; path?: string }[] };
 };
 
 /**
@@ -48,6 +48,10 @@ export async function proposeChecked(
       title: "The check found problems",
       status: 422,
       detail: found.join("; ") || "the check found problems",
+      // Each finding on its member, as the API's own 422 lists them, so a form marks the field (T-6779).
+      errors: (check.verdict?.findings ?? [])
+        .filter((finding) => finding.message && finding.path)
+        .map((finding) => `${finding.path}: ${finding.message}`),
     });
   }
   return unwrap(await send(false));
