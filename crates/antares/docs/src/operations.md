@@ -494,16 +494,13 @@ refused):
   one transaction per range of 1000 Entity ids (by id order), with each
   range's history, so a writer waits on one range's locks, not the
   Tenant's. It first checks every new id for a clash and renames nothing on
-  one. It returns the summed counts and `batches`, and a NOTICE per committed range shows progress. Call it outside a
-  transaction block (`psql -c`, no `BEGIN`): it commits itself. Between two
+  one. It returns the summed counts and `batches`; a NOTICE per committed
+  range shows progress. Call it outside a transaction block (`psql -c`, no
+  `BEGIN`): it commits itself. Between two
   commits a Relationship may name a new id whose range is still to come
   (404 until that range commits). A run stopped by a lock timeout or an
   error keeps the ranges it committed: call it again with the same
-  arguments and it renames the rest. On the jc-dev copy (2026-11-12, 4 MB
-  work_mem) it took {BBSK} for bbsk-otvorene-data (215 k ids), {HEL} for
-  helsinki (211 k) and {PRAHA} for praha-mesto (1.19 M), the longest range
-  {MAXR}; 0033's single transaction took 49 min for helsinki and did not
-  finish bbsk-otvorene-data in 2 h.
+  arguments and it renames the rest.
 - A `GET /ngsi-ld/v1/entities/{old id}` answers the Entity under its new id
   for twelve months after the remint, through the same Policy gate as the
   new id. Writes to an old id are not redirected.
