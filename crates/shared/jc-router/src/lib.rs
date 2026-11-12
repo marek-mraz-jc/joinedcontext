@@ -22,6 +22,9 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use tower::ServiceExt;
 
+mod hosts;
+pub use hosts::{HostRow, HostTable, Organization};
+
 /// The client's address as the router resolved it: the TCP peer, or, when the peer is a trusted
 /// proxy, the right-most `X-Forwarded-For` hop that is not itself a trusted proxy. Modules key
 /// per-address rate limits on it; it is absent when the peer is unknown.
@@ -120,6 +123,13 @@ pub enum RouterError {
         host: String,
         prefix: String,
     },
+    #[error("invalid host row: {0}")]
+    InvalidHostRow(String),
+    #[error("Organization '{organization}' is also the first path segment of module '{module}'")]
+    OrganizationShadowsMount {
+        organization: String,
+        module: String,
+    },
 }
 
 pub fn normalize_prefix(raw: &str) -> Result<String, RouterError> {
@@ -176,6 +186,7 @@ pub struct JcRouter {
     default_host: String,
     trusted_proxies: Arc<Vec<IpNet>>,
     trusted_identities: Arc<Vec<String>>,
+    hosts: Option<Arc<HostTable>>,
 }
 
 pub struct JcRouterBuilder {
@@ -184,6 +195,7 @@ pub struct JcRouterBuilder {
     default_host: String,
     trusted_proxies: Vec<IpNet>,
     trusted_identities: Vec<String>,
+    hosts: Option<HostTable>,
 }
 
 impl Default for JcRouterBuilder {
@@ -201,7 +213,16 @@ impl JcRouterBuilder {
             default_host: default_host.into(),
             trusted_proxies: Vec::new(),
             trusted_identities: Vec::new(),
+            hosts: None,
         }
+    }
+
+    /// The host registry (docs/API/15-addresses-v1.md §2): once set, a host outside it answers
+    /// `421` and every request's [`Organization`] is decided from it.
+    #[must_use]
+    pub fn hosts(mut self, table: HostTable) -> Self {
+        self.hosts = Some(table);
+        self
     }
 
     #[must_use]
@@ -270,6 +291,19 @@ impl JcRouterBuilder {
             Some(_) => 2,
             None => 0,
         };
+        if let Some(table) = &self.hosts {
+            for org in table.organizations() {
+                if let Some(entry) = entries
+                    .iter()
+                    .find(|e| e.prefix.trim_start_matches('/').split('/').next() == Some(org))
+                {
+                    return Err(RouterError::OrganizationShadowsMount {
+                        organization: org.to_owned(),
+                        module: entry.module.clone(),
+                    });
+                }
+            }
+        }
         entries.sort_by(|a, b| {
             rank(&b.host)
                 .cmp(&rank(&a.host))
@@ -281,8 +315,22 @@ impl JcRouterBuilder {
             default_host: self.default_host,
             trusted_proxies: Arc::new(self.trusted_proxies),
             trusted_identities: Arc::new(self.trusted_identities),
+            hosts: self.hosts.map(Arc::new),
         })
     }
+}
+
+/// Whether a browser asked for a page: a `GET` or `HEAD` that accepts HTML. An API client asks
+/// for JSON or anything, and is served in place (docs/API/15-addresses-v1.md §2).
+fn is_page(req: &Request<Body>) -> bool {
+    matches!(
+        *req.method(),
+        axum::http::Method::GET | axum::http::Method::HEAD
+    ) && req
+        .headers()
+        .get(axum::http::header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|a| a.contains("text/html"))
 }
 
 impl JcRouter {
@@ -427,7 +475,39 @@ impl JcRouter {
         let host_only = host_with_port
             .split_once(':')
             .map_or(host_with_port.as_str(), |(h, _)| h);
-        let path = req.uri().path().to_owned();
+        let (path, organization, via) = match &self.hosts {
+            None => (req.uri().path().to_owned(), None, hosts::Via::Plain),
+            Some(table) => {
+                match table.place(&host_with_port, host_only, req.uri().path(), is_page(&req)) {
+                    hosts::Placed::Route {
+                        path,
+                        organization,
+                        via,
+                    } => (path, organization, via),
+                    hosts::Placed::Canonical(path) => {
+                        let location = match req.uri().query() {
+                            Some(q) => format!("{path}?{q}"),
+                            None => path,
+                        };
+                        return (
+                            StatusCode::PERMANENT_REDIRECT,
+                            [(axum::http::header::LOCATION, location)],
+                        )
+                            .into_response();
+                    }
+                    hosts::Placed::Misdirected => {
+                        return (
+                            StatusCode::MISDIRECTED_REQUEST,
+                            "this host is not served here",
+                        )
+                            .into_response();
+                    }
+                    hosts::Placed::NotFound => {
+                        return (StatusCode::NOT_FOUND, "unmounted path").into_response();
+                    }
+                }
+            }
+        };
 
         let Some(entry) = self.find(&host_with_port, host_only, &path) else {
             return (StatusCode::NOT_FOUND, "unmounted path").into_response();
@@ -456,9 +536,17 @@ impl JcRouter {
             module: entry.module.clone(),
             scheme,
             host: host_with_port,
-            path_prefix: entry.prefix.clone(),
+            path_prefix: via.public_prefix(&entry.prefix),
         };
         req.extensions_mut().insert(mount);
+        match organization {
+            Some(org) => {
+                req.extensions_mut().insert(Organization(org));
+            }
+            None => {
+                req.extensions_mut().remove::<Organization>();
+            }
+        }
         match client {
             Some(ip) => {
                 req.extensions_mut().insert(ClientAddr(ip));
