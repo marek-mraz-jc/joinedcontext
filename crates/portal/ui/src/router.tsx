@@ -34,6 +34,9 @@ import { DashboardPage } from "./pages/grafana/DashboardPage";
 import { DashboardBuilderPage } from "./pages/grafana/DashboardBuilder";
 import { HealthPage } from "./pages/health/HealthLog";
 const SecretFormPage = lazy(() => import("./pages/secrets/SecretFormPage").then((module) => ({ default: module.SecretFormPage })));
+const DashboardJsonEditor = lazy(() =>
+  import("./pages/dashboards/DashboardJsonEditor").then((module) => ({ default: module.DashboardJsonEditor })),
+);
 const ApprovalsPage = lazy(() => import("./routes/ApprovalsPage").then((module) => ({ default: module.ApprovalsPage })));
 const McpElicitationPage = lazy(() => import("./pages/mcp/McpElicitationPage").then((module) => ({ default: module.McpElicitationPage })));
 const McpConfirmationPage = lazy(() => import("./pages/mcp/McpElicitationPage").then((module) => ({ default: module.McpConfirmationPage })));
@@ -577,6 +580,25 @@ const dashboardViewRoute = createRoute({
     return (
       <Shell project={project}>
         <DashboardPage project={project} uid={uid} />
+      </Shell>
+    );
+  },
+});
+
+/** A Dashboard manifest written as JSON beside its live preview (T-6791); `?name=` edits one. */
+const dashboardJsonRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "/projects/$project/dashboard-editor",
+  validateSearch: (search: Record<string, unknown>): { name?: string } =>
+    typeof search.name === "string" && search.name !== "" ? { name: search.name } : {},
+  component: function DashboardJsonRoute() {
+    const { project } = dashboardJsonRoute.useParams();
+    const { name } = dashboardJsonRoute.useSearch();
+    return (
+      <Shell project={project}>
+        <Suspense fallback={null}>
+          <DashboardJsonEditor key={name ?? ""} project={project} name={name} />
+        </Suspense>
       </Shell>
     );
   },
@@ -1584,6 +1606,7 @@ export const routeTree = rootRoute.addChildren([
     dashboardViewRoute,
     dashboardNewRoute,
     dashboardEditRoute,
+    dashboardJsonRoute,
     healthRoute,
     approvalsRoute,
     approvalDetailRoute,

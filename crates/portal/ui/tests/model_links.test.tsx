@@ -237,7 +237,7 @@ describe("the places that name a model or a type", () => {
   it("a dashboard's grid names its type as a link (guard: no bare type as the title)", () => {
     // The guard T-2766 asks for: the pages that have the data to link must not print it bare.
     const source = (file: string) => readFileSync(resolve(__dirname, "../src", file), "utf8");
-    expect(source("routes/DashboardsPage.tsx")).toContain("title={<TypeLink project={project} type={widget.entityType} />}");
+    expect(source("components/dashboards/DashboardWidgets.tsx")).toContain("title={<TypeLink project={project} type={widget.entityType} />}");
     for (const [file, bare] of [
       ["routes/DashboardsPage.tsx", "title={widget.entityType}"],
       ["pages/endpoints/EndpointPage.tsx", "<Badge mono>{klass}</Badge>"],

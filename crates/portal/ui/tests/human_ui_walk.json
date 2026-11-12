@@ -1181,6 +1181,23 @@
         "evidence/worker-t4871/T-4871/mcp-connect-link-400.png"
       ]
     },
+    "src/pages/dashboards/DashboardJsonEditor.tsx": {
+      "walkedBy": "worker-t6790",
+      "date": "2026-11-11",
+      "screenshots": [
+        "evidence/T-6791/editor-empty-1440.png",
+        "evidence/T-6791/editor-empty-400.png",
+        "evidence/T-6791/editor-starter-1440.png",
+        "evidence/T-6791/editor-starter-400.png",
+        "evidence/T-6791/editor-valid-1440.png",
+        "evidence/T-6791/editor-valid-400.png",
+        "evidence/T-6791/editor-invalid-1440.png",
+        "evidence/T-6791/editor-invalid-400.png",
+        "evidence/T-6791/editor-refused-1440.png",
+        "evidence/T-6791/editor-refused-400.png",
+        "evidence/T-6791/editor-refused-list-400.png"
+      ]
+    },
     "src/pages/datasources/ConnectionTest.tsx": null,
     "src/pages/datasources/DataSourcesPage.tsx": {
       "walkedBy": "deployer",

@@ -13,14 +13,10 @@ import { ChangeNotice } from "../components/ChangeNotice";
 import { ResourceRowActions } from "../components/ResourceRowActions";
 import { rendersWithDeckGl } from "../components/dashboards/rendering";
 import { RAMP } from "../components/dashboards/mapColours";
+import { DashboardWidgets } from "../components/dashboards/DashboardWidgets";
+import type { WidgetSpec } from "../components/dashboards/DashboardWidgets";
 import type { Bbox, MapLayer } from "../components/dashboards/MapLibreView";
 import type { DenseLayer } from "../components/dashboards/DeckGlOverlay";
-import { GridWidget } from "../components/dashboards/GridWidget";
-import { TypeLink } from "../pages/models/ModelLinks";
-import { TemporalChart } from "../components/dashboards/TemporalChart";
-import { TypeChart } from "../components/dashboards/TypeChart";
-import { VegaLiteWidget } from "../components/dashboards/VegaLiteWidget";
-import type { WidgetSource } from "../components/dashboards/vegaLiteSource";
 import {
   DashboardEditor,
   dashboardFromManifest,
@@ -28,10 +24,12 @@ import {
   layerFromManifest,
 } from "../pages/dashboards/editors";
 import type { DashboardForm, LayerForm } from "../pages/dashboards/editors";
+import { Link } from "@tanstack/react-router";
 import {
   Alert,
   Badge,
   Button,
+  buttonClass,
   Card,
   Checkbox,
   EmptyState,
@@ -74,24 +72,6 @@ interface LayerSpec {
   colorBy?: { property: string; domain?: [number, number]; palette?: string };
   sizeBy?: { property: string; range?: [number, number] };
   popupProperties?: string[];
-}
-
-/** A widget of an analytics page (UI-18), as jc-core's `Widget` writes it. */
-interface WidgetSpec {
-  widgetType: string;
-  endpointRef?: string;
-  entityId?: string;
-  property?: string;
-  /**
-   * The entity type a `grid` shows (T-1440), or a `bar-chart` or `histogram` counts (UI-93); the
-   * grid's own configuration; the filter a chart over a type reads with.
-   */
-  entityType?: string;
-  grid?: Record<string, unknown>;
-  q?: string;
-  /** A `vega-lite` widget's source of its Endpoint and its spec (T-6786). */
-  data?: WidgetSource;
-  spec?: Record<string, unknown>;
 }
 
 interface DashboardSpec {
@@ -462,6 +442,11 @@ export function DashboardsPage({ project }: { project: string }): JSX.Element {
           {t("dashboards.add")}
         </Button>
       </PermissionGuard>
+      <PermissionGuard project={project} kind="Dashboard" verb="propose">
+        <Link to="/projects/$project/dashboard-editor" params={{ project }} search={{}} className={buttonClass("secondary", "sm")}>
+          {t("dashboards.json.newJson")}
+        </Link>
+      </PermissionGuard>
       <PermissionGuard project={project} kind="Layer" verb="propose">
         <Button
           size="sm"
@@ -548,6 +533,16 @@ export function DashboardsPage({ project }: { project: string }): JSX.Element {
                 setEditingDashboard(dashboardFromManifest(dashboard));
               }}
             />
+            <PermissionGuard project={project} kind="Dashboard" verb="propose">
+              <Link
+                to="/projects/$project/dashboard-editor"
+                params={{ project }}
+                search={{ name: dashboard.metadata.name }}
+                className={buttonClass("ghost", "sm")}
+              >
+                {t("dashboards.json.editJson")}
+              </Link>
+            </PermissionGuard>
             {newButtons}
           </div>
         }
@@ -601,62 +596,7 @@ export function DashboardsPage({ project }: { project: string }): JSX.Element {
         </Suspense>
       </Card>
 
-      {widgets.length > 0 ? (
-        <div aria-label={t("dashboards.widgets")} className={widgets.length === 1 ? "grid gap-3" : "grid gap-3 md:grid-cols-2"}>
-          {widgets.map(({ widget, slug }, index) =>
-            widget.widgetType === "grid" && slug && widget.entityType ? (
-              // The same grid the explorer renders, configured by the manifest (UI-71, SDK-30):
-              // the endpoint and the type come from the widget, so a dashboard cannot point it
-              // anywhere else, and the endpoint's Policy still decides every read and write.
-              <GridWidget
-                key={`${widget.endpointRef}-${widget.entityType}-${index}`}
-                project={project}
-                slug={slug}
-                type={widget.entityType}
-                config={widget.grid}
-                title={<TypeLink project={project} type={widget.entityType} />}
-              />
-            ) : widget.widgetType === "temporal-chart" && slug && widget.entityId && widget.property ? (
-              <TemporalChart
-                key={`${widget.entityId}-${widget.property}-${index}`}
-                slug={slug}
-                entityId={widget.entityId}
-                property={widget.property}
-                title={t("dashboards.widget.temporalChart", { property: widget.property })}
-              />
-            ) : (widget.widgetType === "bar-chart" || widget.widgetType === "histogram") && slug && widget.entityType && widget.property ? (
-              <TypeChart
-                key={`${widget.widgetType}-${widget.entityType}-${widget.property}-${index}`}
-                slug={slug}
-                entityType={widget.entityType}
-                property={widget.property}
-                q={widget.q}
-                kind={widget.widgetType}
-                title={t(`dashboards.widget.${widget.widgetType === "bar-chart" ? "barTitle" : "histogramTitle"}`, {
-                  property: widget.property,
-                  type: widget.entityType,
-                })}
-              />
-            ) : widget.widgetType === "vega-lite" && slug && widget.data && widget.spec ? (
-              <VegaLiteWidget
-                key={`vega-lite-${widget.endpointRef}-${index}`}
-                slug={slug}
-                source={widget.data}
-                spec={widget.spec}
-                fallbackTitle={t("dashboards.widget.vegaTitle", {
-                  type: "type" in widget.data ? widget.data.type : "collection" in widget.data ? widget.data.collection : widget.data.entitySet,
-                })}
-              />
-            ) : (
-              <Card padding="sm" key={`${widget.widgetType}-${index}`}>
-                <p role="status" className="text-body text-fg-muted">
-                  {t("dashboards.widget.unsupported", { type: widget.widgetType })}
-                </p>
-              </Card>
-            ),
-          )}
-        </div>
-      ) : null}
+      <DashboardWidgets project={project} widgets={widgets} />
 
       {legend.length > 0 ? (
         <ul aria-label={t("dashboards.legend")} className="flex flex-wrap gap-2">

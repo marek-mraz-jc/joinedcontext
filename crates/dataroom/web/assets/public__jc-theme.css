@@ -847,3 +847,12 @@ body.jc-corner-aside .jc-assistant:not([open]) > summary:focus-visible { pointer
 .dt-view th.fhead input { width: 100%; }
 .jc-image-view { margin: auto; max-height: 100%; display: block; }
 .dt-view .dtr-modal-content h2 > span:first-child, .dt-view .modal-title > span:first-child { font-size: 150%; font-weight: bold; }
+/* Dashboards (T-6790): cards on /dashboards, two chart columns from 992 px, a table across both. */
+.jc-dashboard-cards { list-style: none; padding: 0; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr)); }
+.jc-dashboard-card { border: 1px solid #d0d7de; border-radius: .5rem; padding: 1rem; background: var(--jc-paper, #fff); }
+.jc-dashboard-card h2 { font-size: 1.15rem; margin: 0 0 .25rem; overflow-wrap: anywhere; }
+.jc-dashboard-card p { margin: 0; color: #57606a; }
+.jc-dashboard-page { margin: 0 0 2rem; }
+.jc-dashboard-grid { display: grid; gap: 1.5rem; grid-template-columns: 1fr; }
+@media (min-width: 992px) { .jc-dashboard-grid { grid-template-columns: 1fr 1fr; } .jc-dashboard-wide { grid-column: 1 / -1; } }
+.jc-dashboard-grid .jc-viz { margin: 0; min-width: 0; }

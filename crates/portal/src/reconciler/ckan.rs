@@ -396,6 +396,44 @@ impl CkanSync {
                 .insert(target.dataset_name().to_owned());
         }
 
+        // Each public dashboard goes beside the Endpoints it reads, kept from the sweep by its
+        // package name (T-6790); one a dataset name already claims is refused.
+        let dashboards = crate::reconciler::ckan_dashboards::targets(repo, &wanted);
+        let mut due_dashboards = Vec::new();
+        for dashboard in dashboards {
+            let package = dashboard.package_name();
+            if claims.iter().any(|(_, dataset)| dataset == &package) {
+                reports.push(Report::failed(
+                    &dashboard.project,
+                    &dashboard.name,
+                    format!("the dashboard's catalogue name {package} is a dataset's already: rename the dashboard"),
+                ));
+                continue;
+            }
+            if let Some(organization) = dashboard.organization() {
+                let key = (
+                    dashboard.anchor.instance.base_url().to_owned(),
+                    organization,
+                );
+                if let Some((_, kept)) = sweeps.get_mut(&key) {
+                    kept.insert(package.clone());
+                }
+            }
+            let key = (
+                format!("dashboard:{}", dashboard.project),
+                dashboard.name.clone(),
+            );
+            let print = dashboard_fingerprint(&dashboard, &self.settings);
+            let due = self.pacing.lock().unwrap_or_else(|p| p.into_inner()).due(
+                &key,
+                print,
+                Instant::now(),
+            );
+            if due {
+                due_dashboards.push((key, print, dashboard));
+            }
+        }
+
         let mut due_targets = Vec::new();
         for target in wanted {
             if let Some(reason) = refused.get(&owner(&target)) {
@@ -428,6 +466,14 @@ impl CkanSync {
         })
         .await;
         reports.extend(published);
+        for (key, print, dashboard) in due_dashboards {
+            let report = self.dashboard(dashboard, repository, &known).await;
+            self.pacing
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .record(key, print, &report.publication, Instant::now());
+            reports.push(report);
+        }
         // Each dataset the previous run published and this one does not, by its catalogue and
         // name (EP-178): an entry removed from an Endpoint's list goes alone. A dataset a
         // current Endpoint still publishes (a renamed Endpoint keeping its dataset name, or
@@ -565,6 +611,53 @@ impl CkanSync {
             Err(err) => line(Publication::Failed(format!(
                 "the publication did not finish: {err}"
             ))),
+        }
+    }
+
+    /// Publishes one public dashboard through its anchor Endpoint's catalogue client (T-6790).
+    async fn dashboard(
+        &self,
+        dashboard: crate::reconciler::ckan_dashboards::DashboardTarget,
+        repository: &Path,
+        known: &Organizations,
+    ) -> Report {
+        use crate::reconciler::ckan_dashboards as dashboards;
+        let (project, name) = (dashboard.project.clone(), dashboard.name.clone());
+        let dataset = dashboard.package_name();
+        let repository = repository.to_path_buf();
+        let age_key_file = self.age_key_file.clone();
+        let last_call = self.last_call.clone();
+        let known = known.clone();
+        let this = self.clone();
+        let work = tokio::task::spawn_blocking(move || {
+            let source = publisher::TokenSource {
+                env: None,
+                age_key_file: age_key_file.as_deref(),
+            };
+            let (api, api_url, settings, gap) =
+                this.client(&dashboard.anchor, &repository, source)?;
+            let mut api = Paced::new(api, last_call, gap).remembering(&api_url, known);
+            let organization = dashboard
+                .organization()
+                .ok_or("the dashboard's catalogue names no organization")?;
+            let desired = dashboards::desired(&dashboard, &organization, &settings)?;
+            dashboards::publish(&mut api, &desired)
+        })
+        .await;
+        let publication = match work {
+            Ok(Ok(outcome)) => Publication::Published {
+                dataset: dataset.clone(),
+                outcome,
+                no_linkml: false,
+            },
+            Ok(Err(reason)) => Publication::Failed(reason),
+            Err(err) => Publication::Failed(format!("the publication did not finish: {err}")),
+        };
+        Report {
+            project,
+            endpoint: name,
+            dataset,
+            publication,
         }
     }
 
@@ -717,6 +810,19 @@ pub fn fingerprint(target: &Target, settings: &Settings) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     format!("{target:?}|{settings:?}").hash(&mut hasher);
+    hasher.finish()
+}
+
+/// What a public dashboard looks like to the publisher: its spec and its anchor's fingerprint,
+/// so an edited dashboard or a moved catalogue is due at once (T-6790).
+pub fn dashboard_fingerprint(
+    dashboard: &crate::reconciler::ckan_dashboards::DashboardTarget,
+    settings: &Settings,
+) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    format!("{:?}|{:?}", dashboard.spec, dashboard.endpoints).hash(&mut hasher);
+    fingerprint(&dashboard.anchor, settings).hash(&mut hasher);
     hasher.finish()
 }
 

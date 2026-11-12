@@ -51,6 +51,7 @@ export const ADDRESSES: Record<string, string[]> = {
   "/projects/$project/grafana/dashboards/$uid": ["/projects/helsinki/grafana/dashboards/project-helsinki"],
   "/projects/$project/grafana/new": ["/projects/helsinki/grafana/new"],
   "/projects/$project/grafana/dashboards/$uid/edit": ["/projects/helsinki/grafana/dashboards/jcd-0123456789abcdef/edit"],
+  "/projects/$project/dashboard-editor": ["/projects/helsinki/dashboard-editor", "/projects/helsinki/dashboard-editor?name=ukazovatele"],
   "/projects/$project/inbox": ["/projects/helsinki/inbox"],
   "/playground": ["/playground"],
   "/organization": ["/organization"],
