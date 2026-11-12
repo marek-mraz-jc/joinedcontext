@@ -575,6 +575,55 @@ async fn an_approver_approves_a_grant_only_within_their_own_rights_and_a_removal
         .any(|request| request.url.path().ends_with("/Shako.Merge")));
 }
 
+/// T-6806: a binding to an Organization nobody created grants nothing today and becomes a live
+/// grant the day one of that name is created. The approval refuses it as the proposal does.
+#[tokio::test]
+async fn approving_a_binding_to_an_organization_that_does_not_exist_is_refused() {
+    const GHOST_GRANT: u64 = 0x304;
+    let shako = forge().await;
+    pull(
+        &shako,
+        GHOST_GRANT,
+        "portal/create-rolebinding-jana-ghost-00000304",
+        "users/assignments/jana-ghost.yaml",
+        &binding(
+            "jana-ghost",
+            "steward",
+            json!({ "organization": "no-such-org" }),
+        ),
+    )
+    .await;
+    let state = state_with(&shako);
+    for organization in ["hel", "zilina"] {
+        state.mirror.upsert(envelope(
+            "Organization",
+            organization,
+            ORG_NAMESPACE,
+            // The installation's administrator reaches every Organization (ADR-N-058 2.4).
+            json!({ "domain": format!("{organization}.example"), "installation": organization == "hel" }),
+        ));
+    }
+    let answer = send(
+        &state,
+        person("admin"),
+        "POST",
+        &format!("/api/v1/projects/org/changes/chg-{GHOST_GRANT:08x}/approve"),
+        Some(json!({ "confirm": "jana-ghost" })),
+    )
+    .await;
+    assert_eq!(
+        answer.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        answer.text
+    );
+    assert!(
+        answer.names_field("spec.scope.organization", "no-such-org"),
+        "{}",
+        answer.text
+    );
+}
+
 #[tokio::test]
 async fn the_bootstrap_group_grants_the_first_administrator_into_an_empty_repository() {
     let shako = forge().await;

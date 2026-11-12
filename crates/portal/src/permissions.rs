@@ -1482,6 +1482,95 @@ fn subjects_name_a_group(mirror: &Mirror, manifest: &Value) -> Result<(), ApiErr
     Ok(())
 }
 
+/// Every organization or project scope of a `RoleBinding` or `ServiceAccount` names an
+/// Organization or Project that is there (PF-49, T-6806). A binding to a missing Organization
+/// grants nothing today and becomes a live grant the day somebody creates one of that name. A
+/// scope already in force (the same manifest in the mirror, or `before`) is not judged again, so
+/// a dormant grant can still be narrowed, removed or listed. With no Organization manifest at all
+/// the installation predates them and its organization scope is not a name to look up (PF-121).
+pub fn scopes_name_a_target(
+    mirror: &Mirror,
+    manifest: &Value,
+    before: Option<&Value>,
+) -> Result<(), ApiError> {
+    let scopes = |doc: &Value| -> Vec<(String, Value)> {
+        match doc.get("kind").and_then(Value::as_str) {
+            Some("RoleBinding") => doc
+                .pointer("/spec/scope")
+                .map(|scope| vec![("spec.scope".to_owned(), scope.clone())])
+                .unwrap_or_default(),
+            Some("ServiceAccount") => doc
+                .pointer("/spec/roles")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .filter_map(|(i, role)| {
+                    Some((format!("spec.roles[{i}].scope"), role.get("scope")?.clone()))
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    };
+    let name = |doc: &Value, at: &str| doc.pointer(at).and_then(Value::as_str).map(str::to_owned);
+    let stored = match (name(manifest, "/kind"), name(manifest, "/metadata/name")) {
+        (Some(kind), Some(manifest_name)) => mirror
+            .get(
+                &name(manifest, "/metadata/namespace").unwrap_or_else(|| ORG_NAMESPACE.to_owned()),
+                &kind,
+                &manifest_name,
+            )
+            .and_then(|env| serde_json::to_value(env).ok()),
+        _ => None,
+    };
+    let in_force: Vec<Value> = [stored.as_ref(), before]
+        .into_iter()
+        .flatten()
+        .flat_map(|doc| scopes(doc).into_iter().map(|(_, scope)| scope))
+        .collect();
+    let bundle = crate::references::bundled();
+    let proposed = |kind: &str, wanted: &str| {
+        mirror.get(ORG_NAMESPACE, kind, wanted).is_some()
+            || bundle
+                .iter()
+                .any(|m| m["kind"] == kind && m["metadata"]["name"] == wanted)
+    };
+    let known_organizations = organizations(mirror);
+    for (path, scope) in scopes(manifest) {
+        if in_force.contains(&scope) {
+            continue;
+        }
+        if let Some(organization) = scope.get("organization").and_then(Value::as_str) {
+            if !known_organizations.is_empty() && !proposed("Organization", organization) {
+                let declared: Vec<String> =
+                    known_organizations.iter().map(|(n, _)| n.clone()).collect();
+                return Err(ApiError::Unprocessable {
+                    detail: format!(
+                        "{path}.organization names the Organization '{organization}', which does \
+                         not exist; choose one of: {}",
+                        declared.join(", ")
+                    ),
+                    errors: vec![format!("{path}.organization")],
+                });
+            }
+        }
+        if let Some(project) = scope.get("project").and_then(Value::as_str) {
+            let exists = mirror.namespaces().iter().any(|n| n == project)
+                || mirror.repositories().contains_key(project);
+            if !exists && !proposed("Project", project) {
+                return Err(ApiError::Unprocessable {
+                    detail: format!(
+                        "{path}.project names the project '{project}', which does not exist; \
+                         create the project first, or choose one that is there"
+                    ),
+                    errors: vec![format!("{path}.project")],
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// A change to the organization's access, as the PF-03 guard reads it: a manifest written, or
 /// one removed.
 pub enum AccessChange<'a> {
@@ -1687,6 +1776,7 @@ pub fn within_own_rights(
     // is the gate every door to a `users/` manifest passes through — the resource route, an
     // import, a blueprint and an approval.
     subjects_name_a_group(mirror, manifest)?;
+    scopes_name_a_target(mirror, manifest, before)?;
     replaces_only_own_settings(state, identity, manifest, who)?;
     keeps_an_administrator(mirror, AccessChange::Write(manifest))?;
     let spec = manifest.get("spec").cloned().unwrap_or(Value::Null);
