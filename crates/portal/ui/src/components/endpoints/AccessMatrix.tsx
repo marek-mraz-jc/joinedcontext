@@ -159,7 +159,8 @@ function MatrixTable({ project, matrix }: { project: string; matrix: Matrix }): 
 
   return (
     <div className="space-y-3">
-      <Table caption={t("endpoints.accessMatrix.caption", { name: matrix.endpoint })} zebra={false}>
+      {/* A phone reads each principal as one card of type and action lines: no column waits past its edge. */}
+      <Table caption={t("endpoints.accessMatrix.caption", { name: matrix.endpoint })} zebra={false} stack>
         <TableHead>
           <TableHeaderCell scope="col" className="sticky left-0 z-10 bg-surface">
             {t("endpoints.accessMatrix.who")}
@@ -192,7 +193,10 @@ function MatrixTable({ project, matrix }: { project: string; matrix: Matrix }): 
                     const current =
                       picked?.principal === key && picked.type === type && picked.action === action;
                     return (
-                      <TableCell key={`${type}-${action}`}>
+                      <TableCell
+                        key={`${type}-${action}`}
+                        data-label={`${typeLabel(type)} · ${t(`endpoints.accessMatrix.action.${action}`)}`}
+                      >
                         <Button
                           variant="ghost"
                           size="sm"
