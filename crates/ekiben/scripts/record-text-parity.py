@@ -8,6 +8,7 @@ processor, then a mapping writing each message as its content (hex for MessagePa
 `msgpack: to_json`, since Go writes map keys in random order. tests/parity.rs replays the cases without Bento.
 """
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -39,13 +40,18 @@ pipeline:
 """ + "".join(f"    - {p}\n" for p in procs) + f"""    - mapping: 'root = if errored() {{ "ERROR: " + error() }} else {{ {body} }}'
 output:
   stdout: {{ codec: lines }}
-logger: {{ level: none }}
+logger: {{ level: none, format: logfmt }}
 """
         cf = Path(d) / "c.yaml"
         cf.write_text(conf)
         r = subprocess.run([str(BENTO), "-c", str(cf)], capture_output=True, timeout=60, stdin=subprocess.DEVNULL)
-    if r.returncode != 0:
-        return {"config_error": r.stderr.decode(errors="replace").strip().splitlines()[-1]}
+        if r.returncode != 0:
+            # Rerun with error logs to read why the processor was refused.
+            cf.write_text(conf.replace("level: none", "level: error"))
+            r = subprocess.run([str(BENTO), "-c", str(cf)], capture_output=True, timeout=60, stdin=subprocess.DEVNULL)
+            out = (r.stderr + r.stdout).decode(errors="replace")
+            m = re.search(r'Service closing due to: failed to init processor [^:]*: (.*?)" @service', out)
+            return {"config_error": m.group(1).encode().decode("unicode_escape") if m else out.strip().splitlines()[-1]}
     return {"text": r.stdout.decode()}
 
 

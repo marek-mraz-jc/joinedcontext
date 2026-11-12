@@ -53,6 +53,7 @@ pub const PROCESSORS: &[&str] = &[
     "noop",
     "parallel",
     "parquet_decode",
+    "parse_log",
     "processors",
     "protobuf",
     "rate_limit",
