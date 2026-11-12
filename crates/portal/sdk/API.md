@@ -54,6 +54,7 @@ jc().ai.complete(request: { messages: { role: "system" | "user" | "assistant"; c
 ```
 Asks the model the platform chooses; the App names no model and holds no key. At most 50 messages and 100 KB, `maxTokens` 1 to 4096 (1024 when absent) and never more than the App's `aiTokensPerDay` has left after the prompt, which counts about one token per four bytes; a prompt the day has no room for is `429`. With `schema`, `json` is the answer as one value of that JSON Schema, or the call fails with `502` (`…/no-json`): ask again. A spent day is `429` with `resetAt`; an organization without a working model key is `503` (`…/no-model-key`). Needs `ai` on at every layer, which the organization's default list does not have.
 
+<!-- portal-only: the Portal's OData management API; the app builder's pack leaves it out -->
 ### OData management API (ADR-N-070)
 ```ts
 odata(root: string, options?: { transport?: Transport }): ODataClient
@@ -62,6 +63,7 @@ class ODataQuery<Row> { filter(expr: string); select(...members); orderBy(member
 class ODataError extends Error { status: number; type: string; code: string; title: string; etag?: string; stale: boolean; preconditionRequired: boolean }
 ```
 The Portal's management API of one Organization (`"/api/v1/"` on its host, `"/bbsk/api/v1/"` on a shared one); the set, function and action names and their row and parameter types are generated from its `$metadata` (`ODataModel`). `all()` follows `@odata.nextLink` on the same service only. A bound write sends the entity's `@odata.etag` as `ifMatch`: none is `428`, a stale one `412` with the current `etag`. Every refusal is an `ODataError` carrying the API/09 problem type.
+<!-- /portal-only -->
 
 ### Hooks
 ```ts
