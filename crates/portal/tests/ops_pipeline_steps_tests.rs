@@ -875,8 +875,10 @@ async fn a_data_source_of_an_input_the_runner_does_not_build_is_refused_on_save(
         person("dev"),
         "POST",
         &op("unbuilt", "jc_change_plan"),
-        Some(json!({ "changes": [{ "op": "create", "kind": "DataSource", "name": "sensors",
-            "manifest": manifest("kafka") }] })),
+        Some(
+            json!({ "changes": [{ "op": "create", "kind": "DataSource", "name": "sensors",
+            "manifest": manifest("kafka") }] }),
+        ),
     )
     .await;
     for (door, answer) in [("REST", rest), ("MCP", mcp)] {

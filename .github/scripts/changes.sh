@@ -40,6 +40,8 @@ map() {
     /^Cargo\.(lock|toml)$/ { on["platform"] = "true" }
     /^crates\/antares\// { on["antares"] = "true" }
     /^crates\/ekiben\// { on["ekiben"] = "true" }
+    # the two lists the ekiben portal_catalog test writes from its registry and checks (T-6825)
+    /^vendor\/joinedcontext-platform\/crates\/jc-core\/src\/kinds\/ekiben_components\.rs$/ || /^crates\/portal\/ui\/src\/schemas\/ekiben-components\.json$/ { on["ekiben"] = "true" }
     /^crates\/portal\/(ui|sdk)\// { on["ui"] = "true" }
     # The committed explorer bundle is checked against the build of the UI in the ui job (T-6739).
     /^vendor\/viz\/explorer\// { on["ui"] = "true" }
@@ -181,6 +183,8 @@ if [ "${1:-}" = --selftest ]; then
   check 'crates/antares/crates/antares-broker/src/lib.rs' 'root antares'
   check 'crates/ekiben/Cargo.lock' 'root ekiben supply'
   check 'crates/portal/ui/src/App.tsx' 'ui'
+  check 'crates/portal/ui/src/schemas/ekiben-components.json' 'ekiben ui'
+  check 'vendor/joinedcontext-platform/crates/jc-core/src/kinds/ekiben_components.rs' 'root ekiben portal platform'
   check 'crates/portal/sdk/src/sdk/index.ts' 'root portal ui'
   check 'crates/portal/apps/bbsk-mapa/ui/src/App.tsx' 'root portal dockerfiles'
   check 'crates/portal/Dockerfile' 'root portal dockerfiles'

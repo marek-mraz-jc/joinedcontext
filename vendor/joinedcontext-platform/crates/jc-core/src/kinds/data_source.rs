@@ -1568,8 +1568,14 @@ mod runner_registry_tests {
             .expect("a kind")
             .expect_err("kafka is not built by the runner")
             .to_string();
-        assert!(err.contains("spec.type") && err.contains("`kafka`"), "{err}");
-        assert!(err.contains("nats") && !err.contains("kafka_franz"), "{err}");
+        assert!(
+            err.contains("spec.type") && err.contains("`kafka`"),
+            "{err}"
+        );
+        assert!(
+            err.contains("nats") && !err.contains("kafka_franz"),
+            "{err}"
+        );
 
         let nested = source(
             "  type: broker\n  input:\n    inputs:\n      - nats: { urls: [\"nats://broker.example.fi:4222\"], subject: a }\n      - amqp_0_9: { urls: [\"amqp://broker.example.fi:5672\"], queue: a }\n",
@@ -1578,7 +1584,10 @@ mod runner_registry_tests {
             .expect("a kind")
             .expect_err("amqp_0_9 is not built by the runner")
             .to_string();
-        assert!(err.contains("spec.input") && err.contains("`amqp_0_9`"), "{err}");
+        assert!(
+            err.contains("spec.input") && err.contains("`amqp_0_9`"),
+            "{err}"
+        );
 
         let nats = source(
             "  type: nats\n  input:\n    urls: [\"nats://broker.example.fi:4222\"]\n    subject: vehicles\n",
@@ -1594,7 +1603,10 @@ mod runner_registry_tests {
         let offered: Vec<&str> = super::runner_inputs().collect();
         assert!(offered.contains(&"http_client") && offered.contains(&"nats"));
         for name in &offered {
-            assert!(super::super::ekiben_components::INPUTS.contains(name), "{name}");
+            assert!(
+                super::super::ekiben_components::INPUTS.contains(name),
+                "{name}"
+            );
             assert!(super::bento_inputs::INPUTS.contains(name), "{name}");
         }
         assert!(!offered.contains(&"kafka") && !offered.contains(&"stdin"));
