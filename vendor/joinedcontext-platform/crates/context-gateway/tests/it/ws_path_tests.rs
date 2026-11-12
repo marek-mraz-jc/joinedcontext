@@ -99,6 +99,8 @@ type Upgrades = Arc<Mutex<Vec<HeaderMap>>>;
 struct Stub {
     upgrades: Upgrades,
     push: tokio::sync::broadcast::Sender<String>,
+    /// What the view's entity query answers.
+    rows: Arc<Mutex<serde_json::Value>>,
 }
 
 impl Stub {
@@ -107,6 +109,11 @@ impl Stub {
         let message = json!({"metadata": {"x-op": "x-notification", "x-seq": 1},
             "body": {"type": "Notification", "data": entities}});
         let _ = self.push.send(message.to_string());
+    }
+
+    /// The view's entities from now on, as the broker serves them under its current Policy.
+    fn serve_rows(&self, rows: serde_json::Value) {
+        *self.rows.lock().expect("the rows") = rows;
     }
 
     /// Every upstream goes away without a close frame.
@@ -121,7 +128,7 @@ impl Stub {
 }
 
 /// A broker whose view WebSocket welcomes, answers `x-subscribe` with `201` and forwards what
-/// [`Stub::notify`] pushes; its entity query answers an empty page.
+/// [`Stub::notify`] pushes; its entity query answers [`Stub::serve_rows`], at first nothing.
 async fn broker() -> (String, Stub) {
     broker_answering(201).await
 }
@@ -132,8 +139,10 @@ async fn broker_answering(status: u16) -> (String, Stub) {
     let stub = Stub {
         upgrades: Arc::default(),
         push,
+        rows: Arc::new(Mutex::new(json!([]))),
     };
     let held = stub.clone();
+    let rows = Arc::clone(&stub.rows);
     let app = Router::new()
         .route(
             "/x/views/{view}/ws",
@@ -193,7 +202,10 @@ async fn broker_answering(status: u16) -> (String, Stub) {
         )
         .route(
             "/x/views/{view}/ngsi-ld/v1/entities",
-            get(|| async { axum::Json(json!([])) }),
+            get(move || {
+                let page = rows.lock().expect("the rows").clone();
+                async move { axum::Json(page) }
+            }),
         );
     (serve(app).await, stub)
 }
@@ -1130,9 +1142,8 @@ async fn public_to_restricted_closes_anonymous_sockets_at_the_reload() {
     );
 }
 
-/// T-4874: a withdrawn Policy grant and a widened one both close a token caller's socket at the
-/// reload: no decision of the upgrade outlives a change, and a widening never reaches an open
-/// connection; a deleted Endpoint closes with `view-removed`.
+/// T-4874: a withdrawn Policy grant closes a token caller's socket at the reload, and a deleted
+/// Endpoint closes with `view-removed`; a widened Policy keeps it (T-6776).
 #[tokio::test]
 async fn a_policy_change_or_a_deleted_endpoint_closes_open_sockets() {
     let realm = common::Realm::new();
@@ -1150,20 +1161,88 @@ async fn a_policy_change_or_a_deleted_endpoint_closes_open_sockets() {
         "endpoint-changed"
     );
 
-    let (mut widened, _) = open(&at, INTERNAL, "", &bearer).await.expect("upgraded");
+    // T-6776: a widened Policy changes only what the caller reads: the socket stays.
     std::fs::write(
         dir.join("staff.yaml"),
         policy("staff-bikes", "data-steward"),
     )
     .expect("grant again");
     reload(&gateway, &dir);
-    assert_eq!(
-        closed_within_a_second(&mut widened).await.0,
-        "endpoint-changed"
-    );
+    let (mut widened, _) = open(&at, INTERNAL, "", &bearer).await.expect("upgraded");
+    std::fs::write(dir.join("more.yaml"), policy("more-bikes", "data-steward"))
+        .expect("grant more");
+    reload(&gateway, &dir);
+    assert_eq!(next_op(&mut widened, "x-closing").await, None, "kept open");
 
     let (mut deleted, _) = open(&at, INTERNAL, "", &bearer).await.expect("upgraded");
     std::fs::remove_file(dir.join("internal.yaml")).expect("delete the Endpoint");
     reload(&gateway, &dir);
     assert_eq!(closed_within_a_second(&mut deleted).await.0, "view-removed");
+}
+
+/// T-6776: a hidden attribute and a Policy that reads fewer entities keep the same socket. Within
+/// the two reads after the reload it is sent `x-out-of-scope` for the entity it lost and the
+/// entity it kept without the hidden attribute, then the broker's next change as before.
+#[tokio::test]
+async fn a_narrowed_scope_keeps_the_socket_and_names_what_left() {
+    let realm = common::Realm::new();
+    let (upstream, stub) = broker().await;
+    let dir = repo("rescoped");
+    let (at, gateway) = held(&dir, &upstream, &realm, Duration::from_secs(300), LINGER).await;
+    let kept = "urn:ngsi-ld:BikeHireDockingStation:kept";
+    let lost = "urn:ngsi-ld:BikeHireDockingStation:lost";
+    stub.serve_rows(json!([dock(kept, 3), dock(lost, 4)]));
+    let (mut socket, _) = open(&at, PUBLIC, "", &[]).await.expect("upgraded");
+    subscribe_docks(&mut socket).await;
+    upstreams(&stub, 1).await;
+    // The first filter's snapshot reads both entities into the hub's table.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    let mut narrowed = dock(kept, 3);
+    narrowed
+        .as_object_mut()
+        .map(|e| e.remove("availableBikeNumber"));
+    stub.serve_rows(json!([narrowed]));
+    std::fs::write(
+        dir.join("public.yaml"),
+        endpoint(
+            "helsinki-bikes",
+            PUBLIC,
+            "public",
+            "  projection:\n    hiddenAttributes:\n      - availableBikeNumber\n",
+        ),
+    )
+    .expect("narrow the Endpoint");
+    reload(&gateway, &dir);
+
+    // The reads run at the hub's next two 5 s ticks; next_op waits 2 s at a time.
+    let mut left = None;
+    for _ in 0..6 {
+        left = next_op(&mut socket, "x-out-of-scope").await;
+        if left.is_some() {
+            break;
+        }
+    }
+    let left = left.expect("x-out-of-scope within two ticks");
+    assert_eq!(left["body"]["id"], lost);
+    assert_eq!(
+        left["body"]["subscriptionIds"].as_array().map(Vec::len),
+        Some(1)
+    );
+    let again = next_op(&mut socket, "x-notification")
+        .await
+        .expect("resent");
+    assert_eq!(again["body"]["data"][0]["id"], kept);
+    assert!(
+        again["body"]["data"][0]
+            .get("availableBikeNumber")
+            .is_none(),
+        "{again}"
+    );
+
+    stub.notify(json!([dock(kept, 5)]));
+    let live = next_op(&mut socket, "x-notification")
+        .await
+        .expect("still live");
+    assert_eq!(live["body"]["data"][0]["id"], kept);
 }

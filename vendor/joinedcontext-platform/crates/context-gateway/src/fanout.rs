@@ -574,6 +574,13 @@ impl Index {
                 && antares_matcher::would_notify(&filter.sub, doc, ctx, &|_| None)
         })
     }
+
+    /// Whether filter `id` selects `doc` at all, its triggers aside (T-6776).
+    pub fn matches(&self, id: FilterId, doc: &Value, ctx: &Context) -> bool {
+        self.filters
+            .get(&id)
+            .is_some_and(|filter| antares_matcher::would_notify(&filter.sub, doc, ctx, &|_| None))
+    }
 }
 
 /// The values a one-segment `q` term compares against for one attribute, read from its
