@@ -877,15 +877,16 @@ async fn answer_call(
         }
     }
 
-    // A call that waits on the runner, on Model Tools or on somebody's feed answers a
-    // task at once; the client polls it instead of holding the request open (AG-60). Through a
-    // connector it answers inline: `/c/{id}` withholds personal attributes from, sizes and audits
+    // A call that waits on the runner, on Model Tools or on somebody's feed answers a task at
+    // once when the client asks for one; the client polls it instead of holding the request open
+    // (AG-60). A client that asks for none cannot read a task (MCP tasks; Claude Code refused it,
+    // T-6829) and gets the answer inline. Through a connector it answers inline: `/c/{id}` withholds personal attributes from, sizes and audits
     // the tools/call answer itself, and a task's result would pass beside all three (T-6028).
     let through_connector = caller
         .access
         .as_ref()
         .is_some_and(|access| access.connector().is_some());
-    if !through_connector && (tasks::is_long(name) || params.get("task").is_some()) {
+    if !through_connector && params.get("task").is_some() {
         let owner = caller.identity.subject.clone();
         let state_for_task = state.clone();
         let project = project.to_owned();
@@ -1084,7 +1085,7 @@ pub fn tool_definition(op: &crate::ops::OperationSummary) -> Value {
         },
         // AG-60: a call that leaves the Portal and waits is served as a task.
         "execution": {
-            "taskSupport": if tasks::is_long(&op.name) { "required" } else { "forbidden" }
+            "taskSupport": if tasks::is_long(&op.name) { "optional" } else { "forbidden" }
         },
         // The rule the door applies to the call, as `GET …/ops` names it; a tool whose answer
         // renders in the plan view names it (MCP Apps, T-5960), under the current key and the
