@@ -127,6 +127,45 @@ fn list_sets() -> Vec<ListSet> {
         cursor: None,
         endpoint_list: false,
     });
+    // T-6828: the project reads with a key, as sets: an App build run by its id, a revision by
+    // its sha, a repository by its name. ponytail: runs and revisions hold the newest 100, the
+    // REST lists' own ceiling; a cursor on those operations lifts it.
+    for (set, type_name, op, input, key, cursor) in [
+        (
+            "runs",
+            "Run",
+            "jc_run_list",
+            json!({ "limit": 100 }),
+            "id",
+            None,
+        ),
+        (
+            "revisions",
+            "Revision",
+            "jc_project_revisions",
+            json!({ "limit": 100 }),
+            "sha",
+            None,
+        ),
+        (
+            "repositories",
+            "Repository",
+            crate::ops::repositories::LIST,
+            json!({ "limit": 100 }),
+            "name",
+            Some("cursor"),
+        ),
+    ] {
+        sets.push(ListSet {
+            set: set.into(),
+            type_name: type_name.into(),
+            op,
+            input,
+            key,
+            cursor,
+            endpoint_list: false,
+        });
+    }
     sets.push(ListSet {
         set: endpoint_list::SET.into(),
         type_name: endpoint_list::TYPE.into(),
@@ -471,7 +510,9 @@ pub(crate) async fn rows_of(
             .into_response()
             .into());
         }
-        match (set.cursor, page.get("next")) {
+        // A page names what follows as `next` (a cursor) or `nextCursor` (an offset).
+        let next = page.get("next").or_else(|| page.get("nextCursor"));
+        match (set.cursor, next) {
             (Some(member), Some(next)) if !next.is_null() && !empty => {
                 input[member] = next.clone();
             }

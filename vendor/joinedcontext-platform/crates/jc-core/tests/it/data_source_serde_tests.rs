@@ -406,55 +406,71 @@ fn an_archive_names_plain_members_within_a_bound() {
         .expect("256 MiB is allowed");
 }
 
-const KAFKA: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+const NATS: &str = r#"apiVersion: joinedcontext.com/v1alpha1
 kind: DataSource
 metadata:
-  name: kafka-sensors
+  name: nats-sensors
   namespace: bb-ovzdusie
 spec:
-  type: kafka
+  type: nats
   input:
-    addresses: ["kafka.banskabystrica.sk:9092"]
-    topics: ["sensors.aq"]
-    sasl:
-      password: ${DS_KAFKA_PASSWORD}
+    urls: ["nats://nats.banskabystrica.sk:4222"]
+    subject: sensors.aq
+    auth:
+      user_jwt: ${DS_NATS_JWT}
   secrets:
-    - name: kafka-secret
-      key: password
-      envVar: DS_KAFKA_PASSWORD
+    - name: nats-secret
+      key: jwt
+      envVar: DS_NATS_JWT
 "#;
 
 #[test]
-fn runner_kafka_with_valid_interpolation_and_secrets_validates() {
-    let source = DataSource::from_yaml(KAFKA).expect("parses");
+fn runner_nats_with_valid_interpolation_and_secrets_validates() {
+    let source = DataSource::from_yaml(NATS).expect("parses");
     source.validate().expect("validates");
     assert_eq!(
         source.spec.source_type,
-        DataSourceType::Runner("kafka".to_string())
+        DataSourceType::Runner("nats".to_string())
     );
 
-    // Wire round-trip verifies type: kafka serializes as "kafka" string
+    // Wire round-trip verifies type: nats serializes as "nats" string
     let serialized = serde_norway::to_string(&source).expect("serializes");
-    assert!(serialized.contains("type: kafka"));
+    assert!(serialized.contains("type: nats"));
     let again = DataSource::from_yaml(&serialized).expect("re-parses");
     assert_eq!(source, again);
 
     // secret_refs lists every entry of spec.secrets
     let refs = source.spec.secret_refs();
     assert_eq!(refs.len(), 1);
-    assert_eq!(refs[0].name, "kafka-secret");
-    assert_eq!(refs[0].env_var.as_deref(), Some("DS_KAFKA_PASSWORD"));
+    assert_eq!(refs[0].name, "nats-secret");
+    assert_eq!(refs[0].env_var.as_deref(), Some("DS_NATS_JWT"));
+}
+
+/// T-6825: an input the Bento catalog lists and the pipeline runner does not build is refused at
+/// save, naming the field and the input, instead of stopping the stream at its first run.
+#[test]
+fn runner_kafka_is_refused_at_save_naming_the_type() {
+    let kafka = NATS.replace("type: nats", "type: kafka");
+    let err = DataSource::from_yaml(&kafka)
+        .expect("parses")
+        .validate()
+        .expect_err("kafka is not built by the runner")
+        .to_string();
+    assert!(
+        err.contains("spec.type") && err.contains("`kafka`"),
+        "{err}"
+    );
 }
 
 /// MF-24: a field `kinds/bento_inputs.rs` (`SECRET_FIELDS`) marks secret refuses a literal value.
 #[test]
-fn runner_kafka_with_literal_password_is_refused() {
-    let literal = KAFKA.replace("${DS_KAFKA_PASSWORD}", "plaintext_pass");
+fn runner_nats_with_literal_jwt_is_refused() {
+    let literal = NATS.replace("${DS_NATS_JWT}", "plaintext_jwt");
     let source = DataSource::from_yaml(&literal).expect("parses");
-    let err = source.validate().expect_err("literal password refused");
+    let err = source.validate().expect_err("literal jwt refused");
     assert!(
-        err.to_string().contains("spec.input.sasl.password"),
-        "error should name spec.input.sasl.password, got: {err}"
+        err.to_string().contains("spec.input.auth.user_jwt"),
+        "error should name spec.input.auth.user_jwt, got: {err}"
     );
 }
 
@@ -463,12 +479,13 @@ fn runner_client_certs_key_literal_in_element_1_is_refused() {
     let certs_yaml = r#"apiVersion: joinedcontext.com/v1alpha1
 kind: DataSource
 metadata:
-  name: kafka-certs
+  name: nats-certs
   namespace: bb-ovzdusie
 spec:
-  type: kafka
+  type: nats
   input:
-    addresses: ["kafka.banskabystrica.sk:9092"]
+    urls: ["nats://nats.banskabystrica.sk:4222"]
+    subject: sensors.aq
     tls:
       client_certs:
         - key: ${DS_CERT0_KEY}
@@ -492,15 +509,15 @@ spec:
 #[test]
 fn runner_input_reading_the_runners_own_environment_is_refused() {
     for (needle, replacement) in [
-        ("kafka.banskabystrica.sk", "${JC_CLIENT_SECRET}.example"),
-        ("kafka.banskabystrica.sk", "${JC_CLIENT_SECRET:fallback}"),
+        ("nats.banskabystrica.sk", "${JC_CLIENT_SECRET}.example"),
+        ("nats.banskabystrica.sk", "${JC_CLIENT_SECRET:fallback}"),
         (
-            "kafka.banskabystrica.sk",
-            "x${DS_KAFKA_PASSWORD}${JC_CLIENT_SECRET}",
+            "nats.banskabystrica.sk",
+            "x${DS_NATS_JWT}${JC_CLIENT_SECRET}",
         ),
     ] {
-        assert!(KAFKA.contains(needle), "fixture holds {needle}");
-        let leaking = KAFKA.replace(needle, replacement);
+        assert!(NATS.contains(needle), "fixture holds {needle}");
+        let leaking = NATS.replace(needle, replacement);
         let source = DataSource::from_yaml(&leaking).expect("parses");
         let err = source
             .validate()
@@ -510,31 +527,29 @@ fn runner_input_reading_the_runners_own_environment_is_refused() {
             "error names the variable, got: {err}"
         );
     }
-    let declared = KAFKA.replace("kafka.banskabystrica.sk", "${DS_KAFKA_PASSWORD}.example");
+    let declared = NATS.replace("nats.banskabystrica.sk", "${DS_NATS_JWT}.example");
     DataSource::from_yaml(&declared)
         .expect("parses")
         .validate()
         .expect("a declared secret may appear outside its field");
 }
 
-fn sql_select(dsn: &str) -> DataSource {
+fn nats_at(url: &str) -> DataSource {
     DataSource::from_yaml(&format!(
         r#"apiVersion: joinedcontext.com/v1alpha1
 kind: DataSource
 metadata:
-  name: counters-db
+  name: counters-bus
   namespace: bb-ovzdusie
 spec:
-  type: sql_select
+  type: nats
   input:
-    driver: postgres
-    dsn: "{dsn}"
-    table: counters
-    columns: ["*"]
+    urls: ["{url}"]
+    subject: counters
   secrets:
-    - name: counters-db
+    - name: counters-bus
       key: password
-      envVar: DS_COUNTERS_DB_PASSWORD
+      envVar: DS_COUNTERS_BUS_PASSWORD
 "#
     ))
     .expect("parses")
@@ -542,28 +557,27 @@ spec:
 
 #[test]
 fn a_literal_password_inside_a_connection_string_is_refused() {
-    for dsn in [
-        "postgres://jc:hunter2@db:5432/counters",
-        "jc:hunter2@tcp(db:3306)/counters",
-        "sqlserver://db:1433?database=counters&password=hunter2",
+    for url in [
+        "nats://jc:hunter2@bus:4222",
+        "jc:hunter2@tcp(bus:4222)/counters",
+        "nats://bus:4222?password=hunter2",
     ] {
-        let err = sql_select(dsn)
+        let err = nats_at(url)
             .validate()
             .expect_err("a literal password is refused");
         assert!(
-            err.to_string().contains("spec.input.dsn"),
-            "{dsn}: error names the field, got: {err}"
+            err.to_string().contains("spec.input.urls"),
+            "{url}: error names the field, got: {err}"
         );
     }
-    for dsn in [
-        "postgres://jc:${DS_COUNTERS_DB_PASSWORD}@db:5432/counters",
-        "sqlserver://db:1433?database=counters&password=${DS_COUNTERS_DB_PASSWORD}",
-        "file:/data/counters.db",
-        "postgres://db:5432/counters",
+    for url in [
+        "nats://jc:${DS_COUNTERS_BUS_PASSWORD}@bus:4222",
+        "nats://bus:4222?password=${DS_COUNTERS_BUS_PASSWORD}",
+        "nats://bus:4222",
     ] {
-        sql_select(dsn)
+        nats_at(url)
             .validate()
-            .unwrap_or_else(|e| panic!("{dsn}: {e}"));
+            .unwrap_or_else(|e| panic!("{url}: {e}"));
     }
 }
 
@@ -571,13 +585,13 @@ fn a_literal_password_inside_a_connection_string_is_refused() {
 /// refusal names every input it does list.
 #[test]
 fn unknown_type_nope_is_refused_and_names_accepted_types() {
-    let nope = KAFKA.replace("type: kafka", "type: nope");
+    let nope = NATS.replace("type: nats", "type: nope");
     let source = DataSource::from_yaml(&nope).expect("parses");
     let err = source.validate().expect_err("type nope refused");
     let msg = err.to_string();
     assert!(
-        msg.contains("kafka") && msg.contains("mqtt"),
-        "error reason must contain kafka and mqtt, got: {msg}"
+        msg.contains("nats") && msg.contains("mqtt"),
+        "error reason must contain nats and mqtt, got: {msg}"
     );
 }
 
@@ -627,8 +641,8 @@ fn typed_mqtt_with_input_and_runner_with_tls_are_refused() {
         .expect_err("typed mqtt with input is refused");
     assert!(err.to_string().contains("spec.input"), "{err}");
 
-    let kafka_with_tls = KAFKA.to_string() + "  tls:\n    insecureSkipVerify: false\n";
-    let source = DataSource::from_yaml(&kafka_with_tls).expect("parses");
+    let runner_with_tls = NATS.to_string() + "  tls:\n    insecureSkipVerify: false\n";
+    let source = DataSource::from_yaml(&runner_with_tls).expect("parses");
     let err = source
         .validate()
         .expect_err("runner type with tls is refused");
@@ -724,7 +738,7 @@ fn datasource_schema_spec_type_is_string_with_examples_and_no_enum() {
         .get("examples")
         .and_then(|v| v.as_array())
         .expect("spec.type must have examples");
-    assert!(examples.iter().any(|v| v == "kafka"));
+    assert!(examples.iter().any(|v| v == "nats"));
     assert!(examples.iter().any(|v| v == "mqtt"));
 
     let schema_text = schema.to_string();
@@ -885,10 +899,11 @@ fn a_platform_broker_is_reached_by_brokerref_only() {
         assert!(error.to_string().contains("runner"), "{user}: {error}");
     }
     // A runner input is the same door: its `user` is read as the runner's name too.
-    let raw = KAFKA.replace(
-        "    sasl:\n",
-        "    sasl:\n      user: pipeline-runner-bb-ovzdusie\n",
+    let raw = NATS.replace("type: nats", "type: broker").replace(
+        "  input:\n    urls: [\"nats://nats.banskabystrica.sk:4222\"]\n    subject: sensors.aq\n    auth:\n      user_jwt: ${DS_NATS_JWT}\n",
+        "  input:\n    inputs:\n      - mqtt:\n          urls: [\"tls://mqtt.banskabystrica.sk:8883\"]\n          topics: [\"aq/#\"]\n          user: pipeline-runner-bb-ovzdusie\n",
     );
+    assert!(raw.contains("user: pipeline-runner"), "{raw}");
     let error = DataSource::from_yaml(&raw)
         .expect("parses")
         .validate()
@@ -904,13 +919,13 @@ fn a_platform_broker_is_reached_by_brokerref_only() {
             .expect_err(user);
         assert!(error.to_string().contains("literal"), "{user}: {error}");
     }
-    // The same in a runner input that wraps an mqtt input; a Kafka `user` may still come from a
-    // secret, it names no MQTT account.
-    let nested = KAFKA
-        .replace("type: kafka", "type: broker")
+    // The same in a runner input that wraps an mqtt input. No other input the pipeline runner
+    // builds has a `user` field (T-6825).
+    let nested = NATS
+        .replace("type: nats", "type: broker")
         .replace(
-            "  input:\n    addresses: [\"kafka.banskabystrica.sk:9092\"]\n    topics: [\"sensors.aq\"]\n    sasl:\n      password: ${DS_KAFKA_PASSWORD}\n",
-            "  input:\n    inputs:\n      - mqtt:\n          urls: [\"tls://mqtt.banskabystrica.sk:8883\"]\n          topics: [\"aq/#\"]\n          user: ${DS_KAFKA_PASSWORD}\n",
+            "  input:\n    urls: [\"nats://nats.banskabystrica.sk:4222\"]\n    subject: sensors.aq\n    auth:\n      user_jwt: ${DS_NATS_JWT}\n",
+            "  input:\n    inputs:\n      - mqtt:\n          urls: [\"tls://mqtt.banskabystrica.sk:8883\"]\n          topics: [\"aq/#\"]\n          user: ${DS_NATS_JWT}\n",
         );
     assert!(nested.contains("mqtt:"), "{nested}");
     let error = DataSource::from_yaml(&nested)
@@ -918,14 +933,6 @@ fn a_platform_broker_is_reached_by_brokerref_only() {
         .validate()
         .expect_err("an interpolated mqtt input user");
     assert!(error.to_string().contains("literal"), "{error}");
-    let kafka_user = KAFKA.replace(
-        "    sasl:\n",
-        "    sasl:\n      user: ${DS_KAFKA_PASSWORD}\n",
-    );
-    DataSource::from_yaml(&kafka_user)
-        .expect("parses")
-        .validate()
-        .expect("a Kafka user from a secret");
     // An outside broker whose name starts the same way is no platform Service.
     let outside = MQTT.replace("mqtt.banskabystrica.sk", "mqtt-eu.banskabystrica.sk");
     DataSource::from_yaml(&outside)

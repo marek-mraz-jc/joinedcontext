@@ -523,6 +523,42 @@
         <Property Name="project" Type="Edm.String"/>
         <Property Name="title" Type="Edm.String"/>
       </EntityType>
+      <EntityType Name="Run">
+        <Key>
+          <PropertyRef Name="id"/>
+        </Key>
+        <Property Name="appName" Type="Edm.String"/>
+        <Property Name="createdAt" Type="Edm.DateTimeOffset"/>
+        <Property Name="createdBy" Type="Edm.String"/>
+        <Property Name="id" Type="Edm.String" Nullable="false"/>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="previewUrl" Type="Edm.String"/>
+        <Property Name="project" Type="Edm.String"/>
+        <Property Name="status" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="Revision">
+        <Key>
+          <PropertyRef Name="sha"/>
+        </Key>
+        <Property Name="author" Type="Edm.String"/>
+        <Property Name="message" Type="Edm.String"/>
+        <Property Name="sha" Type="Edm.String" Nullable="false"/>
+      </EntityType>
+      <EntityType Name="Repository">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="archived" Type="Edm.Boolean"/>
+        <Property Name="defaultBranch" Type="Edm.String"/>
+        <Property Name="description" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="owner" Type="Edm.String"/>
+        <Property Name="private" Type="Edm.Boolean"/>
+        <Property Name="role" Type="Edm.String"/>
+        <Property Name="sizeBytes" Type="Edm.Int64"/>
+        <Property Name="updatedAt" Type="Edm.String"/>
+      </EntityType>
       <EntityType Name="EndpointRow">
         <Key>
           <PropertyRef Name="id"/>
@@ -584,6 +620,9 @@
         <EntitySet Name="entities" EntityType="JoinedContext.Portal.Entity"/>
         <EntitySet Name="changes" EntityType="JoinedContext.Portal.Change"/>
         <EntitySet Name="workspaces" EntityType="JoinedContext.Portal.Workspace"/>
+        <EntitySet Name="runs" EntityType="JoinedContext.Portal.Run"/>
+        <EntitySet Name="revisions" EntityType="JoinedContext.Portal.Revision"/>
+        <EntitySet Name="repositories" EntityType="JoinedContext.Portal.Repository"/>
         <EntitySet Name="endpointList" EntityType="JoinedContext.Portal.EndpointRow"/>
       <ActionImport Name="jc_data_write" Action="JoinedContext.Portal.jc_data_write"/><ActionImport Name="jc_endpoint_propose" Action="JoinedContext.Portal.jc_endpoint_propose"/><ActionImport Name="jc_change_approve" Action="JoinedContext.Portal.jc_change_approve"/><ActionImport Name="jc_draft_put" Action="JoinedContext.Portal.jc_draft_put"/><ActionImport Name="jc_draft_drop" Action="JoinedContext.Portal.jc_draft_drop"/><ActionImport Name="jc_space_complete" Action="JoinedContext.Portal.jc_space_complete"/><ActionImport Name="jc_resource_propose" Action="JoinedContext.Portal.jc_resource_propose"/><ActionImport Name="jc_resource_delete" Action="JoinedContext.Portal.jc_resource_delete"/><ActionImport Name="jc_change_reject" Action="JoinedContext.Portal.jc_change_reject"/><ActionImport Name="jc_run_create" Action="JoinedContext.Portal.jc_run_create"/><ActionImport Name="jc_run_cancel" Action="JoinedContext.Portal.jc_run_cancel"/><ActionImport Name="jc_run_publish" Action="JoinedContext.Portal.jc_run_publish"/><ActionImport Name="jc_run_answer" Action="JoinedContext.Portal.jc_run_answer"/><ActionImport Name="jc_run_message" Action="JoinedContext.Portal.jc_run_message"/><ActionImport Name="jc_flow_start" Action="JoinedContext.Portal.jc_flow_start"/><ActionImport Name="jc_pipeline_run" Action="JoinedContext.Portal.jc_pipeline_run"/><ActionImport Name="jc_project_create" Action="JoinedContext.Portal.jc_project_create"/><ActionImport Name="jc_project_delete" Action="JoinedContext.Portal.jc_project_delete"/><ActionImport Name="jc_project_import" Action="JoinedContext.Portal.jc_project_import"/><ActionImport Name="jc_model_source_put" Action="JoinedContext.Portal.jc_model_source_put"/><ActionImport Name="jc_syncsource_sync" Action="JoinedContext.Portal.jc_syncsource_sync"/><ActionImport Name="jc_syncsource_pause" Action="JoinedContext.Portal.jc_syncsource_pause"/><ActionImport Name="jc_syncsource_detach" Action="JoinedContext.Portal.jc_syncsource_detach"/><ActionImport Name="jc_workspace_open" Action="JoinedContext.Portal.jc_workspace_open"/><ActionImport Name="jc_workspace_update_from_main" Action="JoinedContext.Portal.jc_workspace_update_from_main"/><ActionImport Name="jc_workspace_propose" Action="JoinedContext.Portal.jc_workspace_propose"/><ActionImport Name="jc_workspace_discard" Action="JoinedContext.Portal.jc_workspace_discard"/><ActionImport Name="jc_workspace_preview_start" Action="JoinedContext.Portal.jc_workspace_preview_start"/><ActionImport Name="jc_workspace_preview_stop" Action="JoinedContext.Portal.jc_workspace_preview_stop"/><ActionImport Name="jc_person_create" Action="JoinedContext.Portal.jc_person_create"/><ActionImport Name="jc_person_edit" Action="JoinedContext.Portal.jc_person_edit"/><ActionImport Name="jc_person_disable" Action="JoinedContext.Portal.jc_person_disable"/><ActionImport Name="jc_person_enable" Action="JoinedContext.Portal.jc_person_enable"/><ActionImport Name="jc_person_sign_out" Action="JoinedContext.Portal.jc_person_sign_out"/><ActionImport Name="jc_change_plan" Action="JoinedContext.Portal.jc_change_plan"/><ActionImport Name="jc_change_revert_plan" Action="JoinedContext.Portal.jc_change_revert_plan"/><ActionImport Name="jc_change_apply" Action="JoinedContext.Portal.jc_change_apply"/><ActionImport Name="jc_access_request_decide" Action="JoinedContext.Portal.jc_access_request_decide"/></EntityContainer>
     </Schema>

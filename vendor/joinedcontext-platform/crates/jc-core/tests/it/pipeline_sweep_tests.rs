@@ -45,14 +45,17 @@ fn an_input_nested_in_a_wrapper_is_checked_as_a_top_level_one() {
         .expect("a nested file input under /data/ is accepted");
 }
 
-/// `fsevent` watches paths like the file readers do, so it keeps to `/data/` too.
+/// `fsevent` watches paths like the file readers do; the pipeline runner does not build it, so
+/// it is refused at save whatever it watches (T-6825).
 #[test]
-fn fsevent_watches_only_the_files_volume() {
-    let msg = refused("type: fsevent\ninput:\n  paths: [/etc]\n");
-    assert!(msg.contains("spec.input.paths"), "{msg}");
-    source("type: fsevent\ninput:\n  paths: [/data/drop]\n")
-        .validate()
-        .expect("/data/ is accepted");
+fn fsevent_is_refused_at_save() {
+    for paths in ["[/etc]", "[/data/drop]"] {
+        let msg = refused(&format!("type: fsevent\ninput:\n  paths: {paths}\n"));
+        assert!(
+            msg.contains("spec.type") && msg.contains("`fsevent`"),
+            "{msg}"
+        );
+    }
 }
 
 /// An input's Bloblang (`generate.mapping`, a `${! … }` in any field) reads the message, never
@@ -145,7 +148,7 @@ fn a_cache_label_with_a_project_prefix_is_refused() {
     use jc_core::kinds::pipeline::validate_processor;
     for processor in [
         serde_json::json!({ "cache": { "resource": "helsinki__gtfs", "operator": "get", "key": "k" } }),
-        serde_json::json!({ "cached": { "cache": "praha__x", "key": "k", "processors": [] } }),
+        serde_json::json!({ "try": [{ "cache": { "resource": "praha__x", "operator": "get", "key": "k" } }] }),
         serde_json::json!({ "dedupe": { "cache": "_gtfs", "key": "k" } }),
         serde_json::json!({ "branch": { "processors": [{ "cache": { "resource": "Gtfs-2" } }] } }),
         serde_json::json!({ "cache": { "resource": ["gtfs"] } }),
@@ -193,8 +196,8 @@ fn a_file_reader_keeps_to_its_projects_folder() {
     for other in [
         "type: csv\ninput:\n  paths: [/data/praha/stations.csv]\n",
         "type: file\ninput:\n  paths: [/data/stations.csv]\n",
-        "type: broker\ninput:\n  inputs:\n    - parquet:\n        paths: [/data/helsinkix/a.parquet]\n",
-        "type: fsevent\ninput:\n  paths: [/data/helsinki/../praha]\n",
+        "type: broker\ninput:\n  inputs:\n    - file:\n        paths: [/data/helsinkix/a.csv]\n",
+        "type: file\ninput:\n  paths: [/data/helsinki/../praha/a.csv]\n",
     ] {
         let err = source(other)
             .validate_spec(&meta)

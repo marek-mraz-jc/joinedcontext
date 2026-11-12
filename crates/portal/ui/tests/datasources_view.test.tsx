@@ -636,7 +636,7 @@ describe("the manifest a data source form describes", () => {
     expect(await within(dialog).findAllByText(/^A list of file paths to read from/)).toHaveLength(1);
   });
 
-  it("renders grouped select with an optgroup 'Message brokers' containing 'kafka'", async () => {
+  it("renders grouped select with an optgroup 'Message brokers' holding only what the runner builds", async () => {
     renderDataSources();
 
     await userEvent.click(await screen.findByRole("button", { name: en.datasources.add }));
@@ -647,9 +647,11 @@ describe("the manifest a data source form describes", () => {
     await waitFor(() => {
       const brokerGroup = typeSelect.querySelector('optgroup[label="Message brokers"]');
       expect(brokerGroup).not.toBeNull();
-      const kafkaOption = brokerGroup?.querySelector('option[value="kafka"]');
-      expect(kafkaOption).not.toBeNull();
-      expect(kafkaOption?.textContent).toBe("Kafka");
+      const natsOption = brokerGroup?.querySelector('option[value="nats"]');
+      expect(natsOption).not.toBeNull();
+      expect(natsOption?.textContent).toBe("NATS");
+      // Kafka is in the Bento catalogue and not in ekiben's registry (T-6825).
+      expect(brokerGroup?.querySelector('option[value="kafka"]')).toBeNull();
     });
   });
 

@@ -2849,7 +2849,7 @@ output:
             assert!(matches!(refused, RenderError::Bento(_)), "{bento}: {refused:?}");
         }
         // The same names as configuration of an allowed processor are not processors.
-        assert!(render("pipeline:\n  processors:\n    - redis: { url: redis://cache:6379, command: get, args_mapping: 'root = [this.id]' }\n").is_ok());
+        assert!(render("pipeline:\n  processors:\n    - http: { url: 'https://api.hel.fi/v1/items', verb: GET, headers: { command: get, subprocess: sh, file: x } }\n").is_ok());
         assert!(render(BENTO).is_ok());
     }
 

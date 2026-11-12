@@ -60,9 +60,18 @@ pub const ENTITY_READS: [&str; 27] = [
 ];
 
 /// The entity reads the Organization's sets, keys and singletons answer today: `projects`, a set
-/// per kind, `changes`, `workspaces` and `me`. Every other one of [`ENTITY_READS`] is a bound
-/// function until its set lands (T-6815 names them), so no operation is out of reach meanwhile.
-pub const SERVED_AS_SETS: [&str; 9] = [
+/// per kind, `changes`, `workspaces`, `runs`, `revisions`, `repositories` and `me`. Every other
+/// one of [`ENTITY_READS`] stays a bound function (T-6828): `jc_activity_list` and
+/// `jc_access_request_list` rows carry no key, a draft is keyed by kind and name together,
+/// `jc_repository_get` answers more than its row (readme, last commit) and the commits, refs and
+/// pulls take their repository as an argument; `jc_member_list` and `jc_person_*` answer a
+/// project's people and the realm's, which the Organization's `members` set is neither of; and
+/// `jc_organization_read` reads aspects, not a row.
+pub const SERVED_AS_SETS: [&str; 13] = [
+    "jc_run_list",
+    "jc_run_get",
+    "jc_project_revisions",
+    "jc_repository_list",
     "jc_resource_list",
     "jc_resource_get",
     "jc_project_get",

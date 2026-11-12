@@ -1743,6 +1743,8 @@ struct Rights {
     org_propose: BTreeSet<&'static str>,
     /// A member's personal properties ([`people_admin`]).
     people: bool,
+    /// Whether the caller proposes a Change to the `Organization` singleton's manifest.
+    organization: bool,
 }
 
 fn rights(state: &AppState, user: &CurrentUser, org: &str) -> Rights {
@@ -1765,6 +1767,16 @@ fn rights(state: &AppState, user: &CurrentUser, org: &str) -> Rights {
         })
         .map(|(name, ..)| name)
         .collect();
+    rights.organization = crate::permissions::installation_organization(&state.mirror).as_deref()
+        == Some(org)
+        && crate::permissions::holds_at_organization(
+            state,
+            &user.0.identity,
+            org,
+            ORGANIZATION,
+            jc_core::kinds::Verb::Propose,
+            None,
+        );
     for project in state.mirror.namespaces() {
         if readable(state, user, org, &project) {
             let effective = crate::permissions::for_request(state, &user.0.identity, &project);
@@ -1792,7 +1804,12 @@ type Binding = (String, Option<(&'static ListSet, String)>);
 /// (name, binding type, parameters).
 fn bound_actions(rights: &Rights, visible: &BTreeSet<String>) -> Vec<BoundAction> {
     let mut out = Vec::new();
-    for (_, type_name, _) in org_kinds().filter(|(name, ..)| rights.org_propose.contains(name)) {
+    let organization = rights.organization.then_some(ORGANIZATION);
+    let org_types = org_kinds()
+        .filter(|(name, ..)| rights.org_propose.contains(name))
+        .map(|(_, type_name, _)| type_name)
+        .chain(organization);
+    for type_name in org_types {
         let ty = format!("{NAMESPACE}.{type_name}");
         out.push(("propose_update", ty.clone(), &UPDATE_PARAMETERS[..]));
         out.push(("propose_delete", ty, &[("dryRun", "Edm.Boolean")][..]));
@@ -1954,8 +1971,10 @@ fn singleton(state: &AppState, user: &CurrentUser, org: &str, name: &str) -> Res
         let manifest = state
             .mirror
             .get(crate::permissions::ORG_NAMESPACE, ORGANIZATION, org);
+        // Its `@odata.etag` is the REST door's `ETag`: the If-Match of `propose_update`.
         json!({
             "@odata.context": format!("{root}$metadata#{ORGANIZATION}"),
+            "@odata.etag": manifest.as_ref().map(|m| m.etag()),
             "name": org,
             "title": manifest.and_then(|m| m.metadata.title),
         })
@@ -2255,7 +2274,14 @@ async fn act_inner(call: Call<'_>, entity: &str, name: &str) -> Result<Response,
         headers,
         body,
     } = call;
-    let (project, bound) = bound_to(entity)?;
+    let (project, bound) = if entity == ORGANIZATION {
+        // The singleton: the Organization's own manifest, a row of `org` as a set's is (T-6828).
+        let set = SERVED.sets.iter().find(|set| set.type_name == ORGANIZATION);
+        let set = set.ok_or_else(|| no(not_found("no Organization")))?;
+        (ORG_NAMESPACE.to_owned(), Some((set, org.to_owned())))
+    } else {
+        bound_to(entity)?
+    };
     // An Organization set's row (T-6826): its namespace is `org`, read as `org_rows` reads it.
     let at_org = project == ORG_NAMESPACE && bound.is_some();
     if !at_org && !readable(state, &user, org, &project) {
