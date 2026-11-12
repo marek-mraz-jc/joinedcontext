@@ -273,8 +273,10 @@ class Suite:
             extra = sorted(got - set(want))
             if extra and self.index.get("synthetic"):
                 extra = sorted(set(extra) - self.written(e, token, who, grants, extra))
-            # A 199 warning marks a listing the broker cut at its fold ceiling or deadline.
-            partial = f"; warning {h['warning']}" if h.get("warning") else ""
+            # A 199 warning marks a listing the broker cut at its fold ceiling or deadline; the
+            # broker sends it as NGSILD-Warning (CIM 009 6.3.17), so `warning` alone never saw it.
+            warn = h.get("ngsild-warning") or h.get("warning")
+            partial = f"; warning {warn}" if warn else ""
             self.r.check(f"{who}.types.match", e.slug, f"GET {base}/ngsi-ld/v1/types",
                          f"exactly {sorted(want)}", f"missing {missing}, extra {extra}{partial}",
                          not missing and not extra,
