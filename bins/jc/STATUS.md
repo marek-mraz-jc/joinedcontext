@@ -381,6 +381,10 @@ project `e2e` (layout 1: project, space `things`, a `public` and a `project-list
   so the page's POST /mcp stays 401 on a closed Endpoint); the
   gateway then answers 200 or 403 on the person's grants. A Portal in another container than the gateway still
   reads anonymously. On dev APISIX's openid-connect plugin turns the session into a bearer.
+  The exchange admits only a subject token naming portal-api in `aud` (Keycloak 26's standard exchange, kaisatsu
+  the same): `portal-api-audience` on portal-api in the shipped realm, and `deploy/rehearsal` `add_portal_audience`
+  for an imported realm, which lacks it behind APISIX (smoke 43115033172: every exchange "400 Invalid token").
+  A person the gateway refuses meets the panel's refusal state (`grafana.rs` `PERSON_REFUSED`), not "did not answer".
 - Stale since T-6063, corrected by jc-kaisatsu-audience (2026-11-09): jc's linker (`modules/kaisatsu.rs`
   `link_pass`, every 5 s) links each Portal `endpoint:{slug}` scope to `mcp-hub`, `jcctl` and `portal-api` as
   optional, as the deployment's admin-permissions Job does. A person's `jcctl` token with that scope reads the
