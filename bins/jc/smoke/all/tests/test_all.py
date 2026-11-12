@@ -76,6 +76,22 @@ def test_every_suite_runs_with_only_the_flags_it_declares_and_logs_goes_last(tmp
     assert {"good/one", "good/two", "good/three", "dies/run"} <= ids
 
 
+def test_a_variant_runs_the_suite_again_with_its_own_flags_dir_and_prefix(tmp_path, monkeypatch):
+    monkeypatch.setattr(all_suite, "SMOKE", smoke(tmp_path, {"good": GOOD, "logs": LOGS}))
+    out = tmp_path / "out"
+    # good@path gets the common --export E and then its own, which wins: its row `two` fails.
+    code = all_suite.main(["--base-url", "http://127.0.0.1:1", "--out", str(out), "--export", "E",
+                           "--with", "good@path=--export X"])
+    doc = json.loads((out / "results.json").read_text())
+    assert [s["suite"] for s in doc["suites"]] == ["good", "good@path", "logs", "e2e"]
+    by = {r["id"]: r["result"] for r in doc["checks"]}
+    assert by["good/two"] == "pass" and by["good@path/two"] == "fail"
+    assert (out / "good@path" / "results.json").exists() and code == 1
+    assert by["logs/dirs"] == "pass"  # logs scans both runs' result dirs, good and good@path
+    with pytest.raises(SystemExit):
+        all_suite.main(["--base-url", "http://127.0.0.1:1", "--out", str(out), "--with", "nope@path=-x"])
+
+
 def test_green_when_nothing_fails_and_a_missing_required_flag_is_a_skip(tmp_path, monkeypatch):
     monkeypatch.setattr(all_suite, "SMOKE", smoke(tmp_path, {"good": GOOD}))
     out = tmp_path / "out"

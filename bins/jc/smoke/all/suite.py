@@ -12,6 +12,8 @@ is one failing row; one refused for a missing required flag is one skip row nami
 `cargo test --locked -p jc --tests` and turns every test into a row. Writes <out>/results.json
 (one row per check, ids prefixed with the suite) and <out>/REPORT.md (suite, checks, pass, fail,
 skip, then the failures). Answers 0 only when no check failed outside the --known list.
+`--with SUITE@VARIANT=ARGS` runs SUITE a second time right after its first run, with ARGS, into
+<out>/SUITE@VARIANT/ and with that row prefix (the gate's multiorg in host mode, then multiorg@path).
 
 --known names gaps already filed (one `<regex over suite/id>  # reason, owner` per line): a failing
 check whose id matches stays a failure in the tables, marked known, and does not turn the verdict
@@ -65,8 +67,13 @@ def declared(suite: str) -> set[str]:
     return {f for f in COMMON + ("--results-dir",) if f'"{f}"' in src}
 
 
+def program(suite: str) -> str:
+    """The suite a run name `<suite>@<variant>` (a second run of it, --with) runs."""
+    return suite.partition("@")[0]
+
+
 def argv_for(suite: str, a, out: Path, done: list[Path]) -> list[str]:
-    flags = declared(suite)
+    flags = declared(program(suite))
     argv = ["--base-url", a.base_url, "--out", str(out / suite)]
     for f in COMMON:
         v = getattr(a, f[2:].replace("-", "_"))
@@ -84,7 +91,7 @@ def run_suite(suite: str, argv: list[str], out: Path, timeout: float) -> dict:
     d.mkdir(parents=True, exist_ok=True)
     (d / "results.json").unlink(missing_ok=True)
     log = d / "run.log"
-    cmd = [sys.executable, str(SMOKE / "run"), suite, *argv]
+    cmd = [sys.executable, str(SMOKE / "run"), program(suite), *argv]
     started = time.time()
     with log.open("wb") as fo:
         # Its own session, so a timeout kills the suite's children (browsers, curl) too.
@@ -96,7 +103,7 @@ def run_suite(suite: str, argv: list[str], out: Path, timeout: float) -> dict:
             p.wait()
             code = "timeout"
     seconds = round(time.time() - started)
-    call = "run " + suite + " " + " ".join(shlex.quote(x) for x in argv)
+    call = "run " + program(suite) + " " + " ".join(shlex.quote(x) for x in argv)
     text = log.read_text(errors="replace")
     res = d / "results.json"
     if res.exists():
@@ -256,7 +263,9 @@ def main(argv=None) -> int:
     p.add_argument("--only", default="", help="comma list of suites (default: every suite present)")
     p.add_argument("--skip", default="", help="comma list of suites to leave out")
     p.add_argument("--with", dest="extra_args", action="append", default=[], metavar="SUITE=ARGS",
-                   help="more flags for one suite, e.g. --with 'endpoints=--max-endpoints 5'")
+                   help="more flags for one suite, e.g. --with 'endpoints=--max-endpoints 5'; "
+                        "SUITE@VARIANT=ARGS adds a second run of SUITE right after it, with ARGS and "
+                        "its own result dir and row prefix (multiorg@path)")
     p.add_argument("--suite-timeout", type=float, default=3600)
     p.add_argument("--known", help="known gaps: <regex over suite/id>  # reason, one per line")
     a = p.parse_args(argv)
@@ -278,10 +287,11 @@ def main(argv=None) -> int:
     a.extra = {}
     for x in a.extra_args:
         k, _, v = x.partition("=")
-        if k not in suites():
+        if program(k) not in suites() or k.endswith("@"):
             p.error(f"--with names no suite {k!r}")
         a.extra[k] = (a.extra.get(k, "") + " " + v).strip()
-    chosen = [s for s in suites() if (not a.only or s in a.only.split(",")) and s not in a.skip.split(",")]
+    chosen = [r for s in suites() if (not a.only or s in a.only.split(",")) and s not in a.skip.split(",")
+              for r in (s, *(k for k in a.extra if program(k) == s and k != s))]
     unknown = [s for s in a.only.split(",") if s and s not in suites()]
     if unknown:
         p.error(f"no suite {', '.join(unknown)}; suites: {' '.join(suites())}")
@@ -290,12 +300,12 @@ def main(argv=None) -> int:
     runs, done = [], []
     for s in chosen:
         print(f"all: {s} ...", flush=True)
-        if cfg and s not in LIVE:
+        if cfg and program(s) not in LIVE:
             runs.append({"suite": s, "seconds": 0, "exit": None, "call": "", "rows": [
                 row(s, "run", "", "the suite runs", "not run", SKIP,
-                    f"live {cfg['deployment']}: {NOT_LIVE.get(s, 'not cleared for a live deployment')}")]})
+                    f"live {cfg['deployment']}: {NOT_LIVE.get(program(s), 'not cleared for a live deployment')}")]})
             continue
-        r = run_suite(s, argv_for(s, a, out, done) + (LIVE[s] if cfg else []), out, a.suite_timeout)
+        r = run_suite(s, argv_for(s, a, out, done) + (LIVE[program(s)] if cfg else []), out, a.suite_timeout)
         runs.append(r)
         done.append(out / s)
         t = totals(r["rows"])

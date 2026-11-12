@@ -1624,6 +1624,60 @@ fn a_colliding_entry_is_refused_and_its_sibling_is_not() {
 /// its catalogue ambiguous) is said to be unpublished and keeps the dataset it had: neither a
 /// withdrawal nor a sweep deletes it while its author fixes the block.
 #[tokio::test]
+async fn an_organizations_catalogue_keeps_the_dataset_its_endpoint_still_publishes() {
+    // Host mode (jc [[organizations]]): the dataset goes to hel's own catalogue, not the
+    // instance's data.example.fi. The previous run published it; this run publishes it again.
+    let repository = std::env::temp_dir().join(format!("jc-ckan-org-kept-{}", std::process::id()));
+    std::fs::create_dir_all(&repository).expect("a scratch directory");
+    let token_file = repository.join("hel.token");
+    std::fs::write(&token_file, "hel-token\n").expect("the token");
+    let org = |kind: &str, name: &str, spec: Value| {
+        serde_norway::to_string(&json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": kind,
+            "metadata": { "name": name },
+            "spec": spec,
+        }))
+        .expect("yaml")
+    };
+    let bikes = endpoint("bikes", "public", Some(dataset_only()));
+    std::fs::write(
+        repository.join("helsinki.yaml"),
+        [
+            org("Organization", "hel", json!({ "installation": true })),
+            org("Project", PROJECT, json!({ "organizationRef": "hel" })),
+            manifest_in(PROJECT, "CkanInstance", "hel-fi", instance()),
+            manifest_in(PROJECT, "Endpoint", "bikes", bikes.clone()),
+        ]
+        .join("---\n"),
+    )
+    .expect("the project");
+    let previous = Mirror::new();
+    previous.upsert(envelope("CkanInstance", "hel-fi", instance()));
+    previous.upsert(envelope("Endpoint", "bikes", bikes));
+    let repo = jcctl::loader::Repository::load(&repository).expect("the repository loads");
+    let catalogue = joinedcontext_portal::organization_host::OrganizationCatalogue {
+        organization: "hel".to_owned(),
+        url: "http://opendata.hel.localhost:9".parse().expect("a url"),
+        api: None,
+        // Nothing listens there: each catalogue call is one failed report, never a hang.
+        reach: Some("127.0.0.1:9".parse().expect("an address")),
+        data_host: None,
+        token_file,
+    };
+    let reports = CkanSync::new(HOST)
+        .for_organizations(vec![catalogue])
+        .converge(&repo, &previous, &repository)
+        .await;
+    std::fs::remove_dir_all(&repository).expect("cleaned up");
+
+    // One line for `bikes`, its publication. Without the fix a second one: its withdrawal from
+    // hel's catalogue, compared against the instance's catalogue it no longer goes to.
+    let bikes: Vec<_> = reports.iter().filter(|r| r.dataset == "bikes").collect();
+    assert_eq!(bikes.len(), 1, "{reports:?}");
+}
+
+#[tokio::test]
 async fn an_endpoint_the_pass_cannot_place_keeps_its_dataset() {
     let previous = Mirror::new();
     previous.upsert(envelope("CkanInstance", "hel-fi", instance()));

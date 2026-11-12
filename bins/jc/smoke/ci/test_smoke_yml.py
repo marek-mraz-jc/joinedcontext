@@ -53,3 +53,14 @@ def test_the_logs_suite_looks_for_the_realm_secrets_and_jcs_state_files():
     line = next(x for x in gate.splitlines() if x.startswith('args+=(--with "logs='))
     for d in ("$home/secrets ", "$home/secrets/realm ", "$home/state\""):
         assert f"--secrets-dir {d}" in line, d
+
+
+def test_the_gate_judges_multiorg_in_host_and_path_mode_on_a_composed_bundle():
+    # T-6803: on the one-installation synth the suite skipped its setup and judged nothing.
+    gate = (repo / "bins/jc/smoke/ci/gate.sh").read_text()
+    assert (repo / "bins/jc/smoke/ci/multiorg-export.tgz").is_file()
+    assert "multiorg/compose.py" in gate and all(f"--org {o}=" in gate for o in ("hel", "zilina", "barcelona"))
+    withs = [x for x in gate.splitlines() if x.startswith('args+=(--with "multiorg')]
+    assert [w.split('"')[1].split("=")[0] for w in withs] == ["multiorg", "multiorg@path"]
+    assert all("--composed" in w and "--export $mo_export" in w for w in withs)
+    assert "--hosts $mo_hosts" in gate and "REHEARSAL_JC_TOML_EXTRA=$mo_hosts multiorg mo-hosts" in gate
