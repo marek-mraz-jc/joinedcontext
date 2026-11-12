@@ -792,14 +792,32 @@ fn d3_dataset_page_builds_a_calendar_from_choices_on_its_own_endpoints_output() 
     let feed = ep("feeds/vsetky.ics");
     // A publisher's title with markup and q syntax stays text in the label and the head link.
     let title = "Kultúra \"<b>\";|() & viac";
-    let ds = with_dists(
-        dataset("events", json!({ "endpointUrl": ep("") })),
-        vec![dist(
+    // Two calendars and one feed (its three documents) of the dataset's own Endpoint: one
+    // builder with a preset select, no card per preset (T-6805).
+    let mut dists = vec![
+        dist(
             "cal",
             &feed,
             json!({ "mediaType": "text/calendar", "title": {"sk": title} }),
-        )],
-    );
+        ),
+        dist(
+            "kultura",
+            &ep("ical/v1/kultura.ics"),
+            json!({ "mediaType": "text/calendar", "title": {"sk": "Kultúra v kraji"} }),
+        ),
+    ];
+    for (ext, mime) in [
+        ("rss", "application/rss+xml"),
+        ("atom", "application/atom+xml"),
+        ("json", "application/feed+json"),
+    ] {
+        dists.push(dist(
+            ext,
+            &ep(&format!("feeds/novinky.{ext}")),
+            json!({ "mediaType": mime, "title": {"sk": "Novinky kraja"} }),
+        ));
+    }
+    let ds = with_dists(dataset("events", json!({ "endpointUrl": ep("") })), dists);
     let html = render_dataset_page_full(
         &c,
         None,
@@ -825,12 +843,34 @@ fn d3_dataset_page_builds_a_calendar_from_choices_on_its_own_endpoints_output() 
         )),
         "the head names the calendar for feed readers"
     );
-    let webcal = feed.replace("https://", "webcal://");
-    let cid: String = url::form_urlencoded::byte_serialize(webcal.as_bytes()).collect();
-    assert!(html.contains(&format!(
-        "href=\"https://calendar.google.com/calendar/r?cid={cid}\""
-    )));
+    assert!(
+        html.contains(&format!(
+            "type=\"application/rss+xml\" title=\"Novinky kraja\" href=\"{}\"",
+            ep("feeds/novinky.rss")
+        )),
+        "the head names the feed"
+    );
+    // No card per preset: the raw links appear once, in the list a reader without script sees.
+    assert!(!html.contains("id=\"jc-subscribe-cal-1\""));
+    assert!(!html.contains("id=\"jc-subscribe-news-1\""));
     assert!(html.contains(&esc_t("subscribe_refresh", "sk")));
+    let list = &html[html
+        .find("<div data-jc-preset-list>")
+        .expect("the no-script list")..];
+    let list = &list[..list.find("</div>").expect("end")];
+    assert!(
+        list.contains(&format!("<a href=\"{feed}\">{escaped}</a>")),
+        "{list}"
+    );
+    assert!(list.contains(&format!(
+        "<a href=\"{}\">Novinky kraja</a>",
+        ep("feeds/novinky.rss")
+    )));
+    assert_eq!(
+        list.matches("<li>").count(),
+        3,
+        "one entry per preset, the feed once"
+    );
     let at = html
         .find("class=\"jc-subscribe-query\"")
         .expect("the calendar builder");
@@ -838,13 +878,24 @@ fn d3_dataset_page_builds_a_calendar_from_choices_on_its_own_endpoints_output() 
     let base = ep("");
     let base = base.trim_end_matches('/');
     // Hidden without script (jc-viz.js shows it); the builder narrows the dataset's own output.
-    assert!(section.contains(&format!(
-        "data-jc-base=\"{base}\" data-jc-output=\"vsetky\""
-    )));
+    assert!(section.contains(&format!("data-jc-base=\"{base}\"")));
     assert!(section.contains(" hidden>"), "{section}");
-    assert!(!section.contains("data-jc-feeds"), "no feed, no RSS ending");
-    assert!(!section.contains("jc-subscribe-mine-rss"));
+    assert!(section.contains(&format!(
+        "<option value=\"vsetky\" data-jc-kind=\"ics\">{escaped}</option><option value=\"kultura\" data-jc-kind=\"ics\">Kultúra v kraji</option><option value=\"novinky\" data-jc-kind=\"feed\">Novinky kraja</option></select>"
+    )), "{section}");
+    assert!(section.contains("aria-describedby=\"jc-subscribe-preset-hint\""));
+    for key in [
+        "subscribe_preset",
+        "subscribe_preset_ics",
+        "subscribe_preset_feed",
+    ] {
+        assert!(section.contains(&esc_t(key, "sk")), "{key}");
+    }
     for id in [
+        "jc-subscribe-preset",
+        "jc-subscribe-mine-rss",
+        "jc-subscribe-mine-atom",
+        "jc-subscribe-mine-json",
         "jc-subscribe-from",
         "jc-subscribe-to",
         "jc-subscribe-mine-csv",
@@ -870,7 +921,6 @@ fn d3_dataset_page_builds_a_calendar_from_choices_on_its_own_endpoints_output() 
     assert!(section.contains("aria-describedby=\"jc-subscribe-dates-hint\""));
     assert!(section.contains(&esc_t("subscribe_dates_hint", "sk")));
     assert!(section.contains(&esc_t("subscribe_no_facets", "sk")));
-    assert!(section.contains(&format!("{base}/feeds/vsetky.ics</textarea>")));
 }
 
 #[test]
@@ -901,6 +951,8 @@ fn d3_dataset_page_builds_no_calendar_for_another_servers_feed() {
             NONCE,
         );
         assert!(!html.contains("class=\"jc-subscribe-query\""), "{feed}");
+        // A calendar the builder cannot narrow keeps its own card.
+        assert!(html.contains("id=\"jc-subscribe-cal-1\""), "{feed}");
     }
 }
 

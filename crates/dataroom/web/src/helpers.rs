@@ -1478,21 +1478,35 @@ pub fn jc_visualizations(
 /// Subscribe block items (`jc_subscriptions` in `plugin.py` line 1903, D3).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SubscriptionsView {
+    /// Every calendar and feed, for the page head (`<link rel="alternate">`).
     pub calendar: Vec<(String, String, String, String, String)>, // (name, url, webcal_url, mimetype, google)
-    pub news: Vec<(String, String, String)>,                     // (name, url, mimetype)
-    /// The calendar a reader builds from the Endpoint's facets and dates (T-6758).
+    pub news: Vec<(String, String, String)>, // (name, url, mimetype)
+    /// The ones the builder does not cover, listed one card each.
+    pub calendar_cards: Vec<(String, String, String, String, String)>,
+    pub news_cards: Vec<(String, String, String)>,
+    /// The link a reader builds from a stored preset, the Endpoint's facets and dates (T-6758, T-6805).
     pub builder: Option<FeedBuilder>,
 }
 
-/// What the page's calendar builder needs: the dataset's own Endpoint, the stored output its
-/// link narrows, and whether the Endpoint also has a feed (RSS and Atom endings).
+/// What the page's builder needs: the dataset's own Endpoint and its stored presets.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeedBuilder {
     /// `https://{host}/api/endpoint/{slug}`, without a trailing `/`.
     pub base: String,
+    /// Calendars first, then feeds, in the catalogue's order; never empty.
+    pub presets: Vec<FeedPreset>,
+}
+
+/// One stored output the builder narrows.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeedPreset {
+    pub title: String,
     /// The output name, `[A-Za-z0-9_-]{1,63}`.
     pub output: String,
-    pub feed: bool,
+    /// `ics` for a calendar, `feed` for an RSS, Atom and JSON Feed output.
+    pub kind: String,
+    /// The stored link, for a reader without script.
+    pub url: String,
 }
 
 /// Google Calendar's "add by URL" for a calendar feed: it takes the `webcal:` address as `cid`.
@@ -1501,30 +1515,33 @@ fn google_calendar(webcal: &str) -> String {
     format!("https://calendar.google.com/calendar/r?cid={cid}")
 }
 
-/// The builder of a calendar at `url` when it is an output of the dataset's own Endpoint
-/// `endpoint`: `{endpoint}/ical/v1/{name}.ics` or `{endpoint}/feeds/{name}.ics`.
-fn feed_builder(endpoint: &str, url: &str, feed: bool) -> Option<FeedBuilder> {
+/// The Endpoint base a builder may narrow: https, no query, `/api/endpoint/{alnum slug}`.
+fn builder_base(endpoint: &str) -> Option<&str> {
     let base = endpoint.trim_end_matches('/');
     let parsed = url::Url::parse(base).ok()?;
     let slug = parsed.path().strip_prefix("/api/endpoint/")?;
-    let named = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
-    if parsed.scheme() != "https"
-        || parsed.query().is_some()
-        || slug.is_empty()
-        || !slug.chars().all(|c| c.is_ascii_alphanumeric())
-    {
-        return None;
-    }
+    (parsed.scheme() == "https"
+        && parsed.query().is_none()
+        && !slug.is_empty()
+        && slug.chars().all(|c| c.is_ascii_alphanumeric()))
+    .then_some(base)
+}
+
+/// The output name and extension of a stored link under `base`: `{base}/ical/v1/{name}.ics`,
+/// `{base}/feed/v1/{name}/{file}` or `{base}/feeds/{name}.{ics,rss,atom,json}`.
+fn preset_of<'a>(base: &str, url: &'a str) -> Option<(&'a str, &'a str)> {
     let file = url.strip_prefix(base)?;
-    let name = file
-        .strip_prefix("/ical/v1/")
-        .or_else(|| file.strip_prefix("/feeds/"))?
-        .strip_suffix(".ics")?;
-    (!name.is_empty() && name.len() <= 63 && name.chars().all(named)).then(|| FeedBuilder {
-        base: base.to_owned(),
-        output: name.to_owned(),
-        feed,
-    })
+    let (name, ext) = if let Some(rest) = file.strip_prefix("/ical/v1/") {
+        (rest.strip_suffix(".ics")?, "ics")
+    } else if let Some(rest) = file.strip_prefix("/feed/v1/") {
+        let (name, doc) = rest.split_once('/')?;
+        matches!(doc, "rss.xml" | "atom.xml" | "feed.json").then_some((name, "rss"))?
+    } else {
+        let (name, ext) = file.strip_prefix("/feeds/")?.rsplit_once('.')?;
+        matches!(ext, "ics" | "rss" | "atom" | "json").then_some((name, ext))?
+    };
+    let named = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
+    (!name.is_empty() && name.len() <= 63 && name.chars().all(named)).then_some((name, ext))
 }
 
 impl SubscriptionsView {
@@ -1573,15 +1590,50 @@ pub fn jc_subscriptions(ds: &Dataset, lang: &str, default_lang: &str) -> Subscri
             sub.news.push((name, dist.access_url.clone(), mime));
         }
     }
-    let endpoint = ds
+    let base = ds
         .endpoint_url
         .as_deref()
-        .or_else(|| ds.extras.get("endpoint").map(String::as_str));
-    sub.builder = endpoint.and_then(|endpoint| {
-        sub.calendar
-            .first()
-            .and_then(|cal| feed_builder(endpoint, &cal.1, !sub.news.is_empty()))
-    });
+        .or_else(|| ds.extras.get("endpoint").map(String::as_str))
+        .and_then(builder_base);
+    let mut presets: Vec<FeedPreset> = Vec::new();
+    let mut preset = |title: &str, url: &str, calendar: bool| -> bool {
+        let Some((output, ext)) = base.and_then(|b| preset_of(b, url)) else {
+            return false;
+        };
+        // A calendar's link ends .ics, a feed's any other extension; a mismatch stays a card.
+        if calendar != (ext == "ics") {
+            return false;
+        }
+        let kind = if calendar { "ics" } else { "feed" };
+        // A feed lists one output three times (RSS, Atom, JSON Feed): the select names it once.
+        if !presets.iter().any(|p| p.output == output && p.kind == kind) {
+            presets.push(FeedPreset {
+                title: title.to_owned(),
+                output: output.to_owned(),
+                kind: kind.to_owned(),
+                url: url.to_owned(),
+            });
+        }
+        true
+    };
+    sub.calendar_cards = sub
+        .calendar
+        .iter()
+        .filter(|c| !preset(&c.0, &c.1, true))
+        .cloned()
+        .collect();
+    sub.news_cards = sub
+        .news
+        .iter()
+        .filter(|n| !preset(&n.0, &n.1, false))
+        .cloned()
+        .collect();
+    sub.builder = base
+        .filter(|_| !presets.is_empty())
+        .map(|base| FeedBuilder {
+            base: base.to_owned(),
+            presets,
+        });
     sub
 }
 

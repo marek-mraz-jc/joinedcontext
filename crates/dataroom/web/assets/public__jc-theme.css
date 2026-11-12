@@ -807,6 +807,13 @@ body.jc-corner-aside .jc-assistant:not([open]) > summary:focus-visible { pointer
 .jc-subscribe-copy > .btn { flex: none; min-width: 7.5rem; min-height: 2.75rem; }
 .jc-subscribe-links { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; margin: .5rem 0 0; font-size: .875rem; }
 .jc-subscribe-links a { display: inline-flex; align-items: center; min-height: 2rem; }
+.jc-subscribe-links a[hidden] { display: none; }
+.jc-subscribe-fields[hidden] { display: none; }
+/* The built link wraps to three lines at most; Copy carries all of it. */
+.jc-subscribe-query #jc-subscribe-mine-url { max-height: calc(4.2em + .75rem); overflow-y: auto; }
+/* Town and distance, from and to: one row each, also on a phone. */
+#jc-subscribe-near { grid-template-columns: minmax(0, 1fr) 7rem; }
+.jc-subscribe-fields.jc-subscribe-dates { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .jc-subscribe-group { margin: .25rem 0 0; font-size: .8125rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--jc-ink); }
 .jc-subscribe-lead { margin: 0 0 .75rem; font-size: .9375rem; color: var(--jc-ink); }
 .jc-subscribe-query { margin: 0 0 1rem; padding: .75rem 1rem 1rem; border: 1px solid var(--jc-border); border-radius: var(--jc-radius); background: var(--jc-n50); }

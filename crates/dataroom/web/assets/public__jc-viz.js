@@ -84,8 +84,8 @@ if (typeof IntersectionObserver === "function") {
 }
 // T-6758: the Subscribe menu's own calendar, built from choices and never typed. The Endpoint's
 // facets (EP-178) give each attribute's values with counts; the choices and a date range become
-// one NGSI-LD q, every value quoted by jcFeedLink.quote, and the link is the stored output's
-// feeds/{filter}/{output}.ics with its RSS, Atom and CSV endings. The preview reads that link.
+// one NGSI-LD q, every value quoted by jcFeedLink.quote, and the link is the chosen preset's
+// feeds/{filter}/{output}.ics (with CSV) or .rss (with Atom and JSON Feed). The preview reads it.
 window.jcFeedLink = (function () {
   // A Query Term value as an RFC 8259 string, so ";|()" and quotes stay inside one value.
   function quote(v) { return JSON.stringify(String(v)); }
@@ -122,15 +122,16 @@ window.jcFeedLink = (function () {
   function located(attr, value) {
     return "q=" + encode(path(attr) + "==" + quote(value)) + "&attrs=location&format=keyValues&limit=100";
   }
-  // The links of one filter: the calendar by path, the other formats by the query aliases.
-  function links(base, output, f) {
-    var ics = base + "/feeds/" + (f ? f + "/" : "") + output + ".ics";
-    var webcal = ics.replace(/^https:/, "webcal:");
-    var tail = f ? "?" + f : "";
+  // The links of one filter on one preset: a calendar's (kind "ics") or a feed's (kind "feed")
+  // by path, CSV by the query alias; url is the one the page shows.
+  function links(base, output, f, kind) {
+    var at = base + "/feeds/" + (f ? f + "/" : "") + output;
+    var csv = base + "/entities.csv" + (f ? "?" + f : "");
+    if (kind === "feed") return { url: at + ".rss", rss: at + ".rss", atom: at + ".atom", json: at + ".json", csv: csv };
+    var webcal = (at + ".ics").replace(/^https:/, "webcal:");
     return {
-      ics: ics, webcal: webcal,
-      google: "https://calendar.google.com/calendar/r?cid=" + encodeURIComponent(webcal),
-      rss: base + "/entities.rss" + tail, atom: base + "/entities.atom" + tail, csv: base + "/entities.csv" + tail,
+      url: at + ".ics", ics: at + ".ics", webcal: webcal,
+      google: "https://calendar.google.com/calendar/r?cid=" + encodeURIComponent(webcal), csv: csv,
     };
   }
   return { quote: quote, filter: filter, links: links, centre: centre, located: located };
@@ -138,15 +139,22 @@ window.jcFeedLink = (function () {
 (function () {
   var box = document.querySelector(".jc-subscribe-query");
   if (!box) return;
-  var base = box.getAttribute("data-jc-base") || "", output = box.getAttribute("data-jc-output") || "";
-  if (!/^https:\/\/[^\s?#]+\/api\/endpoint\/[A-Za-z0-9]+$/.test(base) || !/^[A-Za-z0-9_-]{1,63}$/.test(output)) return;
+  var base = box.getAttribute("data-jc-base") || "";
+  // The stored presets: an output name and its kind each; the page renders them, this checks them again.
+  var presetBox = document.getElementById("jc-subscribe-preset"), presetHint = document.getElementById("jc-subscribe-preset-hint");
+  var presets = presetBox ? Array.prototype.filter.call(presetBox.options, function (o) {
+    return /^[A-Za-z0-9_-]{1,63}$/.test(o.value) && /^(ics|feed)$/.test(o.getAttribute("data-jc-kind") || "");
+  }) : [];
+  if (!/^https:\/\/[^\s?#]+\/api\/endpoint\/[A-Za-z0-9]+$/.test(base) || !presets.length) return;
   box.hidden = false;
+  // Without script the stored links are the list below; with it the builder is.
+  document.querySelectorAll("[data-jc-preset-list]").forEach(function (l) { l.hidden = true; });
   var fields = document.getElementById("jc-subscribe-facets");
   var noFacets = document.getElementById("jc-subscribe-no-facets");
   var from = document.getElementById("jc-subscribe-from"), to = document.getElementById("jc-subscribe-to");
   var out = document.getElementById("jc-subscribe-mine-url");
   var anchors = {};
-  ["webcal", "google", "ics", "rss", "atom", "csv"].forEach(function (k) { anchors[k] = document.getElementById("jc-subscribe-mine-" + k); });
+  ["webcal", "google", "ics", "rss", "atom", "json", "csv"].forEach(function (k) { anchors[k] = document.getElementById("jc-subscribe-mine-" + k); });
   var list = document.getElementById("jc-subscribe-preview");
   var status = document.getElementById("jc-subscribe-preview-status");
   var menu = box.closest("details");
@@ -245,16 +253,21 @@ window.jcFeedLink = (function () {
       status.textContent = around === "wait" ? box.getAttribute("data-jc-loading") : unlisted ? box.getAttribute("data-jc-held") : "";
       return;
     }
-    var l = jcFeedLink.links(base, output, jcFeedLink.filter(picked, from.value, to.value, around));
+    var p = presetBox.options[presetBox.selectedIndex];
+    if (presets.indexOf(p) < 0) p = presets[0];
+    var kind = p.getAttribute("data-jc-kind");
+    presetHint.textContent = box.getAttribute(kind === "feed" ? "data-jc-preset-feed" : "data-jc-preset-ics");
+    var l = jcFeedLink.links(base, p.value, jcFeedLink.filter(picked, from.value, to.value, around), kind);
     if (copyLabel && copyLabel.hasAttribute("data-label")) { clearTimeout(copyLabel.jcTimer); copyLabel.textContent = copyLabel.getAttribute("data-label"); }
-    out.value = l.ics;
-    Object.keys(anchors).forEach(function (k) { if (anchors[k]) anchors[k].href = l[k]; });
+    out.value = l.url;
+    // Only the endings of the preset's kind show: a calendar app takes no RSS, a feed reader no webcal.
+    Object.keys(anchors).forEach(function (k) { if (anchors[k]) { anchors[k].hidden = !l[k]; if (l[k]) anchors[k].href = l[k]; } });
     clearTimeout(timer);
     if (menu && !menu.open) return;
     asked++;
     list.textContent = "";
     status.textContent = box.getAttribute("data-jc-loading");
-    timer = setTimeout(function () { preview(l.ics); }, 400);
+    timer = setTimeout(function () { preview(l.ics || l.json); }, 400);
   }
   // The facets the anonymous reader may see, each with its most frequent string values.
   function load() {
@@ -306,11 +319,19 @@ window.jcFeedLink = (function () {
     var args = [+m[1], +m[2] - 1, +m[3], +m[5], +m[6], +m[7]];
     return { date: m[8] ? new Date(Date.UTC.apply(null, args)) : new Date(args[0], args[1], args[2], args[3], args[4], args[5]), allDay: false };
   }
+  // A JSON Feed's first five items as the calendar's events: a title and, when it reads, a date.
+  function items(text) {
+    var doc; try { doc = JSON.parse(text); } catch (e) { doc = null; }
+    return (doc && Array.isArray(doc.items) ? doc.items : []).slice(0, 5).map(function (i) {
+      var d = i && typeof i.date_published === "string" ? new Date(i.date_published) : null;
+      return { summary: String((i && i.title) || ""), at: d && !isNaN(d) ? { date: d, allDay: false } : null };
+    });
+  }
   function preview(url) {
-    var mine = ++asked;
+    var mine = ++asked, feed = /\.json$/.test(url);
     list.textContent = "";
     status.textContent = box.getAttribute("data-jc-loading");
-    fetch(url, { credentials: "omit", referrerPolicy: "no-referrer", headers: { Accept: "text/calendar" } }).then(function (r) {
+    fetch(url, { credentials: "omit", referrerPolicy: "no-referrer", headers: { Accept: feed ? "application/feed+json" : "text/calendar" } }).then(function (r) {
       if (!r.ok) {
         return r.json().catch(function () { return {}; }).then(function (p) {
           if (mine !== asked) return;
@@ -322,17 +343,19 @@ window.jcFeedLink = (function () {
         if (mine !== asked) return;
         box.toggleAttribute("data-jc-refused", false);
         var today = new Date(); today.setHours(0, 0, 0, 0);
-        var next = events(text).map(function (e) { var w = when(e.start); return w && { summary: e.summary || "", at: w }; })
+        var next = feed ? items(text) : events(text).map(function (e) { var w = when(e.start); return w && { summary: e.summary || "", at: w }; })
           .filter(function (e) { return e && e.at.date >= today; })
           .sort(function (a, b) { return a.at.date - b.at.date; }).slice(0, 5);
         status.textContent = next.length ? "" : box.getAttribute("data-jc-none");
         next.forEach(function (e) {
-          var f = new Intl.DateTimeFormat(lang, e.at.allDay ? { dateStyle: "medium" } : { dateStyle: "medium", timeStyle: "short" });
           var li = document.createElement("li");
-          var time = document.createElement("time");
-          time.textContent = f.format(e.at.date);
-          li.appendChild(time);
-          li.appendChild(document.createTextNode(" " + e.summary));
+          if (e.at) {
+            var f = new Intl.DateTimeFormat(lang, e.at.allDay ? { dateStyle: "medium" } : { dateStyle: "medium", timeStyle: "short" });
+            var time = document.createElement("time");
+            time.textContent = f.format(e.at.date);
+            li.appendChild(time);
+          }
+          li.appendChild(document.createTextNode((e.at ? " " : "") + e.summary));
           list.appendChild(li);
         });
       });
@@ -342,6 +365,7 @@ window.jcFeedLink = (function () {
   }
   from.addEventListener("change", update);
   to.addEventListener("change", update);
+  presetBox.addEventListener("change", update);
   if (menu) menu.addEventListener("toggle", function () { if (menu.open) { load(); update(); } });
   if (!menu || menu.open) load();
   update();

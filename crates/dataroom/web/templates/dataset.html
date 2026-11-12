@@ -113,10 +113,10 @@
                     <summary class="btn btn-default">{{ labels.subscribe }}</summary>
                     <div class="jc-subscribe-menu">
                       <p class="jc-subscribe-lead">{{ labels.subscribe_hint }}</p>
-                      {% if !subscriptions.calendar.is_empty() %}
+                      {% if !subscriptions.calendar_cards.is_empty() %}
                       <p class="jc-subscribe-group" id="jc-subscribe-calendar">{{ labels.subscribe_calendar }}</p>
                       <ul aria-labelledby="jc-subscribe-calendar">
-                        {% for (c_name, c_url, c_webcal, c_mime, c_google) in subscriptions.calendar %}
+                        {% for (c_name, c_url, c_webcal, c_mime, c_google) in subscriptions.calendar_cards %}
                         <li class="jc-subscribe-feed">
                           <label for="jc-subscribe-cal-{{ loop.index }}">{{ c_name }}</label>
                           <div class="jc-subscribe-copy">
@@ -130,9 +130,12 @@
                       <p class="jc-subscribe-note">{{ labels.subscribe_refresh }}</p>
                       {% endif %}
                       {% if let Some(b) = subscriptions.builder %}
-                      <section class="jc-subscribe-query" aria-labelledby="jc-subscribe-mine" data-jc-base="{{ b.base }}" data-jc-output="{{ b.output }}"{% if b.feed %} data-jc-feeds{% endif %} data-jc-held="{{ labels.subscribe_link_held }}" data-jc-none="{{ labels.subscribe_preview_none }}" data-jc-failed="{{ labels.subscribe_preview_failed }}" data-jc-loading="{{ labels.subscribe_preview_loading }}" data-jc-hint="{{ labels.subscribe_query_hint }}" data-jc-not-listed="{{ labels.subscribe_not_listed }}" data-jc-town="{{ labels.subscribe_town }}" data-jc-genre="{{ labels.subscribe_genre }}" data-jc-count="{{ labels.subscribe_events }}" data-jc-near-failed="{{ labels.subscribe_near_failed }}" data-jc-near-hint="{{ labels.subscribe_near_hint }}" data-jc-near-unknown="{{ labels.subscribe_near_unknown }}" data-jc-lang="{{ chrome.lang }}" hidden>
+                      <section class="jc-subscribe-query" aria-labelledby="jc-subscribe-mine" data-jc-base="{{ b.base }}" data-jc-preset-ics="{{ labels.subscribe_preset_ics }}" data-jc-preset-feed="{{ labels.subscribe_preset_feed }}" data-jc-held="{{ labels.subscribe_link_held }}" data-jc-none="{{ labels.subscribe_preview_none }}" data-jc-failed="{{ labels.subscribe_preview_failed }}" data-jc-loading="{{ labels.subscribe_preview_loading }}" data-jc-hint="{{ labels.subscribe_query_hint }}" data-jc-not-listed="{{ labels.subscribe_not_listed }}" data-jc-town="{{ labels.subscribe_town }}" data-jc-genre="{{ labels.subscribe_genre }}" data-jc-count="{{ labels.subscribe_events }}" data-jc-near-failed="{{ labels.subscribe_near_failed }}" data-jc-near-hint="{{ labels.subscribe_near_hint }}" data-jc-near-unknown="{{ labels.subscribe_near_unknown }}" data-jc-lang="{{ chrome.lang }}" hidden>
                         <p class="jc-subscribe-group" id="jc-subscribe-mine">{{ labels.subscribe_mine }}</p>
                         <p class="jc-subscribe-note">{{ labels.subscribe_mine_lead }}</p>
+                        <div class="jc-subscribe-fields">
+                          <div><label for="jc-subscribe-preset">{{ labels.subscribe_preset }}</label><select id="jc-subscribe-preset" class="form-control form-select" aria-describedby="jc-subscribe-preset-hint">{% for p in b.presets %}<option value="{{ p.output }}" data-jc-kind="{{ p.kind }}">{{ p.title }}</option>{% endfor %}</select><p id="jc-subscribe-preset-hint" class="jc-subscribe-note"></p></div>
+                        </div>
                         <div id="jc-subscribe-facets" class="jc-subscribe-fields"></div>
                         <p id="jc-subscribe-no-facets" class="jc-subscribe-note" hidden>{{ labels.subscribe_no_facets }}</p>
                         <div id="jc-subscribe-near" class="jc-subscribe-fields" hidden>
@@ -145,21 +148,30 @@
                         </div>
                         <p class="jc-subscribe-note" id="jc-subscribe-dates-hint">{{ labels.subscribe_dates_hint }}</p>
                         <div class="jc-subscribe-copy">
-                          <textarea id="jc-subscribe-mine-url" class="form-control" rows="2" readonly spellcheck="false" aria-label="{{ labels.subscribe_mine }}">{{ b.base }}/feeds/{{ b.output }}.ics</textarea>
+                          <textarea id="jc-subscribe-mine-url" class="form-control" rows="2" readonly spellcheck="false" aria-label="{{ labels.subscribe_mine }}"></textarea>
                           <button type="button" class="btn btn-default" data-jc-copy="jc-subscribe-mine-url" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}" aria-label="{{ labels.copy }}: {{ labels.subscribe_mine }}"><span class="jc-code-copy-label" aria-hidden="true">{{ labels.copy }}</span></button>
                         </div>
-                        <p class="jc-subscribe-links"><a id="jc-subscribe-mine-webcal" href="#">{{ labels.subscribe_open_app }}</a><a id="jc-subscribe-mine-google" href="#" rel="noopener noreferrer" target="_blank">{{ labels.subscribe_google }}</a><a id="jc-subscribe-mine-ics" href="#" type="text/calendar">{{ labels.subscribe_download }}</a>{% if b.feed %}<a id="jc-subscribe-mine-rss" href="#" type="application/rss+xml">RSS</a><a id="jc-subscribe-mine-atom" href="#" type="application/atom+xml">Atom</a>{% endif %}<a id="jc-subscribe-mine-csv" href="#" type="text/csv">{{ labels.subscribe_csv }}</a></p>
+                        <p class="jc-subscribe-links"><a id="jc-subscribe-mine-webcal" href="#">{{ labels.subscribe_open_app }}</a><a id="jc-subscribe-mine-google" href="#" rel="noopener noreferrer" target="_blank">{{ labels.subscribe_google }}</a><a id="jc-subscribe-mine-ics" href="#" type="text/calendar">{{ labels.subscribe_download }}</a><a id="jc-subscribe-mine-rss" href="#" type="application/rss+xml" hidden>RSS</a><a id="jc-subscribe-mine-atom" href="#" type="application/atom+xml" hidden>Atom</a><a id="jc-subscribe-mine-json" href="#" type="application/feed+json" hidden>JSON Feed</a><a id="jc-subscribe-mine-csv" href="#" type="text/csv">{{ labels.subscribe_csv }}</a></p>
                         <div class="jc-subscribe-preview">
                           <p class="jc-subscribe-group" id="jc-subscribe-preview-title">{{ labels.subscribe_preview }}</p>
                           <ol id="jc-subscribe-preview" aria-labelledby="jc-subscribe-preview-title"></ol>
                           <p id="jc-subscribe-preview-status" class="jc-subscribe-note" role="status" aria-live="polite"></p>
                         </div>
+                        <p class="jc-subscribe-note">{{ labels.subscribe_refresh }}</p>
                       </section>
+                      <div data-jc-preset-list>
+                        <p class="jc-subscribe-group" id="jc-subscribe-presets">{{ labels.subscribe_calendar }}</p>
+                        <ul aria-labelledby="jc-subscribe-presets">
+                          {% for p in b.presets %}
+                          <li><a href="{{ p.url }}">{{ p.title }}</a></li>
+                          {% endfor %}
+                        </ul>
+                      </div>
                       {% endif %}
-                      {% if !subscriptions.news.is_empty() %}
+                      {% if !subscriptions.news_cards.is_empty() %}
                       <p class="jc-subscribe-group" id="jc-subscribe-news">{{ labels.subscribe_news }}</p>
                       <ul aria-labelledby="jc-subscribe-news">
-                        {% for (n_name, n_url, n_mime) in subscriptions.news %}
+                        {% for (n_name, n_url, n_mime) in subscriptions.news_cards %}
                         <li class="jc-subscribe-feed">
                           <label for="jc-subscribe-news-{{ loop.index }}">{{ n_name }}</label>
                           <div class="jc-subscribe-copy">

@@ -11,6 +11,7 @@ const PAGE = join(process.env.DATAROOM_PAGE_OUT ?? "test-results", "builder.html
 const ASSETS = join(__dirname, "..", "assets");
 const ORIGIN = "https://opendata.dev.joinedcontext.com";
 const SHOTS = process.env.DATAROOM_SHOTS ?? "test-results";
+const NONE = "Tomuto dopytu nezodpovedá žiadne nadchádzajúce podujatie.";
 
 const TOWNS = [
   { value: "Banská Bystrica", count: 41 },
@@ -67,10 +68,19 @@ async function serve(page: Page, opts: { facets: boolean }) {
         : q === 'address[addressLocality]=="Zvolen"' ? [point(19.13, 48.58)] : [];
       return route.fulfill({ contentType: "application/json", body: JSON.stringify(body) });
     }
+    if (url.pathname.endsWith("/novinky.json")) {
+      // A JSON Feed item with markup in its title: the preview shows it as text.
+      const body = { version: "https://jsonfeed.org/version/1.1", title: "Novinky", items: [
+        { id: "1", title: "Nový <b>cyklochodník</b> v Sliači", date_published: "2026-11-10T08:00:00Z" },
+        { id: "2", title: "Uzávierka cesty" },
+      ] };
+      return route.fulfill({ contentType: "application/feed+json", body: JSON.stringify(body) });
+    }
     if (url.pathname.endsWith(".ics")) {
       const filter = decodeURIComponent(url.pathname);
       const year = new Date().getFullYear() + 1;
-      const event = filter.includes("Divadlo")
+      // Nothing starts two years ahead: the no-match state.
+      const event = filter.includes(`${year + 1}-06-01`) ? "" : filter.includes("Divadlo")
         ? `BEGIN:VEVENT\r\nDTSTART:${year}0115T180000\r\nSUMMARY:Rozprávka pre deti v Divadle J. G. Tajovského\r\nEND:VEVENT\r\n`
         : `BEGIN:VEVENT\r\nDTSTART:${year}0110\r\nSUMMARY:Jarmok\r\nEND:VEVENT\r\n`;
       return route.fulfill({ contentType: "text/calendar", body: `BEGIN:VCALENDAR\r\n${event}END:VCALENDAR\r\n` });
@@ -215,9 +225,63 @@ for (const viewport of VIEWPORTS) {
     await page.goto(`${ORIGIN}/sk/dataset/events`);
     await page.locator(".jc-subscribe > summary").click();
     await expect(page.locator("#jc-subscribe-no-facets")).toBeVisible();
+    // Without facets the preset select and the dates still draw; there is no town list to search around.
+    await expect(page.getByLabel("Kalendár alebo kanál", { exact: true })).toBeVisible();
+    await expect(page.locator("#jc-subscribe-near")).toBeHidden();
     await page.locator("#jc-subscribe-from").fill("2026-12-01");
     await expect(page.locator("#jc-subscribe-mine-url")).toHaveValue(/feeds\/q=startDate%3E%3D2026-12-01T00%3A00%3A00Z\/vsetky\.ics$/);
     await expect(page.locator("#jc-subscribe-preview li").first()).toBeVisible();
     await page.screenshot({ path: `${SHOTS}/builder-nofacets-${viewport.width}.png`, fullPage: true });
+  });
+
+  test(`the preset select replaces one card per preset and switches the link's kind (${viewport.width}px)`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const asked = await serve(page, { facets: true });
+    await page.goto(`${ORIGIN}/sk/dataset/events`);
+    await page.locator(".jc-subscribe > summary").click();
+    const preset = page.getByLabel("Kalendár alebo kanál", { exact: true });
+    await expect(preset).toBeVisible();
+    // One builder, one result link: no card, no raw URL per preset, the no-script list hidden.
+    await expect(page.locator(".jc-subscribe-feed")).toHaveCount(0);
+    await expect(page.locator("[data-jc-preset-list]")).toBeHidden();
+    await expect(page.locator(".jc-subscribe-menu textarea")).toHaveCount(1);
+    await expect(preset).toHaveValue("vsetky");
+    await expect(page.locator("#jc-subscribe-preset-hint")).toContainText("napríklad Google Kalendár");
+    const base = "https://api.dev.joinedcontext.com/api/endpoint/esbxdrr7snorjsp7uus2luihr6vl5vv6";
+    const url = page.locator("#jc-subscribe-mine-url");
+    await expect(url).toHaveValue(`${base}/feeds/vsetky.ics`);
+
+    await preset.selectOption("kultura");
+    await page.getByLabel("Žáner", { exact: true }).fill("Hudba");
+    const segment = "q=" + encodeURIComponent('eventCategory=="Hudba"');
+    await expect(url).toHaveValue(`${base}/feeds/${segment}/kultura.ics`);
+    await expect(page.locator("#jc-subscribe-mine-webcal")).toBeVisible();
+    await expect(page.locator("#jc-subscribe-mine-rss")).toBeHidden();
+    await expect.poll(() => asked).toContain(`/api/endpoint/esbxdrr7snorjsp7uus2luihr6vl5vv6/feeds/${segment}/kultura.ics`);
+
+    // A feed preset: the link ends .rss, with Atom and JSON Feed beside it and no calendar endings.
+    await preset.selectOption("novinky");
+    await expect(page.locator("#jc-subscribe-preset-hint")).toContainText("RSS, Atom, JSON Feed");
+    await expect(url).toHaveValue(`${base}/feeds/${segment}/novinky.rss`);
+    await expect(page.locator("#jc-subscribe-mine-atom")).toHaveAttribute("href", `${base}/feeds/${segment}/novinky.atom`);
+    await expect(page.locator("#jc-subscribe-mine-json")).toHaveAttribute("href", `${base}/feeds/${segment}/novinky.json`);
+    await expect(page.locator("#jc-subscribe-mine-csv")).toHaveAttribute("href", `${base}/entities.csv?${segment}`);
+    for (const id of ["webcal", "google", "ics"]) await expect(page.locator(`#jc-subscribe-mine-${id}`)).toBeHidden();
+    // The preview reads the JSON Feed of the same filter; a title's markup stays text.
+    await expect(page.locator("#jc-subscribe-preview li").first()).toContainText("Nový <b>cyklochodník</b> v Sliači");
+    await expect(page.locator("#jc-subscribe-preview b")).toHaveCount(0);
+    await expect(page.locator("#jc-subscribe-preview li").nth(1)).toHaveText("Uzávierka cesty");
+    await expect.poll(() => asked).toContain(`/api/endpoint/esbxdrr7snorjsp7uus2luihr6vl5vv6/feeds/${segment}/novinky.json`);
+    // Phone and desktop: the open menu never makes the page scroll sideways.
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: `${SHOTS}/builder-preset-feed-${viewport.width}.png`, fullPage: true });
+
+    // No match: the preview says so, the link stays.
+    await preset.selectOption("vsetky");
+    await page.locator("#jc-subscribe-from").fill(`${new Date().getFullYear() + 2}-06-01`);
+    await expect(page.locator("#jc-subscribe-preview-status")).toHaveText(NONE);
+    await expect(page.locator("#jc-subscribe-preview li")).toHaveCount(0);
+    await expect(url).toHaveValue(/startDate%3E%3D/);
+    await page.screenshot({ path: `${SHOTS}/builder-nomatch-${viewport.width}.png`, fullPage: true });
   });
 }
