@@ -179,7 +179,13 @@ pub fn compile(query: &str) -> Result<JqFilter, String> {
     let loader = Loader::new(defs);
     let arena = Arena::default();
     let modules = loader
-        .load(&arena, File { code: query, path: () })
+        .load(
+            &arena,
+            File {
+                code: query,
+                path: (),
+            },
+        )
         .map_err(|errs| {
             let msg = errs
                 .iter()
@@ -230,9 +236,7 @@ pub fn run(filter: &JqFilter, input: Val, meta: Val) -> Result<Vec<Value>, Strin
 /// A value as gojq receives it from Bento (`gojq.normalizeNumbers` on `json.Number`).
 pub fn to_val(v: &Value) -> Result<Val, String> {
     Ok(match v {
-        Value::Null | Value::Delete | Value::Nothing => {
-            Val::Null
-        }
+        Value::Null | Value::Delete | Value::Nothing => Val::Null,
         Value::Bool(b) => Val::from(*b),
         Value::Int(i) => int_val(*i as i128),
         Value::Uint(u) => int_val(*u as i128),
@@ -240,9 +244,7 @@ pub fn to_val(v: &Value) -> Result<Val, String> {
         Value::Number(s) => number_val(s),
         Value::String(s) => Val::from(s.clone()),
         Value::Bytes(_) => return Err("invalid type: []uint8".to_string()),
-        Value::Timestamp(t) => {
-            return Err(format!("invalid type: time.Time ({})", t.to_rfc3339()))
-        }
+        Value::Timestamp(t) => return Err(format!("invalid type: time.Time ({})", t.to_rfc3339())),
         Value::Array(a) => a.iter().map(to_val).collect::<Result<Val, String>>()?,
         Value::Object(m) => {
             let mut o = jaq_json::Map::default();

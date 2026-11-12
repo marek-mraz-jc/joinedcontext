@@ -25,12 +25,16 @@ pub const MAX_EXPRESSION_BYTES: usize = 1 << 20;
 pub const MAX_DEPTH: usize = 64;
 
 static NAMED_REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"%\{([A-Za-z0-9_\-.]+(?::[A-Za-z0-9_\-.]+(?::[A-Za-z0-9_\-.]+)?)?)\}").expect("static pattern")
+    Regex::new(r"%\{([A-Za-z0-9_\-.]+(?::[A-Za-z0-9_\-.]+(?::[A-Za-z0-9_\-.]+)?)?)\}")
+        .expect("static pattern")
 });
 
 pub fn register(registry: &Registry) {
     registry.register_processor("grok", |conf, ctx| {
-        Ok(Arc::new(GrokProcessor::from_config(conf, ctx.file_root.as_deref())?))
+        Ok(Arc::new(GrokProcessor::from_config(
+            conf,
+            ctx.file_root.as_deref(),
+        )?))
     });
 }
 
@@ -84,9 +88,7 @@ impl GrokProcessor {
         let mut defs = f.string_map("pattern_definitions")?.unwrap_or_default();
         for path in f.string_list("pattern_paths")?.unwrap_or_default() {
             add_patterns_from_path(&path, root, &mut defs).map_err(|e| {
-                CoreError::config(format!(
-                    "failed to parse patterns from path '{path}': {e}"
-                ))
+                CoreError::config(format!("failed to parse patterns from path '{path}': {e}"))
             })?;
         }
         let g = GrokConfig {
@@ -179,8 +181,8 @@ fn add_patterns_from_path(
     if path.contains(['*', '?', '[']) {
         return Err("glob patterns are not supported here; name a file or a directory".into());
     }
-    let full = ekiben_io_file::path_guard::sanitize_file_path(path, root)
-        .map_err(|e| e.to_string())?;
+    let full =
+        ekiben_io_file::path_guard::sanitize_file_path(path, root).map_err(|e| e.to_string())?;
     let meta = std::fs::metadata(&full).map_err(|e| format!("stat {path}: {e}"))?;
     let mut files = Vec::new();
     if meta.is_dir() {
@@ -272,7 +274,13 @@ fn new_pattern(
         let mut ref_alias = names.get(1).copied().unwrap_or(ref_key).to_string();
         let safe: String = ref_alias
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         if safe != ref_alias {
             safe_aliases.insert(safe.clone(), ref_alias.clone());
@@ -290,7 +298,9 @@ fn new_pattern(
             format!("({})", ref_pattern.expression)
         };
         for (k, t) in &ref_pattern.type_hints {
-            type_hints.entry(k.clone()).or_insert_with(|| t.to_lowercase());
+            type_hints
+                .entry(k.clone())
+                .or_insert_with(|| t.to_lowercase());
         }
         for (s, r) in &ref_pattern.safe_aliases {
             safe_aliases.entry(s.clone()).or_insert_with(|| r.clone());

@@ -45,15 +45,26 @@ async fn run(case: &Json) -> (String, bool) {
         procs.push(serde_json::json!({"msgpack": {"operator": "to_json"}}));
     }
     let hexed = case["processor"]["msgpack"]["operator"] == "from_json" && procs.len() == 1;
-    let mut part = Part::new(Bytes::from(case["input"].as_str().unwrap_or_default().to_string()));
+    let mut part = Part::new(Bytes::from(
+        case["input"].as_str().unwrap_or_default().to_string(),
+    ));
     part.meta_set_str("source", "eea");
     let mut batch = vec![part];
     for conf in &procs {
         let comp = ComponentConfig::from_json_value(conf, "noop", None).expect("config parses");
-        let p = reg.build_processor_list(&[comp], &c).expect("builds").remove(0);
+        let p = reg
+            .build_processor_list(&[comp], &c)
+            .expect("builds")
+            .remove(0);
         let (ok, errored): (Vec<Part>, Vec<Part>) =
             batch.into_iter().partition(|p| !p.is_errored());
-        let mut next: Vec<Part> = p.process_batch(&c, ok).await.expect("no batch error").into_iter().flatten().collect();
+        let mut next: Vec<Part> = p
+            .process_batch(&c, ok)
+            .await
+            .expect("no batch error")
+            .into_iter()
+            .flatten()
+            .collect();
         next.extend(errored);
         batch = next;
     }

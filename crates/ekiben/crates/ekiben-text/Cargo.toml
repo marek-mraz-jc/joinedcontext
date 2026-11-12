@@ -3,6 +3,7 @@ name = "ekiben-text"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 ekiben-bloblang = { workspace = true }
@@ -10,10 +11,10 @@ ekiben-core = { workspace = true }
 async-trait = { workspace = true }
 serde_json = { workspace = true }
 bytes = { workspace = true }
-jaq-core = "3"
-jaq-std = "3"
-jaq-json = "2"
-jmespath = { version = "0.5", features = ["sync"] }
+jaq-core = "=3.1.2"
+jaq-std = "=3.0.4"
+jaq-json = "=2.0.3"
+jmespath = { version = "=0.5.0", features = ["sync"] }
 regex = { workspace = true }
 ekiben-io-file = { workspace = true }
 

@@ -44,10 +44,7 @@ impl<'a> Fields<'a> {
     }
 
     pub fn missing(&self, name: &str) -> CoreError {
-        CoreError::config(format!(
-            "{}: field '{name}' is required",
-            self.component
-        ))
+        CoreError::config(format!("{}: field '{name}' is required", self.component))
     }
 
     pub fn string(&self, name: &str) -> Result<Option<String>, CoreError> {

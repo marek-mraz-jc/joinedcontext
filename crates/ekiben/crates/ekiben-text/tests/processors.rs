@@ -43,7 +43,10 @@ fn build_yaml(yaml: &str) -> Result<(Arc<dyn Processor>, ProcContext), CoreError
 
 async fn run(yaml: &str, inputs: &[&str]) -> Vec<Batch> {
     let (p, c) = build_yaml(yaml).expect("config builds");
-    let batch: Batch = inputs.iter().map(|s| Part::new(Bytes::from(s.to_string()))).collect();
+    let batch: Batch = inputs
+        .iter()
+        .map(|s| Part::new(Bytes::from(s.to_string())))
+        .collect();
     p.process_batch(&c, batch).await.expect("no batch error")
 }
 
@@ -57,7 +60,11 @@ fn bytes(p: &Part) -> String {
 async fn test_jq_all_parts() {
     let out = run(
         "jq:\n  query: .foo.bar\n",
-        &[r#"{"foo":{"bar":0}}"#, r#"{"foo":{"bar":1}}"#, r#"{"foo":{"bar":2}}"#],
+        &[
+            r#"{"foo":{"bar":0}}"#,
+            r#"{"foo":{"bar":1}}"#,
+            r#"{"foo":{"bar":2}}"#,
+        ],
     )
     .await;
     assert_eq!(out.len(), 1);
@@ -89,11 +96,36 @@ async fn test_jq_mutation() {
 #[tokio::test]
 async fn test_jq() {
     let cases: &[(&str, &str, &str, &str)] = &[
-        ("select obj", ".foo.bar", r#"{"foo":{"bar":{"baz":1}}}"#, r#"{"baz":1}"#),
-        ("select array", ".foo.bar", r#"{"foo":{"bar":["baz","qux"]}}"#, r#"["baz","qux"]"#),
-        ("select obj as str", ".foo.bar", r#"{"foo":{"bar":"{\"baz\":1}"}}"#, r#""{\"baz\":1}""#),
-        ("select str", ".foo.bar", r#"{"foo":{"bar":"hello world"}}"#, r#""hello world""#),
-        ("select float", ".foo.bar", r#"{"foo":{"bar":0.123}}"#, "0.123"),
+        (
+            "select obj",
+            ".foo.bar",
+            r#"{"foo":{"bar":{"baz":1}}}"#,
+            r#"{"baz":1}"#,
+        ),
+        (
+            "select array",
+            ".foo.bar",
+            r#"{"foo":{"bar":["baz","qux"]}}"#,
+            r#"["baz","qux"]"#,
+        ),
+        (
+            "select obj as str",
+            ".foo.bar",
+            r#"{"foo":{"bar":"{\"baz\":1}"}}"#,
+            r#""{\"baz\":1}""#,
+        ),
+        (
+            "select str",
+            ".foo.bar",
+            r#"{"foo":{"bar":"hello world"}}"#,
+            r#""hello world""#,
+        ),
+        (
+            "select float",
+            ".foo.bar",
+            r#"{"foo":{"bar":0.123}}"#,
+            "0.123",
+        ),
         ("select int", ".foo.bar", r#"{"foo":{"bar":123}}"#, "123"),
         ("select bool", ".foo.bar", r#"{"foo":{"bar":true}}"#, "true"),
         ("null result", ".baz.qux", r#"{"foo":{"bar":true}}"#, "null"),
@@ -115,7 +147,11 @@ async fn test_jq() {
     let mut m = std::collections::BTreeMap::new();
     m.insert(
         "ts".to_string(),
-        Value::Timestamp(chrono::DateTime::from_timestamp(1000, 0).unwrap().fixed_offset()),
+        Value::Timestamp(
+            chrono::DateTime::from_timestamp(1000, 0)
+                .unwrap()
+                .fixed_offset(),
+        ),
     );
     let out = p
         .process_batch(&c, vec![Part::from_structured(Value::Object(m.into()))])
@@ -128,11 +164,36 @@ async fn test_jq() {
 #[tokio::test]
 async fn test_jq_output_raw() {
     let cases: &[(&str, &str, &str, &str)] = &[
-        ("select obj", ".foo.bar", r#"{"foo":{"bar":{"baz":1}}}"#, r#"{"baz":1}"#),
-        ("select array", ".foo.bar", r#"{"foo":{"bar":["baz","qux"]}}"#, r#"["baz","qux"]"#),
-        ("select obj as str", ".foo.bar", r#"{"foo":{"bar":"{\"baz\":1}"}}"#, r#"{"baz":1}"#),
-        ("select str", ".foo.bar", r#"{"foo":{"bar":"hello world"}}"#, "hello world"),
-        ("select float", ".foo.bar", r#"{"foo":{"bar":0.123}}"#, "0.123"),
+        (
+            "select obj",
+            ".foo.bar",
+            r#"{"foo":{"bar":{"baz":1}}}"#,
+            r#"{"baz":1}"#,
+        ),
+        (
+            "select array",
+            ".foo.bar",
+            r#"{"foo":{"bar":["baz","qux"]}}"#,
+            r#"["baz","qux"]"#,
+        ),
+        (
+            "select obj as str",
+            ".foo.bar",
+            r#"{"foo":{"bar":"{\"baz\":1}"}}"#,
+            r#"{"baz":1}"#,
+        ),
+        (
+            "select str",
+            ".foo.bar",
+            r#"{"foo":{"bar":"hello world"}}"#,
+            "hello world",
+        ),
+        (
+            "select float",
+            ".foo.bar",
+            r#"{"foo":{"bar":0.123}}"#,
+            "0.123",
+        ),
         ("select int", ".foo.bar", r#"{"foo":{"bar":123}}"#, "123"),
         ("select bool", ".foo.bar", r#"{"foo":{"bar":true}}"#, "true"),
         ("null result", ".baz.qux", r#"{"foo":{"bar":true}}"#, "null"),
@@ -145,7 +206,11 @@ async fn test_jq_output_raw() {
         ),
     ];
     for (name, path, input, want) in cases {
-        let out = run(&format!("jq:\n  query: '{path}'\n  output_raw: true\n"), &[input]).await;
+        let out = run(
+            &format!("jq:\n  query: '{path}'\n  output_raw: true\n"),
+            &[input],
+        )
+        .await;
         assert_eq!(out.len(), 1, "{name}");
         assert_eq!(bytes(&out[0][0]), *want, "{name}");
     }
@@ -167,7 +232,10 @@ async fn jq_no_output_drops_the_message_and_limits_hold() {
     let out = run("jq:\n  query: repeat(1)\n", &["{}"]).await;
     let err = out[0][0].error_get().expect("errored").to_string();
     assert!(err.contains("emitted more than"), "{err}");
-    let long = format!("jq:\n  query: '{}'\n", ".".repeat(ekiben_text::processor_jq::MAX_QUERY_BYTES + 1));
+    let long = format!(
+        "jq:\n  query: '{}'\n",
+        ".".repeat(ekiben_text::processor_jq::MAX_QUERY_BYTES + 1)
+    );
     let err = build_yaml(&long).err().expect("refused").to_string();
     assert!(err.contains("more than"), "{err}");
     assert!(build_yaml("jq:\n  query: '.foo |'\n").is_err());
@@ -179,7 +247,11 @@ async fn jq_no_output_drops_the_message_and_limits_hold() {
 async fn test_jmes_path_all_parts() {
     let out = run(
         "jmespath:\n  query: foo.bar\n",
-        &[r#"{"foo":{"bar":0}}"#, r#"{"foo":{"bar":1}}"#, r#"{"foo":{"bar":2}}"#],
+        &[
+            r#"{"foo":{"bar":0}}"#,
+            r#"{"foo":{"bar":1}}"#,
+            r#"{"foo":{"bar":2}}"#,
+        ],
     )
     .await;
     for (i, p) in out[0].iter().enumerate() {
@@ -208,14 +280,44 @@ async fn test_jmes_path_mutation() {
 #[tokio::test]
 async fn test_jmes_path() {
     let cases: &[(&str, &str, &str, &str)] = &[
-        ("select obj", "foo.bar", r#"{"foo":{"bar":{"baz":1}}}"#, r#"{"baz":1}"#),
-        ("select array", "foo.bar", r#"{"foo":{"bar":["baz","qux"]}}"#, r#"["baz","qux"]"#),
-        ("select obj as str", "foo.bar", r#"{"foo":{"bar":"{\"baz\":1}"}}"#, r#""{\"baz\":1}""#),
-        ("select str", "foo.bar", r#"{"foo":{"bar":"hello world"}}"#, r#""hello world""#),
-        ("select float", "foo.bar", r#"{"foo":{"bar":0.123}}"#, "0.123"),
+        (
+            "select obj",
+            "foo.bar",
+            r#"{"foo":{"bar":{"baz":1}}}"#,
+            r#"{"baz":1}"#,
+        ),
+        (
+            "select array",
+            "foo.bar",
+            r#"{"foo":{"bar":["baz","qux"]}}"#,
+            r#"["baz","qux"]"#,
+        ),
+        (
+            "select obj as str",
+            "foo.bar",
+            r#"{"foo":{"bar":"{\"baz\":1}"}}"#,
+            r#""{\"baz\":1}""#,
+        ),
+        (
+            "select str",
+            "foo.bar",
+            r#"{"foo":{"bar":"hello world"}}"#,
+            r#""hello world""#,
+        ),
+        (
+            "select float",
+            "foo.bar",
+            r#"{"foo":{"bar":0.123}}"#,
+            "0.123",
+        ),
         ("select int", "foo.bar", r#"{"foo":{"bar":123}}"#, "123"),
         ("select bool", "foo.bar", r#"{"foo":{"bar":true}}"#, "true"),
-        ("addition int", "sum([foo.bar, `6`])", r#"{"foo":{"bar":123}}"#, "129"),
+        (
+            "addition int",
+            "sum([foo.bar, `6`])",
+            r#"{"foo":{"bar":123}}"#,
+            "129",
+        ),
     ];
     for (name, path, input, want) in cases {
         let out = run(&format!("jmespath:\n  query: \"{path}\"\n"), &[input]).await;
@@ -269,7 +371,8 @@ async fn test_grok() {
         ),
     ];
     for (name, pattern, input, want, defs) in cases {
-        let yaml = format!("grok:\n  expressions:\n    - '{pattern}'\n  pattern_definitions: {defs}\n");
+        let yaml =
+            format!("grok:\n  expressions:\n    - '{pattern}'\n  pattern_definitions: {defs}\n");
         let out = run(&yaml, &[input]).await;
         assert_eq!(out.len(), 1, "{name}");
         assert_eq!(bytes(&out[0][0]), *want, "{name}");
@@ -293,7 +396,10 @@ async fn test_grok_file_imports() {
         .process_batch(&c, vec![Part::new(Bytes::from_static(b"hello foo bar"))])
         .await
         .unwrap();
-    assert_eq!(bytes(&out[0][0]), r#"{"first":"hello","second":"foo","third":"bar"}"#);
+    assert_eq!(
+        bytes(&out[0][0]),
+        r#"{"first":"hello","second":"foo","third":"bar"}"#
+    );
     let out = p
         .process_batch(&c, vec![Part::new(Bytes::from_static(b"10 foo bar"))])
         .await
@@ -306,17 +412,18 @@ async fn test_grok_file_imports() {
 
 #[tokio::test]
 async fn grok_refuses_cycles_traversal_and_reports_no_match() {
-    let err = build_yaml("grok:\n  expressions: ['%{A}']\n  pattern_definitions: {A: '%{B}', B: '%{A}'}\n")
-        .err()
-        .expect("cycle refused")
-        .to_string();
+    let err = build_yaml(
+        "grok:\n  expressions: ['%{A}']\n  pattern_definitions: {A: '%{B}', B: '%{A}'}\n",
+    )
+    .err()
+    .expect("cycle refused")
+    .to_string();
     assert!(err.contains("failed to create grok compiler"), "{err}");
     let dir = tempfile::tempdir().unwrap();
     let (reg, c) = ctx(Some(dir.path().to_path_buf()));
-    let conf: serde_json::Value = serde_norway::from_str(
-        "grok:\n  expressions: ['%{WORD}']\n  pattern_paths: ['../etc']\n",
-    )
-    .unwrap();
+    let conf: serde_json::Value =
+        serde_norway::from_str("grok:\n  expressions: ['%{WORD}']\n  pattern_paths: ['../etc']\n")
+            .unwrap();
     let comp = ComponentConfig::from_json_value(&conf, "noop", None).unwrap();
     assert!(reg.build_processor_list(&[comp], &c).is_err());
     let out = run("grok:\n  expressions: ['%{INT:n}']\n", &["no digits"]).await;
@@ -338,7 +445,9 @@ fn test_msg_pack_to_json() {
     let mut part = Part::new(Bytes::from(input));
     p.process(&mut part).unwrap();
     let v = part.as_structured().unwrap();
-    let Value::Object(m) = &v else { panic!("object") };
+    let Value::Object(m) = &v else {
+        panic!("object")
+    };
     // Go reads int8(123); this workspace's Value carries no integer width.
     assert_eq!(m["intKey"], Value::Int(123));
     assert_eq!(
@@ -349,11 +458,15 @@ fn test_msg_pack_to_json() {
 
 #[test]
 fn test_msg_pack_from_json() {
-    let cases: &[(&str, &str, &[(&str, Value)])] = &[
+    type Case<'a> = (&'a str, &'a str, &'a [(&'a str, Value)]);
+    let cases: &[Case] = &[
         (
             "basic",
             r#"{"key":"foo","trueKey":true,"falseKey":false,"nullKey":null,"intKey":123,"floatKey":45.6,"array":["bar"],"nested":{"key":"baz"}}"#,
-            &[("intKey", Value::Int(123)), ("floatKey", Value::Float(45.6))],
+            &[
+                ("intKey", Value::Int(123)),
+                ("floatKey", Value::Float(45.6)),
+            ],
         ),
         (
             "various ints",
@@ -375,13 +488,17 @@ fn test_msg_pack_from_json() {
         let mut part = Part::new(Bytes::from(input.to_string()));
         p.process(&mut part).unwrap();
         let back = ekiben_bloblang::msgpack::decode(&part.as_bytes()).unwrap();
-        let Value::Object(m) = back else { panic!("{name}: object") };
+        let Value::Object(m) = back else {
+            panic!("{name}: object")
+        };
         for (k, v) in *want {
             assert_eq!(&m[*k], v, "{name}: {k}");
         }
     }
-    assert!(ekiben_text::msgpack_processor::MsgpackProcessor::new("nope")
-        .err()
-        .unwrap()
-        .contains("operator not recognised: nope"));
+    assert!(
+        ekiben_text::msgpack_processor::MsgpackProcessor::new("nope")
+            .err()
+            .unwrap()
+            .contains("operator not recognised: nope")
+    );
 }

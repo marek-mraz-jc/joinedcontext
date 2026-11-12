@@ -49,9 +49,8 @@ impl MsgpackProcessor {
     pub fn process(&self, part: &mut Part) -> Result<(), String> {
         match self.operator {
             Operator::ToJson => {
-                let v = msgpack::decode(&part.as_bytes()).map_err(|e| {
-                    format!("failed to convert MsgPack document to JSON: {e}")
-                })?;
+                let v = msgpack::decode(&part.as_bytes())
+                    .map_err(|e| format!("failed to convert MsgPack document to JSON: {e}"))?;
                 part.set_structured(v);
             }
             Operator::FromJson => {

@@ -27,9 +27,8 @@ impl JmespathProcessor {
     pub fn from_config(conf: &ComponentConfig) -> Result<Self, CoreError> {
         let f = Fields::new("jmespath", &conf.config, &["query"])?;
         let q = f.string("query")?.ok_or_else(|| f.missing("query"))?;
-        let query = jmespath::compile(&q).map_err(|e| {
-            CoreError::config(format!("failed to compile JMESPath query: {e}"))
-        })?;
+        let query = jmespath::compile(&q)
+            .map_err(|e| CoreError::config(format!("failed to compile JMESPath query: {e}")))?;
         Ok(Self { query })
     }
 
@@ -85,14 +84,14 @@ fn from_var(v: &Variable) -> Value {
         Variable::Bool(b) => Value::Bool(*b),
         Variable::Number(n) => Value::Float(n.as_f64().unwrap_or(f64::NAN)),
         Variable::String(s) => Value::String(s.clone()),
-        Variable::Array(a) => Value::Array(a.iter().map(|v| from_var(v)).collect::<Vec<_>>().into()),
-        Variable::Object(o) => {
-            Value::Object(
-                o.iter()
-                    .map(|(k, v)| (k.clone(), from_var(v)))
-                    .collect::<std::collections::BTreeMap<_, _>>()
-                    .into(),
-            )
+        Variable::Array(a) => {
+            Value::Array(a.iter().map(|v| from_var(v)).collect::<Vec<_>>().into())
         }
+        Variable::Object(o) => Value::Object(
+            o.iter()
+                .map(|(k, v)| (k.clone(), from_var(v)))
+                .collect::<std::collections::BTreeMap<_, _>>()
+                .into(),
+        ),
     }
 }
