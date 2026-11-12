@@ -225,6 +225,16 @@ whole file. The broker logs every cut once at `WARN` with its reason, the
 rows and bytes written and the seconds taken, under the request's span.
 The answer ceiling bounds each page it reads.
 
+Before its first byte the surface asks the store to count the file's rows,
+every read counted (a ZIP reads a collection once for its CSV and once for
+its Parquet). Past `ANTARES_EXPORT_FILE_ROWS` (default 300,000) the file is
+`413` and names what to narrow (`bbox`, `datetime`, `filter`), so a file
+too large for its time is refused at once instead of cut minutes later
+(T-6823: jc-dev wrote 377,000 rows of its 421,438-row Garden CSV in the
+240 s at 0.64 s a page and cut the rest). A read the store cannot count
+(a residual filter past its budget) is written and held to the bytes and
+time.
+
 The time is a wall clock over the whole file, time blocked on a slow
 reader included. Its default fits the largest collection of the frozen
 prod export (praha-mesto Garden, 255,283 rows) as a ZIP on a loaded host:
@@ -237,9 +247,11 @@ six (the default `ANTARES_EXPORT_FILES`) can refuse other files for up to
 The surface writes at most `ANTARES_EXPORT_FILES` files at once (default
 6, [Configuration](configuration.md)), Parquet, CSV and ZIP together; a
 file holds its place until its last byte is sent or its client leaves.
-One more is `503` with `Retry-After: 6`, never queued; `/q/health` shows
-the caps as `limits.exportFiles`, `limits.fileBytes` and
-`limits.fileSeconds`.
+One more is `429` with `Retry-After: 6`, never queued: the client asks
+again after it, and a gateway in front passes it on as a `4xx` instead of
+a broker failure (T-6823). `/q/health` shows the caps as
+`limits.exportFiles`, `limits.fileBytes`, `limits.fileSeconds` and
+`limits.fileRows`.
 
 ## 3. Schemas and references
 

@@ -70,6 +70,9 @@ pub fn app(state: AppState) -> Router {
         .merge(crate::public_docs::router())
         .route("/", axum::routing::get(assets::home))
         .fallback(assets::static_handler)
+        // One OData service per Organization shares `/api/v1/` with REST compat (API/13 §2a):
+        // in front of the routes, so the root's own `/api/v1/` reaches it too.
+        .layer(from_fn_with_state(state.clone(), api::odata_org::negotiate))
         // Every portal request, API or page, keeps the cookie session alive against the realm;
         // outermost of the portal's own layers so a rotated cookie reaches every response.
         .layer(from_fn_with_state(state.clone(), auth::refresh::middleware))

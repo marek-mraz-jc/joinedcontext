@@ -44,16 +44,7 @@ pub async fn list_ops(
     if !is_dns1123(&project) {
         return Err(ApiError::NotFound(format!("project '{project}' not found")));
     }
-    let caller = Caller {
-        bearer: None,
-        identity: user.0.identity,
-        via: match front {
-            Front::Portal => Via::Session,
-            Front::Edge => Via::Session,
-            Front::Bearer => Via::Bearer,
-        },
-        access: None,
-    };
+    let caller = caller_of(user, front);
     Ok(Json(ops::listing(&caller, &state, &project)))
 }
 
@@ -106,18 +97,23 @@ pub async fn run_op(
             .map_err(|e| ApiError::BadRequest(format!("invalid json body: {e}")))?
     };
 
-    let caller = Caller {
+    let caller = caller_of(user, front);
+
+    respond(op, ops::call(op, &caller, &state, &project, body_val).await)
+}
+
+/// The caller of a REST door: the signed-in person or a program with its own token, their
+/// bindings alone deciding (no agent profile, no bearer to exchange). The OData door shares it.
+pub(crate) fn caller_of(user: CurrentUser, front: Front) -> Caller {
+    Caller {
         bearer: None,
         identity: user.0.identity,
         via: match front {
-            Front::Portal => Via::Session,
-            Front::Edge => Via::Session,
+            Front::Portal | Front::Edge => Via::Session,
             Front::Bearer => Via::Bearer,
         },
         access: None,
-    };
-
-    respond(op, ops::call(op, &caller, &state, &project, body_val).await)
+    }
 }
 
 /// The HTTP answer of a registered operation: 202 for a change it proposed, 200 otherwise, and a

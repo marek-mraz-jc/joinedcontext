@@ -117,7 +117,7 @@ fn space_of(envelope: &ResourceEnvelope) -> Option<String> {
 }
 
 /// One row of a listing: enough to pick a resource and open it, not the whole manifest.
-fn row(envelope: &ResourceEnvelope) -> Value {
+pub(crate) fn row(envelope: &ResourceEnvelope) -> Value {
     let status = envelope.status.as_ref();
     let mut row = json!({
         "kind": envelope.kind,
@@ -165,11 +165,29 @@ fn list_input_schema() -> Value {
     })
 }
 
+/// One line per resource, as `row` writes it; the OData door builds its entity types from these
+/// properties (T-6655), so a member `row` adds is named here too.
 fn list_output_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "items": { "type": "array", "items": { "type": "object" } }
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "kind": { "type": "string" },
+                        "name": { "type": "string", "description": "The resource's metadata.name" },
+                        "space": { "type": "string", "description": "Its context space, when it lives in one" },
+                        "title": { "type": "string" },
+                        "phase": { "type": "string", "description": "Its reconcile phase, e.g. Ready" },
+                        "sourceUrl": { "type": "string", "description": "Where its manifest lives in the forge" },
+                        "notServing": { "type": "string", "description": "Why the broker serves no view of this Endpoint, when it does not" },
+                        "types": { "type": "array", "items": { "type": "string" }, "description": "Endpoint only: the entity types it serves" },
+                        "url": { "type": "string", "description": "Endpoint only: its NGSI-LD address" }
+                    }
+                }
+            }
         }
     })
 }
