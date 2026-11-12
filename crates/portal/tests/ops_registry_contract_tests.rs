@@ -21,11 +21,11 @@ fn the_tool_list_and_the_openapi_document_say_the_same_of_every_operation() {
         let tool = tool_definition(&ops::summary(op));
         let entry = &doc["paths"][format!("{OPS_PREFIX}{}", op.name)]["post"];
         let mut input = tool["inputSchema"].clone();
-        // MCP carries the project in the arguments, REST in the path: the rest is one schema.
-        input["properties"]
-            .as_object_mut()
-            .expect("properties")
-            .remove("project");
+        // MCP carries the project in the arguments, REST in the path, and an MCP client answers a
+        // question in the arguments (T-6829): the rest is one schema.
+        let properties = input["properties"].as_object_mut().expect("properties");
+        properties.remove("project");
+        properties.remove("elicitation");
         input["required"]
             .as_array_mut()
             .expect("required")

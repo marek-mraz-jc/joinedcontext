@@ -2683,8 +2683,9 @@ MCP (Streamable HTTP, protocol 2026-07-28):
   fresh Verdict.
   The host shows it to the person, who opens the URL and decides; the client then repeats the
   same `tools/call` with `params.elicitation = { "elicitationId": "eli-…" }`, or with
-  `elicitation` among its `arguments` for a client that can only fill arguments, and the
-  operation runs once the person accepted on the page. `"action": "decline"` (or `"cancel"`) answers a refusal and nothing
+  `elicitation` among its `arguments` for a client that can only fill arguments (a tool that may
+  ask lists `elicitation` in its closed `inputSchema`, bounds only; `initialize`'s `instructions`
+  say once what it carries, T-6829), and the operation runs once the person accepted on the page. `"action": "decline"` (or `"cancel"`) answers a refusal and nothing
   runs. An id is one-shot, belongs to the token's subject, expires in ten minutes and is bound to
   the operation and the arguments it was asked for: different arguments need a new answer. Every
   `tools/call` naming a known operation in a project the caller reads is one `mcp.tool` row from
@@ -2694,11 +2695,12 @@ MCP (Streamable HTTP, protocol 2026-07-28):
   token's `azp`) and `change` with the Change's name, also its `correlationId`, when the call
   opened one. Names only: no argument value or manifest content reaches the row.
   Tasks (AG-60): `jc_pipeline_test`, `jc_model_infer`, `jc_space_complete` and
-  `jc_datasource_check` wait on the runner, on Model Tools or on somebody's feed, so `tools/call`
-  answers `{ "task": { "taskId", "status": "working", "pollInterval", "ttl" } }` at once and the
-  client follows it with `tasks/get`, `tasks/result` (the tool's own result), `tasks/list` and
-  `tasks/cancel`; `tools/list` marks them `execution.taskSupport: "required"` and every other tool
-  `"forbidden"`. A task belongs to the token's subject: another caller's `tasks/get` answers
+  `jc_datasource_check` wait on the runner, on Model Tools or on somebody's feed, so a `tools/call`
+  whose params carry `task` answers `{ "task": { "taskId", "status": "working", "pollInterval", "ttl" } }`
+  at once and the client follows it with `tasks/get`, `tasks/result` (the tool's own result),
+  `tasks/list` and `tasks/cancel`; a call without `task` answers the tool's result inline (a client
+  without tasks, T-6829). `tools/list` marks them `execution.taskSupport: "optional"` and every other
+  tool `"forbidden"`. A task belongs to the token's subject: another caller's `tasks/get` answers
   `unknown task`, the same as one that never existed. A finished task is kept ten minutes.
   Limits (AG-60), counted by the token's subject in the Portal itself, so an in-cluster caller
   is bounded too: a ninth call running at once, counted with the person's connectors → 429 with
