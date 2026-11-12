@@ -33,6 +33,9 @@ const REQUESTS: &str = "jc_gateway_requests_total";
 const REQUEST_SECONDS: &str = "jc_gateway_request_duration_seconds";
 /// What the policy decision point decided, by operation and verdict (GW1).
 const DECISIONS: &str = "jc_gateway_pdp_decisions_total";
+/// Entities written under `JC_GATEWAY_URN_OWNER_PREFIX=warn` whose URN names another owner
+/// (T-6793); no Organization label, the log names the space and the owner segment.
+pub const URN_OWNER_MISMATCH: &str = "jc_gateway_urn_owner_mismatch_total";
 /// The broker round trip inside one answer, which is most of a slow request.
 const BROKER_SECONDS: &str = "jc_gateway_broker_request_duration_seconds";
 const SPACE_HELD: &str = "jc_gateway_space_held";
@@ -90,6 +93,10 @@ fn describe() {
     metrics::describe_counter!(REQUESTS, "requests answered by the gateway surface");
     metrics::describe_histogram!(REQUEST_SECONDS, "seconds to answer one request");
     metrics::describe_counter!(DECISIONS, "policy decisions, by operation and verdict");
+    metrics::describe_counter!(
+        URN_OWNER_MISMATCH,
+        "entities written under warn whose URN does not name the space's owning Organization"
+    );
     metrics::describe_histogram!(BROKER_SECONDS, "seconds of one broker round trip");
     metrics::describe_gauge!(
         SPACE_HELD,

@@ -9,6 +9,7 @@ use axum::http::{Method, StatusCode};
 use axum::routing::any;
 use axum::Router;
 use context_gateway::app::{router, Gateway};
+use context_gateway::config::UrnOwnerPrefix;
 use context_gateway::pdp::PolicyPdp;
 use context_gateway::proxy::Broker;
 use context_gateway::resolver::Endpoint;
@@ -104,7 +105,7 @@ fn endpoint(project: &str, role: &str) -> Endpoint {
 struct Deployment {
     organizations: &'static [(&'static str, &'static str)],
     projects: &'static [(&'static str, &'static str)],
-    check: bool,
+    check: UrnOwnerPrefix,
 }
 
 const FOUR: Deployment = Deployment {
@@ -115,7 +116,7 @@ const FOUR: Deployment = Deployment {
         ("hel", "hel.fi"),
     ],
     projects: &[(PROJECT, "bbsk"), ("ba-data", "bratislava")],
-    check: true,
+    check: UrnOwnerPrefix::Enforce,
 };
 
 async fn send(
@@ -269,7 +270,7 @@ async fn a_single_deployment_may_switch_the_check_off_and_several_may_not() {
     let single_off = Deployment {
         organizations: &[("bbsk", "bbsk.sk")],
         projects: &[(PROJECT, "bbsk")],
-        check: false,
+        check: UrnOwnerPrefix::Off,
     };
     for id in [
         "urn:ngsi-ld:Device:sk_bratislava:1",
@@ -286,7 +287,7 @@ async fn a_single_deployment_may_switch_the_check_off_and_several_may_not() {
         assert_eq!(asked.len(), 1);
     }
     let single_on = Deployment {
-        check: true,
+        check: UrnOwnerPrefix::Enforce,
         ..single_off
     };
     let (status, problem, asked) = send(
@@ -298,7 +299,7 @@ async fn a_single_deployment_may_switch_the_check_off_and_several_may_not() {
     .await;
     assert_refused_on_id(status, &problem, &asked, "one Organization, check on");
     let several_off = Deployment {
-        check: false,
+        check: UrnOwnerPrefix::Off,
         ..FOUR
     };
     let (status, problem, asked) = send(
@@ -309,4 +310,72 @@ async fn a_single_deployment_may_switch_the_check_off_and_several_may_not() {
     )
     .await;
     assert_refused_on_id(status, &problem, &asked, "several Organizations, check off");
+}
+
+/// The mismatch counter's value on the scrape.
+async fn mismatches() -> f64 {
+    let response = context_gateway::telemetry::metrics().await;
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("the scrape");
+    String::from_utf8_lossy(&bytes)
+        .lines()
+        .find(|line| line.starts_with("jc_gateway_urn_owner_mismatch_total "))
+        .and_then(|line| line.rsplit(' ').next()?.parse().ok())
+        .unwrap_or_default()
+}
+
+/// T-6793: in the `warn` window a write naming another owner, or none, is written on a deployment
+/// of several Organizations and counted per entity; once the window ended it is refused as under
+/// `enforce`, and the owner's own id still passes.
+#[tokio::test]
+async fn warn_writes_and_counts_a_foreign_owner_until_its_end() {
+    let hour = std::time::Duration::from_secs(3600);
+    let open = Deployment {
+        check: UrnOwnerPrefix::Warn {
+            until: std::time::SystemTime::now() + hour,
+        },
+        ..FOUR
+    };
+    let before = mismatches().await;
+    let (status, problem, asked) = send(
+        &open,
+        endpoint(PROJECT, "public"),
+        "/entityOperations/upsert",
+        json!([
+            device("urn:ngsi-ld:Device:fi_hel:praha:1"),
+            device("urn:ngsi-ld:Device:lamp-1"),
+            device("urn:ngsi-ld:Device:sk_bbsk:1")
+        ]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{problem}");
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert!(
+        mismatches().await >= before + 2.0,
+        "the two foreign entities are counted"
+    );
+
+    let ended = Deployment {
+        check: UrnOwnerPrefix::Warn {
+            until: std::time::SystemTime::now() - hour,
+        },
+        ..FOUR
+    };
+    let (status, problem, asked) = send(
+        &ended,
+        endpoint(PROJECT, "public"),
+        "/entities",
+        device("urn:ngsi-ld:Device:fi_hel:praha:1"),
+    )
+    .await;
+    assert_refused_on_id(status, &problem, &asked, "warn past its end");
+    let (status, problem, _) = send(
+        &ended,
+        endpoint(PROJECT, "public"),
+        "/entities",
+        device("urn:ngsi-ld:Device:sk_bbsk:1"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{problem}");
 }

@@ -19,9 +19,9 @@ use crate::handlers::respond::json_response;
 use crate::handlers::schema;
 use crate::handlers::writes::{
     accepted_payload, batch_entry_id, batch_result, body_length, empty_space, filled_units,
-    hidden_refusal, judge_write, merged_batch, names_no_tenant, owned_guarded, owner_refusal,
-    quality_judged, refusal_entries, refused, unsupported_media_type, with_filled_units,
-    write_share, HeldDelete, HeldWrite, Judged, Refused,
+    foreign_owners, hidden_refusal, judge_write, merged_batch, names_no_tenant, owned_guarded,
+    owner_refusal, quality_judged, refusal_entries, refused, unsupported_media_type,
+    with_filled_units, write_share, HeldDelete, HeldWrite, Judged, Refused,
 };
 use crate::middleware::response::RESULTS_RESTRICTED;
 use crate::pdp::evaluator::Constraints;
@@ -1190,19 +1190,30 @@ pub(crate) async fn view_payload(
     let before = sent.len();
     // The Organization owning the space, when its URNs must name it (ADR-N-068).
     let owner = gateway.urn_owner(&endpoint.project);
-    let owner_id = owner.as_deref().map(jc_core::names::org_id);
+    let owner_id = owner
+        .as_ref()
+        .map(|owner| jc_core::names::org_id(&owner.domain));
     one_entity_per_create(endpoint, operation, sent, owner_id.as_deref())?;
     if operation.is_write() {
         // A caller the Endpoint's Policy refuses learns that alone, not why the body would be
         // refused (DM-61's model, a hidden attribute, another owner's URN), as `model_judged`
         // answers too.
         let held = endpoint_held(endpoint, path, operation, sent, divided).and_then(|()| {
-            match owner.as_deref().and_then(|domain| owner_refusal(sent, operation, domain)) {
-                Some(problem) => {
-                    tracing::info!(slug = %endpoint.slug, "write refused: the URN names another owner");
-                    Err(Box::new(problem.into_response()))
-                }
+            let Some(owner) = &owner else {
+                return Ok(());
+            };
+            let foreign = foreign_owners(sent, operation, &owner.domain);
+            match foreign.first() {
                 None => Ok(()),
+                // The re-mint window (T-6793): written, and seen in the log and the metric.
+                Some(_) if owner.warn => {
+                    gateway.urn_owner_mismatched(&endpoint.slug, &endpoint.space, &foreign);
+                    Ok(())
+                }
+                Some((raw, _)) => {
+                    tracing::info!(slug = %endpoint.slug, "write refused: the URN names another owner");
+                    Err(Box::new(owner_refusal(raw, &owner.domain).into_response()))
+                }
             }
         });
         if let Err(answer) = held {
