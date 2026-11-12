@@ -668,8 +668,7 @@ impl StreamDeployer {
         // once (T-4060).
         let mut sends: Vec<(usize, String, String, Value)> = Vec::new();
         // The pipelines that do not wait for pushes, for the run queue (PL-78).
-        let mut queued: std::collections::BTreeMap<(String, String), Planned> =
-            std::collections::BTreeMap::new();
+        let mut queued = Queued::new();
         // What the queue holds, so a stream this pass finds unchanged is handed over by its
         // digest and deflated only when it changed (T-6820).
         let known = self
@@ -1471,16 +1470,16 @@ impl StreamDeployer {
 
 /// Puts one rendered pipeline where it runs (PL-78): a resident one is sent to the runner on
 /// this pass, any other joins the run queue as one run on its clock.
+/// The run-and-delete pipelines of one pass, for the run queue (PL-78).
+type Queued = std::collections::BTreeMap<(String, String), Planned>;
+
 fn place(
     (ns, name, mut stream): (&str, String, Value),
     resident: bool,
     spec: &PipelineSpec,
     sends: &mut Vec<(usize, String, String, Value)>,
     outcomes: &mut Vec<(String, String, StreamOutcome)>,
-    (queued, known): (
-        &mut std::collections::BTreeMap<(String, String), Planned>,
-        &HashMap<run_queue::Key, [u8; 32]>,
-    ),
+    (queued, known): (&mut Queued, &HashMap<run_queue::Key, [u8; 32]>),
 ) {
     if resident {
         sends.push((outcomes.len(), ns.to_owned(), name.clone(), stream));
