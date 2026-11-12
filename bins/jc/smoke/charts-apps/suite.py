@@ -192,6 +192,9 @@ NO_TOKEN = "does not carry"
 # The Portal's own words for a source answer it does not pass on (crates/portal/src/grafana.rs
 # panel_reason): the gateway's problem body names its type URL, so its 403 or 404 arrives as this.
 SOURCE_SILENT = "the panel's datasource did not answer"
+# The Portal's refusal state for a person the gateway refuses (crates/portal/src/grafana.rs
+# PERSON_REFUSED, sent as `accessDenied`): the page draws a lock, not an alert.
+PERSON_REFUSED = "no Policy of this Endpoint lets you read its data"
 
 
 def panel_answer(st: int, ans) -> tuple[list, str]:
@@ -225,6 +228,8 @@ def judge_refused(status: int, frames, error: str, source_answered: bool = False
         return FAIL, actual, "LEAK: data of a closed Endpoint for a person no Policy grants"
     if status == 200 and re.search(r"upstream status 40[134]\b", error or ""):
         return PASS, actual, "refused upstream"
+    if status == 200 and PERSON_REFUSED in (error or ""):
+        return PASS, actual, "refused: the panel's refusal state"
     if status == 200 and SOURCE_SILENT in (error or ""):
         if source_answered:
             return PASS, actual, "refused: the same source answered the reader with rows (portal.panel)"

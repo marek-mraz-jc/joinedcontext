@@ -343,6 +343,17 @@
           }
         },
         {
+          "name": "portal-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "portal-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
           "name": "context-gateway-simulate-audience",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",

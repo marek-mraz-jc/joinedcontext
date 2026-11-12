@@ -639,6 +639,39 @@ def add_embedder_scope(realm: dict) -> tuple[dict, bool]:
     return out, changed
 
 
+# The Portal's own audience on its sign-in token: a Portal page's read of a closed Endpoint
+# exchanges that token (crates/portal auth/endpoint_token.rs), and the exchange admits only a
+# subject token naming the requester, portal-api (Keycloak 26's standard exchange, kaisatsu
+# oidc handlers.rs). jc has no edge to mint the person's token instead, so a realm exported
+# from behind one lacks the mapper (jc's shipped realm has it).
+PORTAL_AUDIENCE = {
+    "name": "portal-api-audience",
+    "protocol": "openid-connect",
+    "protocolMapper": "oidc-audience-mapper",
+    "consentRequired": False,
+    "config": {"included.client.audience": "portal-api", "access.token.claim": "true",
+               "id.token.claim": "false"},
+}
+
+
+def add_portal_audience(realm: dict) -> tuple[dict, bool]:
+    """portal-api's audience mapper naming itself, on a realm whose portal-api client has no mapper
+    naming portal-api. Nothing else changes. Answers the realm and whether it changed."""
+    def names_itself(m: dict) -> bool:
+        cfg = m.get("config") or {}
+        return (m.get("protocolMapper") == "oidc-audience-mapper"
+                and "portal-api" in (cfg.get("included.client.audience"), cfg.get("included.custom.audience")))
+    changed = False
+    clients = []
+    for c in realm.get("clients") or []:
+        mappers = c.get("protocolMappers") or []
+        if c.get("clientId") == "portal-api" and not any(names_itself(m) for m in mappers):
+            c = dict(c, protocolMappers=list(mappers) + [PORTAL_AUDIENCE])
+            changed = True
+        clients.append(c)
+    return (dict(realm, clients=clients), True) if changed else (realm, False)
+
+
 # jc's in-process model proxy introspects the assistant's tokens as `agent-proxy` and admits only a
 # token naming it in its audience (bins/jc/src/setup.rs PROXY_CLIENT, assistant_realm_file). Prod's
 # realm has none: its proxy is `<project>-agent-proxy`, federated-jwt with token exchange.
@@ -1079,6 +1112,9 @@ def cmd_realms(a):
         clean, accounts = add_service_accounts(clean, json.loads(SHIPPED_REALM.read_text()))
         if accounts:
             print(f"realm {name}: service accounts of {accounts} taken from jc's shipped realm (the export has none)")
+        clean, portal_aud = add_portal_audience(clean)
+        if portal_aud:
+            print(f"realm {name}: portal-api's sign-in token names portal-api (Endpoint reads exchange it)")
         clean, embedder = add_embedder_scope(clean)
         if embedder:
             print(f"realm {name}: jc-assistant may ask scope embedder (the shared embedder's audience)")

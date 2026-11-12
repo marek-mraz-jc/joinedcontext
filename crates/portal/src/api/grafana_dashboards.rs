@@ -1324,6 +1324,38 @@ mod tests {
         assert_eq!(person_headers(&requests), [Some(EXCHANGED.to_owned())]);
     }
 
+    /// T-6783: the gateway refusing the person's exchanged token (no Policy names them) is the
+    /// panel's refusal state; the same refusal of a public panel's anonymous read stays an error.
+    #[tokio::test]
+    async fn a_person_the_gateway_refuses_meets_the_refusal_state_not_a_failure() {
+        let server = service("grafana").await;
+        Mock::given(method("GET"))
+            .and(path("/api/dashboards/live/render"))
+            .respond_with(ResponseTemplate::new(502).set_body_json(json!({
+                "message": "upstream status 403: {\"type\":\"https://joinedcontext.com/errors/forbidden\"}"
+            })))
+            .mount(&server)
+            .await;
+        let mut state = world(Some(&server));
+        let _realm = exchanging(&mut state).await;
+        let data = panel_with(admin(), &state, 3, &[], bearer())
+            .await
+            .expect("an answer");
+        assert_eq!(
+            data.access_denied.as_deref(),
+            Some(crate::grafana::PERSON_REFUSED),
+            "{data:?}"
+        );
+        assert!(data.error.is_none() && data.frames.is_empty(), "{data:?}");
+        let public = panel_with(admin(), &state, 1, &[], bearer())
+            .await
+            .expect("an answer");
+        assert!(
+            public.access_denied.is_none() && public.error.is_some(),
+            "{public:?}"
+        );
+    }
+
     #[tokio::test]
     async fn a_cookie_session_without_a_kept_token_reads_no_members_only_panel_and_says_sign_in() {
         let server = service("grafana").await;
