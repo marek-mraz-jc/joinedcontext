@@ -2328,14 +2328,18 @@ fn judge_at_approval(
         .iter()
         .filter_map(|e| serde_json::to_value(e).ok())
         .collect();
-    crate::references::BUNDLE
-        .sync_scope(bundle, || {
-            judged.iter().try_for_each(|e| {
-                let project = e.metadata.namespace.as_deref().unwrap_or(project);
-                crate::judge::manifest_at_approval(&ground, project, e)
-            })
+    crate::references::BUNDLE.sync_scope(bundle, || {
+        judged.iter().try_for_each(|e| {
+            let project = e.metadata.namespace.as_deref().unwrap_or(project);
+            crate::judge::manifest_at_approval(&ground, project, e)
+                .map_err(|e| ApiError::Conflict(crate::judge::reason(&e)))?;
+            // A binding's scope names an Organization or project that is there, or one this
+            // Change creates (T-6806).
+            let manifest =
+                serde_json::to_value(e).map_err(|e| ApiError::Internal(e.to_string()))?;
+            crate::permissions::scopes_name_a_target(&state.mirror, &manifest, None)
         })
-        .map_err(|e| ApiError::Conflict(crate::judge::reason(&e)))
+    })
 }
 
 /// Whether this file of a change publishes in the public catalogue (EP-142) or makes an App

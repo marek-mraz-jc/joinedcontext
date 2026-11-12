@@ -620,7 +620,7 @@ pub fn may_try(
         return administration::may_decide(&effective, project);
     }
     match missing_right(op.name, &effective, input.and_then(named_kind)) {
-        None => proposed_target(op.name, &effective, input),
+        None => proposed_target(op.name, &state.mirror, &effective, input),
         Some(what) => Err(OpError::Api(ApiError::Denied(format!(
             "{} needs a role with {what} in project {project} (PF-50)",
             op.title
@@ -630,9 +630,11 @@ pub fn may_try(
 
 /// A proposal's manifest, checked here as the proposal checks it (`proposals.rs`
 /// `record_verdict`): a grant narrowed to one Organization or space admits its own targets
-/// only, so a person is never asked to confirm a proposal the Portal then refuses.
+/// only, and a binding's scope names an Organization or project that is there (T-6806), so a
+/// person is never asked to confirm a proposal the Portal then refuses.
 fn proposed_target(
     name: &str,
+    mirror: &crate::store::Mirror,
     effective: &crate::permissions::Effective,
     input: Option<&Value>,
 ) -> Result<(), OpError> {
@@ -648,6 +650,7 @@ fn proposed_target(
     };
     effective
         .check(kind, Verb::Propose, Some(manifest))
+        .and_then(|()| crate::permissions::scopes_name_a_target(mirror, manifest, None))
         .map_err(OpError::Api)
 }
 

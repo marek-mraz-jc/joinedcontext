@@ -971,6 +971,126 @@ async fn a_project_administrator_decides_an_access_request_and_no_other_organiza
     assert_eq!(status, StatusCode::CONFLICT, "decided once: {body}");
 }
 
+/// T-6806 (jc-prod chg-org-00000001): a RoleBinding scoped to an Organization or project that is
+/// not there is refused with 422 at every door, its check included, naming the scope field; a
+/// binding to one that is there is still proposed, and a dormant one already in force is not
+/// judged again, so it can still be changed or removed.
+#[tokio::test]
+async fn a_binding_scoped_to_an_organization_or_project_that_is_not_there_is_refused_at_every_door()
+{
+    let state = scenario_world().await;
+    let who = platform();
+    let bound = |name: &str, scope: Value| {
+        manifest(
+            "RoleBinding",
+            name,
+            ORG_NAMESPACE,
+            json!({ "subjects": [{ "user": "3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14" }], "role": "steward", "scope": scope }),
+        )
+    };
+    for (scope, field) in [
+        (
+            json!({ "organization": "no-such-org" }),
+            "spec.scope.organization",
+        ),
+        (
+            json!({ "project": "no-such-project" }),
+            "spec.scope.project",
+        ),
+    ] {
+        let ghost = bound("dana-ghost", scope);
+        // REST: the check answers the refusal as its finding, the proposal as a 422.
+        let check = common::checked_send(
+            &state,
+            who.clone(),
+            "POST",
+            "/api/v1/projects/org/rolebindings?dryRun=All",
+            Some(ghost.clone()),
+        )
+        .await;
+        let verdict: Value = serde_json::from_str(&check.text).expect("a verdict");
+        assert_eq!(verdict["valid"], json!(false), "{}", check.text);
+        assert!(
+            verdict["verdict"]["findings"]
+                .as_array()
+                .is_some_and(|f| f.iter().any(|f| f["path"] == field)),
+            "{}",
+            check.text
+        );
+        let answer = common::checked_send(
+            &state,
+            who.clone(),
+            "POST",
+            "/api/v1/projects/org/rolebindings",
+            Some(ghost.clone()),
+        )
+        .await;
+        assert_eq!(
+            answer.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{}",
+            answer.text
+        );
+        assert!(
+            answer.names_field(field, "does not exist"),
+            "{}",
+            answer.text
+        );
+        // The operation registry, check first as a client runs it.
+        let (status, body) = step(
+            &who,
+            &state,
+            ORG_NAMESPACE,
+            "jc_resource_propose",
+            json!({ "manifest": ghost }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert!(body.to_string().contains(field), "{body}");
+        // MCP tools/call.
+        let answer = mcp_rpc(
+            &mcp(through_client(who.clone())),
+            &state,
+            json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
+                "name": "jc_resource_propose",
+                "arguments": { "project": ORG_NAMESPACE, "manifest": ghost } } }),
+        )
+        .await;
+        assert_eq!(answer["result"]["isError"], json!(true), "{answer}");
+        assert!(answer.to_string().contains(field), "{answer}");
+    }
+    for (name, scope) in [
+        ("dana-hel", json!({ "organization": "hel" })),
+        ("dana-hel-bus", json!({ "project": HEL_PROJECT })),
+    ] {
+        let answer = common::checked_send(
+            &state,
+            who.clone(),
+            "POST",
+            "/api/v1/projects/org/rolebindings?dryRun=All",
+            Some(bound(name, scope)),
+        )
+        .await;
+        assert_eq!(answer.status, StatusCode::OK, "{name}: {}", answer.text);
+        assert!(
+            answer.text.contains(r#""valid":true"#),
+            "{name}: {}",
+            answer.text
+        );
+    }
+    let dormant = bound("dana-dormant", json!({ "organization": "smartcity" }));
+    approved(&state, &dormant);
+    let answer = common::checked_send(
+        &state,
+        who,
+        "POST",
+        "/api/v1/projects/org/rolebindings?dryRun=All",
+        Some(dormant),
+    )
+    .await;
+    assert!(!answer.text.contains("spec.scope"), "{}", answer.text);
+}
+
 /// Found by the smoke suite `mcp` on a rehearsal: an organization administrator's proposal of
 /// another Organization was answered `input_required`, so the person was asked to confirm a
 /// proposal the Portal then refuses. The MCP door refuses it before asking.
