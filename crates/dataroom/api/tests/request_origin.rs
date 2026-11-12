@@ -180,11 +180,31 @@ async fn two_organizations() -> DataroomState {
 async fn ids_and_help_links_name_the_canonical_base_on_every_host() {
     let reads = [
         // (mount, decided Organization, canonical base)
-        (mount("http", "other.city.test", ""), Some("com_beta"), "http://other.city.test"),
-        (mount("https", "city.test", "/com_beta/opendata"), Some("com_beta"), "http://other.city.test"),
-        (mount("http", "localhost:42301", "/com_beta/opendata"), Some("com_beta"), "http://other.city.test"),
-        (mount("http", "data.city.test", "/opendata"), None, "https://data.city.test/opendata"),
-        (mount("https", "city.test", "/com_alpha/opendata"), Some("com_alpha"), "https://data.city.test/opendata"),
+        (
+            mount("http", "other.city.test", ""),
+            Some("com_beta"),
+            "http://other.city.test",
+        ),
+        (
+            mount("https", "city.test", "/com_beta/opendata"),
+            Some("com_beta"),
+            "http://other.city.test",
+        ),
+        (
+            mount("http", "localhost:42301", "/com_beta/opendata"),
+            Some("com_beta"),
+            "http://other.city.test",
+        ),
+        (
+            mount("http", "data.city.test", "/opendata"),
+            None,
+            "https://data.city.test/opendata",
+        ),
+        (
+            mount("https", "city.test", "/com_alpha/opendata"),
+            Some("com_alpha"),
+            "https://data.city.test/opendata",
+        ),
     ];
     for (at, org, base) in reads {
         let seen = at.public_base();
@@ -203,14 +223,34 @@ async fn ids_and_help_links_name_the_canonical_base_on_every_host() {
             help.contains(&format!("\"help\":\"{base}/api/3/action/help_show")),
             "{seen}: {help}"
         );
-        let (status, dcat) = call(two_organizations().await, at, org, "GET", "/catalog.jsonld", None, None).await;
+        let (status, dcat) = call(
+            two_organizations().await,
+            at,
+            org,
+            "GET",
+            "/catalog.jsonld",
+            None,
+            None,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK, "{seen}: {dcat}");
         assert!(dcat.contains(&format!("{base}/")), "{seen}: {dcat}");
-        for foreign in ["raw.header.test", "localhost", "https://other.city.test", "http://data.city.test"] {
-            assert!(!dcat.contains(foreign) && !help.contains(foreign), "{seen} names {foreign}");
+        for foreign in [
+            "raw.header.test",
+            "localhost",
+            "https://other.city.test",
+            "http://data.city.test",
+        ] {
+            assert!(
+                !dcat.contains(foreign) && !help.contains(foreign),
+                "{seen} names {foreign}"
+            );
         }
         if seen.contains("/com_") {
-            assert!(!dcat.contains("city.test/com_"), "{seen}: an id follows the request");
+            assert!(
+                !dcat.contains("city.test/com_"),
+                "{seen}: an id follows the request"
+            );
         }
     }
 }
@@ -227,9 +267,7 @@ async fn organization_show_of_one_organization_lists_no_dataset_of_another() {
     let (token_a, token_b) = ("a".repeat(40), "b".repeat(40));
     let (bind_a, grant_a) = portal_publisher_on(&token_a, org, a, "com_alpha").unwrap();
     let (bind_b, grant_b) = portal_publisher_on(&token_b, org, b, "com_beta").unwrap();
-    let state = two_organizations()
-        .await
-        .with_tokens(vec![bind_a, bind_b]);
+    let state = two_organizations().await.with_tokens(vec![bind_a, bind_b]);
     let state = DataroomState {
         authorizer: Arc::new(PolicyAuthorizer::new(vec![grant_a, grant_b])),
         ..state
@@ -274,8 +312,20 @@ async fn organization_show_of_one_organization_lists_no_dataset_of_another() {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{who}: {body}");
-        assert!(body.contains(&format!("{who}-budget")), "{who}: {body}");
-        assert!(!body.contains(other), "{who} lists {other}: {body}");
+        assert!(body.contains("\"package_count\":1"), "{who}: {body}");
+        assert!(!body.contains(other), "{who} names {other}: {body}");
+        let (_, list) = call(
+            state.clone(),
+            on(who),
+            Some(who),
+            "GET",
+            &format!("/api/3/action/package_search?fq=organization:{who}"),
+            None,
+            None,
+        )
+        .await;
+        assert!(list.contains(&format!("{who}-budget")), "{who}: {list}");
+        assert!(!list.contains(other), "{who} lists {other}: {list}");
         // The other Organization's organisation is not in this catalogue at all.
         let (status, _) = call(
             state.clone(),

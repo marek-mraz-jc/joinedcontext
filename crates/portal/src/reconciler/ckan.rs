@@ -1640,7 +1640,11 @@ mod tests {
         // A Portal without Organization catalogues keeps the instance's catalogue, and each
         // Organization's Endpoint still lands in its own Organization's CKAN organisation.
         let plain = CkanSync::new("portal.example");
-        for (project, org) in [("bratislava", "ba"), ("helsinki", "hel"), ("unowned", "hel")] {
+        for (project, org) in [
+            ("bratislava", "ba"),
+            ("helsinki", "hel"),
+            ("unowned", "hel"),
+        ] {
             let mut asked = target(project);
             // The Endpoint asks for another Organization's organisation: refused by routing.
             asked.publication.organization = Some("hel-fi".to_owned());
@@ -1665,7 +1669,10 @@ mod tests {
         )
         .expect("a repository");
         let routed = CkanSync::new("portal.example").routed(&repo, target("helsinki"));
-        assert_eq!(routed.instance.organization_default.as_deref(), Some("hel-fi"));
+        assert_eq!(
+            routed.instance.organization_default.as_deref(),
+            Some("hel-fi")
+        );
         assert_eq!(routed.publication.organization, None);
     }
 }

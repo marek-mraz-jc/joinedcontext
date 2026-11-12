@@ -597,13 +597,19 @@ async fn follow_forge(
     }
 }
 
-/// Puts the mount's prefix back in front of the path `jc-router` stripped: the gateway routes on
+/// Puts the mount's prefix back in front of the path `jc-router` stripped (its `RoutePrefix`,
+/// without the Organization's segment of a shared host): the gateway routes on
 /// the whole path (`/api/endpoint/{slug}/...`) at the paths of `Module::root_paths`.
 async fn whole_path(mut req: Request, next: Next) -> Response {
     let prefix = req
         .extensions()
-        .get::<Mount>()
-        .map(|m| m.path_prefix.clone())
+        .get::<jc_router::RoutePrefix>()
+        .map(|p| p.0.clone())
+        .or_else(|| {
+            req.extensions()
+                .get::<Mount>()
+                .map(|m| m.path_prefix.clone())
+        })
         .unwrap_or_default();
     if !prefix.is_empty() {
         let path = match req.uri().path() {
@@ -744,18 +750,18 @@ pub fn by_organization(
 ) -> Router {
     let base = |h: &str| format!("{scheme}://{h}");
     // Organization -> (its API link base, its own API and MCP hosts with their link base).
-    let links: std::sync::Arc<BTreeMap<String, (String, BTreeMap<String, String>)>> =
-        std::sync::Arc::new(
-            orgs.iter()
-                .map(|org| {
-                    let own = [&org.hosts.api, &org.hosts.mcp]
-                        .map(|h| (bare(h).to_owned(), base(h)))
-                        .into_iter()
-                        .collect();
-                    (org.name.clone(), (base(&org.hosts.api), own))
-                })
-                .collect(),
-        );
+    type Links = BTreeMap<String, (String, BTreeMap<String, String>)>;
+    let links: std::sync::Arc<Links> = std::sync::Arc::new(
+        orgs.iter()
+            .map(|org| {
+                let own = [&org.hosts.api, &org.hosts.mcp]
+                    .map(|h| (bare(h).to_owned(), base(h)))
+                    .into_iter()
+                    .collect();
+                (org.name.clone(), (base(&org.hosts.api), own))
+            })
+            .collect(),
+    );
     router.layer(axum::middleware::from_fn(
         move |mut req: Request, next: Next| {
             let links = links.clone();

@@ -233,6 +233,20 @@ puts each Organization on its own hosts: `name` (the JC Organization's `metadata
   hosts every gateway listing (`/api/endpoints`, the MCP hub, `/catalog.jsonld`, `/catalog.ttl`,
   `/cs`) holds that Organization's Endpoints alone, and another Organization's Endpoint, space
   or MCP server answers 404.
+- With Organizations configured jc keeps a host registry (docs/API/15-addresses-v1.md §2,
+  `jc_router::HostTable`): each Organization's hosts are bound to it; the base host, every other
+  mounted host and the loopback names are shared, where a first path segment naming an
+  Organization selects it (`/hel/opendata/...`). A host outside the registry answers 421, an
+  unknown `_`-shaped segment or another Organization's name on a bound host the router's 404.
+  On a bound host the prefixed form (`/hel/...`) answers in place for the API and 308 to the
+  prefix-less path for a page. The router decides the Organization once (`jc_router::Organization`);
+  the Portal pin, the gateway's listings and dataroom's catalogue read it.
+- `[[hosts]]` binds a further host to an Organization and maps its root below it:
+  `host = "data.example.com"`, `organization = "hel"`, `root = "/opendata"` serves the
+  Organization's catalogue at `https://data.example.com/dataset/{name}`. A row names an
+  `[[organizations]]` entry and a host no other row or Organization holds.
+- dataroom writes every absolute id and link under the catalogue's canonical base
+  (`{scheme}://{opendata host}`), whichever registered host read it, so a DCAT `@id` never moves.
 - kaisatsu stays on one host and one issuer for every Organization.
 
 ## 5. Rollback per step

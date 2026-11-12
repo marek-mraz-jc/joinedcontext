@@ -234,9 +234,8 @@ pub(crate) fn with_request_host(router: Router) -> Router {
             }
             let org = req.extensions().get::<jc_router::Organization>().cloned();
             if let Some(org) = org {
-                req.extensions_mut().insert(
-                    joinedcontext_portal::organization_host::RequestOrganization(org.0),
-                );
+                req.extensions_mut()
+                    .insert(joinedcontext_portal::organization_host::RequestOrganization(org.0));
             }
             next.run(req).await
         },

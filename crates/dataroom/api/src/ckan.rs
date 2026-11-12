@@ -120,9 +120,11 @@ async fn dispatch_ckan_action(
     let (ctx, cat) = match state.resolve_context(&headers).await {
         Ok(v) => v,
         Err(e) => {
-            let base = crate::request_origin()
-                .map(|o| o.base())
-                .or_else(|| state.public_base.clone())
+            // The configured base first: a request's own address is not echoed back.
+            let base = state
+                .public_base
+                .clone()
+                .or_else(|| crate::request_origin().map(|o| o.base()))
                 .unwrap_or_else(|| "https://dataroom.local".into());
             return ckan_err(&base, &action, e);
         }

@@ -219,7 +219,11 @@ impl HostTable {
                 } else {
                     rest
                 };
-                match under(&inner, root).filter(|_| page) {
+                // `//x` or `/\x` as a Location is another site's address: such a page is served
+                // in place instead of redirected.
+                let canonical = under(&inner, root)
+                    .filter(|c| page && !c.starts_with("//") && !c.starts_with("/\\"));
+                match canonical {
                     Some(canonical) => Placed::Canonical(if canonical.is_empty() {
                         "/".into()
                     } else {
@@ -454,6 +458,14 @@ mod tests {
                     .into()
             )
         );
+        // A canonical path that a browser reads as another site is no redirect.
+        for path in [
+            "/com_example/data//evil.example/x",
+            "/com_example//evil.example",
+        ] {
+            let (status, _) = call(&jc, "opendata.example.com", path, PAGE).await;
+            assert_ne!(status, StatusCode::PERMANENT_REDIRECT, "{path}");
+        }
         // A write is never redirected, whatever it accepts.
         let post = Request::builder()
             .method("POST")

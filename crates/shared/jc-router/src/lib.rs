@@ -31,6 +31,12 @@ pub use hosts::{HostRow, HostTable, Organization};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClientAddr(pub IpAddr);
 
+/// The prefix of the mount entry a request matched, as the router stripped it from the path.
+/// [`Mount::path_prefix`] is the public one, which also carries the Organization's segment on a
+/// shared host; a module that routes on the whole path puts this one back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoutePrefix(pub String);
+
 /// Resolved mount context passed to a module router via request extensions and at router build time (W9).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -539,6 +545,8 @@ impl JcRouter {
             path_prefix: via.public_prefix(&entry.prefix),
         };
         req.extensions_mut().insert(mount);
+        req.extensions_mut()
+            .insert(RoutePrefix(entry.prefix.clone()));
         match organization {
             Some(org) => {
                 req.extensions_mut().insert(Organization(org));
