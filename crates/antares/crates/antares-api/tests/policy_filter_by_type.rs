@@ -788,6 +788,37 @@ async fn a_slow_type_does_not_cut_the_types_listed_after_it() {
     assert_eq!(listed, fast, "the slow type cut the names after it");
 }
 
+/// T-6800: the rules' beside reads run inside the discovery deadline. On a
+/// restored copy under load each took 1-2 s; one after the other per rule they
+/// spent the whole 6 s, so zilina-doprava's Endpoint (two rules per type)
+/// listed none of its three types. Six rules over three types, each read
+/// 2.5 s: read once per type set and side by side, they leave the probes time.
+#[tokio::test(start_paused = true)]
+async fn slow_beside_reads_do_not_spend_the_types_deadline() {
+    let names = ["OffStreetParking", "TrafficFlowObserved", "Vehicle"];
+    let rules: Vec<(&str, &[&str])> = names
+        .iter()
+        .flat_map(|n| [(*n, &[][..]), (*n, &["name"][..])])
+        .collect();
+    let mut st = state(picks(&rules)).await;
+    for n in names {
+        create(&st, json!({"id": format!("urn:ngsi-ld:{n}:1"), "type": n})).await;
+    }
+    st.store = Arc::new(crate::common::Double::slowing_beside(
+        st.store.clone(),
+        std::time::Duration::from_millis(2500),
+    ));
+    let (code, body) = send(&st, "GET", "/ngsi-ld/v1/types", None).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let listed: Vec<&str> = body["typeList"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no typeList: {body}"))
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(listed, names, "the beside reads cut the listing");
+}
+
 /// Zone A: the square (0,0)-(1,1); a Car at x 0.5 is inside, at x 5 not.
 fn zone_a() -> Box<antares_ql::geo::GeoQuery> {
     let params = std::collections::HashMap::from([
