@@ -184,7 +184,7 @@ window.jcFeedLink = (function () {
     var id = "jc-subscribe-facet-" + i, wrap = document.createElement("div");
     var l = document.createElement("label"); l.htmlFor = id; l.textContent = label(attr);
     var input = document.createElement("input");
-    input.id = id; input.className = "form-control"; input.type = "text"; input.autocomplete = "off";
+    input.id = id; input.className = "form-control"; input.type = "text"; input.autocomplete = "off"; input.placeholder = box.getAttribute("data-jc-pick") || "";
     input.setAttribute("list", id + "-values"); input.setAttribute("aria-describedby", id + "-hint");
     var options = document.createElement("datalist"); options.id = id + "-values";
     values.forEach(function (v) {

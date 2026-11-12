@@ -1335,6 +1335,14 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
         "Kezdjen egy naptárral vagy hírcsatornával, majd válasszon települést, műfajt, helyet vagy dátumokat: csak az egyező tételek érkeznek, és a lenti cím a választást követi.",
     );
     add(
+        "subscribe_pick",
+        "Choose from the list or type",
+        "Vyberte zo zoznamu alebo píšte",
+        "Vyberte ze seznamu nebo pište",
+        "Aus der Liste wählen oder tippen",
+        "Válasszon a listából vagy írjon",
+    );
+    add(
         "subscribe_preset",
         "Calendar or feed",
         "Kalendár alebo kanál",
@@ -1491,11 +1499,11 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
     );
     add(
         "subscribe_preview_none",
-        "No upcoming event matches this query.",
-        "Tomuto dopytu nezodpovedá žiadne nadchádzajúce podujatie.",
-        "Tomuto dotazu neodpovídá žádná nadcházející akce.",
-        "Kein kommender Termin passt zu dieser Abfrage.",
-        "Egyetlen közelgő esemény sem felel meg a lekérdezésnek.",
+        "No upcoming event matches this query; widen the dates or empty a field. The link still works and fills as events arrive.",
+        "Tomuto dopytu nezodpovedá žiadne nadchádzajúce podujatie; rozšírte dátumy alebo vyprázdnite niektoré pole. Odkaz platí a naplní sa, keď podujatia pribudnú.",
+        "Tomuto dotazu neodpovídá žádná nadcházející akce; rozšiřte data nebo vyprázdněte některé pole. Odkaz platí a naplní se, až akce přibudou.",
+        "Kein kommender Termin passt zu dieser Abfrage; erweitern Sie die Daten oder leeren Sie ein Feld. Der Link bleibt gültig und füllt sich mit neuen Terminen.",
+        "Egyetlen közelgő esemény sem felel meg a lekérdezésnek; bővítse a dátumokat vagy ürítsen ki egy mezőt. A link érvényes marad, és megtelik, ahogy események érkeznek.",
     );
     add(
         "subscribe_preview_loading",

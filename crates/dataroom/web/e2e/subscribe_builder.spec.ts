@@ -11,7 +11,7 @@ const PAGE = join(process.env.DATAROOM_PAGE_OUT ?? "test-results", "builder.html
 const ASSETS = join(__dirname, "..", "assets");
 const ORIGIN = "https://opendata.dev.joinedcontext.com";
 const SHOTS = process.env.DATAROOM_SHOTS ?? "test-results";
-const NONE = "Tomuto dopytu nezodpovedá žiadne nadchádzajúce podujatie.";
+const NONE = /^Tomuto dopytu nezodpovedá žiadne nadchádzajúce podujatie; rozšírte dátumy/;
 
 const TOWNS = [
   { value: "Banská Bystrica", count: 41 },

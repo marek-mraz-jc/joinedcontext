@@ -888,6 +888,7 @@ fn d3_dataset_page_builds_a_calendar_from_choices_on_its_own_endpoints_output() 
         "subscribe_preset",
         "subscribe_preset_ics",
         "subscribe_preset_feed",
+        "subscribe_pick",
     ] {
         assert!(section.contains(&esc_t(key, "sk")), "{key}");
     }
