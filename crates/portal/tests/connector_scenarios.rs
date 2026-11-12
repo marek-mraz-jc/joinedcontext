@@ -2077,18 +2077,16 @@ impl Harness {
                     "sub": "service-account-scn-pipelines", "exp": now + 600, "iat": now,
                 }));
                 for message in messages {
-                    let status = server::internal_app(self.state.clone())
-                        .oneshot(
-                            Request::builder()
-                                .method("POST")
-                                .uri(path)
-                                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                                .body(Body::from(message.to_string()))
-                                .map_err(|e| e.to_string())?,
-                        )
-                        .await
-                        .map_err(|e| e.to_string())?
-                        .status();
+                    let request = Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .body(Body::from(message.to_string()))
+                        .map_err(|e| e.to_string())?;
+                    let Ok(response) = server::internal_app(self.state.clone())
+                        .oneshot(request)
+                        .await;
+                    let status = response.status();
                     if status != StatusCode::NO_CONTENT {
                         return Err(format!("runner: the capture answered {status}"));
                     }

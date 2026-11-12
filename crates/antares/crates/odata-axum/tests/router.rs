@@ -71,7 +71,7 @@ async fn get_with(app: Router, uri: &str, headers: &[(&str, &str)]) -> Result<An
         request = request.header(*name, *value);
     }
     let request = request.body(Body::empty()).map_err(|e| e.to_string())?;
-    let response = app.oneshot(request).await.map_err(|e| e.to_string())?;
+    let Ok(response) = app.oneshot(request).await;
     let header = |name: &str| {
         response
             .headers()
@@ -636,10 +636,7 @@ async fn a_write_on_the_documents_is_an_odata_405() -> Result<(), String> {
             .header("OData-MaxVersion", "4.01")
             .body(Body::empty())
             .map_err(|e| e.to_string())?;
-        let response = app(state())
-            .oneshot(request)
-            .await
-            .map_err(|e| e.to_string())?;
+        let Ok(response) = app(state()).oneshot(request).await;
         assert_eq!(
             response.status(),
             StatusCode::METHOD_NOT_ALLOWED,
@@ -674,10 +671,7 @@ async fn metadata_carries_a_strong_etag_per_serialisation_and_revalidates() -> R
             request = request.header(k, v);
         }
         let request = request.body(Body::empty()).map_err(|e| e.to_string())?;
-        let response = app(state())
-            .oneshot(request)
-            .await
-            .map_err(|e| e.to_string())?;
+        let Ok(response) = app(state()).oneshot(request).await;
         let header = |name: &str| {
             response
                 .headers()
@@ -743,10 +737,7 @@ async fn the_service_document_names_the_metadata_documents_tag() -> Result<(), S
     let request = Request::get("/odata/$metadata")
         .body(Body::empty())
         .map_err(|e| e.to_string())?;
-    let response = app(tagged.clone())
-        .oneshot(request)
-        .await
-        .map_err(|e| e.to_string())?;
+    let Ok(response) = app(tagged.clone()).oneshot(request).await;
     let header = response.headers().get("etag").and_then(|v| v.to_str().ok());
     assert_eq!(header, tag.as_deref(), "the XML document's own tag");
     assert_eq!(xml.status, StatusCode::OK);
