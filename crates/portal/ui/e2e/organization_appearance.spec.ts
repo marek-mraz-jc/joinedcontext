@@ -112,7 +112,7 @@ test.describe("an Organization's appearance", () => {
       await expect(page.getByText("A colour as # and six hexadecimal digits, such as #0b5394.").first()).toBeVisible();
       expect(proposed).toHaveLength(0);
       // The footer names what is left to fix and leads to it, where it said every required field was filled.
-      await expect(page.getByRole("alert").filter({ hasText: "Fields to fix: 1. First: Primary, in How it looks." })).toBeVisible();
+      await expect(page.getByRole("status").filter({ hasText: "Fields to fix: 1. First: Primary, in How it looks." })).toBeVisible();
       await expect(page.getByTestId("required-count")).toHaveCount(0);
       const showFirst = page.getByRole("button", { name: "Show the first field to fix" });
       await showFirst.scrollIntoViewIfNeeded();

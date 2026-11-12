@@ -212,8 +212,9 @@ export function SchemaForm<T>(props: SchemaFormProps<T>): React.JSX.Element {
       value={
         actions || progress.total > 0 ? (
           <>
+            {/* A polite status: the refused field's own error is the alert. */}
             {checked && refused.length > 0 ? (
-              <span role="alert" className="mr-auto flex flex-wrap items-center gap-2 text-body font-medium text-danger">
+              <span role="status" className="mr-auto flex flex-wrap items-center gap-2 text-body font-medium text-danger">
                 <Icon name="error" className="size-4" />
                 <span>
                   {t("form.fixCount", { count: refused.length })}
