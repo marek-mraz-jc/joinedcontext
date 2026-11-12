@@ -70,6 +70,14 @@ async fn broker() -> MockServer {
         })))
         .mount(&broker)
         .await;
+    Mock::given(method("POST"))
+        .and(path_regex("^/x/views/[a-z0-9-]+/ical/v1/preview$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "read": 3, "valid": 2, "outside": 0, "skipped": {"missing-summary": 1},
+            "events": ["BEGIN:VEVENT\r\nSUMMARY:Koncert\r\nEND:VEVENT\r\n"]
+        })))
+        .mount(&broker)
+        .await;
     Mock::given(method("GET"))
         .respond_with(ResponseTemplate::new(404))
         .mount(&broker)
@@ -304,4 +312,120 @@ async fn a_bad_draft_is_400_and_no_view_is_503() {
         "{}",
         answer.text
     );
+}
+
+fn ical_route(name: &str) -> String {
+    format!("/api/v1/projects/city/endpoints/{name}/ical-preview")
+}
+
+fn preset(extra: Value) -> Value {
+    let mut output = json!({"name": "kultura", "query": "q=eventCategory==%22koncert%22",
+        "sources": [{"type": "Event", "preset": "sdm-event"}]});
+    if let (Some(o), Some(extra)) = (output.as_object_mut(), extra.as_object()) {
+        o.extend(extra.clone());
+    }
+    json!({ "output": output })
+}
+
+/// T-6762 (API/02 §4a): the form previews one calendar preset through the saved view as the
+/// person; the broker gets the preset's `query` as the `filter` it stands for, with its sort,
+/// limit and zone, and the answer is the broker's counts and first entries.
+#[tokio::test]
+async fn a_member_previews_a_calendar_preset_through_the_saved_view() {
+    let r = rig(true).await;
+    let kept = json!({"sort": "-start", "limit": 5, "timezone": "Europe/Prague"});
+    // a member of the project's group, whom the gateway's door admits (EP-14)
+    let jana = joinedcontext_portal::auth::session::Identity {
+        groups: vec!["city".into()],
+        ..person("jana")
+    };
+    let answer = send(
+        &r.state,
+        jana,
+        "POST",
+        &ical_route("air-staff"),
+        Some(preset(kept)),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let body: Value = serde_json::from_str(&answer.text).expect("JSON");
+    assert_eq!(
+        (body["read"].clone(), body["valid"].clone()),
+        (json!(3), json!(2))
+    );
+    assert_eq!(body["skipped"], json!({"missing-summary": 1}));
+    let asked = previews(&r.broker).await;
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    let (headers, _, sent) = &asked[0];
+    assert!(
+        headers.contains(&("x-jc-subject".to_owned(), "sub-jana".to_owned())),
+        "{headers:?}"
+    );
+    assert_eq!(
+        sent["output"]["filter"],
+        json!({"q": "eventCategory==\"koncert\""})
+    );
+    assert!(sent["output"].get("query").is_none(), "{sent}");
+    assert_eq!(
+        (
+            sent["output"]["sort"].clone(),
+            sent["output"]["limit"].clone(),
+            sent["output"]["timezone"].clone()
+        ),
+        (json!("-start"), json!(5), json!("Europe/Prague"))
+    );
+}
+
+/// Each preset field is checked again on the server: a refusal is 422 naming the member, and
+/// the broker is never asked; somebody the space does not admit gets the 404 of no Endpoint.
+#[tokio::test]
+async fn a_calendar_preset_preview_rechecks_each_field() {
+    let r = rig(true).await;
+    for (extra, member) in [
+        (json!({"sort": "title"}), "`sort: title`"),
+        (json!({"limit": 0}), "`limit`"),
+        (json!({"limit": 10001}), "`limit`"),
+        (json!({"timezone": "Mars/Base; rm"}), "`timezone"),
+        (json!({"query": "limit=5"}), "`query` names `limit`"),
+    ] {
+        let answer = send(
+            &r.state,
+            person("jana"),
+            "POST",
+            &ical_route("air-staff"),
+            Some(preset(extra)),
+        )
+        .await;
+        assert_eq!(
+            answer.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{}",
+            answer.text
+        );
+        assert!(answer.text.contains(member), "{member}: {}", answer.text);
+    }
+    let answer = send(
+        &r.state,
+        person("jana"),
+        "POST",
+        &ical_route("air-staff"),
+        Some(json!({"output": preset(json!({}))["output"], "limit": 51})),
+    )
+    .await;
+    assert_eq!(
+        answer.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        answer.text
+    );
+    let refused = send(
+        &r.state,
+        person("eva"),
+        "POST",
+        &ical_route("air-staff"),
+        Some(preset(json!({}))),
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::NOT_FOUND, "{}", refused.text);
+    assert!(previews(&r.broker).await.is_empty());
 }

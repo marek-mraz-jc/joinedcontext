@@ -2225,6 +2225,49 @@
           "none": "Tento typ nemá pole k zobrazení; nejprve vyberte typ z datového modelu prostoru.",
           "full": "Nejvýše {max} sloupců; chcete-li jiný, jeden odškrtněte."
         }
+      },
+      "sortField": {
+        "label": "Pořadí",
+        "hint": "Které akce limit ponechá. Například nejdřívější jako první ponechá nadcházející akce kalendáře „co se děje“.",
+        "default": "Výchozí (nejdřívější jako první, když je nastaven limit)",
+        "start": "Nejdřívější začátek jako první",
+        "latest": "Nejpozdější začátek jako první"
+      },
+      "limitField": {
+        "label": "Nejvíce záznamů (nepovinné)",
+        "hint": "1 až 10000, například 100. Prázdné ponechá všechny akce, které dotaz vybere.",
+        "bad": "Zadejte celé číslo od 1 do {max}."
+      },
+      "feedLimitField": {
+        "hint": "Položek na stránku, 1 až 200, například 50 (výchozí, když je prázdné)."
+      },
+      "timezoneField": {
+        "label": "Časové pásmo",
+        "hint": "Časy bez posunu se čtou v tomto pásmu a kalendář ho zobrazí, například Europe/Bratislava.",
+        "default": "{zone} (výchozí)"
+      },
+      "preview": {
+        "label": "Náhled kalendáře",
+        "loading": "Načítá se…",
+        "hint": "Ukáže první záznamy, které kalendář dá s dotazem, pořadím, limitem a pásmem výše, čtené s vaším vlastním přístupem. Nic se neuloží.",
+        "unsaved": "Uložte Endpoint alespoň jednou, pak můžete kalendáře zobrazit v náhledu.",
+        "counts": "Načtených záznamů: {read}, položek kalendáře: {valid}.",
+        "skipped": "Vynechané: {reasons}. Zkontrolujte mapování níže.",
+        "none": "Žádný záznam: dotaz neponechá žádnou akci nebo mapování vynechá každou. Rozšiřte dotaz nebo zkontrolujte mapování.",
+        "untitled": "(bez názvu)",
+        "heading": "Náhled",
+        "outside": "Mimo časové okno: {outside}.",
+        "shown": "Zobrazeno prvních {shown} z {valid}.",
+        "reason": "{n} {reason}",
+        "reasons": {
+          "missing-summary": "bez názvu (SUMMARY)",
+          "missing-dtstart": "bez začátku (DTSTART)",
+          "unparsable-date": "s nečitelným datem",
+          "unparsable-duration": "s nečitelným trváním",
+          "dtend-not-after-dtstart": "s koncem před začátkem",
+          "geo-out-of-range": "s polohou mimo rozsah",
+          "url-not-http": "s odkazem, který není http(s)"
+        }
       }
     },
     "accessMatrix": {
@@ -3727,6 +3770,10 @@
     "widget": {
       "temporalChart": "{property} v čase",
       "unsupported": "Tato stránka má prvek {type}, který Portál zatím nekreslí.",
+      "vegaNoRowsTitle": "Žádné řádky k vykreslení",
+      "vegaNoRows": "Zdroj tohoto grafu nemá žádné řádky. Změňte filtr zdroje nebo ověřte, že koncový bod tento typ zveřejňuje.",
+      "vegaCut": "Graf kreslí jen prvních {count} řádků.",
+      "vegaTitle": "Graf typu {type}",
       "noHistory": "Není historie k vykreslení.",
       "latest": "Poslední hodnota {property}: {value} ({count} měření)",
       "chartLabel": "{property} entity {entity} v čase",
@@ -5730,6 +5777,9 @@
     "page": "Strana",
     "showMetadata": "Zobrazit metadata pro",
     "error": "Nenačteno, zkuste znovu",
+    "retry": "Zkusit znovu",
+    "busy": "zdroj dat je právě zaneprázdněný",
+    "timedOut": "zdroj dat neodpověděl včas",
     "filter": "Filtr",
     "noFilter": "Libovolné",
     "ops": {
@@ -5761,6 +5811,7 @@
     "sortAll": "Seřadit všechny řádky podle",
     "sortedLoaded": "Seřazeno v rámci {count} načtených řádků: tento pohled čte i další brokery, které neřadí.",
     "notReadable": "Další pole ({count}) se nezobrazují: váš přístup je nezahrnuje.",
+    "notReadableOne": "Další pole (1) se nezobrazuje: váš přístup ho nezahrnuje.",
     "queryRefused": "Broker tento dotaz odmítl",
     "errorDetail": "Co broker odpověděl",
     "matching": "Odpovídá: {n}",
@@ -8689,7 +8740,8 @@
       "temporal-chart": "Graf v čase",
       "bar-chart": "Sloupce podle hodnoty",
       "histogram": "Histogram",
-      "grid": "Tabulka"
+      "grid": "Tabulka",
+      "vega-lite": "Graf Vega-Lite"
     },
     "columnFormat": {
       "text": "Text",

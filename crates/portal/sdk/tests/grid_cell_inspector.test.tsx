@@ -62,6 +62,16 @@ describe("CellInspector", () => {
     expect(screen.getByRole("status")).toHaveTextContent(words);
   });
 
+  it("names the actions its one reason speaks for where the chips differ (T-6781)", () => {
+    const { rerender } = render(<CellInspector attribute="no2" label="NO2" access={{ name: "no2", read: true, write: false, delete: false, reason: "grant" }} onClose={() => undefined} />);
+    expect(screen.getByRole("status")).toHaveTextContent(`${L.read}: ${L.grant}`);
+    rerender(<CellInspector attribute="no2" label="NO2" access={{ name: "no2", read: true, write: false, delete: false, reason: "not_in_grant" }} onClose={() => undefined} />);
+    expect(screen.getByRole("status")).toHaveTextContent(`${L.write}, ${L.delete}: ${L.notInGrant}`);
+    // All alike: the reason alone, as before.
+    rerender(<CellInspector attribute="no2" label="NO2" access={{ name: "no2", read: true, write: true, delete: true, reason: "grant" }} onClose={() => undefined} />);
+    expect(screen.getByRole("status").textContent).toBe(L.grant);
+  });
+
   it("colours each allowed action and locks each refused one", () => {
     render(<CellInspector attribute="no2" label="NO2" access={{ name: "no2", read: true, write: true, delete: false, reason: "grant" }} onClose={() => undefined} />);
     expect(chips()).toEqual([

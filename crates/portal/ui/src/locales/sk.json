@@ -2225,6 +2225,49 @@
           "none": "Tento typ nemá polia na zobrazenie; najprv vyberte typ z dátového modelu priestoru.",
           "full": "Najviac {max} stĺpcov; ak chcete iný, jeden odškrtnite."
         }
+      },
+      "sortField": {
+        "label": "Poradie",
+        "hint": "Ktoré podujatia limit ponechá. Napríklad najskoršie ako prvé ponechá nadchádzajúce podujatia kalendára „čo sa deje“.",
+        "default": "Predvolené (najskoršie ako prvé, keď je nastavený limit)",
+        "start": "Najskorší začiatok ako prvý",
+        "latest": "Najneskorší začiatok ako prvý"
+      },
+      "limitField": {
+        "label": "Najviac záznamov (nepovinné)",
+        "hint": "1 až 10000, napríklad 100. Prázdne ponechá všetky podujatia, ktoré dopyt vyberie.",
+        "bad": "Zadajte celé číslo od 1 do {max}."
+      },
+      "feedLimitField": {
+        "hint": "Položiek na stranu, 1 až 200, napríklad 50 (predvolené, keď je prázdne)."
+      },
+      "timezoneField": {
+        "label": "Časové pásmo",
+        "hint": "Časy bez posunu sa čítajú v tomto pásme a kalendár ho zobrazí, napríklad Europe/Bratislava.",
+        "default": "{zone} (predvolené)"
+      },
+      "preview": {
+        "label": "Ukážka kalendára",
+        "loading": "Načítava sa…",
+        "hint": "Ukáže prvé záznamy, ktoré kalendár dá s dopytom, poradím, limitom a pásmom vyššie, čítané s vaším vlastným prístupom. Nič sa neuloží.",
+        "unsaved": "Uložte Endpoint aspoň raz, potom môžete kalendáre ukázať.",
+        "counts": "Načítaných záznamov: {read}, položiek kalendára: {valid}.",
+        "skipped": "Vynechané: {reasons}. Skontrolujte mapovanie nižšie.",
+        "none": "Žiadny záznam: dopyt neponechá žiadne podujatie alebo mapovanie vynechá každé. Rozšírte dopyt alebo skontrolujte mapovanie.",
+        "untitled": "(bez názvu)",
+        "heading": "Ukážka",
+        "outside": "Mimo časového okna: {outside}.",
+        "shown": "Zobrazené prvé {shown} z {valid}.",
+        "reason": "{n} {reason}",
+        "reasons": {
+          "missing-summary": "bez názvu (SUMMARY)",
+          "missing-dtstart": "bez začiatku (DTSTART)",
+          "unparsable-date": "s nečitateľným dátumom",
+          "unparsable-duration": "s nečitateľným trvaním",
+          "dtend-not-after-dtstart": "s koncom pred začiatkom",
+          "geo-out-of-range": "s polohou mimo rozsahu",
+          "url-not-http": "s odkazom, ktorý nie je http(s)"
+        }
       }
     },
     "accessMatrix": {
@@ -3727,6 +3770,10 @@
     "widget": {
       "temporalChart": "{property} v čase",
       "unsupported": "Táto stránka má prvok {type}, ktorý Portál zatiaľ nekreslí.",
+      "vegaNoRowsTitle": "Žiadne riadky na kreslenie",
+      "vegaNoRows": "Zdroj tohto grafu nemá žiadne riadky. Zmeňte filter zdroja alebo overte, či endpoint tento typ zverejňuje.",
+      "vegaCut": "Graf kreslí iba prvých {count} riadkov.",
+      "vegaTitle": "Graf typu {type}",
       "noHistory": "Niet histórie na vykreslenie.",
       "latest": "Posledná hodnota {property}: {value} ({count} meraní)",
       "chartLabel": "{property} entity {entity} v čase",
@@ -5730,6 +5777,9 @@
     "page": "Strana",
     "showMetadata": "Zobraziť metadáta pre",
     "error": "Nenačítané, skúste znova",
+    "retry": "Skúsiť znova",
+    "busy": "zdroj údajov je práve zaneprázdnený",
+    "timedOut": "zdroj údajov neodpovedal včas",
     "filter": "Filter",
     "noFilter": "Ľubovoľné",
     "ops": {
@@ -5761,6 +5811,7 @@
     "sortAll": "Zoradiť všetky riadky podľa",
     "sortedLoaded": "Zoradené v rámci {count} načítaných riadkov: tento pohľad číta aj ďalšie brokery, ktoré nezoraďujú.",
     "notReadable": "Ďalšie polia ({count}) sa nezobrazujú: váš prístup ich nezahŕňa.",
+    "notReadableOne": "Ďalšie pole (1) sa nezobrazuje: váš prístup ho nezahŕňa.",
     "queryRefused": "Broker tento dopyt odmietol",
     "errorDetail": "Čo broker odpovedal",
     "matching": "Vyhovuje: {n}",
@@ -8689,7 +8740,8 @@
       "temporal-chart": "Graf v čase",
       "bar-chart": "Stĺpce podľa hodnoty",
       "histogram": "Histogram",
-      "grid": "Tabuľka"
+      "grid": "Tabuľka",
+      "vega-lite": "Graf Vega-Lite"
     },
     "columnFormat": {
       "text": "Text",

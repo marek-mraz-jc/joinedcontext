@@ -58,7 +58,7 @@ function ordered(orderBy: string | null) {
   });
 }
 
-async function stub(page: Page, entities: "rows" | "empty" | "refused" | "values-fail" | "signed-out", asked: URL[]): Promise<void> {
+async function stub(page: Page, entities: "rows" | "empty" | "refused" | "values-fail" | "signed-out" | "busy-once", asked: URL[]): Promise<void> {
   const list = (items: unknown[]) => ({ apiVersion: API, kind: "List", items });
   await page.route("**/api/v1/**", (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -85,6 +85,10 @@ async function stub(page: Page, entities: "rows" | "empty" | "refused" | "values
       if (entities === "values-fail" && url.searchParams.get("limit") === "1000") {
         return json({ title: "Service Unavailable", detail: "the broker is busy" }, {}, 503);
       }
+      // The first page read meets a busy broker; the next one answers (T-6781).
+      if (entities === "busy-once" && Number(url.searchParams.get("limit") ?? 25) > 0 && !asked.some((seen) => seen !== url && Number(seen.searchParams.get("limit") ?? 25) > 0)) {
+        return json({ title: "Service Unavailable", detail: "the broker is busy" }, {}, 503);
+      }
       if (entities === "signed-out") {
         return json({ title: "Authentication Required", detail: "sign in" }, {}, 401);
       }
@@ -103,6 +107,7 @@ async function stub(page: Page, entities: "rows" | "empty" | "refused" | "values
 const dir = join("test-results", "T-6303");
 mkdirSync(dir, { recursive: true });
 mkdirSync(join("test-results", "T-6328"), { recursive: true });
+mkdirSync(join("test-results", "T-6781"), { recursive: true });
 
 for (const width of [1440, 400]) {
   test(`an Endpoint's rows sort through the endpoint and keep their address at ${width} px`, async ({ page }) => {
@@ -122,7 +127,8 @@ for (const width of [1440, 400]) {
     await sort.click();
     await expect.poll(() => asked.at(-1)?.searchParams.get("orderBy")).toBe("pm10;desc");
     await expect(page).toHaveURL(/dataSort=pm10%3Bdesc/);
-    await expect(section.getByRole("gridcell", { name: "Your access: PM10 89", exact: true }).first()).toBeVisible();
+    // A phone's cells carry no "i" (T-6781), so the cell is named by its value alone.
+    await expect(section.getByRole("gridcell", { name: width < 640 ? "89" : "Your access: PM10 89", exact: true }).first()).toBeVisible();
     await section.screenshot({ path: join(dir, `data-sorted-${width}.png`) });
 
     // The address opens the same order on a fresh load.
@@ -179,6 +185,63 @@ for (const width of [1440, 400]) {
     await page.screenshot({ path: join(dir, `data-full-${width}.png`) });
     await page.keyboard.press("Escape");
     await expect(full).toBeHidden();
+  });
+
+  // T-6781: the owner's phone showed a 44 px "i" over the text of every cell and the toolbar in four
+  // lines. At 400 px no control covers a cell's text, the toolbar is at most two rows, and the access
+  // panel the cells no longer open is one item of the column's menu.
+  if (width < 640) {
+    test(`no control covers a cell's text and the toolbar keeps to two rows at ${width} px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await stub(page, "rows", []);
+      await page.goto("/projects/helsinki/endpoints/air?lang=en");
+      const section = page.locator("section", { has: page.getByRole("heading", { name: "Data", exact: true }) });
+      await expect(section.getByText("42 matching")).toBeVisible();
+      const overlaps = await section.locator("tbody").evaluate((body) => {
+        const hit = (a: DOMRect, b: DOMRect) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+        const found: string[] = [];
+        for (const cell of body.querySelectorAll("td")) {
+          const text = cell.querySelector(".jc-grid-cell");
+          if (!text || !text.textContent?.trim()) continue;
+          for (const control of cell.querySelectorAll("button")) {
+            if (text.contains(control)) continue;
+            if (hit(control.getBoundingClientRect(), text.getBoundingClientRect())) found.push(`${cell.dataset.label}: ${control.getAttribute("aria-label")}`);
+          }
+        }
+        return found;
+      });
+      expect(overlaps).toEqual([]);
+      await expect(section.locator("tbody .jc-grid-info")).toHaveCount(0);
+      // Two rows at most: the controls' tops fall on no more than two lines.
+      const tops = await section.getByTestId("grid-toolbar").evaluate((bar) =>
+        [...bar.querySelectorAll(":scope > *")].filter((each) => (each as HTMLElement).offsetHeight > 0).map((each) => Math.round(each.getBoundingClientRect().top)),
+      );
+      expect(new Set(tops).size).toBeLessThanOrEqual(2);
+      // The column's menu opens what the person may do with the field.
+      await section.getByRole("button", { name: "Column options: PM10" }).click();
+      await page.getByRole("menuitem", { name: "Your access" }).click();
+      await expect(page.getByRole("heading", { name: "Your access: PM10" })).toBeInViewport();
+      await page.screenshot({ path: join("test-results", "T-6781", `data-access-${width}.png`) });
+    });
+  }
+
+  test(`a failed read offers Try again, which reads the rows at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await stub(page, "busy-once", []);
+    await page.goto("/projects/helsinki/endpoints/air?lang=en");
+    const section = page.locator("section", { has: page.getByRole("heading", { name: "Data", exact: true }) });
+    const retry = section.getByRole("button", { name: "Try again" });
+    await expect(retry).toBeVisible();
+    expect((await retry.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    // The busy broker in the page's words, its own sentence only under the disclosure; no count over no rows.
+    const line = section.locator(".jc-grid-error");
+    await expect(line).toContainText("the data source is busy right now");
+    await expect(line.getByText("the broker is busy")).toBeHidden();
+    await expect(section.getByText("42 matching")).toHaveCount(0);
+    await section.screenshot({ path: join("test-results", "T-6781", `data-error-${width}.png`) });
+    await retry.click();
+    await expect(section.getByText("42 matching")).toBeVisible();
+    await expect(retry).toHaveCount(0);
   });
 
   // T-6328: the owner could not see where to click to filter. A header's funnel opens the column's

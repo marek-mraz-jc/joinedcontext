@@ -75,11 +75,7 @@ pub fn validate_and_build_cimd_client(
     let client_host = client_url
         .host_str()
         .ok_or_else(|| KaisatsuError::invalid_client("CIMD client_id has no host"))?;
-    if !realm
-        .cimd_allowed_client_domains
-        .iter()
-        .any(|d| d.eq_ignore_ascii_case(client_host))
-    {
+    if !host_allowed(realm, client_host) {
         return Err(KaisatsuError::invalid_client(format!(
             "CIMD client host '{client_host}' is not permitted by realm policy"
         )));
@@ -187,6 +183,31 @@ pub fn cimd_optional_scopes(realm: &RealmConfig) -> Vec<String> {
         }
     }
     scopes
+}
+
+fn host_allowed(realm: &RealmConfig, host: &str) -> bool {
+    realm
+        .cimd_allowed_client_domains
+        .iter()
+        .any(|d| d.eq_ignore_ascii_case(host))
+}
+
+/// Whether `client_id` is an `https://` URL on the realm's `cimd_allowed_client_domains`: a
+/// client the realm treats as CIMD, also when a Keycloak realm import stored it as a plain client.
+pub fn is_allowed_cimd_client_id(realm: &RealmConfig, client_id: &str) -> bool {
+    Url::parse(client_id).is_ok_and(|u| {
+        u.scheme() == "https" && u.host_str().is_some_and(|h| host_allowed(realm, h))
+    })
+}
+
+/// Puts a stored CIMD client (fetched earlier, or imported with an allowed CIMD client_id) under
+/// the realm's current CIMD policy: consent, no full scope, no password grant, the CIMD scopes.
+pub fn apply_cimd_policy(realm: &RealmConfig, client: &mut ClientRepresentation) {
+    client.is_cimd = true;
+    client.consent_required = true;
+    client.full_scope_allowed = false;
+    client.direct_access_grants_enabled = false;
+    client.optional_client_scopes = cimd_optional_scopes(realm);
 }
 
 /// Fetches and validates a CIMD document through `guard`.

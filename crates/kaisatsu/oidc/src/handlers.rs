@@ -168,7 +168,8 @@ async fn openid_configuration(
         "token_endpoint_auth_methods_supported": [
             "client_secret_basic",
             "client_secret_post",
-            "private_key_jwt"
+            "private_key_jwt",
+            "none"
         ],
         "code_challenge_methods_supported": ["S256"],
         "dpop_signing_alg_values_supported": ["ES256", "RS256", "EdDSA"],
@@ -231,8 +232,14 @@ pub async fn resolve_or_fetch_client(
         if !existing.enabled {
             return Err(KaisatsuError::invalid_client("client is disabled"));
         }
-        if existing.is_cimd {
-            existing.optional_client_scopes = crate::cimd::cimd_optional_scopes(realm);
+        if existing.is_cimd || crate::cimd::is_allowed_cimd_client_id(realm, client_id) {
+            // Stored, so the login, consent and token steps that read the client from the
+            // store see the same policy.
+            let before = existing.clone();
+            crate::cimd::apply_cimd_policy(realm, &mut existing);
+            if existing != before {
+                return state.store.upsert_client(existing).await;
+            }
         }
         return Ok(existing);
     }

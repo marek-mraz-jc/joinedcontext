@@ -964,11 +964,21 @@ fn view_of(
     // without a member serves no such format.
     // A stored preset's `query` (API/02 §4a) reaches the broker as the `filter` it stands for,
     // so a preset and the output it replaced render the same bytes.
+    // A stored `query` that does not read (only data past the save check) drops its output, so
+    // the preset answers 404 instead of serving the whole view (fail closed).
+    let reads = |name: &str, query: Option<&str>, types: &[&str]| {
+        let refused = query.and_then(|q| jc_core::kinds::OutputFilter::from_query(q, types).err());
+        if let Some(why) = &refused {
+            tracing::warn!(endpoint = %e.name, output = name, %why, "a preset's query does not read: output not served");
+        }
+        refused.is_none()
+    };
     let mut representations = serde_json::Map::new();
     let ical: Vec<_> = e
         .spec
         .ical_outputs()
         .iter()
+        .filter(|o| reads(&o.name, o.query.as_deref(), &o.types()))
         .map(|output| jc_core::kinds::IcalOutput {
             filter: output.effective_filter(),
             query: None,
@@ -983,6 +993,7 @@ fn view_of(
         .spec
         .feed_outputs()
         .iter()
+        .filter(|o| reads(&o.name, o.query.as_deref(), &o.types()))
         .map(|output| jc_core::kinds::FeedOutput {
             filter: output.effective_filter(),
             query: None,
@@ -1908,6 +1919,32 @@ impl ViewSync {
         query: &str,
         headers: &reqwest::header::HeaderMap,
     ) -> Result<(u16, Value), String> {
+        self.broker_post(id, &format!("q/views/{id}/preview?{query}"), view, headers)
+            .await
+    }
+
+    /// The first Events a candidate calendar `output` (a stored preset, its `query` read into
+    /// `filter`) renders through the stored view `id`, read as the subject `headers` name
+    /// (antares-ical `POST /x/views/{id}/ical/v1/preview`, T-6762): the broker's status and
+    /// body. Nothing is stored.
+    pub async fn ical_preview(
+        &self,
+        id: &str,
+        body: &Value,
+        headers: &reqwest::header::HeaderMap,
+    ) -> Result<(u16, Value), String> {
+        self.broker_post(id, &format!("x/views/{id}/ical/v1/preview"), body, headers)
+            .await
+    }
+
+    /// POSTs `body` to `path` on the broker of view `id`'s space with the admin token.
+    async fn broker_post(
+        &self,
+        id: &str,
+        path: &str,
+        body: &Value,
+        headers: &reqwest::header::HeaderMap,
+    ) -> Result<(u16, Value), String> {
         let token = match std::fs::read_to_string(&self.token_file) {
             Ok(token) if !token.trim().is_empty() => token.trim().to_owned(),
             _ => return Err("the broker's admin token is not readable".into()),
@@ -1927,13 +1964,10 @@ impl ViewSync {
             .address(&broker)
             .ok_or_else(|| format!("the space's broker '{broker}' has no address"))?;
         // The person's request id: the broker's line for the preview (a refusal too) carries it.
-        let request = crate::request_id::forward(
-            self.http
-                .post(format!("{base}/q/views/{id}/preview?{query}")),
-        )
-        .bearer_auth(token)
-        .json(view)
-        .headers(headers.clone());
+        let request = crate::request_id::forward(self.http.post(format!("{base}/{path}")))
+            .bearer_auth(token)
+            .json(body)
+            .headers(headers.clone());
         let answer = request
             .send()
             .await
@@ -4000,6 +4034,13 @@ mod tests {
             serde_json::to_vec(&as_preset["representations"]).ok(),
             serde_json::to_vec(&view["representations"]).ok()
         );
+        // T-6762 (fail closed): a stored query that does not read drops its output, never
+        // hands the broker an output with no filter.
+        let mut unread = preset.clone();
+        unread[0]["query"] = json!("limit=5");
+        assert!(with(json!(["ngsi-ld", "ical"]), Some(&unread))
+            .get("representations")
+            .is_none());
         assert!(with(json!(["ngsi-ld", "ical"]), None)
             .get("representations")
             .is_none());

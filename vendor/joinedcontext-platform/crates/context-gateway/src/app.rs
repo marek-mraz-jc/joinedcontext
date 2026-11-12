@@ -119,9 +119,14 @@ pub struct Gateway {
     pub public_max_age: u32,
     /// Whether a write waits for the Organization's verified domain (PF-41, T-2572).
     pub domain_gate: Arc<crate::domain_gate::DomainGate>,
-    /// Whether a create or upsert on a deployment of one Organization must name it in its URN
-    /// (`JC_GATEWAY_URN_OWNER_PREFIX`, ADR-N-068); with several the check always runs.
-    pub urn_owner_prefix: bool,
+    /// Whether a create or upsert must name the space's Organization in its URN
+    /// (`JC_GATEWAY_URN_OWNER_PREFIX`, ADR-N-068); with several Organizations `off` does not hold.
+    pub urn_owner_prefix: crate::config::UrnOwnerPrefix,
+    /// When each (space, owner segment) a `warn` write named was last logged (T-6793).
+    urn_owner_reported:
+        std::sync::Mutex<std::collections::HashMap<(String, String), std::time::Instant>>,
+    /// Whether the end of the `warn` window was logged.
+    urn_owner_warn_ended: std::sync::atomic::AtomicBool,
     /// Where a person's own connectors are read, `/api/mcp/me/{name}` (EP-123); `None` serves
     /// no personal address.
     pub personal: Option<Arc<crate::mcp::personal::Personal>>,
@@ -226,7 +231,9 @@ impl Gateway {
             domain_gate: Arc::new(crate::domain_gate::DomainGate::new(
                 crate::domain_gate::Mode::Report,
             )),
-            urn_owner_prefix: false,
+            urn_owner_prefix: crate::config::UrnOwnerPrefix::Off,
+            urn_owner_reported: Default::default(),
+            urn_owner_warn_ended: Default::default(),
             personal: None,
             documents: None,
             personal_keys: None,
@@ -458,17 +465,62 @@ impl Gateway {
     /// Organization in their URNs (ADR-N-068): always on a deployment of several Organizations,
     /// on one Organization unless the operator switched the check off. A project naming no
     /// Organization the repository has is the installation's.
-    pub(crate) fn urn_owner(&self, project: &str) -> Option<String> {
+    pub(crate) fn urn_owner(&self, project: &str) -> Option<UrnOwner> {
+        use crate::config::UrnOwnerPrefix;
         let provenance = self.provenance.load();
-        if !self.urn_owner_prefix && provenance.domains.len() < 2 {
-            return None;
-        }
+        let warn = match self.urn_owner_prefix {
+            UrnOwnerPrefix::Off if provenance.domains.len() < 2 => return None,
+            UrnOwnerPrefix::Warn { until } if std::time::SystemTime::now() < until => true,
+            UrnOwnerPrefix::Warn { .. } => {
+                if !self.urn_owner_warn_ended.swap(true, Ordering::Relaxed) {
+                    tracing::warn!(
+                        "JC_GATEWAY_URN_OWNER_WARN_UNTIL has passed: a write whose URN names \
+                         another owner is refused 422 as under enforce; set \
+                         JC_GATEWAY_URN_OWNER_PREFIX=enforce once the ids are re-minted"
+                    );
+                }
+                false
+            }
+            UrnOwnerPrefix::Enforce | UrnOwnerPrefix::Off => false,
+        };
         let domain = provenance
             .organizations
             .get(project)
             .and_then(|organization| provenance.domains.get(organization))
             .unwrap_or(&self.org_domain);
-        Some(domain.clone())
+        Some(UrnOwner {
+            domain: domain.clone(),
+            warn,
+        })
+    }
+
+    /// Logs and counts the entities a `warn` write let through though their URNs name another
+    /// owner, `(id, owner segment)` (T-6793): every one counts, each (space, owner segment) is
+    /// logged once an hour.
+    pub(crate) fn urn_owner_mismatched(
+        &self,
+        slug: &str,
+        space: &str,
+        foreign: &[(String, String)],
+    ) {
+        metrics::counter!(telemetry::URN_OWNER_MISMATCH).increment(foreign.len() as u64);
+        let now = std::time::Instant::now();
+        let mut reported = self
+            .urn_owner_reported
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (id, owner) in foreign {
+            if first_this_hour(&mut reported, (space.to_owned(), owner.clone()), now) {
+                tracing::warn!(
+                    slug,
+                    space,
+                    owner = %owner,
+                    example = %id,
+                    "written under JC_GATEWAY_URN_OWNER_PREFIX=warn: the URN does not name the \
+                     Organization owning the space (ADR-N-068); re-mint before the window ends"
+                );
+            }
+        }
     }
 
     /// The publisher of `project`'s catalogue, when the project names one (EP-127).
@@ -874,4 +926,78 @@ async fn ok() -> &'static str {
 /// Anything off the surface answers the same problem document as an unknown slug.
 pub(crate) async fn missing() -> Response<Body> {
     ProblemDetails::not_found().into_response()
+}
+
+/// The Organization a write's URNs must name (ADR-N-068), and whether a URN naming another is
+/// only reported, the `warn` window (T-6793).
+pub(crate) struct UrnOwner {
+    /// The owning Organization's domain.
+    pub(crate) domain: String,
+    /// Written and reported instead of refused.
+    pub(crate) warn: bool,
+}
+
+/// The most (space, owner segment) pairs [`Gateway::urn_owner_mismatched`] remembers: the owner
+/// segment is the writer's text, so the log's memory is bounded; past it a pair is counted, not
+/// logged, until an hour frees room.
+const URN_OWNER_REPORTED: usize = 1024;
+
+/// Whether `key` was not logged in the hour before `now`; remembers it when so.
+fn first_this_hour(
+    reported: &mut std::collections::HashMap<(String, String), std::time::Instant>,
+    key: (String, String),
+    now: std::time::Instant,
+) -> bool {
+    const HOUR: std::time::Duration = std::time::Duration::from_secs(3600);
+    if reported
+        .get(&key)
+        .is_some_and(|logged| now.duration_since(*logged) < HOUR)
+    {
+        return false;
+    }
+    if reported.len() >= URN_OWNER_REPORTED && !reported.contains_key(&key) {
+        reported.retain(|_, logged| now.duration_since(*logged) < HOUR);
+        if reported.len() >= URN_OWNER_REPORTED {
+            return false;
+        }
+    }
+    reported.insert(key, now);
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// T-6793: a (space, owner) pair is logged once an hour, and the memory stays bounded.
+    #[test]
+    fn a_mismatch_is_logged_once_an_hour_per_space_and_owner() {
+        let mut reported = std::collections::HashMap::new();
+        let start = Instant::now();
+        let key = |owner: &str| ("praha".to_owned(), owner.to_owned());
+        assert!(first_this_hour(&mut reported, key("fi_hel"), start));
+        assert!(!first_this_hour(
+            &mut reported,
+            key("fi_hel"),
+            start + Duration::from_secs(3599)
+        ));
+        assert!(first_this_hour(&mut reported, key(""), start));
+        assert!(first_this_hour(
+            &mut reported,
+            key("fi_hel"),
+            start + Duration::from_secs(3600)
+        ));
+        for n in 0..2 * URN_OWNER_REPORTED {
+            first_this_hour(&mut reported, key(&n.to_string()), start);
+        }
+        assert_eq!(reported.len(), URN_OWNER_REPORTED);
+        assert!(!first_this_hour(&mut reported, key("new"), start));
+        assert!(first_this_hour(
+            &mut reported,
+            key("new"),
+            start + Duration::from_secs(7200)
+        ));
+        assert_eq!(reported.len(), 1);
+    }
 }

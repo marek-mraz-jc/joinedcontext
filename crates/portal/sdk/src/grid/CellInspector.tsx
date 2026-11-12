@@ -129,6 +129,11 @@ export function CellInspector({ attribute, label, access, failed, explain, askAc
     }
   };
   const ask = access && (access.reason === "not_in_grant" || access.reason === "no_grant") && askAccessHref;
+  // One reason speaks for some of the actions (T-6781): "Your access allows this." under "Write: not
+  // allowed" read as a contradiction, so where the chips differ the line names the actions it means.
+  const about = (granted: boolean) => ACTIONS.filter((action) => access?.[action] === granted).map((action) => labels[action]);
+  const meant = access ? about(access.reason === "grant") : [];
+  const reasonLine = meant.length > 0 && meant.length < ACTIONS.length ? `${meant.join(", ")}: ${reason()}` : reason();
 
   return (
     <aside
@@ -169,7 +174,7 @@ export function CellInspector({ attribute, label, access, failed, explain, askAc
             ))}
           </ul>
           <p role="status" className="jc-grid-inspector-reason">
-            {reason()}
+            {reasonLine}
           </p>
           {ask ? (
             <a className="jc-grid-inspector-ask" href={askAccessHref}>

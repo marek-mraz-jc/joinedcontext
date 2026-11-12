@@ -237,6 +237,8 @@ for (const width of [1440, 400]) {
     test("the CSV download is not offered when a shown column cannot be read", async ({ page }) => {
       await stub(page, "editor", 3);
       await page.goto("/projects/helsinki/endpoints/helsinki-bikes?lang=en");
+      // A phone holds the actions in its one Tools menu (T-6748).
+      if (width < 640) await page.getByTestId("grid-toolbar").locator(":scope > details > summary").click();
       const csv = page.getByRole("button", { name: "Download these rows as CSV" });
       await expect(csv).toHaveAttribute("aria-disabled", "true");
       await expect(page.getByText(/does not let you read Operator note/i).first()).toBeVisible();

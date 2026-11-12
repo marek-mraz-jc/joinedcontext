@@ -324,6 +324,17 @@ pub fn load_with(headers: &HeaderMap, state: &AppState) -> Option<Session> {
     Some(session)
 }
 
+/// The person this Portal's own cookie session names, for a request without `Authorization`,
+/// judged as `CurrentUser` judges a cookie: a session past its access token or revoked names
+/// nobody. What a module mounted beside the Portal in one process asks (daiya's page, T-6784).
+pub fn cookie_person(headers: &HeaderMap, state: &AppState) -> Option<Session> {
+    if headers.contains_key(header::AUTHORIZATION) {
+        return None;
+    }
+    load_with(headers, state)
+        .filter(|session| !session.access_expired(now_unix()) && !state.is_revoked(session))
+}
+
 /// Reads the session, ignoring an expired or unparseable one. The access token may already be
 /// past its time: that is for the refresh middleware and `CurrentUser` to decide.
 pub fn load(jar: &PrivateCookieJar) -> Option<Session> {

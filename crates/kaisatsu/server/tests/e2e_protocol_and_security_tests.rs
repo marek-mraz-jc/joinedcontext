@@ -634,6 +634,76 @@ async fn e2e_cimd_claude_client_gets_the_portal_mcp_scope_and_audience() {
     assert!(tok_resp["refresh_token"].is_string());
 }
 
+/// T-6774 jc-dev: the realm import from the old Keycloak stored the claude.ai client as a plain
+/// client (`isCimd: false`, no consent, the realm-wide scopes). An https client_id on
+/// `cimd_allowed_client_domains` is put under the CIMD policy at resolve; one off the list is not.
+#[tokio::test]
+async fn imported_claude_client_on_the_cimd_allow_list_gets_mcp_portal() {
+    let (state, store, _kek) = setup_dev_realm_state().await;
+    let realm = store.get_realm("dev").await.unwrap().unwrap();
+    let imported = |client_id: &str| {
+        let doc = serde_json::from_value(json!({
+            "client_id": client_id,
+            "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"]
+        }))
+        .unwrap();
+        let mut realm = realm.clone();
+        realm.cimd_allowed_client_domains = vec!["claude.ai".into(), "other.example".into()];
+        let mut c =
+            kaisatsu_oidc::cimd::validate_and_build_cimd_client(&realm, client_id, doc).unwrap();
+        c.is_cimd = false;
+        c.managed_by = None;
+        c.consent_required = false;
+        c.optional_client_scopes = vec!["connector".into(), "offline_access".into()];
+        c
+    };
+    let cimd_url = "https://claude.ai/oauth/mcp-oauth-client-metadata";
+    let off_list = "https://other.example/oauth/mcp-oauth-client-metadata";
+    store.upsert_client(imported(cimd_url)).await.unwrap();
+    store.upsert_client(imported(off_list)).await.unwrap();
+    let mount = Mount::new("kaisatsu", "https", "idm.dev.example.test", "").unwrap();
+    let app = router(state, mount);
+
+    // cimd_code_flow asserts the consent screen: the imported client now requires consent.
+    let tok_resp = cimd_code_flow(&app, cimd_url, "openid mcp:portal offline_access").await;
+    let claims = decode_jwt_payload(tok_resp["access_token"].as_str().unwrap());
+    let scope = claims["scope"].as_str().unwrap();
+    assert!(scope.split(' ').any(|s| s == "mcp:portal"), "{scope}");
+    assert_eq!(claims["aud"], json!("portal-api"), "{claims}");
+    assert!(claims.get("realm_access").is_none());
+
+    let challenge =
+        sha256_base64url("pkce-verifier-string-with-at-least-43-characters-long-888888");
+    let auth_uri = format!(
+        "/realms/dev/protocol/openid-connect/auth?client_id={}&redirect_uri={}&response_type=code&scope=openid%20mcp%3Aportal&state=s1&code_challenge={challenge}&code_challenge_method=S256",
+        url::form_urlencoded::byte_serialize(off_list.as_bytes()).collect::<String>(),
+        url::form_urlencoded::byte_serialize(b"https://claude.ai/api/mcp/auth_callback")
+            .collect::<String>(),
+    );
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&auth_uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let location = resp
+        .headers()
+        .get(header::LOCATION)
+        .map(|l| l.to_str().unwrap().to_owned())
+        .unwrap_or_default();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let body = String::from_utf8_lossy(&body);
+    assert!(
+        body.contains("invalid_scope") || location.contains("error=invalid_scope"),
+        "{location} {body}"
+    );
+    assert!(!location.contains("code="), "{location}");
+}
+
 /// The CIMD-only list widens no other client: a public client (`mcp-hub`) and a confidential
 /// one (`portal-api`) without `mcp:portal` in their scopes are still refused it.
 #[tokio::test]

@@ -644,6 +644,13 @@ pub trait CurrentStateDriver: Send + Sync {
         let _ = (tenant, any_of);
         Ok(None)
     }
+    /// The id the Entity once called `id` carries since a remint renamed it
+    /// to its owner prefix (T-6770); `None` when nothing renamed it. A read
+    /// of the old id answers the Entity under this one.
+    async fn remapped_id(&self, tenant: &TenantId, id: &str) -> Result<Option<String>, NgsiError> {
+        let _ = (tenant, id);
+        Ok(None)
+    }
     /// Each distinct `lead + s` the Tenant's ids start with, `s` being the
     /// text after `lead` up to the first `sep` (an id without one stands
     /// for itself), sorted by bytes (T-5661): with

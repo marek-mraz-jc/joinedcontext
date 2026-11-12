@@ -27,7 +27,7 @@ pub use render::{
     render_frames_html_table,
 };
 pub use state::{
-    DaiyaState, MIN_SERVER_ADMIN_PASSWORD, PERSON_TOKEN_HEADER, PersonTokenExchanger,
+    DaiyaState, MIN_SERVER_ADMIN_PASSWORD, PERSON_TOKEN_HEADER, PageReader, PersonTokenExchanger,
     ServerAdminCheck, SubjectResolver, TokenBinding, resolve_request_ctx, token_sub,
 };
 

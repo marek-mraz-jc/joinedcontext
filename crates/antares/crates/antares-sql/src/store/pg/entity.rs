@@ -958,6 +958,27 @@ impl PgEntityStore {
         Ok(row.map(|r| r.get::<Value, _>(0)))
     }
 
+    /// The id a remint gave the Entity once called `id` (T-6770, migration
+    /// 0033), while the rename is under twelve months old.
+    pub async fn remapped_id(
+        &self,
+        tenant: &TenantId,
+        id: &str,
+    ) -> Result<Option<String>, sqlx::Error> {
+        let mut tx = super::begin(&self.pool).await?;
+        crate::store::pg::set_tenant(&mut tx, tenant).await?;
+        let new = sqlx::query_scalar(
+            "SELECT new_id FROM entity_id_remap WHERE tenant_id = $1 AND old_id = $2
+               AND remapped_at > now() - interval '12 months'",
+        )
+        .bind(tenant.as_str())
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(new)
+    }
+
     /// The types the Tenant's live Entities carry, sorted (T-4610): the
     /// names from the type catalogue the writes keep (migration 0012,
     /// T-4683), each kept while the types index finds a live Entity of it.

@@ -7,6 +7,7 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::{Duration, SystemTime};
 
 /// How the gateway proves its own Keycloak client (`JC_OIDC_CLIENT_SECRET` or
 /// `JC_OIDC_CLIENT_ASSERTION_FILE`, PF-47).
@@ -131,10 +132,10 @@ pub struct Config {
     /// write waits for the Organization's verified domain (PF-41, Architecture/03 §3).
     pub domain_verification: crate::domain_gate::Mode,
     /// Whether a create or upsert must name the space's owning Organization in its URN,
-    /// `urn:ngsi-ld:{Type}:{orgId}:...` (`JC_GATEWAY_URN_OWNER_PREFIX`, `enforce` by default or
-    /// `off`, ADR-N-068). `off` holds only while the repository has at most one Organization: with
-    /// several the check runs whatever this says.
-    pub urn_owner_prefix: bool,
+    /// `urn:ngsi-ld:{Type}:{orgId}:...` (`JC_GATEWAY_URN_OWNER_PREFIX`: `enforce` by default,
+    /// `warn` until `JC_GATEWAY_URN_OWNER_WARN_UNTIL`, or `off`, ADR-N-068). `off` holds only while
+    /// the repository has at most one Organization: with several the check runs whatever this says.
+    pub urn_owner_prefix: UrnOwnerPrefix,
     /// The Portal's list of domain states (`JC_GATEWAY_DOMAIN_VERIFICATIONS_URL`, its internal
     /// listener's `/internal/domain-verifications`); required under `enforce`.
     pub domain_verifications_url: Option<String>,
@@ -276,11 +277,12 @@ impl Config {
                     name: "JC_GATEWAY_DOMAIN_VERIFICATION",
                     reason,
                 })?;
-        let urn_owner_prefix = urn_owner_prefix(var("JC_GATEWAY_URN_OWNER_PREFIX").ok().as_deref())
-            .map_err(|reason| ConfigError::Invalid {
-                name: "JC_GATEWAY_URN_OWNER_PREFIX",
-                reason,
-            })?;
+        let urn_owner_prefix = urn_owner_prefix(
+            var("JC_GATEWAY_URN_OWNER_PREFIX").ok().as_deref(),
+            var("JC_GATEWAY_URN_OWNER_WARN_UNTIL").ok().as_deref(),
+            SystemTime::now(),
+        )
+        .map_err(|(name, reason)| ConfigError::Invalid { name, reason })?;
         let domain_verifications_url = var("JC_GATEWAY_DOMAIN_VERIFICATIONS_URL")
             .ok()
             .filter(|url| !url.trim().is_empty());
@@ -453,14 +455,70 @@ impl Config {
 pub const PUBLIC_MAX_AGE_LIMIT: u32 = 60;
 
 /// `JC_GATEWAY_PUBLIC_MAX_AGE` as whole seconds from 0 to [`PUBLIC_MAX_AGE_LIMIT`]; 0 when unset.
+/// What a create or upsert whose URN does not name the space's owning Organization meets
+/// (`JC_GATEWAY_URN_OWNER_PREFIX`, ADR-N-068).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UrnOwnerPrefix {
+    /// Refused `422` on `id`, the default.
+    Enforce,
+    /// Written, logged and counted until `until`, refused as under `Enforce` from then on: the
+    /// window in which live ids minted before ADR-N-068 are re-minted (T-6793, T-6770).
+    Warn {
+        /// The end of the window.
+        until: SystemTime,
+    },
+    /// Written unchecked, on a deployment of one Organization only.
+    Off,
+}
+
+/// The longest `warn` window an operator may set (T-6793).
+pub const URN_OWNER_WARN_LIMIT: Duration = Duration::from_secs(14 * 24 * 3600);
+
 /// `JC_GATEWAY_URN_OWNER_PREFIX`: unset, empty or `enforce` checks the owner segment; `off` does
-/// not on a deployment of one Organization. Any other word is an error, so a typo never runs as
-/// the weaker setting.
-fn urn_owner_prefix(value: Option<&str>) -> Result<bool, String> {
+/// not on a deployment of one Organization; `warn` needs `JC_GATEWAY_URN_OWNER_WARN_UNTIL`, a
+/// date `YYYY-MM-DD` at most [`URN_OWNER_WARN_LIMIT`] after `now`, and holds through that day
+/// (UTC). Any other word is an error, so a typo never runs as the weaker setting. A date already
+/// past starts the gateway enforcing, so a restart after the window never stops the surface.
+fn urn_owner_prefix(
+    value: Option<&str>,
+    until: Option<&str>,
+    now: SystemTime,
+) -> Result<UrnOwnerPrefix, (&'static str, String)> {
+    const UNTIL: &str = "JC_GATEWAY_URN_OWNER_WARN_UNTIL";
     match value.map(str::trim) {
-        None | Some("") | Some("enforce") => Ok(true),
-        Some("off") => Ok(false),
-        Some(other) => Err(format!("`{other}` is neither `enforce` nor `off`")),
+        None | Some("") | Some("enforce") => Ok(UrnOwnerPrefix::Enforce),
+        Some("off") => Ok(UrnOwnerPrefix::Off),
+        Some("warn") => {
+            let until = until
+                .map(str::trim)
+                .filter(|until| !until.is_empty())
+                .ok_or((
+                    UNTIL,
+                    "`warn` needs the date it ends, e.g. 2026-11-20 (at most 14 days ahead)"
+                        .to_owned(),
+                ))?;
+            let end = chrono::NaiveDate::parse_from_str(until, "%Y-%m-%d")
+                .ok()
+                .and_then(|day| day.succ_opt())
+                .and_then(|day| day.and_hms_opt(0, 0, 0))
+                .and_then(|end| u64::try_from(end.and_utc().timestamp()).ok())
+                .map(|seconds| SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
+                .ok_or((
+                    UNTIL,
+                    format!("`{until}` is no date YYYY-MM-DD, e.g. 2026-11-20"),
+                ))?;
+            if end > now + URN_OWNER_WARN_LIMIT + Duration::from_secs(24 * 3600) {
+                return Err((
+                    UNTIL,
+                    format!("`{until}` is more than 14 days ahead: re-mint the ids sooner"),
+                ));
+            }
+            Ok(UrnOwnerPrefix::Warn { until: end })
+        }
+        Some(other) => Err((
+            "JC_GATEWAY_URN_OWNER_PREFIX",
+            format!("`{other}` is none of `enforce`, `warn` or `off`"),
+        )),
     }
 }
 
@@ -636,7 +694,7 @@ mod tests {
             egress_private_hosts: Vec::new(),
             personal_keys: None,
             domain_verification: crate::domain_gate::Mode::Report,
-            urn_owner_prefix: true,
+            urn_owner_prefix: UrnOwnerPrefix::Enforce,
             domain_verifications_url: None,
             write_budget_mib: crate::app::WRITE_BUDGET_MIB,
             max_in_flight: crate::middleware::in_flight::MAX_IN_FLIGHT,
@@ -655,11 +713,47 @@ mod tests {
     /// T-6769: the owner check is on unless the operator writes `off`; a typo is no setting.
     #[test]
     fn the_urn_owner_prefix_is_enforced_unless_switched_off() {
+        let now = SystemTime::now();
         for on in [None, Some(""), Some("enforce"), Some(" enforce ")] {
-            assert_eq!(urn_owner_prefix(on), Ok(true), "{on:?}");
+            assert_eq!(
+                urn_owner_prefix(on, None, now),
+                Ok(UrnOwnerPrefix::Enforce),
+                "{on:?}"
+            );
         }
-        assert_eq!(urn_owner_prefix(Some("off")), Ok(false));
-        assert!(urn_owner_prefix(Some("of")).is_err());
+        assert_eq!(
+            urn_owner_prefix(Some("off"), None, now),
+            Ok(UrnOwnerPrefix::Off)
+        );
+        assert!(urn_owner_prefix(Some("of"), None, now).is_err());
+    }
+
+    /// T-6793: `warn` runs only with the date it ends, at most 14 days ahead, through that day.
+    #[test]
+    fn warn_needs_an_end_within_fourteen_days() {
+        // 2026-11-11T12:00:00Z.
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_794_398_400);
+        for missing in [None, Some(""), Some(" ")] {
+            let (name, _) = urn_owner_prefix(Some("warn"), missing, now).expect_err("no end");
+            assert_eq!(name, "JC_GATEWAY_URN_OWNER_WARN_UNTIL");
+        }
+        for wrong in ["2026-11-31", "20.11.2026", "2026-11-26", "2027-11-12"] {
+            assert!(
+                urn_owner_prefix(Some("warn"), Some(wrong), now).is_err(),
+                "{wrong}"
+            );
+        }
+        assert_eq!(
+            urn_owner_prefix(Some("warn"), Some("2026-11-25"), now),
+            Ok(UrnOwnerPrefix::Warn {
+                until: SystemTime::UNIX_EPOCH + Duration::from_secs(1_795_651_200)
+            })
+        );
+        // A date past already enforces: the restart after the window keeps serving.
+        assert!(matches!(
+            urn_owner_prefix(Some("warn"), Some("2026-11-01"), now),
+            Ok(UrnOwnerPrefix::Warn { until }) if until < now
+        ));
     }
 
     #[test]
