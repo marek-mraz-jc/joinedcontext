@@ -59,11 +59,6 @@ fn source(text: &str) -> Map<String, Value> {
     m
 }
 
-/// The one error of a model that compiles: the artifacts this port does not render.
-fn unrendered() -> String {
-    format!("{}: {NOT_RENDERED}", UNRENDERED.join(", "))
-}
-
 fn errors_of(v: &Value) -> Vec<String> {
     v["errors"]
         .as_array()
@@ -82,8 +77,7 @@ async fn healthz_answers_and_every_other_route_is_a_json_404() {
     for (method, path) in [
         ("GET", "/generate"),
         ("POST", "/infer-schema"),
-        ("POST", "/import-sdm"),
-        ("GET", "/catalog"),
+        ("POST", "/catalog"),
         ("POST", "/try-mapping"),
         ("GET", "/"),
     ] {
@@ -101,7 +95,7 @@ async fn a_model_compiles_to_a_broker_schema_the_broker_reads_and_a_context() {
     let body = json!({"source": MODEL}).to_string();
     let (status, out) = call("POST", "/generate", body).await;
     assert_eq!(status, StatusCode::OK, "{out}");
-    assert_eq!(errors_of(&out), vec![unrendered()]);
+    assert_eq!(errors_of(&out), Vec::<String>::new());
     let schema = &out["brokerSchema"];
     assert_eq!(schema["name"], "parking");
     assert_eq!(schema["classes"]["ParkingSpot"]["is_a"], "Entity");
@@ -114,10 +108,138 @@ async fn a_model_compiles_to_a_broker_schema_the_broker_reads_and_a_context() {
     assert_eq!(context["ParkingSpot"]["@id"], "city:ParkingSpot");
     assert_eq!(context["capacity"]["@id"], "city:capacity");
     assert_eq!(out["generatorVersion"], generator_version());
-    assert!(
-        out.get("jsonSchema").is_none(),
-        "only the views' artifacts are filled"
+}
+
+/// T-6831: every artifact the Portal's save commits (DM-02) is rendered, so a model saves on jc.
+#[tokio::test]
+async fn a_model_renders_every_artifact_the_save_commits() {
+    let source = MODEL.replacen(
+        "  linkml: https://w3id.org/linkml/\n",
+        "  linkml: https://w3id.org/linkml/\n  ucefact: http://unece.org/cefact/\n",
+        1,
+    )
+    .replacen(
+        "  capacity:\n    range: integer\n",
+        "  capacity:\n    range: integer\n    description: Spaces in total.\n    unit:\n      ucum_code: '1'\n      exact_mappings: [ucefact:C62]\n",
+        1,
     );
+    let (status, out) = call("POST", "/generate", json!({"source": source}).to_string()).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(errors_of(&out), Vec::<String>::new(), "{out}");
+
+    let spot = &out["jsonSchema"]["definitions"]["ParkingSpot"];
+    assert_eq!(
+        out["jsonSchema"]["$schema"],
+        "http://json-schema.org/draft-07/schema#"
+    );
+    assert_eq!(
+        out["jsonSchema"]["x-generator-version"],
+        generator_version()
+    );
+    assert_eq!(spot["properties"]["capacity"]["type"], "integer");
+    assert_eq!(
+        spot["properties"]["location"]["x-ngsi-ld-kind"],
+        "GeoProperty"
+    );
+    assert_eq!(
+        spot["properties"]["status"]["enum"],
+        json!(["free", "occupied"])
+    );
+    assert_eq!(
+        spot["properties"]["capacity"]["x-unit"],
+        json!({"ucumCode": "1", "exactMappings": ["ucefact:C62"]})
+    );
+
+    assert!(
+        out["docs"].as_str().unwrap().contains("ParkingSpot"),
+        "{}",
+        out["docs"]
+    );
+
+    let example = &out["example"];
+    assert_eq!(
+        example["id"],
+        "urn:ngsi-ld:ParkingSpot:city.example:example:1"
+    );
+    assert_eq!(example["type"], "ParkingSpot");
+    assert_eq!(example["capacity"], 0);
+    assert_eq!(example["status"], "free");
+    assert_eq!(example["location"]["type"], "Point");
+    let terms = out["context"]["@context"].as_object().unwrap();
+    for key in example.as_object().unwrap().keys() {
+        assert!(
+            matches!(key.as_str(), "id" | "type") || terms.contains_key(key),
+            "{key}"
+        );
+    }
+
+    let ts = out["typescript"].as_str().unwrap();
+    assert!(
+        ts.contains("export type SpotStatus = \"free\" | \"occupied\";"),
+        "{ts}"
+    );
+    assert!(ts.contains("export type ParkingSpot = {"), "{ts}");
+    assert!(
+        ts.contains("  /** Spaces in total. Unit: 1. */\n  capacity?: number | null;"),
+        "{ts}"
+    );
+    assert!(ts.contains("  location?: Geometry | null;"), "{ts}");
+    assert!(
+        ts.contains("export type EntityTypeName = \"ParkingSpot\";"),
+        "{ts}"
+    );
+}
+
+/// A model with no entity class has no example: the save is refused naming the field.
+#[tokio::test]
+async fn a_model_without_an_entity_class_names_the_example_in_errors() {
+    let source = MODEL.replacen("    is_a: Entity\n", "", 1);
+    let (status, out) = call("POST", "/generate", json!({"source": source}).to_string()).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    let errors = errors_of(&out);
+    assert_eq!(errors.len(), 1, "{out}");
+    assert!(
+        errors[0].starts_with("example: no class of this model specialises `Entity`"),
+        "{out}"
+    );
+    assert!(
+        out.get("example").is_none() && out.get("jsonSchema").is_some(),
+        "{out}"
+    );
+}
+
+/// T-6831: the catalogue is the Portal's mirror; Model Tools on jc fetches nothing, so its
+/// catalogue is empty and stale, and an import names the model it does not hold.
+#[tokio::test]
+async fn catalog_and_import_sdm_answer_without_fetching() {
+    let (status, out) = call(
+        "GET",
+        "/catalog?refresh=true&subject=dataModel.Parking",
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        out,
+        json!({"subjects": [], "refreshedAt": null, "stale": true})
+    );
+
+    let body = json!({"model": "dataModel.Environment/AirQualityObserved"}).to_string();
+    let (status, out) = call("POST", "/import-sdm", body).await;
+    assert_eq!(status, StatusCode::OK);
+    let errors = errors_of(&out);
+    assert!(
+        errors[0].starts_with(
+            "dataModel.Environment/AirQualityObserved is not in the Smart Data Models mirror"
+        ),
+        "{out}"
+    );
+    assert!(out.get("linkml").is_none(), "{out}");
+
+    for bad in ["", "{}", "{\"model\": 3}", "not json"] {
+        let (status, out) = call("POST", "/import-sdm", bad.to_owned()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {out}");
+    }
 }
 
 /// T-6747: the broker schema keeps what the author says the model is, so a view's published
@@ -131,7 +253,7 @@ async fn the_broker_schema_keeps_the_title_description_and_license() {
     );
     let (status, out) = call("POST", "/generate", json!({"source": source}).to_string()).await;
     assert_eq!(status, StatusCode::OK, "{out}");
-    assert_eq!(errors_of(&out), vec![unrendered()]);
+    assert_eq!(errors_of(&out), Vec::<String>::new());
     let schema = &out["brokerSchema"];
     assert_eq!(
         (&schema["title"], &schema["description"], &schema["license"]),
@@ -251,7 +373,7 @@ slots:
     body.insert("imports".to_owned(), json!({"org.shared.v1": shared}));
     let (status, out) = generate(&body);
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(errors_of(&out), vec![unrendered()], "{out}");
+    assert_eq!(errors_of(&out), Vec::<String>::new(), "{out}");
     assert_eq!(out["brokerSchema"]["slots"]["label"]["range"], "string");
 }
 

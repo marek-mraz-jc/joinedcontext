@@ -313,6 +313,10 @@ COPY --from=build /jc /usr/local/bin/jc
 # kaisatsu_migrate role, before jc connects as kaisatsu_app (an init container in components/jc).
 COPY --from=build /kaisatsu /usr/local/bin/kaisatsu
 COPY --from=apps /srv/apps /srv/apps
+# The Smart Data Models mirror the Portal image carries (T-6353, crates/portal/Dockerfile): every
+# catalogue model converted to LinkML ahead of time, so jc_model_sdm_search and jc_model_sdm_import
+# answer from disk and jc fetches nothing from GitHub (T-6831). Same pin as the Portal's (DM-08).
+ADD --keep-git-dir=false https://github.com/marek-mraz-jc/joinedcontext-sdm-linkml.git#e6df96dabeca93e8557f3b681b4cf49257704052 /srv/sdm-mirror
 # The assistant's embedding model and ONNX Runtime; without them the module stays off. From
 # `rust`, which downloads them: ship hands in `build` as a named context holding only the
 # binaries and state/ (image.yml), so a COPY from `build` finds nothing there.
@@ -330,6 +334,7 @@ ENV JCBIN_LISTEN=0.0.0.0:8080 \
 # The bundles above, read from disk per request (the Portal's static host); a deployment that
 # mounts its own artifact root sets it elsewhere.
 ENV JC_PORTAL_APPS_DIR=/srv/apps
+ENV JC_PORTAL_SDM_MIRROR_DIR=/srv/sdm-mirror
 # jemalloc as the Portal and the gateway run it (crates/portal/Dockerfile): freed pages purged after a
 # second, four arenas whatever the node's core count.
 ENV _RJEM_MALLOC_CONF=background_thread:true,narenas:4,dirty_decay_ms:1000,muzzy_decay_ms:0
