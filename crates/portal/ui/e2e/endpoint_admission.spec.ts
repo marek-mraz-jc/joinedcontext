@@ -122,6 +122,11 @@ async function stub(page: Page, admitted: boolean): Promise<string[]> {
     if (path === "/api/v1/organization/data-access") return json(READERS);
     if (path.endsWith(`/endpoints/${NAME}`)) return json(ENDPOINT);
     if (path.endsWith(`/${PROJECT}/endpoints`)) return json(list([ENDPOINT]));
+    // The edit form keeps a draft of what is typed (T-2474); the stub keeps none.
+    if (path.includes(`/drafts/Endpoint/${NAME}`))
+      return route.request().method() === "PUT"
+        ? json({ manifest: route.request().postDataJSON()?.manifest, version: 1, updatedAt: "2026-11-12T06:00:00Z" })
+        : json({ title: "Not Found", status: 404 }, 404);
     if (path.endsWith(`/endpoints/${NAME}/access-requests`)) return json({ types: ["AirQualityObserved"], refusal: null, items: [] });
     return json(list([]));
   });
@@ -153,6 +158,16 @@ test.describe("an Endpoint the gateway does not admit you to (T-6802)", () => {
       await shot(page, `settings-access-refused-${width}`);
       await page.locator("[data-endpoint-refused]").getByRole("link", { name: "Request access" }).click();
       await expect(page).toHaveURL(new RegExp(`/endpoints/${NAME}#request-access$`));
+
+      // The edit form reads the schema, the data and the filter proof through the gateway too.
+      await page.goto(`/projects/${PROJECT}/endpoints/${NAME}/edit?lang=en`);
+      const editRefused = page.locator("[data-endpoint-refused]");
+      await expect(editRefused.getByText("You do not read this Endpoint's data")).toBeVisible();
+      await editRefused.scrollIntoViewIfNeeded();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      await shot(page, `endpoint-edit-refused-${width}`);
+      await editRefused.getByRole("link", { name: "Request access" }).click();
+      await expect(page).toHaveURL(new RegExp(`/endpoints/${NAME}#request-access$`));
       expect(gateway).toEqual([]);
     });
 
@@ -181,6 +196,16 @@ test.describe("an Endpoint the gateway does not admit you to (T-6802)", () => {
       await expect.poll(() => gateway).toContain(`/api/endpoint/${SLUG}/access`);
       await expect(page.locator("[data-endpoint-refused]")).toHaveCount(0);
       await shot(page, `settings-access-granted-${width}`);
+
+      await page.goto(`/projects/${PROJECT}/endpoints/${NAME}/edit?lang=en`);
+      await expect.poll(() => gateway).toContain(`/api/endpoint/${SLUG}/schema/index.json`);
+      await expect(page.locator("[data-endpoint-refused]")).toHaveCount(0);
+      const summary = page.locator("summary", { hasText: "What this endpoint answers" });
+      await summary.click();
+      const preview = page.locator("details", { has: summary });
+      await expect(preview.getByText("Mannerheimintie").first()).toBeVisible();
+      await preview.scrollIntoViewIfNeeded();
+      await shot(page, `endpoint-edit-granted-${width}`);
     });
   }
 });
