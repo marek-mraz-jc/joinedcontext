@@ -113,3 +113,21 @@ def test_an_organization_endpoint_counts_as_readable_only_with_a_read_policy_in_
     s.expectations()
     project = s.exp["zilina"]["projects"]["zilina"]
     assert set(project["closed"]) == {"aaaa", "bbbb"} and project["readable"] == ["bbbb"]
+
+
+def test_the_people_rows_name_user_names_never_e_mail_addresses(tmp_path):
+    # Smoke 43161732041: the logs suite failed multiorg's REPORT.md and results.json on the
+    # addresses these rows printed (personal.results8, personal.results9).
+    everyone = [{"email": f"mo-{o}-{k}@rehearsal.invalid"} for o in ("hel", "zilina") for k in ("admin", "member")]
+
+    class Session:
+        def json(self, method, path):
+            return 200, {"items": everyone}
+
+    s = suite.Suite(args(tmp_path))
+    s.exp, s.installation = {"hel": {}, "zilina": {}}, "hel"
+    s.session = lambda key, on=None: Session()
+    s.check_people()
+    assert s.rows and not any("@" in str(r[k]) for r in s.rows for k in ("expected", "actual", "reason"))
+    hel = next(r for r in s.rows if r["id"] == "people.hel-admin.no-foreign")
+    assert hel["actual"] == "200, foreign ['mo-zilina-admin', 'mo-zilina-member']"
