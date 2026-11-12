@@ -1452,7 +1452,7 @@ export function PipelineFlow({
       </Field>
       {needle ? (
         found.length === 0 ? (
-          <p className="text-caption text-fg-muted">{t("pipelines.flow.searchNone", { query: query.trim() })}</p>
+          <p role="status" className="rounded-md border border-border bg-surface-subtle p-3 text-sm text-fg">{t("pipelines.flow.searchNone", { query: query.trim() })}</p>
         ) : (
           <ul className="flex flex-col gap-1" aria-label={t("pipelines.flow.searchFound", { count: found.length })}>
             {found.map((processor) => (
