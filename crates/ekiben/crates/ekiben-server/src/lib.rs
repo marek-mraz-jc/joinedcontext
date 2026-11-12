@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use ekiben_core::Registry;
 
-/// The registry of every component this build carries (processors, HTTP, file, NATS, and with
+/// The registry of every component this build carries (processors, text processors, HTTP, file, NATS, and with
 /// their features NGSI-LD, Parquet and Protobuf), as the `ekiben` binary and a hosting `jc` use it.
 pub fn build_full_registry() -> Arc<Registry> {
     let reg = Arc::new(Registry::new());
@@ -37,6 +37,7 @@ pub fn build_full_registry() -> Arc<Registry> {
     ekiben_io_http::register_all(&reg);
     ekiben_io_file::register_all(&reg);
     ekiben_io_nats::register_all(&reg);
+    ekiben_text::register(&reg);
     #[cfg(feature = "ngsild")]
     ekiben_io_ngsild::register_all(&reg);
     #[cfg(feature = "parquet")]
