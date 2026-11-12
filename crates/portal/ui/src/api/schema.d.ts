@@ -1523,7 +1523,7 @@ export interface paths {
         put?: never;
         /**
          * Open A Project
-         * @description Opens a project, with the opener's steward binding in the same change; the organization's own setting says who may.
+         * @description Opens a project with you as its steward, in an Organization whose own setting lets you.
          */
         post: operations["open_project"];
         delete?: never;
@@ -1548,7 +1548,7 @@ export interface paths {
         post?: never;
         /**
          * Delete A Project
-         * @description Proposes the one red-lane change that removes a project and every space, endpoint, app, service account, role and binding written for it.
+         * @description Proposes the red-lane change removing a project and its spaces, endpoints, apps, service accounts, roles and bindings.
          */
         delete: operations["delete_project"];
         options?: never;
@@ -2871,7 +2871,7 @@ export interface paths {
         };
         /**
          * Export Project
-         * @description The project's manifests as one bundle, narrowed to the kinds and names asked for; the whole project is for organization administrators.
+         * @description The project's manifests as one bundle, narrowed to the kinds and names asked; the whole one needs an organization admin.
          */
         get: operations["export"];
         put?: never;
@@ -5085,7 +5085,7 @@ export interface paths {
         put?: never;
         /**
          * Open A Project
-         * @description Opens a project, with the opener's steward binding in the same change; the organization's own setting says who may
+         * @description Opens a project with you as its steward, in an Organization whose own setting lets you
          */
         post: operations["jc_project_create"];
         delete?: never;
@@ -5105,7 +5105,7 @@ export interface paths {
         put?: never;
         /**
          * Delete A Project
-         * @description Proposes the one red-lane change that removes a project and every space, endpoint, app, service account, role and binding written for it
+         * @description Proposes the red-lane change removing a project and its spaces, endpoints, apps, service accounts, roles and bindings
          */
         post: operations["jc_project_delete"];
         delete?: never;
@@ -5125,7 +5125,7 @@ export interface paths {
         put?: never;
         /**
          * Export Project
-         * @description The project's manifests as one bundle, narrowed to the kinds and names asked for; the whole project is for organization administrators
+         * @description The project's manifests as one bundle, narrowed to the kinds and names asked; the whole one needs an organization admin
          */
         post: operations["jc_project_export"];
         delete?: never;
@@ -11089,6 +11089,11 @@ export interface components {
             displayName?: string | null;
             /** @description The slug: the `{project}` segment of every path of it (PF-67). */
             name: string;
+            /**
+             * @description The Organization the project belongs to, e.g. `bbsk`: needed only when the caller may open
+             *     a project in several; the caller must hold that right there (T-6766).
+             */
+            organization?: string | null;
         };
         /** @description What opening a workspace asks for (API/01 §22). */
         OpenRequest: {
@@ -32193,12 +32198,14 @@ export interface operations {
                  *     }
                  */
                 "application/json": {
-                    /** @description One line about what the project is for */
+                    /** @description What it is for, one line */
                     description?: string;
-                    /** @description What people call it; the slug when absent */
+                    /** @description Shown name; the slug when absent */
                     displayName?: string;
-                    /** @description The project slug, a DNS-1123 label */
+                    /** @description Slug, a DNS-1123 label */
                     name: string;
+                    /** @description Its Organization, e.g. bbsk; only when you may open projects in several */
+                    organization?: string;
                 };
             };
         };
@@ -32416,13 +32423,13 @@ export interface operations {
                 /** @example {} */
                 "application/json": {
                     /**
-                     * @description The bundle's format; yaml when absent
+                     * @description yaml when absent
                      * @enum {string}
                      */
                     format?: "yaml" | "json";
                     /** @description Comma-separated plurals, e.g. endpoints,pipelines */
                     kinds?: string;
-                    /** @description Comma-separated metadata.name values, e.g. doprava */
+                    /** @description Comma-separated names, e.g. doprava */
                     names?: string;
                     /** @description A commit of the configuration repository */
                     revision?: string;
@@ -32602,7 +32609,7 @@ export interface operations {
                     conflictPolicy?: "fail" | "skip" | "replace" | "rename";
                     /** @description Answer the plan and write nothing */
                     dryRun?: boolean;
-                    /** @description Organisation imported ids are rewritten to; this one when absent */
+                    /** @description Organisation ids are rewritten to; this one when absent */
                     orgDomain?: string;
                 };
             };

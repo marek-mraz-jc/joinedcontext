@@ -30,7 +30,7 @@ the operation named in the row. Every operation is on the registry, so the UI re
 | | create another Organization | `jc_resource_propose` kind `Organization` at `org` | refused: installation-wide manifest (ADR-N-058 §2.2) | refused | none yet (jc-admin-ui) |
 | | setup checklist, validation health, every project's checks, limits, brokers | `jc_organization_read` aspects `setup`, `health`, `healthChecks`, `limits`, `brokers` (new) | refused by the route (PF-03: installation administrators) | refused by the route | `/organization/setup`, `/organization/health`, `/organization/limits` (OrganizationLimitsView), `/organization/brokers`; project checks: `/projects/$project/health` |
 | Projects | list readable projects | `jc_organization_read` aspect `projects` (new) | same; only its Organization's projects | same; only its projects | `/` (project picker), `/organization/projects` |
-| | open a project | `jc_project_create` | refused: a new project belongs to the installation Organization (ADR-N-058 §2.2); P moves it by `organizationRef` | refused unless `Organization.spec.projects.creation` lets them (PF-65) | `/` New project |
+| | open a project | `jc_project_create`; with several Organizations refused in the installation Organization, which holds no data projects (T-6766) | `jc_project_create`: the project lands in O's own Organization, `organization` names one when O holds the right in several (T-6766) | refused unless `Organization.spec.projects.creation` lets them (PF-65) | `/` New project |
 | | read, revisions, export, import, delete | `jc_project_get`, `jc_project_revisions`, `jc_project_export`, `jc_project_import`, `jc_project_delete` (red lane, asks) | same, in its Organization's projects | same, in its project; export of the whole project is P's | `/projects/$project/settings`, `/projects/$project/import` |
 | Spaces | create, edit, complete, delete | `jc_resource_propose` / `jc_resource_delete` kind `ContextSpace`, `jc_space_complete`, `jc_space_governance` | same in its projects | same in its project | `/projects/$project/spaces`, `/projects/$project/spaces/complete` |
 | People (kaisatsu realm) | list, get, create, edit, disable, enable, sign out | `jc_person_list`, `jc_person_get`, `jc_person_create`, `jc_person_edit`, `jc_person_disable`, `jc_person_enable`, `jc_person_sign_out` | op (route): the realm is the installation's; the route decides on `Person` at organization scope | refused by the route | `/organization/people` |
@@ -86,10 +86,6 @@ the masked answer for MCP, and one activity row per MCP `tools/call` (`mcp::reco
 
 ## 5. Gaps left
 
-- Opening a project directly inside a non-installation Organization (O): `POST
-  /api/v1/projects` always writes `organizationRef: <installation>` (`api/projects.rs`
-  `open_project_files`). Today P opens it and proposes the `Project` manifest with the other
-  `organizationRef` (`jc_resource_propose`). Changing that is an ADR-N-058 §2.2 decision.
 - People of a non-installation Organization (O): the realm is one per installation, so
   `jc_person_*` are P's. A per-Organization people view needs kaisatsu organizations first.
 - Grafana visualizations (`POST /projects/{p}/grafana`, `DELETE /projects/{p}/grafana/{id}`)

@@ -754,7 +754,7 @@ fn readme(
     get,
     path = "/api/v1/projects/{project}/export",
     summary = "Export Project",
-    description = "The project's manifests as one bundle, narrowed to the kinds and names asked for; the whole project is for organization administrators.",
+    description = "The project's manifests as one bundle, narrowed to the kinds and names asked; the whole one needs an organization admin.",
     tag = "resources",
     params(
         ("project" = String, Path, description = "Project name"),
