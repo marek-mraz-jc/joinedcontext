@@ -1824,7 +1824,12 @@ mod tests {
         for op in crate::ops::registry() {
             let tool = tool_definition(&crate::ops::summary(op));
             let listed = tool["inputSchema"]["properties"].get("elicitation");
-            assert_eq!(listed.is_some(), may_ask(&crate::ops::summary(op)), "{}", op.name);
+            assert_eq!(
+                listed.is_some(),
+                may_ask(&crate::ops::summary(op)),
+                "{}",
+                op.name
+            );
         }
         let create = tool_definition(&crate::ops::summary(
             crate::ops::find("jc_project_create").expect("registered"),
