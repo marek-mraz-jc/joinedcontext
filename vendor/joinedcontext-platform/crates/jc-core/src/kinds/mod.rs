@@ -7,6 +7,7 @@ pub mod appearance;
 pub mod assistant;
 pub mod bento_inputs;
 pub mod bento_processors;
+pub mod ekiben_components;
 pub mod blueprint;
 pub mod catalog;
 pub mod catalog_datasets;

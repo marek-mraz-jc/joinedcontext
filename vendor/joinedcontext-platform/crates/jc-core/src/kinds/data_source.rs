@@ -117,9 +117,9 @@ impl JsonSchema for DataSourceType {
                     serde_json::json!("http"),
                     serde_json::json!("websocket"),
                     serde_json::json!("gtfs-rt"),
-                    serde_json::json!("kafka"),
+                    serde_json::json!("nats"),
                     serde_json::json!("csv"),
-                    serde_json::json!("sql_select"),
+                    serde_json::json!("http_client"),
                 ],
                 ..Default::default()
             })),
@@ -580,9 +580,8 @@ impl DataSourceSpec {
             }
             DataSourceType::Runner(name) => {
                 if !bento_inputs::INPUTS.contains(&name.as_str()) {
-                    let mut accepted = Vec::with_capacity(4 + bento_inputs::INPUTS.len());
-                    accepted.extend_from_slice(&["mqtt", "http", "websocket", "gtfs-rt"]);
-                    accepted.extend_from_slice(bento_inputs::INPUTS);
+                    let mut accepted = vec!["mqtt", "http", "websocket", "gtfs-rt"];
+                    accepted.extend(runner_inputs());
                     return Err(Error::Invalid {
                         field: "spec.type".to_string(),
                         reason: format!(
@@ -592,6 +591,7 @@ impl DataSourceSpec {
                     });
                 }
                 refused_input("spec.type", name)?;
+                unregistered_input("spec.type", name)?;
                 if !present.is_empty() {
                     return Err(Error::Name {
                         field: "spec",
@@ -1025,6 +1025,30 @@ fn refused_input(field: &'static str, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// The runner inputs an author may name: the Bento catalog's, less the refused ones, that the
+/// pipeline runner (ekiben) also builds (T-6825).
+pub fn runner_inputs() -> impl Iterator<Item = &'static str> {
+    bento_inputs::INPUTS.iter().copied().filter(|name| {
+        !REFUSED_INPUTS.contains(name) && super::ekiben_components::INPUTS.contains(name)
+    })
+}
+
+/// Refuses an input the Bento catalog knows and the pipeline runner does not build, at save
+/// instead of at the stream's first run (T-6825).
+fn unregistered_input(field: &'static str, name: &str) -> Result<()> {
+    if super::ekiben_components::INPUTS.contains(&name) {
+        return Ok(());
+    }
+    Err(Error::Invalid {
+        field: field.to_owned(),
+        reason: format!(
+            "input `{name}` is not one the pipeline runner carries, so the stream would stop at \
+             its first run; accepted inputs are: {}",
+            runner_inputs().collect::<Vec<_>>().join(", ")
+        ),
+    })
+}
+
 /// One runner input and every input nested in it (T-3833): no refused input, a file reader (and
 /// `fsevent`, which watches paths) under `files`, and its `processors` held to the rules of a
 /// pipeline step. `own` is the source's declared `envVar`s.
@@ -1089,6 +1113,7 @@ fn validate_input_tree(
                 });
             }
             refused_input("spec.input", child_name)?;
+            unregistered_input("spec.input", child_name)?;
             let empty = serde_json::Map::new();
             validate_input_tree(
                 child_name,
@@ -1521,5 +1546,57 @@ mod address_tests {
         ] {
             assert!(validate_input_strings(&allowed).is_ok(), "{allowed}");
         }
+    }
+}
+
+#[cfg(test)]
+mod runner_registry_tests {
+    fn source(input: &str) -> String {
+        format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: DataSource\nmetadata:\n  name: feed\n  namespace: helsinki\nspec:\n{input}"
+        )
+    }
+
+    /// T-6825: an input the Bento catalog lists and the runner does not build is refused at
+    /// save, naming the field and the input, instead of failing at the stream's first run.
+    #[test]
+    fn an_input_the_runner_does_not_build_is_refused_naming_the_field() {
+        let kafka = source(
+            "  type: kafka\n  input:\n    addresses: [\"broker.example.fi:9092\"]\n    topics: [\"vehicles\"]\n",
+        );
+        let err = crate::registry::validate_yaml("DataSource", &kafka)
+            .expect("a kind")
+            .expect_err("kafka is not built by the runner")
+            .to_string();
+        assert!(err.contains("spec.type") && err.contains("`kafka`"), "{err}");
+        assert!(err.contains("nats") && !err.contains("kafka_franz"), "{err}");
+
+        let nested = source(
+            "  type: broker\n  input:\n    inputs:\n      - nats: { urls: [\"nats://broker.example.fi:4222\"], subject: a }\n      - amqp_0_9: { urls: [\"amqp://broker.example.fi:5672\"], queue: a }\n",
+        );
+        let err = crate::registry::validate_yaml("DataSource", &nested)
+            .expect("a kind")
+            .expect_err("amqp_0_9 is not built by the runner")
+            .to_string();
+        assert!(err.contains("spec.input") && err.contains("`amqp_0_9`"), "{err}");
+
+        let nats = source(
+            "  type: nats\n  input:\n    urls: [\"nats://broker.example.fi:4222\"]\n    subject: vehicles\n",
+        );
+        crate::registry::validate_yaml("DataSource", &nats)
+            .expect("a kind")
+            .expect("nats is built by the runner");
+    }
+
+    /// Every input offered is one the Bento catalog draws a form for and the runner builds.
+    #[test]
+    fn runner_inputs_are_both_catalogs() {
+        let offered: Vec<&str> = super::runner_inputs().collect();
+        assert!(offered.contains(&"http_client") && offered.contains(&"nats"));
+        for name in &offered {
+            assert!(super::super::ekiben_components::INPUTS.contains(name), "{name}");
+            assert!(super::bento_inputs::INPUTS.contains(name), "{name}");
+        }
+        assert!(!offered.contains(&"kafka") && !offered.contains(&"stdin"));
     }
 }

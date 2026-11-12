@@ -1245,21 +1245,34 @@ pub fn validate_processor_reading(
             reason: "a processor step names exactly one processor (PL-52)",
         });
     };
-    if !super::bento_processors::PROCESSORS.contains(&name.as_str()) {
-        let accepted: Vec<&str> = super::bento_processors::PROCESSORS
+    // The Bento catalog less the refused processors and those the runner (ekiben) does not build.
+    let accepted = || {
+        super::bento_processors::PROCESSORS
             .iter()
             .copied()
-            .filter(|p| !REFUSED_PROCESSORS.contains(p))
-            .collect();
+            .filter(|p| {
+                !REFUSED_PROCESSORS.contains(p) && super::ekiben_components::PROCESSORS.contains(p)
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if !super::bento_processors::PROCESSORS.contains(&name.as_str()) {
         return Err(refused(format!(
             "unknown processor `{name}`; accepted processors are: {}",
-            accepted.join(", ")
+            accepted()
         )));
     }
     if REFUSED_PROCESSORS.contains(&name.as_str()) {
         return Err(refused(format!(
             "processor `{name}` {} (PL-52)",
             refused_reason(name)
+        )));
+    }
+    if !super::ekiben_components::PROCESSORS.contains(&name.as_str()) {
+        return Err(refused(format!(
+            "processor `{name}` is not one the pipeline runner carries, so the stream would stop \
+             at its first run (T-6825); accepted processors are: {}",
+            accepted()
         )));
     }
     if let Some(nested) = nested_refused(&config[name]) {
@@ -1899,4 +1912,22 @@ fn validate_steps(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod runner_registry_tests {
+    use serde_json::json;
+
+    /// T-6825: a step of a processor the Bento catalog lists and the runner does not build is
+    /// refused at save, naming the step's field and the processor.
+    #[test]
+    fn a_processor_the_runner_does_not_build_is_refused_naming_it() {
+        let err = super::validate_processor("spec.steps", &json!({ "jq": { "query": "." } }))
+            .expect_err("jq is not built by the runner")
+            .to_string();
+        assert!(err.contains("spec.steps") && err.contains("`jq`"), "{err}");
+        assert!(err.contains("mapping") && !err.contains(", jq,"), "{err}");
+        super::validate_processor("spec.steps", &json!({ "mapping": "root = this" }))
+            .expect("mapping is built by the runner");
+    }
 }
