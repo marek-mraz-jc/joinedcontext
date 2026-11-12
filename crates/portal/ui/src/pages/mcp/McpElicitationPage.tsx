@@ -141,15 +141,19 @@ function McpDecision<Q extends Asked>({
         </Alert>
       ) : null}
       <div className="space-y-2">
+        {/* Neither answer is filled until the person gives one: the filled button is the answer. */}
         <p className="text-body text-fg-muted">{t("mcpElicitation.hint")}</p>
         <div className="flex flex-wrap gap-3">
           <Button
-            variant="primary"
+            variant={asked.decision === "accept" ? "primary" : "secondary"}
+            aria-pressed={asked.decision ? asked.decision === "accept" : undefined}
             onClick={() => decide.mutate("accept")}
           >
             {t("mcpElicitation.accept")}
           </Button>
           <Button
+            variant={asked.decision === "decline" ? "primary" : "secondary"}
+            aria-pressed={asked.decision ? asked.decision === "decline" : undefined}
             onClick={() => decide.mutate("decline")}
           >
             {t("mcpElicitation.decline")}
@@ -163,7 +167,16 @@ function McpDecision<Q extends Asked>({
 
 const homeLink = "focus-ring text-body text-primary-soft-fg underline hover:no-underline";
 
-export function McpElicitationPage({ project, id }: { project: string; id: string }): JSX.Element {
+/** `open` is false while the call is about a project the person does not read yet (T-6829). */
+export function McpElicitationPage({
+  project,
+  id,
+  open = true,
+}: {
+  project: string;
+  id: string;
+  open?: boolean;
+}): JSX.Element {
   const { t } = useTranslation();
   return (
     <McpDecision
@@ -187,9 +200,15 @@ export function McpElicitationPage({ project, id }: { project: string; id: strin
       rows={(asked) => [[t("mcpElicitation.operation"), <code key="op">{asked.operation}</code>]]}
       look={(asked) => asked.resource}
       home={
-        <Link to="/projects/$project/home" params={{ project }} className={homeLink}>
-          {t("mcpElicitation.home")}
-        </Link>
+        open ? (
+          <Link to="/projects/$project/home" params={{ project }} className={homeLink}>
+            {t("mcpElicitation.home")}
+          </Link>
+        ) : (
+          <Link to="/" className={homeLink}>
+            {t("mcpConfirmation.home")}
+          </Link>
+        )
       }
     />
   );
