@@ -51,7 +51,12 @@ async fn car(app: &Router, n: u32) -> Outcome {
     let car = json!({"id": format!("urn:ngsi-ld:Car:{n}"), "type": "Car",
                      "speed": {"type": "Property", "value": n}});
     let (status, body) = call(app, "POST", "/ngsi-ld/v1/entities", &car.to_string()).await;
-    assert_eq!(status, StatusCode::CREATED, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
     Ok(())
 }
 
@@ -65,9 +70,19 @@ async fn a_file_past_its_rows_is_refused_before_its_first_byte() -> Outcome {
                       "rules": [{"types": ["Car"], "attributes": ["speed"]}],
                       "operations": ["query_entities"]});
     let (status, body) = call(&app, "PUT", "/q/views/city", &view.to_string()).await;
-    assert_eq!(status, StatusCode::CREATED, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
     let (status, body) = call(&app, "PUT", "/q/schemas/city", SCHEMA).await;
-    assert_eq!(status, StatusCode::CREATED, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
     for n in 1..=5 {
         car(&app, n).await?;
     }
@@ -75,7 +90,13 @@ async fn a_file_past_its_rows_is_refused_before_its_first_byte() -> Outcome {
     let (status, body) = call(&app, "GET", CARS, "").await;
     let csv = String::from_utf8(body)?;
     assert_eq!(status, StatusCode::OK, "{csv}");
-    assert_eq!(csv.lines().filter(|l| l.contains("urn:ngsi-ld:Car:")).count(), 5, "{csv}");
+    assert_eq!(
+        csv.lines()
+            .filter(|l| l.contains("urn:ngsi-ld:Car:"))
+            .count(),
+        5,
+        "{csv}"
+    );
     assert!(!csv.contains("# the file stopped"), "{csv}");
 
     car(&app, 6).await?;
@@ -85,7 +106,9 @@ async fn a_file_past_its_rows_is_refused_before_its_first_byte() -> Outcome {
         let problem: Value = serde_json::from_slice(&body)?;
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{uri}: {problem}");
         assert!(
-            problem.to_string().contains("narrow it (bbox, datetime, filter)"),
+            problem
+                .to_string()
+                .contains("narrow it (bbox, datetime, filter)"),
             "{uri}: {problem}"
         );
     }
