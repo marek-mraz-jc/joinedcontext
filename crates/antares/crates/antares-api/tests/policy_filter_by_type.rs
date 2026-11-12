@@ -756,6 +756,38 @@ async fn discovery_lists_each_types_own_attributes_only() {
     }
 }
 
+/// T-6785: a view of many selectors lists every type it shows though the
+/// probe of one type outlasts the discovery deadline. helsinki-all (about 40
+/// selectors) listed nothing after a TrafficFlowObserved walk that took the
+/// whole 6 s: the names were probed one after the other, so every later one
+/// came back cut.
+#[tokio::test(start_paused = true)]
+async fn a_slow_type_does_not_cut_the_types_listed_after_it() {
+    let mut names = vec!["Aardvark".to_owned()];
+    names.extend((0..30).map(|i| format!("Kind{i:02}")));
+    let rules: Vec<(&str, &[&str])> = names.iter().map(|n| (n.as_str(), &[][..])).collect();
+    let mut st = state(picks(&rules)).await;
+    for n in &names {
+        create(&st, json!({"id": format!("urn:ngsi-ld:{n}:1"), "type": n})).await;
+    }
+    let slow = std::time::Duration::from_secs(60);
+    st.store = Arc::new(crate::common::Double::slowing_type(
+        st.store.clone(),
+        &iri("Aardvark"),
+        slow,
+    ));
+    let (code, body) = send(&st, "GET", "/ngsi-ld/v1/types", None).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let listed: Vec<&str> = body["typeList"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no typeList: {body}"))
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    let fast: Vec<&str> = names[1..].iter().map(String::as_str).collect();
+    assert_eq!(listed, fast, "the slow type cut the names after it");
+}
+
 /// Zone A: the square (0,0)-(1,1); a Car at x 0.5 is inside, at x 5 not.
 fn zone_a() -> Box<antares_ql::geo::GeoQuery> {
     let params = std::collections::HashMap::from([

@@ -8,6 +8,7 @@ use antares_store::filter::{EntityFilter, Page};
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
+use futures_util::{StreamExt, TryStreamExt};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -304,10 +305,20 @@ async fn type_names(
     let Some((w, names)) = Walk::of(st, tenant, max, view).await? else {
         return Ok(None);
     };
+    let w = &w;
+    // unordered: an ordered buffer keeps a slow head's slot and stalls the rest
+    let probes = futures_util::stream::iter(names.into_iter().enumerate())
+        .map(|(at, name)| async move {
+            let found = first_visible(w, &name, None, &mut |_| true).await;
+            found.map(|p| (at, name, p))
+        })
+        .buffer_unordered(NAME_PROBES);
+    let mut found: Vec<_> = probes.try_collect().await?;
+    found.sort_unstable_by_key(|(at, ..)| *at);
     let mut shown = Vec::new();
     let mut partial = false;
-    for name in names {
-        match first_visible(&w, &name, None, &mut |_| true).await? {
+    for (_, name, found) in found {
+        match found {
             Probe::Seen => shown.push(name),
             Probe::None => {}
             Probe::Cut => partial = true,
@@ -315,6 +326,14 @@ async fn type_names(
     }
     Ok(Some((shown, partial)))
 }
+
+/// How many type names [`type_names`] probes at once (T-6785). One name
+/// whose probe walks far (a type of many Entities under a rule of several id
+/// patterns, which narrows nothing) held the whole list back: on helsinki-all
+/// (about 40 selectors) every name sorted after TrafficFlowObserved came back
+/// cut at [`crate::bounds::DISCOVERY_WAIT`]. Several in flight let the other
+/// names answer beside it; few enough to leave the shared pool to the rest.
+const NAME_PROBES: usize = 4;
 
 /// type IRI → the Attribute names its Entities show the caller
 type Shapes = BTreeMap<String, BTreeSet<String>>;
