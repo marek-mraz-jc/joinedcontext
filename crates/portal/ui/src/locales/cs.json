@@ -2797,7 +2797,7 @@
       "removeNode": "Odstranit",
       "search": "Najít procesor",
       "searchPlaceholder": "Název, kategorie nebo co dělá",
-      "searchNone": "Žádný procesor neodpovídá „{query}“. Paleta nabízí jen to, co spouštěč pipeline podporuje: zkuste širší slovo, například „json“, nebo mapování Bloblang.",
+      "searchNone": "Žádný procesor neodpovídá „{query}“. Paleta nabízí jen to, co spouštěč pipeline podporuje: zkuste širší slovo jako „json“.",
       "searchFound": "{count, plural, one {Nalezen # procesor} few {Nalezeny # procesory} other {Nalezeno # procesorů}}",
       "wire": {
         "intoSource": "Zdroj čte mimo pipeline; nic do něj nevede.",

@@ -2797,7 +2797,7 @@
       "removeNode": "Remove",
       "search": "Find a processor",
       "searchPlaceholder": "Name, category or what it does",
-      "searchNone": "No processor matches \"{query}\". The palette offers only what the pipeline runner builds: try a broader word such as \"json\", or a Bloblang mapping.",
+      "searchNone": "No processor matches \"{query}\". The palette offers only what the pipeline runner builds: try a broader word such as \"json\".",
       "searchFound": "{count, plural, one {# processor found} other {# processors found}}",
       "wire": {
         "intoSource": "A source reads from outside the pipeline; nothing wires into it.",

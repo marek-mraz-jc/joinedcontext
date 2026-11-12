@@ -2011,7 +2011,8 @@
         "pipeline_flow_steps.test.tsx",
         "pipeline_graph.test.ts",
         "pipeline_last_samples.test.tsx",
-        "pipeline_step_form.test.tsx"
+        "pipeline_step_form.test.tsx",
+        "runner_lists.test.ts"
       ]
     },
     "src/pages/pipelines/PipelineOverview.tsx": {
