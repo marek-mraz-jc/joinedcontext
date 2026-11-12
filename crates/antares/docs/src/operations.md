@@ -501,7 +501,12 @@ refused):
   (404 until that range commits). A range that deadlocks with a writer or
   waits on one past the 30 s lock timeout rolls back alone and is tried
   again, up to five times. A run that stops keeps the ranges it committed:
-  call it again with the same arguments and it renames the rest.
+  call it again with the same arguments and it renames the rest. Budget
+  (jc-dev copy, 2026-11-12, one Postgres 16 container on a shared disk,
+  4 MB work_mem): about 4 s per range, longest 5.5 s, so a writer waits at
+  most one range; praha-mesto (1.19 M ids) runs about 85 min, about 4 ms
+  an id, most of it moving about 16 `entity_values` rows per id. 0033's
+  single transaction held the locks 49 min for helsinki (211 k ids).
 - A `GET /ngsi-ld/v1/entities/{old id}` answers the Entity under its new id
   for twelve months after the remint, through the same Policy gate as the
   new id. Writes to an old id are not redirected.
@@ -571,18 +576,19 @@ writer: `POST /ngsi-ld/v1/entityOperations/delete` with its ids, and
 Then run the remint, which renames the newer copy. When a pipeline still
 writes both segments, fix its mapping first, or the pairs come back.
 
-jc-dev copy of 2026-11-12 (pairs in `entities`; "newer" = which segment
+jc-dev copy of 2026-11-12 (pairs in `entities`, owner `fi_hel`, the zilina
+Tenants `sk_zilina`; "newer" = which segment
 holds the later write):
 
-| Tenant | Segments (owner) | Pairs | Second newer | Temporal (1st / 2nd) |
+| Tenant | Segments | Pairs | Second newer | Temporal (1st / 2nd) |
 | --- | --- | --- | --- | --- |
-| ovzdusie | hel.fi, banskabystrica.sk (fi_hel) | 1 | 1 | 1 / 1 |
-| banskabystrica-kpi | hel.fi, banskabystrica.sk (fi_hel) | 3 | 2 | 3 / 3 |
-| bbsk-kpi | hel.fi, bbsk.sk (fi_hel) | 28 | 0 | 28 / 28 |
-| zilina-verejne | hel.fi, zilina.sk (sk_zilina) | 110 | 6 | 1 / 1 |
-| zilina-uniza | hel.fi, zilina.sk (sk_zilina) | 787 | 787 | 0 / 0 |
-| zilina-mesto | hel.fi, zilina.sk (sk_zilina) | 6425 | 3632 | 6425 / 6425 |
-| banskabystrica-verejne | hel.fi, banskabystrica.sk (fi_hel) | 210 | 79 | 0 / 3 |
+| ovzdusie | hel.fi, banskabystrica.sk | 1 | 1 | 1 / 1 |
+| banskabystrica-kpi | hel.fi, banskabystrica.sk | 3 | 2 | 3 / 3 |
+| bbsk-kpi | hel.fi, bbsk.sk | 28 | 0 | 28 / 28 |
+| zilina-verejne | hel.fi, zilina.sk | 110 | 6 | 1 / 1 |
+| zilina-uniza | hel.fi, zilina.sk | 787 | 787 | 0 / 0 |
+| zilina-mesto | hel.fi, zilina.sk | 6425 | 3632 | 6425 / 6425 |
+| banskabystrica-verejne | hel.fi, banskabystrica.sk | 210 | 79 | 0 / 3 |
 
 Every pair was written on 2026-11-11 or 2026-11-12, so both segments came
 from pipelines live in the week of the URN owner change.
