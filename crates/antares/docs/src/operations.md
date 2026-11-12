@@ -490,11 +490,11 @@ refused):
   into `entity_id_remap` and returns the counts per table as JSON. It
   refuses, renaming nothing, when a new id already exists. Writers wait on
   its table locks until the transaction ends; readers go on.
-- `CALL antares_remint_batched(tenant, from, to, 5000)` does the same in
-  one transaction per range of 5000 Entity ids (by id order), with each
+- `CALL antares_remint_batched(tenant, from, to, 1000)` does the same in
+  one transaction per range of 1000 Entity ids (by id order), with each
   range's history, so a writer waits on one range's locks, not the
   Tenant's. It first checks every new id for a clash and renames nothing on
-  one. It returns the summed counts and `batches`. Call it outside a
+  one. It returns the summed counts and `batches`, and a NOTICE per committed range shows progress. Call it outside a
   transaction block (`psql -c`, no `BEGIN`): it commits itself. Between two
   commits a Relationship may name a new id whose range is still to come
   (404 until that range commits). A run stopped by a lock timeout or an
@@ -534,7 +534,7 @@ Steps, rehearsal first:
    SELECT * FROM antares_remint_digest('<tenant>', 'bbsk.sk', 'sk_bbsk');
    ```
 
-4. `psql -c "CALL antares_remint_batched('<tenant>', 'bbsk.sk', 'sk_bbsk', 5000)"`
+4. `psql -c "CALL antares_remint_batched('<tenant>', 'bbsk.sk', 'sk_bbsk', 1000)"`
    once per Tenant and per old segment (`banskabystrica.sk` ->
    `sk_banskabystrica` likewise). A refusal "Tenant ... already holds <new
    id>" means the Tenant has the same local id under both segments; resolve

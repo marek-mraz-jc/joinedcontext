@@ -348,7 +348,11 @@ async fn remint_batched_commits_each_range_and_ends_as_one_transaction_would() {
     assert_eq!(report["entities"], N + 1, "{report}");
     assert_eq!(report["selectors_still_naming_from"], 0, "{report}");
     let commits = "SELECT count(DISTINCT remapped_at) FROM entity_id_remap WHERE tenant_id = $1";
-    assert_eq!(count(&pool, commits, t).await, 5, "one transaction per range");
+    assert_eq!(
+        count(&pool, commits, t).await,
+        5,
+        "one transaction per range"
+    );
 
     assert_eq!(digest(&pool, t, "sk_bbsk", "sk_bbsk").await, expected);
     for sql in [

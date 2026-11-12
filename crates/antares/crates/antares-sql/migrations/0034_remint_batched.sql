@@ -17,12 +17,13 @@
 --
 -- antares_remint_batched(tenant, from, to, batch) is the live form: it
 -- checks every new id for a clash first, renaming nothing on one, then
--- commits one range of `batch` Entity ids at a time, so a writer waits on
--- the locks of one range (seconds), not of the whole Tenant. Between
--- commits a Relationship can name a new id whose range is still to come:
--- the run ends with every id and document renamed, as one transaction
--- would. CALL it outside a transaction block; a run that stopped (a lock
--- timeout, a clash written meanwhile) is resumed by calling it again.
+-- commits one range of `batch` Entity ids (default 1000) at a time, so a
+-- writer waits on the locks of one range (seconds), not of the whole
+-- Tenant. Between commits a Relationship can name a new id whose range is
+-- still to come: the run ends with every id and document renamed, as one
+-- transaction would. CALL it outside a transaction block; a run that
+-- stopped (a lock timeout, a clash written meanwhile) is resumed by
+-- calling it again.
 
 CREATE FUNCTION remint_map_build(p_tenant text, p_from text, p_to text, p_lo text, p_hi text)
   RETURNS bigint LANGUAGE plpgsql
@@ -114,14 +115,12 @@ BEGIN
   GET DIAGNOSTICS n = ROW_COUNT;
   out := out || jsonb_build_object('entities', n);
   -- the update trigger pairs old and new rows by id, so a renamed Entity's
-  -- keys are rebuilt here; a document that only names one is the trigger's
-  DELETE FROM entity_values v USING remint_map m
+  -- keys move here, each string renamed as remint_doc renamed it in the
+  -- document (0033 recomputed them from the document: 3 of every 4 ms an
+  -- Entity cost); a document that only names one is the trigger's
+  UPDATE entity_values v SET id = m.new_id, txt = remint_id(v.txt, p_from, p_to)
+    FROM remint_map m
    WHERE v.tenant_id = p_tenant AND v.id = m.old_id;
-  INSERT INTO entity_values (tenant_id, id, attr, f, txt)
-    SELECT e.tenant_id, e.id, r.attr, r.f, r.txt
-      FROM entities e JOIN remint_map m ON e.id = m.new_id,
-           entity_value_rows(e.entity) r
-     WHERE e.tenant_id = p_tenant;
 
   UPDATE temporal_entities SET id = remint_id(id, p_from, p_to), meta = remint_doc(meta, p_from, p_to)
    WHERE tenant_id = p_tenant AND (id LIKE pat OR meta::text LIKE pat)
@@ -198,7 +197,7 @@ END $$;
 -- one Entity with millions of history rows makes one long range; split by
 -- history rows if a Tenant ever has one.
 CREATE PROCEDURE antares_remint_batched(p_tenant text, p_from text, p_to text,
-                                        p_batch integer DEFAULT 5000,
+                                        p_batch integer DEFAULT 1000,
                                         INOUT result jsonb DEFAULT NULL)
   LANGUAGE plpgsql
   AS $$
@@ -229,6 +228,7 @@ BEGIN
                            FROM jsonb_each_text(r) WHERE value ~ '^[0-9]+$');
     batches := batches + 1;
     COMMIT;
+    RAISE NOTICE 'remint %: range % committed, % ids so far', p_tenant, batches, result ->> 'ids';
     lo := hi;
   END LOOP;
   r := remint_apply(p_tenant, p_from, p_to, true, lo, NULL);
