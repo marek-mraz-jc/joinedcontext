@@ -410,6 +410,9 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 24 }
       - run: cd sdk && pnpm install --frozen-lockfile && pnpm build
+      # The OData client's types are generated from the org-admin $metadata snapshot, which the
+      # Portal's test sdk_metadata_snapshot_is_the_org_admins_metadata keeps current (T-6816).
+      - run: cd sdk && node scripts/odata-gen.mjs --check
       - run: cd ui && pnpm install --frozen-lockfile
       - run: cd ui && pnpm lint
       - run: cd ui && pnpm build && test -s dist/index.html

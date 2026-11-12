@@ -695,6 +695,528 @@ async fn an_unpinned_request_with_several_organizations_reads_none() {
 }
 
 /// A write as an action: POST with the session's CSRF token, `If-Match` when given.
+/// The registry's functions (API/13 §2b, T-6815): each answers 401 to nobody and 404 on a project
+/// of another Organization; one the caller's `$metadata` leaves out is refused them; a function
+/// answers what MCP `tools/call` answers for the same input.
+#[tokio::test]
+async fn every_function_is_refused_where_metadata_leaves_it_out() {
+    use joinedcontext_portal::api::odata_ops::{form, Form};
+    let state = state();
+    let mode = Mode::Host("hel");
+    let viewer = get(&state, mode, "hel-only", "/api/v1/$metadata").await;
+    assert_eq!(viewer.status, StatusCode::OK, "{}", viewer.text);
+    let functions: Vec<&str> = joinedcontext_portal::ops::registry()
+        .iter()
+        .map(|op| op.name)
+        .filter(|name| form(name) == Some(Form::Function))
+        .collect();
+    assert!(functions.len() >= 31, "{functions:?}");
+    assert!(
+        viewer
+            .text
+            .contains(r#"<Function Name="jc_schema_get" IsBound="true">"#),
+        "{}",
+        viewer.text
+    );
+    for name in &functions {
+        let uri = format!("/api/v1/projects('helsinki')/JoinedContext.Portal.{name}()");
+        let nobody = send(&state, mode, "", &uri, &[]).await;
+        assert_eq!(
+            nobody.status,
+            StatusCode::UNAUTHORIZED,
+            "{name}: {}",
+            nobody.text
+        );
+        // A member of none of this Organization's projects stops at its session gate.
+        let elsewhere = get(&state, mode, "ba-only", &uri).await;
+        assert_eq!(
+            elsewhere.status,
+            StatusCode::FORBIDDEN,
+            "{name}: {}",
+            elsewhere.text
+        );
+        let other_org = get(
+            &state,
+            mode,
+            "hel-only",
+            &format!("/api/v1/projects('bratislava')/JoinedContext.Portal.{name}()"),
+        )
+        .await;
+        assert_eq!(
+            other_org.status,
+            StatusCode::NOT_FOUND,
+            "{name}: {}",
+            other_org.text
+        );
+        assert!(
+            other_org.json()["error"]["code"].is_string(),
+            "{}",
+            other_org.text
+        );
+        if !viewer.text.contains(&format!(r#"<Function Name="{name}""#)) {
+            let refused = get(&state, mode, "hel-only", &uri).await;
+            assert!(
+                matches!(
+                    refused.status,
+                    StatusCode::FORBIDDEN | StatusCode::NOT_FOUND
+                ),
+                "{name} is not in the viewer's $metadata yet answered {}: {}",
+                refused.status,
+                refused.text
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_function_answers_as_mcp_tools_call_and_takes_aliases() {
+    use joinedcontext_portal::ops::{Caller, Via};
+    let state = state();
+    let mode = Mode::Host("hel");
+    let odata = get(
+        &state,
+        mode,
+        "hel-only",
+        "/api/v1/projects/helsinki/JoinedContext.Portal.jc_schema_get(kind=@k)?@k='ContextSpace'",
+    )
+    .await;
+    assert_eq!(odata.status, StatusCode::OK, "{}", odata.text);
+    let body = odata.json();
+    assert!(
+        body["@odata.context"]
+            .as_str()
+            .is_some_and(|c| c.ends_with("$metadata#Edm.Untyped")),
+        "{body}"
+    );
+    let caller = Caller::new(person("hel-only", &[]), Via::Mcp);
+    let mcp = common::doors::mcp_rpc(
+        &caller,
+        &state,
+        json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+            "name": "jc_schema_get",
+            "arguments": { "project": "helsinki", "kind": "ContextSpace" } } }),
+    )
+    .await;
+    assert_eq!(body["value"], mcp["result"]["structuredContent"], "{mcp}");
+
+    for (uri, status) in [
+        // A literal OData does not know, a parameter the operation does not take.
+        (
+            "projects('helsinki')/JoinedContext.Portal.jc_schema_get(kind=ContextSpace)",
+            400,
+        ),
+        (
+            "projects('helsinki')/JoinedContext.Portal.jc_schema_get(kind='ContextSpace',size=1)",
+            422,
+        ),
+        (
+            "projects('helsinki')/JoinedContext.Portal.jc_schema_get(kind=@k)",
+            400,
+        ),
+        (
+            "projects('helsinki')/JoinedContext.Portal.jc_nothing()",
+            404,
+        ),
+        // An action is no function, an entity no binding.
+        (
+            "projects('helsinki')/JoinedContext.Portal.jc_run_create()",
+            404,
+        ),
+        (
+            "spaces(project='helsinki',name='air')/JoinedContext.Portal.jc_schema_get(kind='x')",
+            404,
+        ),
+    ] {
+        let answer = get(&state, mode, "hel-only", &format!("/api/v1/{uri}")).await;
+        assert_eq!(answer.status.as_u16(), status, "{uri}: {}", answer.text);
+        assert!(
+            answer.json()["error"]["message"].is_string(),
+            "{uri}: {}",
+            answer.text
+        );
+    }
+}
+
+/// The org-admin's CSDL JSON the SDK's OData client is generated from (T-6816): a change of the
+/// service that moves it fails here until the snapshot is written again
+/// (`JC_WRITE_SNAPSHOT=1 cargo test --test odata_org_tests sdk_metadata`) and the client
+/// regenerated (`node sdk/scripts/odata-gen.mjs`), which CI checks has no diff.
+#[tokio::test]
+async fn sdk_metadata_snapshot_is_the_org_admins_metadata() {
+    const SNAPSHOT: &str = "sdk/odata/org-admin.metadata.json";
+    let state = state();
+    let answer = get(
+        &state,
+        Mode::Host("hel"),
+        "root",
+        "/api/v1/$metadata?$format=json",
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let pretty = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&answer.json()).expect("JSON")
+    );
+    if std::env::var_os("JC_WRITE_SNAPSHOT").is_some() {
+        std::fs::write(SNAPSHOT, &pretty).expect("write the snapshot");
+    }
+    let stored = std::fs::read_to_string(SNAPSHOT).unwrap_or_default();
+    assert!(
+        stored == pretty,
+        "{SNAPSHOT} is not the org-admin's $metadata: write it with JC_WRITE_SNAPSHOT=1 and \
+         regenerate the SDK client with node sdk/scripts/odata-gen.mjs"
+    );
+}
+
+/// The names a REST list answers, whatever its envelope.
+fn rest_names(body: &Value) -> Vec<String> {
+    let rows = body
+        .get("items")
+        .or_else(|| body.get("value"))
+        .unwrap_or(body)
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let mut names: Vec<String> = rows
+        .iter()
+        .filter_map(|r| {
+            r.pointer("/metadata/name")
+                .or_else(|| r.get("name"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+/// PF-56 parity (T-6817): every role reads every project kind over OData as it reads it over REST:
+/// the same refusal status, or the same rows; and over MCP `jc_resource_list` the same rows.
+#[tokio::test]
+async fn every_role_reads_every_set_as_rest_and_mcp_answer_it() {
+    use joinedcontext_portal::ops::{Caller, Via};
+    let state = state();
+    let mode = Mode::Host("hel");
+    let mut differ = Vec::new();
+    let sets: Vec<(String, String)> = joinedcontext_portal::resource::kinds()
+        .filter(|info| !matches!(info.scope, jc_core::Scope::Organization))
+        .map(|info| (info.plural.to_owned(), info.kind.to_owned()))
+        .collect();
+    assert!(sets.len() > 10, "{sets:?}");
+    for who in ["", "hel-only", "hel-editor", "root", "ba-only"] {
+        let cookie = if who.is_empty() {
+            String::new()
+        } else {
+            cookies(&state.config, person(who, groups_of(who)), "hel").await
+        };
+        for (plural, kind) in &sets {
+            let odata = send(
+                &state,
+                mode,
+                &cookie,
+                &format!("/api/v1/projects('helsinki')/{plural}"),
+                &[],
+            )
+            .await;
+            let rest = send(
+                &state,
+                mode,
+                &cookie,
+                &format!("/api/v1/projects/helsinki/{plural}"),
+                &[],
+            )
+            .await;
+            let same = match (odata.status.is_success(), rest.status.is_success()) {
+                (true, true) => {
+                    let mut o = names(&odata.json(), "name");
+                    o.sort();
+                    o == rest_names(&rest.json())
+                }
+                (false, false) => odata.status == rest.status,
+                _ => false,
+            };
+            if !same {
+                differ.push(format!(
+                    "{who:?} {plural}: OData {} {} / REST {} {}",
+                    odata.status,
+                    odata.text.chars().take(600).collect::<String>(),
+                    rest.status,
+                    rest.text.chars().take(160).collect::<String>()
+                ));
+            }
+            // Over MCP a Role list inside a project answers the Organization's Roles too (PF-68);
+            // OData and REST key a project's row by its own copy only.
+            let both_homes = joinedcontext_portal::resource::by_kind(kind)
+                .is_some_and(|info| matches!(info.scope, jc_core::Scope::OrganizationOrProject));
+            if who.is_empty() || !odata.status.is_success() || both_homes {
+                continue;
+            }
+            let caller = Caller::new(person(who, groups_of(who)), Via::Mcp);
+            let mcp = common::doors::mcp_rpc(
+                &caller,
+                &state,
+                json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+                    "name": "jc_resource_list",
+                    "arguments": { "project": "helsinki", "kind": kind } } }),
+            )
+            .await;
+            let mut o = names(&odata.json(), "name");
+            o.sort();
+            let m = rest_names(&mcp["result"]["structuredContent"]);
+            if o != m {
+                differ.push(format!("{who:?} {plural}: OData {o:?} / MCP {m:?}"));
+            }
+        }
+    }
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
+}
+
+/// PF-56 parity of the bound actions (T-6817): each role's dry-run `propose_delete` and
+/// `propose_update` answer the status the REST door's dry-run `DELETE` and `PATCH` answer.
+#[tokio::test]
+async fn every_role_acts_as_the_rest_door_decides() {
+    let state = state();
+    let etag = state
+        .mirror
+        .get("helsinki", "ContextSpace", "air")
+        .expect("air")
+        .etag();
+    let entity = "/api/v1/spaces(project='helsinki',name='air')/JoinedContext.Portal.";
+    let mut differ = Vec::new();
+    for who in ["hel-only", "hel-editor", "root", "ba-only"] {
+        let cookie = cookies(&state.config, person(who, groups_of(who)), "hel").await;
+        let token = cookie
+            .split("; ")
+            .find_map(|c| c.strip_prefix(&format!("{CSRF_COOKIE}=")))
+            .unwrap_or_default()
+            .to_owned();
+        for (action, method, body) in [
+            ("propose_delete", "DELETE", json!({ "dryRun": true })),
+            (
+                "propose_update",
+                "PATCH",
+                json!({ "patch": { "metadata": { "title": "Air" } }, "dryRun": true }),
+            ),
+        ] {
+            let odata = act(
+                &state,
+                who,
+                &format!("{entity}{action}"),
+                Some(&etag),
+                body.clone(),
+            )
+            .await;
+            let rest_body = body.get("patch").cloned().unwrap_or(Value::Null);
+            let request = Request::builder()
+                .method(method)
+                .uri("/api/v1/projects/helsinki/spaces/air?dryRun=All")
+                .header(header::HOST, HEL)
+                .header(header::COOKIE, &cookie)
+                .header(csrf::CSRF_HEADER, &token)
+                .header(header::CONTENT_TYPE, "application/merge-patch+json")
+                .header(header::IF_MATCH, &etag)
+                .body(if method == "PATCH" {
+                    Body::from(rest_body.to_string())
+                } else {
+                    Body::empty()
+                })
+                .expect("request");
+            let rest = server::app(state.clone())
+                .oneshot(request)
+                .await
+                .expect("response")
+                .status();
+            if odata.status != rest {
+                differ.push(format!(
+                    "{who} {action}: OData {} {} / REST {method} {rest}",
+                    odata.status, odata.text
+                ));
+            }
+        }
+    }
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
+}
+
+/// Critic §8 (T-6817): an entity answers `304` to its own `ETag` only after the read check (a
+/// caller who may not read it keeps the 404), and every OData answer varies on who asks.
+#[tokio::test]
+async fn not_modified_comes_after_the_read_check_and_answers_vary_on_the_caller() {
+    let state = state();
+    let mode = Mode::Host("hel");
+    let uri = "/api/v1/spaces(project='helsinki',name='air')";
+    let one = get(&state, mode, "hel-only", uri).await;
+    assert_eq!(one.status, StatusCode::OK, "{}", one.text);
+    let etag = one.headers[header::ETAG].to_str().expect("ETag").to_owned();
+    let vary: Vec<&str> = one
+        .headers
+        .get_all(header::VARY)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .collect();
+    assert!(
+        vary.iter().any(|v| v.contains("Authorization, Cookie")),
+        "{vary:?}"
+    );
+    // `no-store` (the session layer's) is stricter than API/13's `private`: either keeps it out
+    // of a shared cache.
+    let cache = one.headers[header::CACHE_CONTROL]
+        .to_str()
+        .unwrap_or_default();
+    assert!(matches!(cache, "private" | "no-store"), "{cache}");
+
+    let reader = cookies(&state.config, person("hel-only", &[]), "hel").await;
+    let same = send(&state, mode, &reader, uri, &[("if-none-match", &etag)]).await;
+    assert_eq!(same.status, StatusCode::NOT_MODIFIED, "{}", same.text);
+    assert!(same.text.is_empty());
+    assert_eq!(same.headers[header::ETAG], etag.as_str());
+    let other = send(
+        &state,
+        mode,
+        &reader,
+        uri,
+        &[("if-none-match", "\"other\"")],
+    )
+    .await;
+    assert_eq!(other.status, StatusCode::OK, "{}", other.text);
+
+    // Another Organization's entity with the right tag: still not there.
+    let elsewhere = state
+        .mirror
+        .get("bratislava", "ContextSpace", "air")
+        .expect("air")
+        .etag();
+    let refused = send(
+        &state,
+        mode,
+        &reader,
+        "/api/v1/spaces(project='bratislava',name='air')",
+        &[("if-none-match", &elsewhere)],
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::NOT_FOUND, "{}", refused.text);
+    let nobody = send(&state, mode, "", uri, &[("if-none-match", &etag)]).await;
+    assert_eq!(nobody.status, StatusCode::UNAUTHORIZED, "{}", nobody.text);
+}
+
+/// The registry's actions: a Change-proposing one needs the project's `If-Match` (428, then 412
+/// with the current one) and then answers what the REST door answers; a dry run needs none; a
+/// project opens only in the Organization whose service was called.
+#[tokio::test]
+async fn registry_actions_keep_their_door_and_need_the_projects_if_match() {
+    let state = state();
+    let project = get(
+        &state,
+        Mode::Host("hel"),
+        "hel-editor",
+        "/api/v1/projects('helsinki')",
+    )
+    .await;
+    assert_eq!(project.status, StatusCode::OK, "{}", project.text);
+    let etag = project
+        .headers
+        .get(header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .expect("a project answers its ETag")
+        .to_owned();
+    assert_eq!(
+        project.json()["@odata.etag"],
+        json!(etag),
+        "{}",
+        project.text
+    );
+
+    let delete = "/api/v1/projects('helsinki')/JoinedContext.Portal.jc_project_delete";
+    let input = json!({ "name": "helsinki" });
+    let missing = act(&state, "hel-editor", delete, None, input.clone()).await;
+    assert_eq!(
+        missing.status,
+        StatusCode::PRECONDITION_REQUIRED,
+        "{}",
+        missing.text
+    );
+    let stale = act(
+        &state,
+        "hel-editor",
+        delete,
+        Some("\"stale\""),
+        input.clone(),
+    )
+    .await;
+    assert_eq!(
+        stale.status,
+        StatusCode::PRECONDITION_FAILED,
+        "{}",
+        stale.text
+    );
+    assert_eq!(
+        stale
+            .headers
+            .get(header::ETAG)
+            .and_then(|v| v.to_str().ok()),
+        Some(etag.as_str())
+    );
+    // The editor may not delete the project: the REST door's 403, now that If-Match holds.
+    let refused = act(&state, "hel-editor", delete, Some(&etag), input.clone()).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
+    // Another Organization's project is not there, If-Match or not.
+    let elsewhere = act(
+        &state,
+        "hel-editor",
+        "/api/v1/projects('bratislava')/JoinedContext.Portal.jc_project_delete",
+        Some(&etag),
+        json!({ "name": "bratislava" }),
+    )
+    .await;
+    assert_eq!(
+        elsewhere.status,
+        StatusCode::NOT_FOUND,
+        "{}",
+        elsewhere.text
+    );
+    let stranger = act(&state, "ba-only", delete, Some(&etag), input).await;
+    assert_eq!(stranger.status, StatusCode::FORBIDDEN, "{}", stranger.text);
+
+    let create = "/api/v1/projects('helsinki')/JoinedContext.Portal.jc_project_create";
+    let crossing = act(
+        &state,
+        "hel-editor",
+        create,
+        None,
+        json!({ "name": "elsewhere", "organization": "ba" }),
+    )
+    .await;
+    assert_eq!(
+        crossing.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        crossing.text
+    );
+
+    // A dry run is no Change: no If-Match, the registry's answer as the REST door's.
+    let dry = act(
+        &state,
+        "hel-editor",
+        "/api/v1/projects('helsinki')/JoinedContext.Portal.jc_manifest_dry_run",
+        None,
+        json!({ "nothing": true }),
+    )
+    .await;
+    assert_eq!(dry.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", dry.text);
+    let editor = get(&state, Mode::Host("hel"), "hel-editor", "/api/v1/$metadata").await;
+    assert!(
+        editor
+            .text
+            .contains(r#"<Action Name="jc_manifest_dry_run" IsBound="true">"#),
+        "{}",
+        editor.text
+    );
+    assert!(
+        !editor.text.contains(r#"Name="jc_resource_propose""#),
+        "{}",
+        editor.text
+    );
+}
+
 async fn act(
     state: &AppState,
     who: &str,
