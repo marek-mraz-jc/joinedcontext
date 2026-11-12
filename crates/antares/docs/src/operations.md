@@ -533,8 +533,8 @@ Steps, rehearsal first:
 
 4. `psql -c "CALL antares_remint_batched('<tenant>', 'bbsk.sk', 'sk_bbsk', 1000)"`
    once per Tenant and per old segment (`banskabystrica.sk` ->
-   `sk_banskabystrica` likewise). A refusal "Tenant ... already holds <new
-   id>" means the Tenant has the same local id under both segments; resolve
+   `sk_banskabystrica` likewise). A refusal "Tenant ... already holds `<new
+   id>`" means the Tenant has the same local id under both segments; resolve
    it as "Duplicate ids under two segments" below, then call again.
 5. After: `SELECT * FROM antares_remint_digest('<tenant>', 'sk_bbsk',
    'sk_bbsk');` equals step 3's digest row for row; the count by owner
@@ -573,15 +573,15 @@ writes both segments, fix its mapping first, or the pairs come back.
 jc-dev copy of 2026-11-12 (pairs in `entities`; "newer" = which segment
 holds the later write):
 
-| Tenant | Segments (-> owner) | Pairs | Newer under the second | Temporal Entities (first / second segment) |
-|---|---|---|---|---|
-| ovzdusie | hel.fi, banskabystrica.sk (-> fi_hel) | 1 | 1 | 1 / 1 |
-| banskabystrica-kpi | hel.fi, banskabystrica.sk (-> fi_hel) | 3 | 2 | 3 / 3 |
-| bbsk-kpi | hel.fi, bbsk.sk (-> fi_hel) | 28 | 0 | 28 / 28 |
-| zilina-verejne | hel.fi, zilina.sk (-> sk_zilina) | 110 | 6 | 1 / 1 |
-| zilina-uniza | hel.fi, zilina.sk (-> sk_zilina) | 787 | 787 | 0 / 0 |
-| zilina-mesto | hel.fi, zilina.sk (-> sk_zilina) | 6425 | 3632 | 6425 / 6425 |
-| banskabystrica-verejne | hel.fi, banskabystrica.sk (-> fi_hel) | 210 | 79 | 0 / 3 |
+| Tenant | Segments (owner) | Pairs | Second newer | Temporal (1st / 2nd) |
+| --- | --- | --- | --- | --- |
+| ovzdusie | hel.fi, banskabystrica.sk (fi_hel) | 1 | 1 | 1 / 1 |
+| banskabystrica-kpi | hel.fi, banskabystrica.sk (fi_hel) | 3 | 2 | 3 / 3 |
+| bbsk-kpi | hel.fi, bbsk.sk (fi_hel) | 28 | 0 | 28 / 28 |
+| zilina-verejne | hel.fi, zilina.sk (sk_zilina) | 110 | 6 | 1 / 1 |
+| zilina-uniza | hel.fi, zilina.sk (sk_zilina) | 787 | 787 | 0 / 0 |
+| zilina-mesto | hel.fi, zilina.sk (sk_zilina) | 6425 | 3632 | 6425 / 6425 |
+| banskabystrica-verejne | hel.fi, banskabystrica.sk (fi_hel) | 210 | 79 | 0 / 3 |
 
 Every pair was written on 2026-11-11 or 2026-11-12, so both segments came
 from pipelines live in the week of the URN owner change.
