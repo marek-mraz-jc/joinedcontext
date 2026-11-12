@@ -13,7 +13,7 @@ import { Card, EmptyState, Skeleton } from "../ui";
 import { PageFailed } from "../ui/PageState";
 import { VegaChart, chartTheme, loadVega } from "../panels/VegaChart";
 import type { ChartTheme, Spec } from "../panels/specs";
-import { readSource } from "./vegaLiteSource";
+import { csvRecords, readSource } from "./vegaLiteSource";
 import type { WidgetSource } from "./vegaLiteSource";
 
 /** The chart's height when its spec names none; `autosize: fit` keeps the axes inside it. */
@@ -70,7 +70,7 @@ export function VegaLiteWidget({
       const got = await readSource(slug, source);
       if (got.csv === undefined) return got;
       const [vega] = await loadVega();
-      return { ...got, rows: vega.read(got.csv, { type: "csv", parse: "auto" }) as Record<string, unknown>[] };
+      return { ...got, rows: vega.read(JSON.stringify(csvRecords(got.csv)), { type: "json", parse: "auto" }) as Record<string, unknown>[] };
     },
   });
   const drawn = useMemo(() => (read.data ? withRows(spec, read.data.rows) : null), [spec, read.data]);

@@ -438,6 +438,63 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
         "Fügen Sie diesen Code in Ihre Seite ein; das Diagramm liest weiter die aktuellen Daten.",
         "Illessze be ezt a kódot az oldalába; a grafikon mindig az aktuális adatokat olvassa.",
     );
+    // Dashboards (T-6790).
+    add(
+        "dashboards",
+        "Dashboards",
+        "Dashboardy",
+        "Dashboardy",
+        "Dashboards",
+        "Irányítópultok",
+    );
+    add(
+        "dashboards_lead",
+        "Charts and tables the publishers built from their live data.",
+        "Grafy a tabuľky, ktoré vydavatelia zostavili zo svojich aktuálnych údajov.",
+        "Grafy a tabulky, které vydavatelé sestavili ze svých aktuálních dat.",
+        "Diagramme und Tabellen, die die Herausgeber aus ihren aktuellen Daten erstellt haben.",
+        "A kiadók által aktuális adataikból összeállított grafikonok és táblázatok.",
+    );
+    add(
+        "dashboards_empty",
+        "No dashboard is published yet. A publisher adds one by making a dashboard public in the Portal; until then the datasets hold the same data.",
+        "Zatiaľ nie je zverejnený žiadny dashboard. Vydavateľ ho pridá tak, že dashboard v Portáli zverejní; dovtedy tie isté údaje nájdete v datasetoch.",
+        "Zatím není zveřejněn žádný dashboard. Vydavatel jej přidá tak, že dashboard v Portálu zveřejní; do té doby stejná data najdete v datových sadách.",
+        "Noch ist kein Dashboard veröffentlicht. Ein Herausgeber fügt eines hinzu, indem er ein Dashboard im Portal öffentlich macht; bis dahin finden Sie dieselben Daten in den Datensätzen.",
+        "Még nincs közzétett irányítópult. A kiadó úgy ad hozzá egyet, hogy a Portálon nyilvánossá tesz egy irányítópultot; addig ugyanezek az adatok az adatkészletekben találhatók.",
+    );
+    add(
+        "dashboard_nothing",
+        "This dashboard has no chart or table the catalogue can draw yet. The data it reads is listed below.",
+        "Tento dashboard zatiaľ nemá graf ani tabuľku, ktorú katalóg vie zobraziť. Údaje, z ktorých čerpá, sú uvedené nižšie.",
+        "Tento dashboard zatím nemá graf ani tabulku, kterou katalog umí zobrazit. Data, ze kterých čerpá, jsou uvedena níže.",
+        "Dieses Dashboard hat noch kein Diagramm und keine Tabelle, die der Katalog zeigen kann. Die gelesenen Daten stehen unten.",
+        "Ennek az irányítópultnak még nincs olyan grafikonja vagy táblázata, amelyet a katalógus meg tud jeleníteni. A felhasznált adatok lent láthatók.",
+    );
+    add(
+        "dashboard_data",
+        "Data it reads",
+        "Údaje, z ktorých čerpá",
+        "Data, ze kterých čerpá",
+        "Gelesene Daten",
+        "Felhasznált adatok",
+    );
+    add(
+        "dashboard_grid",
+        "Table",
+        "Tabuľka",
+        "Tabulka",
+        "Tabelle",
+        "Táblázat",
+    );
+    add(
+        "dataset_dashboards",
+        "Dashboards with this data",
+        "Dashboardy s týmito údajmi",
+        "Dashboardy s těmito daty",
+        "Dashboards mit diesen Daten",
+        "Irányítópultok ezekkel az adatokkal",
+    );
     add(
         "viz_table",
         "The data as a table",

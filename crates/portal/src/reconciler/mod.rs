@@ -12,6 +12,7 @@ pub mod app_clients;
 pub mod app_hosts;
 pub mod catalog;
 pub mod ckan;
+pub mod ckan_dashboards;
 pub mod daemon;
 pub mod drift;
 pub mod edge_file;

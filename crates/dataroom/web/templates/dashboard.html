@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="{{ chrome.lang }}">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
+    {% if chrome.branding.noindex %}<meta name="robots" content="noindex, nofollow">{% endif %}
+    <title>{{ title }} - {{ chrome.site_title }}</title>
+    <link rel="shortcut icon" href="{{ chrome.favicon }}" />
+    {% for opt in chrome.lang_options %}
+    <link rel="alternate" hreflang="{{ opt.code }}" href="{{ opt.url }}" />
+    {% endfor %}
+<style nonce="{{ chrome.csp_nonce }}">
+  :root {
+    --jc-primary: {{ chrome.branding.colours.primary }};
+    --jc-primary-fg: {{ chrome.branding.primary_foreground }};
+    --jc-primary-rgb: {{ chrome.branding.primary_rgb }};
+    --jc-secondary: {{ chrome.branding.colours.secondary }};
+    --jc-accent: {{ chrome.branding.colours.accent }};
+    --jc-background: {{ chrome.branding.colours.background }};
+    --jc-text: {{ chrome.branding.colours.text }};
+    --jc-font-heading: {{ chrome.branding.fonts.heading }};
+    --jc-font-body: {{ chrome.branding.fonts.body }};
+  }
+</style>
+<link rel="stylesheet" href="{{ chrome.mount_prefix }}/jc-theme.css">
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-dock.js"></script>
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-copy.js" defer></script>
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-forms.js" defer></script>
+  </head>
+  <body data-site-root="{{ chrome.site_root }}" data-locale-root="{{ chrome.locale_root }}">
+    <div class="visually-hidden-focusable"><a href="#content">{{ labels.skip_to_content }}</a></div>
+{% if !chrome.branding.ribbon.is_empty() %}
+<div class="jc-ribbon" role="note">{{ chrome.branding.ribbon }}</div>
+{% endif %}
+<div class="account-masthead">
+  <div class="container">
+    <nav class="account not-authed" aria-label="Account">
+      <ul class="list-unstyled">
+        <li><a href="{{ chrome.lang_prefix }}/user/login">{{ labels.login }}</a></li>
+      </ul>
+    </nav>
+  </div>
+</div>
+<header class="masthead">
+  <div class="container">
+    <nav class="navbar navbar-expand-lg navbar-light">
+      <hgroup class="header-image navbar-left">
+        <a class="logo jc-brand" href="{{ chrome.lang_prefix }}/">
+          <img src="{{ chrome.site_logo }}" alt="{{ chrome.site_title }}" width="171" height="36">
+        </a>
+      </hgroup>
+      <div class="main-navbar collapse navbar-collapse" id="main-navigation-toggle">
+        <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
+          <li><a href="{{ chrome.lang_prefix }}/dataset/">{{ labels.nav_datasets }}</a></li><li><a href="{{ chrome.lang_prefix }}/organization/">{{ labels.nav_publishers }}</a></li><li><a href="{{ chrome.lang_prefix }}/about">{{ labels.nav_about }}</a></li>
+        </ul>
+      </div>
+    </nav>
+  </div>
+</header>
+  <div class="main">
+    <div id="content" class="container">
+      <div class="toolbar" role="navigation" aria-label="Breadcrumb">
+        <ol class="breadcrumb">
+          <li class="home"><a href="{{ chrome.lang_prefix }}/" aria-label="{{ labels.home }}">{% include "jc/icons/home.svg" %}<span> {{ labels.home }}</span></a></li>
+          <li><a href="{{ chrome.lang_prefix }}/dashboards">{{ heading }}</a></li>
+          <li class="active"><a href="#content" aria-current="page">{{ title }}</a></li>
+        </ol>
+      </div>
+      <div class="row wrapper no-nav">
+        <div class="primary col-12" role="main">
+          <article class="module">
+            <div class="module-content jc-dashboard">
+              <h1 class="page-heading">{{ title }}</h1>
+              {% if !publisher.is_empty() %}<p class="jc-lead">{{ publisher }}</p>{% endif %}
+              {% if sections.is_empty() %}
+              <p class="jc-dashboards-empty" role="status">{{ empty }}</p>
+              {% endif %}
+              {% for section in sections %}
+              <section class="jc-dashboard-page" aria-labelledby="{{ section.id }}">
+                {% if !section.title.is_empty() %}<h2 id="{{ section.id }}">{{ section.title }}</h2>{% else %}<h2 id="{{ section.id }}" class="visually-hidden">{{ title }}</h2>{% endif %}
+                <div class="jc-dashboard-grid">
+                {% for item in section.items %}
+                  {% if let Some(viz) = item.chart %}
+                  <figure class="jc-viz" aria-labelledby="jc-viz-{{ viz.id }}-title">
+                    <figcaption>
+                      <h3 id="jc-viz-{{ viz.id }}-title">{{ viz.title }}</h3>
+                      {% if !viz.description.is_empty() %}<p>{{ viz.description }}</p>{% endif %}
+                    </figcaption>
+                    <iframe class="jc-viz-frame" loading="lazy" title="{{ viz.title }}" src="{{ viz.src }}" data-jc-viz="{{ viz.origin }}"
+                            referrerpolicy="no-referrer" sandbox="{{ viz.sandbox }}"></iframe>
+                    {% if !viz.package_link.is_empty() %}<div class="jc-viz-actions"><a href="{{ viz.package_link }}">{{ labels.viz_table }}</a></div>{% endif %}
+                  </figure>
+                  {% endif %}
+                  {% if let Some(grid) = item.grid %}
+                  <figure class="jc-viz jc-dashboard-wide" aria-labelledby="jc-grid-{{ grid.id }}-title">
+                    <figcaption><h3 id="jc-grid-{{ grid.id }}-title">{{ grid.title }}</h3></figcaption>
+                    <iframe class="jc-viz-frame jc-explorer-frame" loading="lazy" title="{{ grid.title }}" src="{{ grid.src }}" data-jc-viz="{{ grid.origin }}"
+                            referrerpolicy="no-referrer" sandbox="{{ grid.sandbox }}"></iframe>
+                  </figure>
+                  {% endif %}
+                {% endfor %}
+                </div>
+              </section>
+              {% endfor %}
+              {% if !data.is_empty() %}
+              <section class="jc-dashboard-data" aria-labelledby="jc-dashboard-data-title">
+                <h2 id="jc-dashboard-data-title">{{ data_heading }}</h2>
+                <ul>
+                  {% for link in data %}<li><a href="{{ link.url }}">{{ link.title }}</a></li>{% endfor %}
+                </ul>
+              </section>
+              {% endif %}
+            </div>
+          </article>
+        </div>
+      </div>
+    </div>
+  </div>
+{% include "_footer.html" %}
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-viz.js" defer></script>
+  </body>
+</html>

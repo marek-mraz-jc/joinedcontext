@@ -9,7 +9,7 @@ import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
-import { SOURCE_MAX_ROWS, readSource, seconds, sourceUrl, temporalRows } from "../src/components/dashboards/vegaLiteSource";
+import { SOURCE_MAX_ROWS, csvRecords, readSource, seconds, sourceUrl, temporalRows } from "../src/components/dashboards/vegaLiteSource";
 
 vi.mock("../src/components/panels/VegaChart", async (actual) => ({
   ...(await actual<typeof import("../src/components/panels/VegaChart")>()),
@@ -97,6 +97,16 @@ describe("the source a vega-lite widget reads", () => {
     expect(capped.cut).toBe(true);
   });
 
+  it("reads a CSV's records, quoted fields and CRLF included, up to the row cap", () => {
+    expect(csvRecords('name,note\r\n"Kamppi, Helsinki","said ""hi"""\r\nTöölö,\r\n')).toEqual([
+      { name: "Kamppi, Helsinki", note: 'said "hi"' },
+      { name: "Töölö", note: "" },
+    ]);
+    expect(csvRecords("a\nmulti\n\n")).toEqual([{ a: "multi" }]);
+    expect(csvRecords("")).toEqual([]);
+    expect(csvRecords("n\n1\n2\n3\n", 2)).toEqual([{ n: "1" }, { n: "2" }]);
+  });
+
   it("fills the rows into the dataset `source` and keeps the spec's own data reference", () => {
     const drawn = withRows(SPEC, [{ district: "Staré Mesto", pm10: 12 }]);
     expect(drawn.data).toEqual({ name: "source" });
@@ -127,7 +137,17 @@ describe("the vega-lite widget", () => {
     expect(screen.getByText("PM10 by district").tagName).toBe("FIGCAPTION");
   });
 
-  it("parses a CSV source into rows", async () => {
+  it("parses a CSV source into rows without evaluating code, which the Portal's CSP refuses", async () => {
+    // T-6791: d3-dsv built each CSV row with `new Function`; under `script-src` without
+    // 'unsafe-eval' every CSV chart failed. A Function that throws stands in for the CSP here.
+    vi.stubGlobal(
+      "Function",
+      class {
+        constructor() {
+          throw new EvalError("Refused to evaluate a string as JavaScript (CSP)");
+        }
+      },
+    );
     answering(() => new Response("district,pm10\nRužinov,31\nPetržalka,18\n", { headers: { "Content-Type": "text/csv" } }));
     show(<VegaLiteWidget slug="air-ops" source={{ source: "csv", type: "AirQualityObserved" }} spec={SPEC} fallbackTitle="fallback" />);
     const chart = await screen.findByRole("img", { name: "PM10 by district" });

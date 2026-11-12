@@ -1307,7 +1307,7 @@ pub fn jc_live(ds: &Dataset, branding: &BrandingBlock) -> Option<LiveEndpointBox
 /// the Portal's origin (jc in slug mode) jc serves the page as a CSP sandbox in an opaque origin
 /// (the Portal session's cookies and CSRF token are readable on that origin), so the frame asks
 /// for no origin either and its messages come from `null`.
-fn viz_frame(viz: &str, branding: &BrandingBlock, sandbox: &str) -> (String, String) {
+pub(crate) fn viz_frame(viz: &str, branding: &BrandingBlock, sandbox: &str) -> (String, String) {
     let origin = origin_of(viz).to_owned();
     let portal = branding.address(Address::Portal);
     if portal.as_deref().map(origin_of) == Some(origin.as_str()) {
