@@ -167,6 +167,9 @@ class Fake:
                 return 404, {}, {"title": "ResourceNotFound"}
             eid = urllib.parse.unquote(rest.split("/", 3)[3])
             return 200, {}, {"id": eid, "type": "AirQualityObserved"}
+        if self.broken == "too-many-rows" and qs.get("f") in (["csv"], ["parquet"], ["zip"]):
+            return 413, {}, {"title": "Payload Too Large",
+                             "detail": "the file would hold more rows than a file may: narrow it (bbox, datetime, filter)"}
         if rest == "ogc/features/collections" and qs.get("f") == ["zip"]:
             if self.broken == "no-files":
                 return 400, {}, {"title": "unknown parameter f"}
@@ -190,9 +193,9 @@ class Fake:
                                              for i in range(rows))
             return 200, {"Content-Type": "text/csv; charset=utf-8; header=present"}, body.encode()
         if rest.endswith("/items") and qs.get("f") == ["parquet"]:
-            if self.broken in ("busy", "busy-once") and not self.busy_seen:
-                self.busy_seen = self.broken == "busy-once"
-                return 503, {"Retry-After": "0"}, {"title": "busy"}
+            if self.broken in ("busy", "busy-once", "busy-429-once") and not self.busy_seen:
+                self.busy_seen = self.broken != "busy"
+                return (429 if self.broken == "busy-429-once" else 503), {"Retry-After": "0"}, {"title": "busy"}
             if self.broken == "no-files":
                 return 400, {}, {"title": "unknown parameter f"}
             return 200, {"Content-Type": "application/vnd.apache.parquet"}, b"PAR1" + b"\0" * 8 + b"PAR1"
@@ -442,6 +445,41 @@ def test_a_query_only_grant_answers_an_id_404_as_prod_does(tmp_path, serve, monk
 def test_a_busy_file_is_asked_again(tmp_path, serve):
     code, res = run(tmp_path, serve(Fake("busy-once")), now_iso())
     assert code == 0, [r for r in res["checks"] if r["result"] == "fail"]
+
+
+def test_a_file_the_broker_refuses_with_429_is_asked_again(tmp_path, serve):
+    """T-6823: past its places the broker answers 429 with Retry-After; the file is asked again."""
+    code, res = run(tmp_path, serve(Fake("busy-429-once")), now_iso())
+    assert code == 0, [r for r in res["checks"] if r["result"] == "fail"]
+
+
+def test_a_busy_file_is_asked_again_within_its_wait(monkeypatch):
+    """Busy every time: asked again until FILE_WAIT has passed, then the busy answer counts."""
+    s = suite.Suite.__new__(suite.Suite)
+    calls = []
+
+    def get(path, token=None, accept=None):
+        calls.append(path)
+        return 429, {"retry-after": "0"}, b"busy"
+    s.get = get
+    monkeypatch.setattr(suite, "FILE_WAIT", 0.0)
+    assert s.file("/f", None)[0] == 429 and len(calls) == 1
+    monkeypatch.setattr(suite, "FILE_WAIT", 60.0)
+    calls.clear()
+    assert s.file("/f", None)[0] == 429 and len(calls) == suite.FILE_TRIES
+
+
+def test_a_file_past_the_row_ceiling_passes_only_as_its_413(tmp_path, serve, monkeypatch):
+    """T-6823: a file whose bundle count passes FILE_ROWS is refused before its first byte; that 413
+    is the documented answer, and a 200 for it means the ceiling is gone."""
+    monkeypatch.setattr(suite, "FILE_ROWS", 1)
+    code, res = run(tmp_path / "refused", serve(Fake("too-many-rows")), now_iso())
+    files = [r for r in res["checks"] if r["id"].endswith((".ogc.csv", ".ogc.parquet", ".ogc.zip"))]
+    assert files and all(r["result"] == "pass" for r in files), files
+    assert code == 0, [r for r in res["checks"] if r["result"] == "fail"]
+    _, res = run(tmp_path / "written", serve(Fake()), now_iso())
+    files = [r for r in res["checks"] if r["id"].endswith((".ogc.csv", ".ogc.parquet", ".ogc.zip"))]
+    assert files and all(r["result"] == "fail" for r in files), files
 
 
 def test_a_stopped_gateway_fails_and_never_passes(tmp_path):
