@@ -1086,10 +1086,25 @@
         "$Kind": "NavigationProperty",
         "$Type": "JoinedContext.Portal.ModelProjection"
       },
+      "repositories": {
+        "$Collection": true,
+        "$Kind": "NavigationProperty",
+        "$Type": "JoinedContext.Portal.Repository"
+      },
+      "revisions": {
+        "$Collection": true,
+        "$Kind": "NavigationProperty",
+        "$Type": "JoinedContext.Portal.Revision"
+      },
       "roles": {
         "$Collection": true,
         "$Kind": "NavigationProperty",
         "$Type": "JoinedContext.Portal.Role"
+      },
+      "runs": {
+        "$Collection": true,
+        "$Kind": "NavigationProperty",
+        "$Type": "JoinedContext.Portal.Run"
       },
       "sample": {
         "$Nullable": true,
@@ -1133,6 +1148,57 @@
         "$Kind": "NavigationProperty",
         "$Type": "JoinedContext.Portal.Workspace"
       }
+    },
+    "Repository": {
+      "$Key": [
+        "project",
+        "name"
+      ],
+      "$Kind": "EntityType",
+      "archived": {
+        "$Nullable": true,
+        "$Type": "Edm.Boolean"
+      },
+      "defaultBranch": {
+        "$Nullable": true
+      },
+      "description": {
+        "$Nullable": true
+      },
+      "name": {},
+      "owner": {
+        "$Nullable": true
+      },
+      "private": {
+        "$Nullable": true,
+        "$Type": "Edm.Boolean"
+      },
+      "project": {},
+      "role": {
+        "$Nullable": true
+      },
+      "sizeBytes": {
+        "$Nullable": true,
+        "$Type": "Edm.Int64"
+      },
+      "updatedAt": {
+        "$Nullable": true
+      }
+    },
+    "Revision": {
+      "$Key": [
+        "project",
+        "sha"
+      ],
+      "$Kind": "EntityType",
+      "author": {
+        "$Nullable": true
+      },
+      "message": {
+        "$Nullable": true
+      },
+      "project": {},
+      "sha": {}
     },
     "Role": {
       "$Key": [
@@ -1186,6 +1252,38 @@
         "$Nullable": true
       },
       "title": {
+        "$Nullable": true
+      },
+      "url": {
+        "$Nullable": true
+      }
+    },
+    "Run": {
+      "$Key": [
+        "project",
+        "id"
+      ],
+      "$Kind": "EntityType",
+      "appName": {
+        "$Nullable": true
+      },
+      "createdAt": {
+        "$Nullable": true,
+        "$Precision": 0,
+        "$Type": "Edm.DateTimeOffset"
+      },
+      "createdBy": {
+        "$Nullable": true
+      },
+      "id": {},
+      "kind": {
+        "$Nullable": true
+      },
+      "previewUrl": {
+        "$Nullable": true
+      },
+      "project": {},
+      "status": {
         "$Nullable": true
       },
       "url": {
@@ -1378,7 +1476,10 @@
           "pipelines": "pipelines",
           "policies": "policies",
           "projections": "projections",
+          "repositories": "repositories",
+          "revisions": "revisions",
           "roles": "roles",
+          "runs": "runs",
           "scopedefinitions": "scopedefinitions",
           "serviceaccounts": "serviceaccounts",
           "shared": "shared",
@@ -1389,6 +1490,14 @@
         },
         "$Type": "JoinedContext.Portal.Project"
       },
+      "repositories": {
+        "$Collection": true,
+        "$Type": "JoinedContext.Portal.Repository"
+      },
+      "revisions": {
+        "$Collection": true,
+        "$Type": "JoinedContext.Portal.Revision"
+      },
       "rolebindings": {
         "$Collection": true,
         "$Type": "JoinedContext.Portal.RoleBinding"
@@ -1396,6 +1505,10 @@
       "roles": {
         "$Collection": true,
         "$Type": "JoinedContext.Portal.Role"
+      },
+      "runs": {
+        "$Collection": true,
+        "$Type": "JoinedContext.Portal.Run"
       },
       "scopedefinitions": {
         "$Collection": true,
@@ -3455,27 +3568,6 @@
         }
       }
     ],
-    "jc_project_revisions": [
-      {
-        "$IsBound": true,
-        "$Kind": "Function",
-        "$Parameter": [
-          {
-            "$Name": "bindingParameter",
-            "$Nullable": false,
-            "$Type": "JoinedContext.Portal.Project"
-          },
-          {
-            "$Name": "limit",
-            "$Nullable": true,
-            "$Type": "Edm.Int64"
-          }
-        ],
-        "$ReturnType": {
-          "$Type": "Edm.Untyped"
-        }
-      }
-    ],
     "jc_repository_commit": [
       {
         "$IsBound": true,
@@ -3588,37 +3680,6 @@
             "$Name": "repository",
             "$Nullable": false,
             "$Type": "Edm.String"
-          }
-        ],
-        "$ReturnType": {
-          "$Type": "Edm.Untyped"
-        }
-      }
-    ],
-    "jc_repository_list": [
-      {
-        "$IsBound": true,
-        "$Kind": "Function",
-        "$Parameter": [
-          {
-            "$Name": "bindingParameter",
-            "$Nullable": false,
-            "$Type": "JoinedContext.Portal.Project"
-          },
-          {
-            "$Name": "cursor",
-            "$Nullable": true,
-            "$Type": "Edm.Int64"
-          },
-          {
-            "$Name": "filter",
-            "$Nullable": true,
-            "$Type": "Edm.String"
-          },
-          {
-            "$Name": "limit",
-            "$Nullable": true,
-            "$Type": "Edm.Int64"
           }
         ],
         "$ReturnType": {
@@ -3870,68 +3931,6 @@
           },
           {
             "$Name": "visibility",
-            "$Nullable": true,
-            "$Type": "Edm.String"
-          }
-        ],
-        "$ReturnType": {
-          "$Type": "Edm.Untyped"
-        }
-      }
-    ],
-    "jc_run_get": [
-      {
-        "$IsBound": true,
-        "$Kind": "Function",
-        "$Parameter": [
-          {
-            "$Name": "bindingParameter",
-            "$Nullable": false,
-            "$Type": "JoinedContext.Portal.Project"
-          },
-          {
-            "$Name": "id",
-            "$Nullable": false,
-            "$Type": "Edm.String"
-          }
-        ],
-        "$ReturnType": {
-          "$Type": "Edm.Untyped"
-        }
-      }
-    ],
-    "jc_run_list": [
-      {
-        "$IsBound": true,
-        "$Kind": "Function",
-        "$Parameter": [
-          {
-            "$Name": "bindingParameter",
-            "$Nullable": false,
-            "$Type": "JoinedContext.Portal.Project"
-          },
-          {
-            "$Name": "app",
-            "$Nullable": true,
-            "$Type": "Edm.String"
-          },
-          {
-            "$Name": "kind",
-            "$Nullable": true,
-            "$Type": "Edm.String"
-          },
-          {
-            "$Name": "limit",
-            "$Nullable": true,
-            "$Type": "Edm.Int64"
-          },
-          {
-            "$Name": "mine",
-            "$Nullable": true,
-            "$Type": "Edm.Boolean"
-          },
-          {
-            "$Name": "status",
             "$Nullable": true,
             "$Type": "Edm.String"
           }
@@ -4624,6 +4623,25 @@
             "$Name": "bindingParameter",
             "$Nullable": false,
             "$Type": "JoinedContext.Portal.OrganizationRole"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
           },
           {
             "$Name": "dryRun",
@@ -5429,6 +5447,35 @@
             "$Name": "bindingParameter",
             "$Nullable": false,
             "$Type": "JoinedContext.Portal.OrganizationRole"
+          },
+          {
+            "$Name": "manifest",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "patch",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "dryRun",
+            "$Nullable": true,
+            "$Type": "Edm.Boolean"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      },
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
           },
           {
             "$Name": "manifest",
