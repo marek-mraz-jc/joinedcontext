@@ -600,20 +600,26 @@ async fn besides(
     let sets: Vec<Option<BTreeSet<String>>> = rules_of(view)
         .map(|rule| (!rule.types.is_empty()).then(|| rule.types.iter().cloned().collect()))
         .collect();
-    let distinct: BTreeSet<&BTreeSet<String>> = sets.iter().flatten().collect();
-    let read: BTreeMap<&BTreeSet<String>, Option<BTreeSet<String>>> =
+    let distinct: BTreeSet<Vec<String>> = sets
+        .iter()
+        .flatten()
+        .map(|s| s.iter().cloned().collect())
+        .collect();
+    let read: BTreeMap<Vec<String>, Option<BTreeSet<String>>> =
         futures_util::stream::iter(distinct)
-            .map(|set| async move {
-                let of: Vec<String> = set.iter().cloned().collect();
+            .map(|of| async move {
                 let found = st.store.entity_types_beside(tenant, &of).await?;
-                Ok::<_, NgsiError>((set, found.map(|t| t.into_iter().collect())))
+                Ok::<_, NgsiError>((of, found.map(|t| t.into_iter().collect())))
             })
             .buffer_unordered(NAME_PROBES)
             .try_collect()
             .await?;
     Ok(sets
         .iter()
-        .map(|set| set.as_ref().and_then(|s| read.get(s).cloned().flatten()))
+        .map(|set| {
+            let of: Vec<String> = set.as_ref()?.iter().cloned().collect();
+            read.get(&of).cloned().flatten()
+        })
         .collect())
 }
 
