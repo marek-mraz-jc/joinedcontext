@@ -851,7 +851,7 @@ async fn a_planned_data_source_is_sampled_before_its_approval() {
 }
 
 /// T-6825: an input the pipeline runner (ekiben) does not build is refused when it is saved,
-/// through the REST door and through the operation MCP calls, with a 422 naming the field and
+/// through the REST door (400) and through the operation MCP calls (422), naming the field and
 /// the input, instead of a stream that stops at its first run.
 #[tokio::test]
 async fn a_data_source_of_an_input_the_runner_does_not_build_is_refused_on_save() {
@@ -881,13 +881,12 @@ async fn a_data_source_of_an_input_the_runner_does_not_build_is_refused_on_save(
         ),
     )
     .await;
-    for (door, answer) in [("REST", rest), ("MCP", mcp)] {
-        assert_eq!(
-            answer.status,
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "{door}: {}",
-            answer.text
-        );
+    // REST answers every invalid manifest 400 (its OpenAPI), the operation MCP calls 422.
+    for (door, answer, status) in [
+        ("REST", rest, StatusCode::BAD_REQUEST),
+        ("MCP", mcp, StatusCode::UNPROCESSABLE_ENTITY),
+    ] {
+        assert_eq!(answer.status, status, "{door}: {}", answer.text);
         assert!(
             answer.text.contains("spec.type") && answer.text.contains("`kafka`"),
             "{door}: {}",
