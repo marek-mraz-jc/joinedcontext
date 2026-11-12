@@ -99,6 +99,8 @@ const ROUTE_COVERAGE: &[(&str, &str, &str)] = &[
 ("POST", "/projects/{project}/mqttbrokers/{name}/test-publish", "a dry run of one device message for the broker card's Test drawer, publishing and writing nothing (T-5534, API/01 §44a); jc_mqtt_test_publish answers the same (JC2-59)"),
 ("GET", "/projects/{project}/mqttbrokers/{name}/watch", "the gateway's refusals of a broker and its measured connections for the Test drawer's watch; it writes nothing (T-5534, API/01 §44a)"),
 ("GET", "/organization/limits", "a summary for the settings page: the catalog and the operator's bounds beside the values the Organization and Project manifests hold, which jc_resource_get reaches; it writes nothing (T-2715, API/01 §28)"),
+("GET", "/organization/widgets", "the home page's Dashboards of the request's Organization, each re-read under the caller's rights; an agent reads each Dashboard and the Organization manifest with jc_resource_get; it writes nothing (T-6779, UIX-16)"),
+("GET", "/organization/widgets/options", "the Organization form's choices of home page Dashboards, the ones the caller may read, which jc_resource_list reaches per project; it writes nothing (T-6779, UIX-16)"),
 ("GET", "/organization/setup", "a summary for the setup page, read from manifests the operations registry already reaches and from the deployment; it writes nothing (T-2748, API/01 §25)"),
 ("GET", "/projects/{project}/endpoints/{name}/quality", "the dataset's quality score, a reading about the data the Endpoint page shows and not a manifest (T-5112)"),
 ("POST", "/projects/{project}/endpoints/{name}/preview", "the filter editor's proof, one page through a draft a person is typing (EP-85); jc_endpoint_preview answers the same for a client (JC2-33)"),

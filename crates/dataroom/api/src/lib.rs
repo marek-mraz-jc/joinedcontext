@@ -151,6 +151,12 @@ pub fn portal_publisher_from_file(
 /// Optional host-supplied subject resolver when mounted in-process inside the Portal (G1).
 pub type SubjectResolver = Arc<dyn Fn(&HeaderMap) -> Option<Subject> + Send + Sync>;
 
+/// The public Dashboards a catalogue's home shows, in the page's language (UIX-16, T-6780):
+/// asked on every render, so the host re-checks each one's visibility and Organization.
+pub use dataroom_web::DashboardCard;
+
+pub type DashboardResolver = Arc<dyn Fn(&CatalogueId, &str) -> Vec<DashboardCard> + Send + Sync>;
+
 /// Shared application state for the Axum router.
 #[derive(Clone)]
 pub struct DataroomState {
@@ -167,13 +173,16 @@ pub struct DataroomState {
     /// knows it: its links follow it instead of `https://{host}`.
     pub public_base: Option<String>,
     pub subject_resolver: Option<SubjectResolver>,
+    pub dashboard_resolver: Option<DashboardResolver>,
     pub assets: Arc<RwLock<BTreeMap<String, SanitisedAsset>>>,
     /// Whether a request on a loopback name (or with no host) reads the default catalogue. Off
     /// when the host serves several catalogues by host: then every host must name one.
     pub loopback_default: bool,
     /// The installation branding of one catalogue, in place of [`Self::installation_branding`]
     /// (each Organization's own live addresses).
-    pub catalogue_branding: Arc<BTreeMap<CatalogueId, BrandingBlock>>,
+    /// Each catalogue's installation branding; `jc` swaps one in when its Organization's
+    /// appearance changes (UIX-16, T-6777).
+    pub catalogue_branding: Arc<std::sync::RwLock<BTreeMap<CatalogueId, BrandingBlock>>>,
 }
 
 /// Where a request came in, as the host's router resolved it (`jc_router::Mount`: the scheme
@@ -239,9 +248,10 @@ impl DataroomState {
             mount_prefix: String::new(),
             public_base: None,
             subject_resolver: None,
+            dashboard_resolver: None,
             assets: Arc::new(RwLock::new(BTreeMap::new())),
             loopback_default: true,
-            catalogue_branding: Arc::new(BTreeMap::new()),
+            catalogue_branding: Arc::default(),
         }
     }
 
@@ -253,15 +263,18 @@ impl DataroomState {
 
     /// Each catalogue's own installation branding (its live addresses).
     pub fn with_catalogue_branding(mut self, by: BTreeMap<CatalogueId, BrandingBlock>) -> Self {
-        self.catalogue_branding = Arc::new(by);
+        self.catalogue_branding = Arc::new(std::sync::RwLock::new(by));
         self
     }
 
     /// The installation branding `cat` layers its own over.
-    pub fn branding_of(&self, cat: &Catalogue) -> &BrandingBlock {
+    pub fn branding_of(&self, cat: &Catalogue) -> BrandingBlock {
         self.catalogue_branding
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&cat.id)
             .unwrap_or(&self.installation_branding)
+            .clone()
     }
 
     /// The mount prefix links are written under: this request's entry's, else the state's.
@@ -305,6 +318,15 @@ impl DataroomState {
         F: Fn(&HeaderMap) -> Option<Subject> + Send + Sync + 'static,
     {
         self.subject_resolver = Some(Arc::new(resolver));
+        self
+    }
+
+    /// The public Dashboards each catalogue's home shows (T-6780).
+    pub fn with_dashboard_resolver<F>(mut self, resolver: F) -> Self
+    where
+        F: Fn(&CatalogueId, &str) -> Vec<DashboardCard> + Send + Sync + 'static,
+    {
+        self.dashboard_resolver = Some(Arc::new(resolver));
         self
     }
 
@@ -1005,7 +1027,7 @@ async fn handle_get_branding(State(state): State<DataroomState>, headers: Header
         Ok(v) => v,
         Err(e) => return problem_response(e),
     };
-    let effective = cat.effective_branding(Some(state.branding_of(&cat)));
+    let effective = cat.effective_branding(Some(&state.branding_of(&cat)));
     Json(effective).into_response()
 }
 
@@ -1050,7 +1072,7 @@ async fn handle_post_branding(
             },
         )
         .await;
-    let effective = saved.effective_branding(Some(state.branding_of(&saved)));
+    let effective = saved.effective_branding(Some(&state.branding_of(&saved)));
     Json(effective).into_response()
 }
 
@@ -1208,7 +1230,7 @@ async fn handle_sitemap_xml(State(state): State<DataroomState>, headers: HeaderM
 async fn handle_logo_svg(State(state): State<DataroomState>, headers: HeaderMap) -> Response {
     let own = match state.resolve_context(&headers).await {
         Ok((_ctx, cat)) => {
-            cat.effective_branding(Some(state.branding_of(&cat)))
+            cat.effective_branding(Some(&state.branding_of(&cat)))
                 .logo_svg
         }
         Err(_) => None,
@@ -1229,7 +1251,7 @@ async fn handle_robots_txt(State(state): State<DataroomState>, headers: HeaderMa
         Ok(v) => v,
         Err(e) => return problem_response(e),
     };
-    let branding = cat.effective_branding(Some(state.branding_of(&cat)));
+    let branding = cat.effective_branding(Some(&state.branding_of(&cat)));
     let txt = jc_robots_txt(&cat, &branding);
     (
         StatusCode::OK,
@@ -1313,7 +1335,7 @@ async fn login_redirect(state: &DataroomState, headers: &HeaderMap) -> Response 
         Ok(v) => v,
         Err(e) => return problem_response(e),
     };
-    let branding = cat.effective_branding(Some(state.branding_of(&cat)));
+    let branding = cat.effective_branding(Some(&state.branding_of(&cat)));
     let target = if let Some(portal) = branding.address(dataroom_core::branding::Address::Portal) {
         format!("{portal}/login")
     } else {
@@ -1434,7 +1456,7 @@ async fn dispatch_ui_route(
         Ok(v) => v,
         Err(e) => return problem_response(e),
     };
-    let branding = cat.effective_branding(Some(state.branding_of(&cat)));
+    let branding = cat.effective_branding(Some(&state.branding_of(&cat)));
     let cookie_hdr = headers.get(header::COOKIE).and_then(|v| v.to_str().ok());
     let accept_lang = headers
         .get(header::ACCEPT_LANGUAGE)
@@ -1488,11 +1510,17 @@ async fn dispatch_ui_route(
             datasets.retain(|d| !is_dashboard(d));
             let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
             let q = q_params.get("q").map(String::as_str).unwrap_or("");
+            let dashboards = state
+                .dashboard_resolver
+                .as_ref()
+                .map(|resolve| resolve(&cat.id, &lang))
+                .unwrap_or_default();
             let html = render_home_page_mounted(
                 &cat,
-                Some(state.branding_of(&cat)),
+                Some(&state.branding_of(&cat)),
                 &datasets,
                 &publishers,
+                &dashboards,
                 q,
                 &lang,
                 had_url_prefix,
@@ -1596,7 +1624,7 @@ async fn dispatch_ui_route(
 
             let html = render_dataset_list_page(
                 &cat,
-                Some(state.branding_of(&cat)),
+                Some(&state.branding_of(&cat)),
                 &outcome.datasets,
                 &publishers,
                 &outcome.facets,
@@ -1722,7 +1750,7 @@ async fn dispatch_ui_route(
                 .collect();
             let html = dataroom_web::render_dataset_page_linked(
                 &cat,
-                Some(state.branding_of(&cat)),
+                Some(&state.branding_of(&cat)),
                 &ds,
                 pub_rec.as_ref(),
                 &all_views,
@@ -1812,7 +1840,7 @@ async fn dispatch_ui_route(
             }
             let html = render_resource_page(
                 &cat,
-                Some(state.branding_of(&cat)),
+                Some(&state.branding_of(&cat)),
                 &ds,
                 dist,
                 pub_rec.as_ref(),
@@ -1835,7 +1863,7 @@ async fn dispatch_ui_route(
                 .unwrap_or("title asc");
             let html = render_organization_list_page(
                 &cat,
-                Some(state.branding_of(&cat)),
+                Some(&state.branding_of(&cat)),
                 &publishers,
                 &datasets,
                 q,
@@ -1924,7 +1952,7 @@ async fn dispatch_ui_route(
 
             let html = render_organization_read_page(
                 &cat,
-                Some(state.branding_of(&cat)),
+                Some(&state.branding_of(&cat)),
                 &pub_rec,
                 &outcome.datasets,
                 &outcome.facets,
@@ -1951,7 +1979,7 @@ async fn dispatch_ui_route(
                 .unwrap_or("title asc");
             let html = dataroom_web::groups::render_group_list_page(
                 &cat,
-                Some(state.branding_of(&cat)),
+                Some(&state.branding_of(&cat)),
                 &datasets,
                 q,
                 sort,
@@ -1986,7 +2014,7 @@ async fn dispatch_ui_route(
         ["about"] => {
             let html = render_about_page(
                 &cat,
-                Some(state.branding_of(&cat)),
+                Some(&state.branding_of(&cat)),
                 &lang,
                 had_url_prefix,
                 &state.mount_prefix(),
@@ -2003,7 +2031,7 @@ async fn dispatch_ui_route(
         {
             let Some(html) = render_static_page(
                 &cat,
-                Some(state.branding_of(&cat)),
+                Some(&state.branding_of(&cat)),
                 page_name,
                 &lang,
                 had_url_prefix,
@@ -2018,7 +2046,7 @@ async fn dispatch_ui_route(
         ["assistants"] => {
             let html = render_assistants_page(
                 &cat,
-                Some(state.branding_of(&cat)),
+                Some(&state.branding_of(&cat)),
                 &lang,
                 had_url_prefix,
                 &state.mount_prefix(),
@@ -2030,7 +2058,7 @@ async fn dispatch_ui_route(
         ["assistants", guide_id] => {
             let Some(html) = render_assistant_guide_page(
                 &cat,
-                Some(state.branding_of(&cat)),
+                Some(&state.branding_of(&cat)),
                 guide_id,
                 &lang,
                 had_url_prefix,
@@ -2057,7 +2085,7 @@ async fn dispatch_ui_route(
             }
             let Some(html) = render_map_page(
                 &cat,
-                Some(state.branding_of(&cat)),
+                Some(&state.branding_of(&cat)),
                 &ds,
                 None,
                 &lang,
@@ -2082,7 +2110,7 @@ async fn dispatch_ui_route(
             }
             let Some(html) = render_map_page(
                 &cat,
-                Some(state.branding_of(&cat)),
+                Some(&state.branding_of(&cat)),
                 &ds,
                 Some(res_id),
                 &lang,

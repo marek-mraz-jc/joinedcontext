@@ -194,6 +194,12 @@
     "dns1123": "Nur Kleinbuchstaben, Ziffern und Bindestriche, beginnend mit einem Buchstaben oder einer Ziffer, höchstens 63 Zeichen.",
     "entityType": "Ein NGSI-LD-Typ: ein Großbuchstabe, dann Buchstaben und Ziffern, höchstens 64 Zeichen.",
     "requiredCount": "{filled} von {total} Pflichtfeldern ausgefüllt",
+    "svgPreview": "Vorschau: {label}",
+    "svgPreviewNote": "Als Bild gezeichnet: nichts im SVG wird ausgeführt.",
+    "fixCount": "Zu korrigierende Felder: {count}.",
+    "fixFirst": "Das erste zu korrigierende Feld zeigen",
+    "fixFirstInGroup": "Zuerst: {field}, in {group}.",
+    "fixFirstNamed": "Zuerst: {field}.",
     "askAboutField": "Zu diesem Feld fragen",
     "askAboutFieldQuestion": "Im {kind}-Formular: Was gehört in „{label}“, und was passiert, wenn es leer bleibt?",
     "fillFromSentence": "Aus einem Satz ausfüllen",
@@ -222,7 +228,8 @@
     "mapLanguage": "Sprache",
     "mapAddLanguage": "Sprache hinzufügen",
     "advancedFields": "Erweitert",
-    "advancedFieldsHint": "Runner-Einstellungen, die die meisten Quellen auf dem Standard lassen."
+    "advancedFieldsHint": "Runner-Einstellungen, die die meisten Quellen auf dem Standard lassen.",
+    "chosenOf": "{chosen} von {max} ausgewählt"
   },
   "approvals": {
     "lead": "Jede Änderung am Projekt ist hier ein Vorschlag, bis eine freigebende Person sie zusammenführt.",
@@ -7684,6 +7691,30 @@
         "agentRunsPerDay": "Assistentenläufe pro Tag",
         "entitiesPerSpace": "Entitäten pro Raum",
         "requestsPerMinute": "Anfragen pro Minute je Endpunkt"
+      },
+      "appearance": {
+        "title": "Erscheinungsbild",
+        "instanceName": "Name",
+        "shortName": "Kurzname",
+        "city": "Stadt oder Region",
+        "publisher": "Herausgeber",
+        "contactEmail": "Kontakt-E-Mail",
+        "licenseDefault": "Standardlizenz",
+        "colours": "Farben",
+        "logoSvg": "Logo (SVG)",
+        "faviconSvg": "Favicon (SVG)",
+        "colour": {
+          "primary": "Primär",
+          "secondary": "Sekundär",
+          "accent": "Akzent",
+          "background": "Hintergrund",
+          "text": "Text"
+        },
+        "homeWidgets": "Dashboards auf der Startseite",
+        "homeWidgetsNone": "Noch kein Dashboard zur Auswahl. Öffnen Sie ein Projekt dieser Organisation, gehen Sie zu Dashboards und legen Sie eines an; es wird beim nächsten Mal hier angeboten.",
+        "homeWidgetsProjects": "Projekte der Organisation öffnen",
+        "opendataWidgets": "Dashboards im Open-Data-Portal",
+        "opendataWidgetsNone": "Noch kein öffentliches Dashboard zur Auswahl: Stellen Sie zuerst ein Dashboard eines Projekts dieser Organisation auf öffentlich."
       }
     },
     "contactRole": {
@@ -7736,7 +7767,8 @@
       "creationGroup": "Die Mitglieder der Gruppe {group} eröffnen Projekte.",
       "creationAdmin": "Nur die Organisationsverwaltung eröffnet Projekte.",
       "cooldown": "{days} Tage",
-      "noQuota": "Für ein neues Projekt ist keine Grenze gesetzt."
+      "noQuota": "Für ein neues Projekt ist keine Grenze gesetzt.",
+      "fromInstallation": "Vorgabe der Installation"
     },
     "members": {
       "title": "Mitglieder",
@@ -10082,6 +10114,12 @@
       "empty": "Noch ist nichts mit Ihnen geteilt. Wenn ein anderes Projekt eine App mit der ganzen Organisation teilt, erscheint sie hier.",
       "from": "Aus dem Projekt {project}",
       "newTab": "(öffnet in einem neuen Tab)"
+    },
+    "widgets": {
+      "title": "Dashboards auf der Startseite",
+      "lead": "Von Ihrer Organisation ausgewählt; Sie sehen die, die Sie öffnen dürfen.",
+      "open": "Öffnen",
+      "pages": "{count, plural, one {# Seite} other {# Seiten}}"
     }
   },
   "alerts": {

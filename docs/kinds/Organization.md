@@ -15,6 +15,7 @@ Desired specification of an `Organization` resource (PF-01, PF-02, PF-25, PF-41)
 
 | Field | Type | Required | Description |
 |---|---|---|---|
+| `appearance` | [OrganizationAppearance](#organizationappearance) | no | What the Organization's Portal, open data portal and login page show of it, each member over the installation's branding (UIX-16). |
 | `catalog` | [ProjectCatalog](#projectcatalog) | no | The catalogue publisher a project of this Organization takes when it names none of its own (ADR-N-058 section 2.3, EP-127). |
 | `contacts` | list of [Contact](#contact) | no | Administrative, technical, data protection, or security contacts. |
 | `dcatProfiles` | list of [DcatProfile](#dcatprofile) | no | The national DCAT-AP profiles the records of its Endpoints are also served in, besides DCAT-AP 3.0, which is always served (EP-27, docs API/08 section 5). |
@@ -26,6 +27,24 @@ Desired specification of an `Organization` resource (PF-01, PF-02, PF-25, PF-41)
 | `locales` | list of string | yes | Ordered list of supported locales, most preferred first (PF-25). |
 | `policies` | [OrganizationPolicies](#organizationpolicies) | no | The organization's choices: public apps, the password policy, the models agents may use (ADR-N-035, PF-96). |
 | `projects` | [ProjectsPolicy](#projectspolicy) | no | How projects are opened and who sees them (PF-61, PF-65). |
+
+## OrganizationAppearance
+
+`spec.appearance` (UIX-16).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `city` | string | no | The city or region the Organization serves, e.g. `Banská Bystrica`. |
+| `colours` | [AppearanceColours](#appearancecolours) | no | The colour tokens, each a hex colour such as `#0b5394`. |
+| `contactEmail` | string | no | The contact address in the footer and the open data portal, e.g. `opendata@banskabystrica.sk`. |
+| `faviconSvg` | string | no | The favicon as an SVG document of at most 64 KiB, under the same rules as the logo. |
+| `homeWidgets` | list of string | no | Dashboards the Organization's Portal home page shows, each `project/name` of one of its projects, e.g. `doprava/prehlad`; a viewer sees only those they may read (T-6779). |
+| `instanceName` | string | no | Full name on page titles and the login page, e.g. `Mesto Banská Bystrica`. |
+| `licenseDefault` | string | no | The licence a new dataset starts with, e.g. `CC-BY-4.0`. |
+| `logoSvg` | string | no | The logo as an SVG document of at most 64 KiB, without script, event handler or external reference. |
+| `opendataWidgets` | list of string | no | Dashboards the Organization's open data portal shows on its catalogue home, each `project/name` of one of its projects with `visibility: public`, e.g. `doprava/prehlad`; anonymous readers see them (T-6780). |
+| `publisher` | string | no | The legal publisher named in the footer and the open data portal, e.g. `Mesto Banská Bystrica`. |
+| `shortName` | string | no | Short name on sidebars and tabs, e.g. `BB`. |
 
 ## ProjectCatalog
 
@@ -89,6 +108,18 @@ The organization's rules for its projects (PF-61, PF-65).
 | `nameCooldownDays` | integer (uint32) | no | How long a deleted project's name stays reserved, in days (PF-78). Absent is [`DEFAULT_NAME_COOLDOWN_DAYS`]; `0` frees the name the moment the project is gone. |
 | `quota` | [Quotas](#quotas) | no | The quota every project the organization opens starts from (PF-73). A project may lower a value in the yellow lane; raising one above this is the red lane and an `org-admin`. |
 | `visibility` | [ProjectVisibility](#projectvisibility) | no | Who holds the seeded `viewer` role at organization scope: every signed-in person of the organization (`organization`, the default) or only whoever a binding names (`members`) (PF-61). |
+
+## AppearanceColours
+
+`spec.appearance.colours`: each one a hex colour, `#rgb` or `#rrggbb`.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `accent` | string | no | Highlight colour, e.g. `#f59e0b`. |
+| `background` | string | no | Page background, e.g. `#ffffff`. |
+| `primary` | string | no | Primary action colour, e.g. `#0b5394`. |
+| `secondary` | string | no | Secondary colour for links and focus, e.g. `#0f766e`. |
+| `text` | string | no | Body text, e.g. `#0f172a`. |
 
 ## ContactPoint
 

@@ -194,6 +194,12 @@
     "dns1123": "Iba malé písmená, číslice a spojovníky, začína písmenom alebo číslicou, najviac 63 znakov.",
     "entityType": "Typ NGSI-LD: veľké písmeno, potom písmená a číslice, najviac 64 znakov.",
     "requiredCount": "{filled} z {total} povinných polí vyplnených",
+    "svgPreview": "Náhľad: {label}",
+    "svgPreviewNote": "Vykreslené ako obrázok: nič v SVG sa nespustí.",
+    "fixCount": "Polia na opravu: {count}.",
+    "fixFirst": "Ukázať prvé pole na opravu",
+    "fixFirstInGroup": "Prvé: {field}, v skupine {group}.",
+    "fixFirstNamed": "Prvé: {field}.",
     "askAboutField": "Spýtať sa na toto pole",
     "askAboutFieldQuestion": "Vo formulári {kind}: čo patrí do „{label}“ a čo sa stane, keď to zostane prázdne?",
     "fillFromSentence": "Vyplniť z jednej vety",
@@ -222,7 +228,8 @@
     "mapLanguage": "Jazyk",
     "mapAddLanguage": "Pridať jazyk",
     "advancedFields": "Rozšírené",
-    "advancedFieldsHint": "Nastavenia spúšťača, ktoré väčšina zdrojov necháva predvolené."
+    "advancedFieldsHint": "Nastavenia spúšťača, ktoré väčšina zdrojov necháva predvolené.",
+    "chosenOf": "Vybraté: {chosen} z {max}"
   },
   "approvals": {
     "lead": "Každá zmena projektu je tu návrhom, kým ju schvaľovateľ nezlúči.",
@@ -7684,6 +7691,30 @@
         "agentRunsPerDay": "Behy asistenta za deň",
         "entitiesPerSpace": "Entity v priestore",
         "requestsPerMinute": "Požiadavky za minútu na endpoint"
+      },
+      "appearance": {
+        "title": "Vzhľad",
+        "instanceName": "Názov",
+        "shortName": "Krátky názov",
+        "city": "Mesto alebo región",
+        "publisher": "Vydavateľ",
+        "contactEmail": "Kontaktný e-mail",
+        "licenseDefault": "Predvolená licencia",
+        "colours": "Farby",
+        "logoSvg": "Logo (SVG)",
+        "faviconSvg": "Ikona stránky (SVG)",
+        "colour": {
+          "primary": "Hlavná",
+          "secondary": "Doplnková",
+          "accent": "Zvýraznenie",
+          "background": "Pozadie",
+          "text": "Text"
+        },
+        "homeWidgets": "Dashboardy na domovskej stránke",
+        "homeWidgetsNone": "Zatiaľ niet dashboardu na výber. Otvorte projekt tejto organizácie, prejdite na Dashboardy a vytvorte ho; nabudúce sa ponúkne tu.",
+        "homeWidgetsProjects": "Otvoriť projekty organizácie",
+        "opendataWidgets": "Dashboardy na portáli otvorených údajov",
+        "opendataWidgetsNone": "Zatiaľ niet verejného dashboardu na výber: najprv nastavte dashboard v projekte tejto organizácie ako verejný."
       }
     },
     "contactRole": {
@@ -7736,7 +7767,8 @@
       "creationGroup": "Projekty otvárajú členovia skupiny {group}.",
       "creationAdmin": "Projekty otvára iba administrátor organizácie.",
       "cooldown": "{days} dní",
-      "noQuota": "Pre nový projekt nie je stanovený žiadny limit."
+      "noQuota": "Pre nový projekt nie je stanovený žiadny limit.",
+      "fromInstallation": "predvolené inštaláciou"
     },
     "members": {
       "title": "Členovia",
@@ -10082,6 +10114,12 @@
       "empty": "Zatiaľ s vami nikto nič nezdieľa. Keď iný projekt zdieľa aplikáciu s celou organizáciou, objaví sa tu.",
       "from": "Z projektu {project}",
       "newTab": "(otvorí sa na novej karte)"
+    },
+    "widgets": {
+      "title": "Dashboardy na domovskej stránke",
+      "lead": "Vybrala ich vaša organizácia; vidíte tie, ktoré smiete otvoriť.",
+      "open": "Otvoriť",
+      "pages": "{count, plural, one {# strana} few {# strany} other {# strán}}"
     }
   },
   "alerts": {

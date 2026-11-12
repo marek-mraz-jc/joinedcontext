@@ -81,6 +81,7 @@ pub mod mqtt_test_publish;
 pub mod mutate;
 pub mod ops;
 pub mod organization_limits;
+pub mod organization_widgets;
 pub mod people;
 pub mod people_ids;
 pub mod permissions;
@@ -197,6 +198,7 @@ pub fn router() -> Router<AppState> {
         .merge(endpoint_usage::router())
         .merge(visualization_templates::router())
         .merge(organization_limits::router())
+        .merge(organization_widgets::router())
         .merge(brokers::router())
         .merge(costs::router())
         .merge(agent_registry::router())

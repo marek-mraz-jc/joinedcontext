@@ -27,7 +27,7 @@ pub const MAX_AGE_SECONDS: u32 = 300;
     )
 )]
 pub async fn get_branding(State(state): State<AppState>) -> impl IntoResponse {
-    let mut branding = Branding::load(state.config.branding_file.as_deref());
+    let mut branding = state.branding();
     branding.apps_origin = state
         .config
         .apps_url
@@ -72,7 +72,7 @@ pub async fn get_asset(
     State(state): State<AppState>,
     Path(asset): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let branding = Branding::load(state.config.branding_file.as_deref());
+    let branding = state.branding();
     let name = match asset.as_str() {
         "logo" => branding.logo,
         "favicon" => branding.favicon,
@@ -80,6 +80,19 @@ pub async fn get_asset(
     };
     if name.is_empty() {
         return Err(ApiError::NotFound(format!("no {asset} is configured")));
+    }
+    // The request's Organization carries its own as an SVG in its manifest (UIX-16), checked
+    // when the Change was proposed; served as an attachment that never sniffs into a page, so
+    // even an SVG the check missed renders only inside an `<img>` (RTE-14).
+    if name == Branding::INLINE_SVG {
+        let svg = state
+            .pinned_organization()
+            .and_then(|spec| match asset.as_str() {
+                "logo" => spec.appearance.logo_svg,
+                _ => spec.appearance.favicon_svg,
+            });
+        let svg = svg.ok_or_else(|| ApiError::NotFound(format!("no {asset} is configured")))?;
+        return Ok(served(&format!("{asset}.svg"), svg.into_bytes()));
     }
     let directory = state
         .config
@@ -91,17 +104,30 @@ pub async fn get_asset(
 
     let bytes = std::fs::read(directory.join(&name))
         .map_err(|_| ApiError::NotFound(format!("the {asset} file is not readable")))?;
-    Ok((
+    Ok(served(&name, bytes))
+}
+
+/// An asset's answer: its image type and `Content-Disposition: attachment` (the server adds
+/// `nosniff`), so opening the address downloads it rather than showing
+/// it as a document; an `<img>` still draws it (RTE-14).
+fn served(name: &str, bytes: Vec<u8>) -> axum::response::Response {
+    let file = name.rsplit('/').next().unwrap_or("asset");
+    (
         StatusCode::OK,
         [
-            (header::CONTENT_TYPE, media_type(&name).to_owned()),
+            (header::CONTENT_TYPE, media_type(name).to_owned()),
             (
                 header::CACHE_CONTROL,
                 format!("public, max-age={MAX_AGE_SECONDS}"),
             ),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{file}\""),
+            ),
         ],
         bytes,
-    ))
+    )
+        .into_response()
 }
 
 /// The image types a logo or a favicon may be. Anything else is served as a download rather

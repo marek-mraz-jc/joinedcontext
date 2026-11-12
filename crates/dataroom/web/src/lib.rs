@@ -96,6 +96,8 @@ pub struct UiLabels {
     pub hero_placeholder: String,
     pub by_topic: String,
     pub recent: String,
+    pub dashboards: String,
+    pub dashboard_sources: String,
     pub all_datasets: String,
     pub by_publisher: String,
     pub by_keyword: String,
@@ -275,6 +277,8 @@ impl UiLabels {
             hero_placeholder: t("hero_placeholder"),
             by_topic: t("by_topic"),
             recent: t("recent"),
+            dashboards: t("dashboards"),
+            dashboard_sources: t("dashboard_sources"),
             all_datasets: t("all_datasets"),
             by_publisher: t("by_publisher"),
             by_keyword: t("by_keyword"),
@@ -732,6 +736,16 @@ pub struct FacetGroupView {
     pub more_href: Option<String>,
 }
 
+/// A public Dashboard the catalogue's Organization shows on its home (UIX-16, T-6780): its title in
+/// the page's language, its pages' titles and the public Endpoints it reads. The host re-reads
+/// the Organization's manifest for every render, so only what is still public reaches the page.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DashboardCard {
+    pub title: String,
+    pub pages: Vec<String>,
+    pub sources: Vec<String>,
+}
+
 /// Home page Askama template (`templates/home.html`, D1).
 #[derive(Template)]
 #[template(path = "home.html")]
@@ -747,6 +761,7 @@ pub struct HomePageTemplate {
     pub total_publishers_formatted: String,
     pub topic_tiles: Vec<TopicTileView>,
     pub recent_datasets: Vec<DatasetRowView>,
+    pub dashboards: Vec<DashboardCard>,
     pub datasets: Vec<DatasetRowView>,
     pub publishers: Vec<PublisherRowView>,
     pub popular_keywords: Vec<(String, String)>,
@@ -999,7 +1014,16 @@ pub fn render_home_page(
     csp_nonce: &str,
 ) -> String {
     render_home_page_mounted(
-        catalogue, None, datasets, publishers, query, lang, false, "", csp_nonce,
+        catalogue,
+        None,
+        datasets,
+        publishers,
+        &[],
+        query,
+        lang,
+        false,
+        "",
+        csp_nonce,
     )
 }
 
@@ -1009,6 +1033,7 @@ pub fn render_home_page_mounted(
     installation_branding: Option<&BrandingBlock>,
     datasets: &[Dataset],
     publishers: &[Publisher],
+    dashboards: &[DashboardCard],
     query: &str,
     lang: &str,
     had_url_prefix: bool,
@@ -1177,6 +1202,7 @@ pub fn render_home_page_mounted(
         total_publishers_formatted: jc_number(pub_rows.len()),
         topic_tiles,
         recent_datasets,
+        dashboards: dashboards.to_vec(),
         datasets: ds_rows,
         publishers: pub_rows,
         popular_keywords,

@@ -2582,6 +2582,41 @@
       "tests": [
         "part_change_notice.test.tsx"
       ]
+    },
+    "src/components/forms/SchemaForm.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "access_forms.test.tsx",
+        "access_presets.test.tsx",
+        "app_form.test.tsx",
+        "contextsourceregistration_form.test.tsx",
+        "contract_form_submit_state.test.tsx",
+        "contract_widget_describedby.test.tsx",
+        "edit_prefill.test.tsx",
+        "endpoint_open_data.test.tsx",
+        "entity_selector_field.test.tsx",
+        "form_buttons_language.test.tsx",
+        "form_errors_after_touch.test.tsx",
+        "form_errors_once.test.tsx",
+        "form_required_marks.test.tsx",
+        "form_schema_form.test.tsx",
+        "lazy_schema_form.test.tsx",
+        "part_resource_picker.test.tsx",
+        "part_secret_ref.test.tsx",
+        "part_theme.test.tsx",
+        "pickers.test.tsx",
+        "policy_attribute_capabilities.test.tsx",
+        "policy_form.test.tsx",
+        "raw_values_on_pages.test.tsx",
+        "schema_form.test.tsx",
+        "secret_ref_widget.test.tsx",
+        "serviceaccount_form.test.tsx",
+        "subscription_form.test.tsx",
+        "uischema.test.tsx",
+        "wide_layout.test.tsx"
+      ]
     }
   }
 }
