@@ -454,6 +454,8 @@ dependencies = [
  "ring",
  "serde_json",
  "sqlx",
+ "tikv-jemalloc-ctl",
+ "tikv-jemallocator",
  "tokio",
  "tracing",
  "tracing-subscriber",

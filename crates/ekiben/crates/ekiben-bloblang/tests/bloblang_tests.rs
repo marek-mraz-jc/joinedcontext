@@ -157,6 +157,25 @@ root.complex_slice = this.items[1:5:2]
     assert_eq!(jv["complex_slice"], serde_json::json!(["b", "d"]));
 }
 
+/// T-6820: a byte bound inside a multi-byte character ends the slice at the character before
+/// it, as a Go string slice that the JSON encoder repairs would, instead of panicking the
+/// pipeline thread (prod rehearsal 2026-11-12: `.slice(0, 2000)` inside 'á').
+#[test]
+fn string_slice_inside_a_character_keeps_whole_characters() {
+    let out = run_map(
+        r#"
+root.head = this.text.slice(0, 2)
+root.tail = this.text.slice(2)
+"#,
+        r#"{"text":"aábc"}"#,
+    )
+    .unwrap()
+    .unwrap();
+    let jv: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(jv["head"], "a");
+    assert_eq!(jv["tail"], "ábc");
+}
+
 #[test]
 fn bento_arithmetic_md_degradation_and_comparisons() {
     // Grounded in website/docs/guides/bloblang/arithmetic.md and internal/bloblang/query/arithmetic.go

@@ -668,8 +668,14 @@ impl StreamDeployer {
         // once (T-4060).
         let mut sends: Vec<(usize, String, String, Value)> = Vec::new();
         // The pipelines that do not wait for pushes, for the run queue (PL-78).
-        let mut queued: std::collections::BTreeMap<(String, String), Planned> =
-            std::collections::BTreeMap::new();
+        let mut queued = Queued::new();
+        // What the queue holds, so a stream this pass finds unchanged is handed over by its
+        // digest and deflated only when it changed (T-6820).
+        let known = self
+            .queue
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .digests();
 
         for ns in mirror.namespaces() {
             // What the project may keep resident (PF-74): the ones beyond its quota are not
@@ -813,7 +819,7 @@ impl StreamDeployer {
                                 &spec,
                                 &mut sends,
                                 &mut outcomes,
-                                &mut queued,
+                                (&mut queued, &known),
                             );
                         }
                         Err(reason) => {
@@ -932,7 +938,7 @@ impl StreamDeployer {
                     &spec,
                     &mut sends,
                     &mut outcomes,
-                    &mut queued,
+                    (&mut queued, &known),
                 );
             }
         }
@@ -1464,13 +1470,16 @@ impl StreamDeployer {
 
 /// Puts one rendered pipeline where it runs (PL-78): a resident one is sent to the runner on
 /// this pass, any other joins the run queue as one run on its clock.
+/// The run-and-delete pipelines of one pass, for the run queue (PL-78).
+type Queued = std::collections::BTreeMap<(String, String), Planned>;
+
 fn place(
     (ns, name, mut stream): (&str, String, Value),
     resident: bool,
     spec: &PipelineSpec,
     sends: &mut Vec<(usize, String, String, Value)>,
     outcomes: &mut Vec<(String, String, StreamOutcome)>,
-    queued: &mut std::collections::BTreeMap<(String, String), Planned>,
+    (queued, known): (&mut Queued, &HashMap<run_queue::Key, [u8; 32]>),
 ) {
     if resident {
         sends.push((outcomes.len(), ns.to_owned(), name.clone(), stream));
@@ -1480,10 +1489,17 @@ fn place(
     match Clock::of(spec.period.as_deref(), spec.schedule.as_deref()) {
         Ok(clock) => {
             own_credential(&mut stream, ns);
-            let stream = run_queue::one_run(&stream).to_string();
+            let text = run_queue::one_run(&stream).to_string();
+            let key = (ns.to_owned(), name.clone());
+            let digest = run_queue::digest(&text);
+            let stream = if known.get(&key) == Some(&digest) {
+                run_queue::Packed::known(digest)
+            } else {
+                run_queue::Packed::new(&text)
+            };
             let replace = identity::replaces_any(spec);
             queued.insert(
-                (ns.to_owned(), name.clone()),
+                key,
                 Planned {
                     stream,
                     clock,

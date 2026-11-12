@@ -55,6 +55,10 @@ antares-jsonld = { workspace = true }
 proptest = { workspace = true }
 # T-5050: the batch statements are counted from sqlx's per-statement events.
 tracing-subscriber = { workspace = true }
+# T-6820: tests/pg_pool_buffers.rs reads the bytes still live after a
+# connection goes back to the pool from jemalloc's counters.
+tikv-jemallocator = { workspace = true }
+tikv-jemalloc-ctl = { workspace = true }
 
 [[bench]]
 name = "core_paths"

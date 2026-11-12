@@ -21,13 +21,13 @@ use jc_core::system_members::{
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// The size limit of one compiled model pattern: linear time either way, this bounds memory.
 pub const PATTERN_SIZE_LIMIT: usize = 10 * 1024 * 1024;
 
 /// One class schema compiled for checking, or `None` (logged) when it does not compile.
-fn validator(model: &str, class: &str, schema: &Value) -> Option<Arc<jsonschema::Validator>> {
+fn validator_of(model: &str, class: &str, schema: &Value) -> Option<Arc<jsonschema::Validator>> {
     let patterns = jsonschema::PatternOptions::regex().size_limit(PATTERN_SIZE_LIMIT);
     match jsonschema::draft7::options()
         .with_pattern_options(patterns)
@@ -70,8 +70,10 @@ pub struct ModelSchema {
     /// The model's JSON Schema definitions as Model Tools wrote them (key-value form), which the
     /// attribute list reads its descriptions, units and enums from (T-3223).
     definitions: Map<String, Value>,
-    /// Each class's schema compiled once, `None` for one that does not compile.
-    validators: BTreeMap<String, Option<Arc<jsonschema::Validator>>>,
+    /// Each class's schema compiled on its first check, `None` for one that does not compile.
+    /// Lazy (T-6820): a model is compiled per space at start, and its records are mostly of a
+    /// few classes; eager validators of every class held 97-143 MiB on the prod rehearsal.
+    validators: BTreeMap<String, OnceLock<Option<Arc<jsonschema::Validator>>>>,
     /// The space's own quality rules (DM-87) the Portal's stage holds a record to: a rejecting
     /// one is a problem named by the rule (DM-88). Empty from `compile`; the gateway enforces
     /// the space's rules itself and leaves it so.
@@ -278,8 +280,8 @@ impl ModelSchema {
             })
             .collect();
         let validators = compiled
-            .iter()
-            .map(|(class, schema)| (class.clone(), validator(model, class, schema)))
+            .keys()
+            .map(|class| (class.clone(), OnceLock::new()))
             .collect();
         Self {
             model: model.to_owned(),
@@ -290,6 +292,15 @@ impl ModelSchema {
             validators,
             quality: Vec::new(),
         }
+    }
+
+    /// Class validators compiled so far.
+    #[cfg(test)]
+    fn compiled_validators(&self) -> usize {
+        self.validators
+            .values()
+            .filter(|v| v.get().is_some())
+            .count()
     }
 
     /// The attributes of `class` whose `x-ingest` (the LinkML `ingest`, ADR-N-054 2.6, DM-121)
@@ -505,7 +516,8 @@ impl ModelSchema {
         let Some(class) = object.get("type").and_then(Value::as_str) else {
             return vec![problem("sh:minCount", "type", "the record has no type")];
         };
-        let Some(validator) = self.validators.get(class) else {
+        let (Some(validator), Some(schema)) = (self.validators.get(class), self.classes.get(class))
+        else {
             return vec![problem(
                 "type",
                 "type",
@@ -516,7 +528,7 @@ impl ModelSchema {
             )];
         };
         let mut problems = id_problems(object, class);
-        match validator {
+        match validator.get_or_init(|| validator_of(&self.model, class, schema)) {
             Some(validator) => problems.extend(validator.iter_errors(record).flat_map(|error| {
                 let mut path = attribute_of(&error.instance_path().to_string());
                 // An attribute the class does not declare is named on its own, one problem each,
@@ -1120,6 +1132,29 @@ mod tests {
             false,
             missing,
         )
+    }
+
+    /// T-6820: compiling a model compiles no class validator; the first check of a class compiles
+    /// that class's alone. The gateway and the Portal compile every space's model at start, and
+    /// eager validators for all classes of 158 models held 97-143 MiB on the prod rehearsal
+    /// profile, while pipelines write a few classes of each.
+    #[test]
+    fn a_class_validator_is_compiled_on_its_first_check() {
+        let mut schema = schema();
+        schema["definitions"]["Device"] = json!({ "type": "object", "properties": {} });
+        let model = ModelSchema::compile(
+            "bb-air-quality",
+            "1.0.0",
+            &schema,
+            &["AirQualityObserved".into(), "Device".into()],
+            false,
+        );
+        assert_eq!(model.compiled_validators(), 0);
+        assert!(model.check(&valid()).is_empty());
+        assert_eq!(model.compiled_validators(), 1);
+        assert!(model.check(&valid()).is_empty());
+        assert_eq!(model.compiled_validators(), 1, "a second check reuses it");
+        assert_eq!(model.clone().compiled_validators(), 1, "a clone keeps it");
     }
 
     /// DM-88: a record a rejecting rule refuses names the rule and the attribute, never the
