@@ -136,6 +136,8 @@ class Fake:
         if rest == "ngsi-ld/v1/types":
             types = ["AirQualityObserved"] + (["Road"] if self.broken == "extra-type" else []) \
                 + (["WaterQualityObserved"] if self.broken.startswith("grown") else [])
+            if self.broken == "cut-types":  # T-6800: the broker cut every probe at its deadline
+                return 200, {"NGSILD-Warning": '199 antares "entity scan ceiling reached"'}, {"typeList": []}
             return 200, {}, {"typeList": types}
         if rest.startswith("ngsi-ld/v1/types/") or rest == "ngsi-ld/v1/attributes":
             return 200, {}, {"attributeNames": ["pm10"]}
@@ -274,6 +276,13 @@ def test_each_broken_rule_turns_its_check_red(tmp_path, serve, broken, check):
     code, res = run(tmp_path, serve(Fake(broken)), now_iso())
     red = {r["id"] for r in res["checks"] if r["result"] == "fail"}
     assert code == 1 and check in red, red
+
+
+def test_a_cut_types_listing_names_the_brokers_warning(tmp_path, serve):
+    # smoke 43135784935: the restore copy listed no type of 4aw6...; the row showed no 199.
+    code, res = run(tmp_path, serve(Fake("cut-types")), now_iso())
+    row = next(r for r in res["checks"] if r["id"] == "anon.types.match")
+    assert code == 1 and row["result"] == "fail" and "; warning 199 antares" in row["actual"], row
 
 
 def test_a_synthetic_bundle_grown_by_its_pipelines_counts_the_seeded_rows(tmp_path, serve):

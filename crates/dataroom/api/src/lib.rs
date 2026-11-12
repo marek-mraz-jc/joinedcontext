@@ -1178,10 +1178,7 @@ async fn handle_serve_asset(
                 (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_owned()),
                 // An uploaded SVG opened on its own runs nothing and loads nothing (B3, defence
                 // in depth behind the upload check).
-                (
-                    header::CONTENT_SECURITY_POLICY,
-                    "default-src 'none'; style-src 'unsafe-inline'; sandbox".to_owned(),
-                ),
+                (header::CONTENT_SECURITY_POLICY, SVG_CSP.to_owned()),
             ],
             asset.bytes,
         )
@@ -1234,13 +1231,25 @@ async fn handle_jc_enums_json() -> Response {
         .into_response()
 }
 
-async fn handle_jc_logo_svg() -> Response {
+/// What an SVG of this origin is served under: opened on its own it runs nothing, loads nothing
+/// and is never sniffed into a page, whatever the logo deny-list misses (B3, T-6801).
+const SVG_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
+
+fn svg_response(body: impl IntoResponse) -> Response {
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, "image/svg+xml; charset=utf-8")],
-        JC_LOGO_SVG,
+        [
+            (header::CONTENT_TYPE, "image/svg+xml; charset=utf-8"),
+            (header::CONTENT_SECURITY_POLICY, SVG_CSP),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        body,
     )
         .into_response()
+}
+
+async fn handle_jc_logo_svg() -> Response {
+    svg_response(JC_LOGO_SVG)
 }
 
 async fn handle_sitemap_xml(State(state): State<DataroomState>, headers: HeaderMap) -> Response {
@@ -1274,12 +1283,7 @@ async fn handle_logo_svg(State(state): State<DataroomState>, headers: HeaderMap)
     let body = own
         .filter(|svg| dataroom_core::branding::is_safe_logo_svg(svg))
         .unwrap_or_else(|| JC_LOGO_SVG.to_owned());
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "image/svg+xml; charset=utf-8")],
-        body,
-    )
-        .into_response()
+    svg_response(body)
 }
 
 async fn handle_robots_txt(State(state): State<DataroomState>, headers: HeaderMap) -> Response {

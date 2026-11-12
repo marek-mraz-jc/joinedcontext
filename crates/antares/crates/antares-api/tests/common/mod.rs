@@ -38,6 +38,8 @@ pub struct Double {
     size_scan_fails: AtomicBool,
     /// Each `query_entities` probing this type waits this long.
     slow_type: Option<(String, std::time::Duration)>,
+    /// Each `entity_types_beside` answers after this long.
+    slow_beside: Option<std::time::Duration>,
 }
 
 impl Double {
@@ -63,6 +65,7 @@ impl Double {
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
+            slow_beside: None,
         }
     }
 
@@ -89,6 +92,7 @@ impl Double {
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
+            slow_beside: None,
         }
     }
 
@@ -115,6 +119,7 @@ impl Double {
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
+            slow_beside: None,
         }
     }
 
@@ -143,6 +148,7 @@ impl Double {
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
+            slow_beside: None,
         }
     }
 
@@ -183,6 +189,7 @@ impl Double {
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
+            slow_beside: None,
         }
     }
 
@@ -209,6 +216,7 @@ impl Double {
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
+            slow_beside: None,
         }
     }
 
@@ -235,6 +243,7 @@ impl Double {
             wedged: AtomicBool::new(false),
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
+            slow_beside: None,
         }
     }
 
@@ -254,6 +263,15 @@ impl Double {
     ) -> Self {
         Self {
             slow_type: Some((type_iri.to_owned(), delay)),
+            ..Self::passthrough(inner)
+        }
+    }
+
+    /// Delegates everything; each `entity_types_beside` answers after
+    /// `delay`, as on a freshly restored Postgres copy under load (T-6800).
+    pub fn slowing_beside(inner: Arc<dyn CurrentStateDriver>, delay: std::time::Duration) -> Self {
+        Self {
+            slow_beside: Some(delay),
             ..Self::passthrough(inner)
         }
     }
@@ -510,6 +528,17 @@ impl CurrentStateDriver for Double {
     async fn entity_type_names(&self, tenant: &TenantId) -> Result<Option<Vec<String>>, NgsiError> {
         self.pool_wall()?;
         self.inner.entity_type_names(tenant).await
+    }
+    async fn entity_types_beside(
+        &self,
+        tenant: &TenantId,
+        any_of: &[String],
+    ) -> Result<Option<Vec<String>>, NgsiError> {
+        self.pool_wall()?;
+        if let Some(delay) = self.slow_beside {
+            tokio::time::sleep(delay).await;
+        }
+        self.inner.entity_types_beside(tenant, any_of).await
     }
     async fn mutate_boxed<'a>(
         &self,
