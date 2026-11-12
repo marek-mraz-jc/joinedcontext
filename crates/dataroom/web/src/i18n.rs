@@ -1336,11 +1336,11 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
     );
     add(
         "subscribe_pick",
-        "Choose from the list or type",
-        "Vyberte zo zoznamu alebo píšte",
-        "Vyberte ze seznamu nebo pište",
-        "Aus der Liste wählen oder tippen",
-        "Válasszon a listából vagy írjon",
+        "Choose or type",
+        "Vyberte alebo píšte",
+        "Vyberte nebo pište",
+        "Wählen oder tippen",
+        "Válasszon vagy írjon",
     );
     add(
         "subscribe_preset",
