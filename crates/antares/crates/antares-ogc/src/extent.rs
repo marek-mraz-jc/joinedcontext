@@ -5,7 +5,9 @@
 //! Entity's location never widens it. One read takes at most [`EXTENT_SCAN`] Features, with no
 //! whole count (T-6508: on dev that count alone outran the read cut of a type of 67 000 rows,
 //! a page of it took 1 s); a collection filling that page, a history collection and one
-//! without a geometry state none.
+//! without a geometry state none. So does one whose read, its wait for a place included, takes
+//! longer than [`EXTENT_WAIT`] (T-6833: `/collections` of a view of 30 types, read 4 at a time on
+//! a busy store, crossed the gateway's 10 s read cut and answered 503).
 //! An answer is kept for [`FRESH_MICROS`] per view compilation, collection and caller, so a
 //! `/collections` read costs one read per collection per minute and `/collections` and
 //! `/collections/{c}` state the same extent (ETS `FeatureCollection` compares them).
@@ -31,6 +33,12 @@ pub(crate) const EXTENT_SCAN: u64 = 1_000;
 /// (jc-memory-cut2), and eight health probes asking at once multiplied it.
 const EXTENT_READS: usize = 4;
 static READS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(EXTENT_READS);
+
+/// How long one extent read may take, its wait for one of the [`EXTENT_READS`] places included:
+/// past it the collection states no extent, so `/collections` answers within this bound however
+/// many collections the view holds. The `None` is kept like any answer, so `/collections/{c}`
+/// states the same.
+const EXTENT_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// How long a computed extent is served before it is read again.
 const FRESH_MICROS: i64 = 60_000_000;
@@ -91,10 +99,16 @@ pub(crate) async fn of(
     bbox.map(|b| json!({"spatial": {"bbox": [b], "crs": crate::crs::CRS84}}))
 }
 
-/// `read` once one of the [`EXTENT_READS`] places is free; `None` if the bound closed.
+/// `read` once one of the [`EXTENT_READS`] places is free; `None` if the bound closed or the
+/// read, its wait included, took longer than [`EXTENT_WAIT`].
 async fn bounded<T>(read: impl std::future::Future<Output = T>) -> Option<T> {
-    let _place = READS.acquire().await.ok()?;
-    Some(read.await)
+    tokio::time::timeout(EXTENT_WAIT, async {
+        let _place = READS.acquire().await.ok()?;
+        Some(read.await)
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// The bounding box of the collection's Features as the caller reads them; `None` at
@@ -169,6 +183,14 @@ mod tests {
         let done = futures_util::future::join_all(reads).await;
         assert!(done.iter().all(Option::is_some));
         assert_eq!(most.load(Ordering::SeqCst), EXTENT_READS);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_extent_read_past_the_wait_states_none() {
+        let late = bounded(std::future::pending::<()>());
+        let answered = tokio::time::timeout(EXTENT_WAIT.saturating_mul(2), late).await;
+        assert_eq!(answered, Ok(None));
+        assert_eq!(bounded(async { 7 }).await, Some(7));
     }
 
     #[test]
