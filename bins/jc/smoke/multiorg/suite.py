@@ -124,6 +124,7 @@ class Suite:
                             if n:
                                 kinds[kind].append(n.group(1))
                 closed = {}  # slug -> (name, audience) of every Endpoint that is not public
+                readable = []  # of them, those whose space has a Policy granting a read to anyone
                 for f in (files / CONFIG[0] / p).glob("spaces/*/endpoints/*.yaml"):
                     text = f.read_text(errors="replace")
                     aud = re.search(r"^\s*audience:\s*([\w-]+)", text, re.M)
@@ -131,13 +132,17 @@ class Suite:
                     name = re.search(r"^metadata:\s*\n(?:\s+.*\n)*?\s+name:\s*([\w.-]+)", text, re.M)
                     if aud and slug and name and aud.group(1) != "public":
                         closed[slug.group(1)] = (name.group(1), aud.group(1))
+                        if any(re.search(r"^\s*-\s*retrieveOps\s*$", q.read_text(errors="replace"), re.M)
+                               for q in (f.parent.parent / "policies").glob("*.yaml")):
+                            readable.append(slug.group(1))
                 ckan = []
                 for f in (files / CONFIG[0] / p / "ckan").glob("*.yaml"):
                     d = re.search(r"organizationDefault:\s*([\w.-]+)", f.read_text())
                     if d:
                         ckan.append(d.group(1))
                 exp[org]["projects"][p] = {k: sorted(set(v)) for k, v in kinds.items()} | {"ckanOrgs": ckan,
-                                                                                          "closed": closed}
+                                                                                          "closed": closed,
+                                                                                          "readable": readable}
         self.exp = exp
         orgs = files / CONFIG[0] / CONFIG[1] / "organizations"
         self.installation = next((f.stem for f in orgs.glob("*.yaml")
@@ -591,8 +596,11 @@ class Suite:
         for org in self.exp:
             foreign = {slug: (p, *v) for o, oe in self.exp.items() if o != org
                        for p, pe in oe["projects"].items() for slug, v in pe["closed"].items()}
-            own_org = {slug for p, pe in self.exp[org]["projects"].items()
+            # Organization Endpoints a person can read at all: a space without a read Policy lets nobody
+            # read its Endpoints, so the readable catalogue rightly lists none of them.
+            org_aud = {slug for p, pe in self.exp[org]["projects"].items()
                        for slug, (_, aud) in pe["closed"].items() if aud == "organization"}
+            own_org = {slug for pe in self.exp[org]["projects"].values() for slug in pe["readable"]} & org_aud
             for kind in ("admin", "member"):
                 key = f"{org}-{kind}"
                 st, body = self.session(key).json("GET", "/api/v1/catalogue/readable")
@@ -601,6 +609,10 @@ class Suite:
                 self.row(f"data.{key}.readable.no-foreign", org, "GET /api/v1/catalogue/readable",
                          "no closed Endpoint of another org", f"{st}, {len(slugs)} listed, foreign {seen[:4]}",
                          st == 200 and not seen)
+                if org_aud and not own_org:
+                    self.row(f"data.{key}.readable.own-organization", org, "GET /api/v1/catalogue/readable",
+                             f">= 1 of its {len(org_aud)} organization Endpoints", f"{st}", None,
+                             "no organization Endpoint of it has a read Policy in its space: nobody may read one")
                 if own_org:
                     # `audience: organization` admits the Organization; a Policy still has to name the
                     # caller, and the export's name project groups, not these persons: at least one.

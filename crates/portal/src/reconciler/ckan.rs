@@ -488,9 +488,14 @@ impl CkanSync {
         // current Endpoint still publishes (a renamed Endpoint keeping its dataset name, or
         // another project's) is not the gone one's to delete; nor is the dataset of a project
         // that did not read or of an Endpoint held back this run.
+        // Compared where each is published: in host mode `routed` moves a dataset from its
+        // `CkanInstance`'s catalogue to its Organization's, the one `claims` names, so a dataset
+        // compared by its declared catalogue alone was withdrawn every pass right after its
+        // creation (T-6803: 58 created, every one withdrawn on the next pass).
         for target in withdrawn(previous, &claims, self.installation.as_ref())
             .into_iter()
             .map(|target| self.routed(repo, target))
+            .filter(|target| !claims.contains(&claim(target)))
             .filter(|target| {
                 let project = target.id.namespace.clone().unwrap_or_default();
                 !unread.contains(&project) && !held.contains(&(project, target.id.name.clone()))

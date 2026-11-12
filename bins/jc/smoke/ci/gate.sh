@@ -7,10 +7,10 @@
 # loopback bind) and runs every smoke suite with the rehearsal's state, log and admin listener.
 # JC_BIN names the jc binary (kaisatsu and daiya beside it); SMOKE_E2E=1 adds `cargo test -p jc
 # --tests`; SMOKE_ARGS adds flags to `run all`. Beside it, two more jcs on the three-Organization
-# bundle compose.py makes of multiorg-export.tgz (hel, bratislava, barcelona of the same synth): one
-# with each Organization on its own *.localhost hosts for `multiorg` (host mode), one without for
-# `multiorg@path`; both import while the gate's own jc does. The CI job (.github/workflows/smoke.yml) and a
-# local check run the same script. Answers `run all`'s verdict: 0 green, 1 red.
+# bundle compose.py makes of synth-export.tgz (hel, zilina) and multiorg-export.tgz (barcelona):
+# one with each Organization on its own *.localhost hosts for `multiorg` (host mode), one without
+# for `multiorg@path`; both import while the gate's own jc does. The CI job
+# (.github/workflows/smoke.yml) and a local check run the same script. Answers `run all`'s verdict: 0 green, 1 red.
 set -euo pipefail
 out=$(realpath -m "${1:?usage: gate.sh <out dir> [port] [pg port]}")
 port=${2:-42101}; pg_port=${3:-55441}
@@ -98,19 +98,30 @@ python3 -I "$here/redate.py" "$export_dir"
 # redate rewrites the history lines, so the bundle is stamped again: the import refuses a file that
 # differs from its manifest's digest (P-26).
 python3 -I "$repo/deploy/rehearsal/rehearsal.py" digest --export "$export_dir" >/dev/null
-# The three-Organization bundle: hel (helsinki), bratislava and barcelona of one synth, composed,
-# moved to now and stamped. Each Organization on its own Portal, open data, API and MCP host.
+# The three-Organization bundle, composed, moved to now and stamped: hel's helsinki and zilina's
+# zilina from the gate's own synth (its manifests pass jcctl validate), barcelona with the realm and
+# the configuration repository from multiorg-export.tgz (`rehearsal.py synth` of the deployment's
+# dev config, sliced to barcelona). Not bratislava: its 453 Endpoints held the first reconciler pass
+# 413 s. Each Organization on its own Portal, open data, API and MCP host.
 mo_src=$(mktemp -d)
-tar -xzf "$here/multiorg-export.tgz" -C "$mo_src"
-python3 -I "$repo/bins/jc/smoke/multiorg/compose.py" --base "$mo_src" --org hel="$mo_src" \
-  --org bratislava="$mo_src" --org barcelona="$mo_src" --out "$mo_export" --entities-per-type 0
+mkdir "$mo_src/gate" "$mo_src/bcn"
+tar -xzf "$here/synth-export.tgz" -C "$mo_src/gate"
+tar -xzf "$here/multiorg-export.tgz" -C "$mo_src/bcn"
+python3 -I "$repo/bins/jc/smoke/multiorg/compose.py" --base "$mo_src/bcn" --org hel="$mo_src/gate" \
+  --org zilina="$mo_src/gate" --org barcelona="$mo_src/bcn" --out "$mo_export" --entities-per-type 0
 rm -rf "${mo_src:?}"
 python3 -I "$here/redate.py" "$mo_export"
 python3 -I "$repo/deploy/rehearsal/rehearsal.py" digest --export "$mo_export" >/dev/null
+# Each Organization's catalogue takes the Portal's datasets only with a token of its own
+# (portal_token_file, bins/jc/CUTOVER.md 4a): random per run, in a 0700 dir, never printed.
+mo_tokens=$REHEARSAL_HOME/multiorg-tokens
+rm -rf "$mo_tokens" && mkdir -m 700 "$mo_tokens"
 : > "$mo_hosts"
-for org in hel:a1 bratislava:b1 barcelona:c1; do
+for org in hel:a1 zilina:b1 barcelona:c1; do
   o=${org%%:*}
+  (umask 077 && python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > "$mo_tokens/$o")
   printf '[[organizations]]\nname = "%s"\ncatalogue_id = "00000000-0000-7000-8000-0000000000%s"\n' "$o" "${org#*:}"
+  printf 'portal_token_file = "%s"\n' "$mo_tokens/$o"
   printf 'hosts = { portal = "portal.%s.localhost:%s", opendata = "opendata.%s.localhost:%s", api = "api.%s.localhost:%s", mcp = "mcp.%s.localhost:%s" }\n\n' \
     "$o" "$mo_port" "$o" "$mo_port" "$o" "$mo_port" "$o" "$mo_port"
 done >> "$mo_hosts"
@@ -161,10 +172,23 @@ args+=(--known "$repo/bins/jc/smoke/ci/known.txt")
 python3 -c 'import playwright' 2>/dev/null || args+=(--with "charts-apps=--no-shots")
 # shellcheck disable=SC2206 # SMOKE_ARGS is a flag list by design
 args+=(${SMOKE_ARGS:-})
+# The two multiorg jcs take most of a core each while they idle (their catalogue waves): both
+# stopped once multiorg@path has written its results, and in any case once `run all` ends.
+stop_mo() {
+  local e
+  for e in mo-hosts mo-path; do
+    if [ -s "$REHEARSAL_HOME/$e/jc.pid" ]; then "$repo/deploy/rehearsal/stop-jc.sh" "$(cat "$REHEARSAL_HOME/$e/jc.pid")" || true; fi
+  done
+}
+rm -f "$out/multiorg@path/results.json"
+( while [ ! -e "$out/multiorg@path/results.json" ]; do sleep 5; done; stop_mo ) &
+mo_stop=$!
 set +e
 python3 "$repo/bins/jc/smoke/run" all "${args[@]}"
 verdict=$?
 set -e
+kill "$mo_stop" 2>/dev/null || true
+stop_mo
 cp "$home/jc.log" "$out/jc.log" 2>/dev/null || true
 cp "$REHEARSAL_HOME/mo-hosts/jc.log" "$out/mo-hosts-jc.log" 2>/dev/null || true
 cp "$REHEARSAL_HOME/mo-path/jc.log" "$out/mo-path-jc.log" 2>/dev/null || true

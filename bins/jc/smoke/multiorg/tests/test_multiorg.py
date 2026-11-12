@@ -95,3 +95,21 @@ def test_the_suite_takes_the_state_realm(tmp_path):
     state.mkdir()
     (state / "realm-name.txt").write_text("smartcity")
     assert suite.Suite(args(tmp_path, str(state))).realm == "smartcity"
+
+
+def test_an_organization_endpoint_counts_as_readable_only_with_a_read_policy_in_its_space(tmp_path):
+    a = args(tmp_path)
+    exp = Path(a.export)
+    (exp / "manifest.json").write_text(json.dumps({"multiorg": {"organizations": {"zilina": {"projects": ["zilina"]}}}}))
+    (exp / "gitea/files/joinedcontext/configuration/organizations").mkdir(parents=True)
+    for space, slug, verb in (("mesto", "aaaa", "createEntity"), ("data", "bbbb", "retrieveOps")):
+        d = exp / "gitea/files/joinedcontext/zilina/spaces" / space
+        (d / "endpoints").mkdir(parents=True)
+        (d / "policies").mkdir()
+        (d / "endpoints/e.yaml").write_text(f"kind: Endpoint\nmetadata:\n  name: {space}\nspec:\n  slug: {slug}\n"
+                                            "  audience: organization\n")
+        (d / "policies/p.yaml").write_text(f"kind: Policy\nspec:\n  operations:\n    - {verb}\n")
+    s = suite.Suite(a)
+    s.expectations()
+    project = s.exp["zilina"]["projects"]["zilina"]
+    assert set(project["closed"]) == {"aaaa", "bbbb"} and project["readable"] == ["bbbb"]
