@@ -51,7 +51,7 @@ ekiben = ["dep:ekiben-server", "dep:ekiben-core", "dep:futures", "dep:jc-core"]
 # views, the joinedcontext engine and every surface dev's broker serves.
 antares = ["dep:antares-broker"]
 gateway = ["dep:context-gateway", "dep:jc-core", "dep:jc-manifest", "dep:jcctl", "dep:zip"]
-portal = ["dep:joinedcontext-portal"]
+portal = ["dep:joinedcontext-portal", "dep:jc-core"]
 # POST /generate for the reconciler: broker schema and @context of a LinkML model.
 model-tools = ["dep:linkml-model", "dep:serde_norway"]
 # The knowledge assistant's page, widget and chat (vendor/joinedcontext-platform/crates/assistant)

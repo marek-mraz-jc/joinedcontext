@@ -1671,6 +1671,10 @@ async fn check_content(
     }
     crate::judge::manifest(&ground, project, envelope)?;
 
+    // 4b-widgets. An Organization's home page names only Dashboards of its own projects the
+    //       proposer may read (UIX-16, T-6779); the page reads each one again for its viewer.
+    crate::api::organization_widgets::check(state, identity, envelope)?;
+
     // 4d. A projection names only what its model version has (MP-01, T-2558): the same check
     //     `jcctl validate` runs, so the two cannot disagree about what is stale, and every stale
     //     name is listed at once. The model is looked up in this project only, so a model of

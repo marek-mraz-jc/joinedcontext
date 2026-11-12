@@ -3,6 +3,7 @@
 pub mod agent_profile;
 pub mod app;
 pub mod app_identity;
+pub mod appearance;
 pub mod assistant;
 pub mod bento_inputs;
 pub mod bento_processors;
@@ -56,6 +57,7 @@ pub use app::{
     AppServiceLimits, AppSource, AppSpec, AppVisibility, ContentSecurityPolicy, DataNeed,
     GeoConstraint, GeoWithin, GitSource, TemporalConstraint, DEFAULT_ORGANIZATION_SERVICES,
 };
+pub use appearance::{is_hex_colour, AppearanceColours, OrganizationAppearance};
 pub use assistant::{
     AnswerSpec, AssistantDeploymentSpec, AssistantScope, Budget, Channel, ChatWidget, Connector,
     KnowledgeSourceSpec, Localised, ModelChoice, PdfPolicy, PdfPolicyKind, ProviderRouting,

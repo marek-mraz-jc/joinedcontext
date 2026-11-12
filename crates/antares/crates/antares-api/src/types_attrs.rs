@@ -585,27 +585,42 @@ fn may_show(view: View<'_>, name: &str, attr: &str) -> bool {
 
 /// Per rule of the narrowing, the types an Entity of two or more types
 /// carries beside the rule's own (T-4683); `None` for a rule naming no type
-/// or a backend without that read.
+/// or a backend without that read. One read per distinct type set, at most
+/// [`NAME_PROBES`] at once (T-6800): they run inside the discovery deadline,
+/// and one after the other per rule they took the whole 6 s on a freshly
+/// restored copy (zilina-doprava's Endpoint listed no type at all).
 async fn besides(
     st: &AppState,
     tenant: &antares_model::TenantId,
     view: View<'_>,
 ) -> Result<Vec<Option<BTreeSet<String>>>, NgsiError> {
-    let mut beside = Vec::new();
     let Some(view) = view else {
-        return Ok(beside);
+        return Ok(Vec::new());
     };
-    for rule in rules_of(view) {
-        beside.push(match rule.types.is_empty() {
-            true => None,
-            false => st
-                .store
-                .entity_types_beside(tenant, &rule.types)
-                .await?
-                .map(|t| t.into_iter().collect::<BTreeSet<String>>()),
-        });
-    }
-    Ok(beside)
+    let sets: Vec<Option<BTreeSet<String>>> = rules_of(view)
+        .map(|rule| (!rule.types.is_empty()).then(|| rule.types.iter().cloned().collect()))
+        .collect();
+    let distinct: BTreeSet<Vec<String>> = sets
+        .iter()
+        .flatten()
+        .map(|s| s.iter().cloned().collect())
+        .collect();
+    let read: BTreeMap<Vec<String>, Option<BTreeSet<String>>> =
+        futures_util::stream::iter(distinct)
+            .map(|of| async move {
+                let found = st.store.entity_types_beside(tenant, &of).await?;
+                Ok::<_, NgsiError>((of, found.map(|t| t.into_iter().collect())))
+            })
+            .buffer_unordered(NAME_PROBES)
+            .try_collect()
+            .await?;
+    Ok(sets
+        .iter()
+        .map(|set| {
+            let of: Vec<String> = set.as_ref()?.iter().cloned().collect();
+            read.get(&of).cloned().flatten()
+        })
+        .collect())
 }
 
 /// The type names a discovery answer probes. A view with rules probes only

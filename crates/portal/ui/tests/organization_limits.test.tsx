@@ -211,6 +211,31 @@ describe("the Organization form", () => {
     expect(idle.description).toContain("Allowed: 5 – 120.");
   });
 
+  it("offers as home page dashboards only the ones the server lists for this person (T-6779)", () => {
+    const offered = [{ reference: "doprava/prehlad", label: "Traffic overview (doprava/prehlad)" }];
+    const errors = (homeWidgets: string[]) =>
+      validator
+        .validateFormData({ ...base, appearance: { homeWidgets } }, organizationSchema(t, LIMITS.entries, offered))
+        .errors.map((error) => `${error.property} ${error.message}`);
+    expect(errors(["doprava/prehlad"])).toEqual([]);
+    expect(errors(["mhd/linky"]).join("\n")).toMatch(/homeWidgets/);
+    expect(errors(["doprava/prehlad", "doprava/prehlad"]).join("\n")).toMatch(/homeWidgets/);
+  });
+
+  it("offers as open data portal dashboards only the public ones the server lists (T-6780)", () => {
+    const offered = [
+      { reference: "doprava/prehlad", label: "Traffic overview (doprava/prehlad)", public: true },
+      { reference: "doprava/interne", label: "Internal (doprava/interne)", public: false },
+    ];
+    const errors = (opendataWidgets: string[]) =>
+      validator
+        .validateFormData({ ...base, appearance: { opendataWidgets } }, organizationSchema(t, LIMITS.entries, offered))
+        .errors.map((error) => `${error.property} ${error.message}`);
+    expect(errors(["doprava/prehlad"])).toEqual([]);
+    expect(errors(["doprava/interne"]).join("\n")).toMatch(/opendataWidgets/);
+    expect(errors(["mhd/linky"]).join("\n")).toMatch(/opendataWidgets/);
+  });
+
   it("refuses a public-app policy the platform does not know", () => {
     expect(errorsOf({ ...base, policies: { apps: { public: "sometimes" } } }).join("\n")).toMatch(/public/);
     expect(errorsOf({ ...base, policies: { apps: { public: "refused" } } })).toEqual([]);

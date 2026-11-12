@@ -2789,6 +2789,14 @@
         "evidence/jc-grafana-parity/shots/portal/portal-list-no-match-1440.png",
         "evidence/jc-grafana-parity/shots/portal/portal-list-no-match-400.png"
       ]
+    },
+    "src/components/forms/SchemaForm.tsx": {
+      "walkedBy": "worker-t6779 (stub walk: the fix summary of a refused form, T-6772)",
+      "date": "2026-11-11",
+      "screenshots": [
+        "evidence/T-6772/appearance-refused-summary-1440.png",
+        "evidence/T-6772/appearance-refused-summary-400.png"
+      ]
     }
   }
 }

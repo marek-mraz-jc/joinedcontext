@@ -32,6 +32,8 @@ pub(crate) static PORTAL_STATE: std::sync::OnceLock<joinedcontext_portal::state:
 
 #[cfg(feature = "antares")]
 pub mod antares;
+#[cfg(feature = "portal")]
+pub(crate) mod appearance;
 #[cfg(feature = "assistant")]
 pub mod assistant;
 #[cfg(feature = "daiya")]
@@ -104,7 +106,17 @@ pub async fn build(
     let _ = (shutdown, tasks, &ctx, cfg, &mount);
     match module {
         #[cfg(feature = "kaisatsu")]
-        Module::Kaisatsu => kaisatsu::build(&cfg.kaisatsu, ctx, mount, shutdown, tasks).await,
+        Module::Kaisatsu => {
+            kaisatsu::build(
+                &cfg.kaisatsu,
+                &cfg.organizations,
+                ctx,
+                mount,
+                shutdown,
+                tasks,
+            )
+            .await
+        }
         #[cfg(feature = "dataroom")]
         Module::Dataroom => {
             let widget =
@@ -112,11 +124,11 @@ pub async fn build(
             dataroom::build(
                 &cfg.dataroom,
                 &cfg.organizations,
-                &ctx.secrets.organization_tokens,
-                ctx.setup,
-                ctx.siblings,
+                ctx,
                 mount,
                 widget,
+                shutdown,
+                tasks,
             )
             .await
         }

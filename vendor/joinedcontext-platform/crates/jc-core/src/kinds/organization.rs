@@ -2,6 +2,7 @@
 
 use crate::envelope::{self, Kind, ObjectMeta, Scope};
 use crate::error::{Error, Result};
+use crate::kinds::appearance::OrganizationAppearance;
 use crate::kinds::org_settings::{OrganizationBounds, OrganizationLimits, OrganizationPolicies};
 use crate::names;
 use crate::urn::Urn;
@@ -48,6 +49,10 @@ pub struct OrganizationSpec {
     /// own (ADR-N-058 section 2.3, EP-127).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub catalog: Option<crate::kinds::ProjectCatalog>,
+    /// What the Organization's Portal, open data portal and login page show of it, each member
+    /// over the installation's branding (UIX-16).
+    #[serde(default, skip_serializing_if = "OrganizationAppearance::is_unset")]
+    pub appearance: OrganizationAppearance,
 }
 
 /// Where an Organization lived before an installation held several (PF-121): it still loads,
@@ -243,6 +248,7 @@ impl OrganizationSpec {
         if let Some(catalog) = &self.catalog {
             catalog.validate()?;
         }
+        self.appearance.validate()?;
 
         Ok(())
     }
