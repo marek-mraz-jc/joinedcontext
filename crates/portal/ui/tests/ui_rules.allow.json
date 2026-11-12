@@ -136,7 +136,7 @@
     }
   },
   "data_table_is_the_grid": {
-    "_max": 42,
+    "_max": 41,
     "src/components/ActivityFeed.tsx": {
       "lines": 2,
       "group": "grid-ops"
@@ -167,10 +167,6 @@
       "lines": 2,
       "group": "grid-editors",
       "reason": "an editor, not a list (T-6753): two form widgets: the fixed iCal fields and feed roles in their schema order, each row an attribute picker bound to the Endpoint form"
-    },
-    "src/components/grid/ManifestGrid.tsx": {
-      "lines": 1,
-      "group": "grid-manifest"
     },
     "src/components/panels/TablePanel.tsx": {
       "lines": 1,

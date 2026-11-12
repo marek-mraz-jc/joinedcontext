@@ -5,7 +5,7 @@
  * lines aged out keeps its counts and says so; a pass that wrote nothing is a run of zeros that
  * says so (T-3001); a list that could not be read says why.
  */
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
@@ -174,7 +174,10 @@ describe("a pipeline's runs and log", () => {
 
     await renderRoute({ path: PATH, answer: answering({ items: runs }, {}) });
     const dialog = await openRuns();
-    expect(await within(dialog).findByRole("status")).toHaveTextContent("The last run wrote nothing, while the run before wrote 40.");
+    // The grid's row count is a status too: the silent-run notice is one of them.
+    await waitFor(() =>
+      expect(within(dialog).getAllByRole("status").map((each) => each.textContent)).toContainEqual(expect.stringContaining("The last run wrote nothing, while the run before wrote 40.")),
+    );
     const rows = within(within(dialog).getByRole("table", { name: en.pipelines.runs.caption })).getAllByRole("row");
     expect(rows[1]).toHaveTextContent(en.pipelines.runs.silentBadge);
     expect(rows[2]).toHaveTextContent("3 minutes");

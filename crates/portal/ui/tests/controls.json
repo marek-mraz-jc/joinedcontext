@@ -494,8 +494,8 @@
     },
     "src/components/grid/ManifestGrid.tsx": {
       "controls": {
-        "Button": 8,
-        "Checkbox": 3,
+        "Button": 7,
+        "Checkbox": 2,
         "Switch": 1
       },
       "tests": [

@@ -13,7 +13,8 @@ export function names(table: HTMLElement): string[] {
     .getAllByRole("row")
     .slice(1)
     .map((row) => {
-      const cell = within(row).getAllByRole("cell")[0];
+      // The shared grid's name cell is the row's header (T-6750: the SDK DataGrid).
+      const cell = within(row).queryAllByRole("rowheader")[0] ?? within(row).getAllByRole("cell")[0];
       return (cell?.firstElementChild ?? cell)?.textContent ?? "";
     });
 }
@@ -23,8 +24,11 @@ export async function narrowsAndOrders(
   check: {
     /** The grid's search label (`grid.searchIn`), a text that keeps `searched` alone. */
     search: { label: string; text: string; kept: string[] };
-    /** A numeric column's label and the names in ascending order of it. */
-    sort: { column: string; ascending: string[] };
+    /**
+     * A numeric column's label and the names in ascending order of it; descending is the reverse
+     * unless given (a row with no value stays last either way, as a spreadsheet keeps it).
+     */
+    sort: { column: string; ascending: string[]; descending?: string[] };
     /** A state value's label and the names it keeps. */
     filter: { value: RegExp; kept: string[] };
   },
@@ -37,11 +41,12 @@ export async function narrowsAndOrders(
   expect(names(table)).toEqual(check.search.kept);
   await user.clear(box);
 
-  const sort = within(table).getByRole("button", { name: en.grid.sortBy.replace("{column}", check.sort.column) });
+  // The column's header button sorts it (the SDK DataGrid, T-6750): ascending, descending, then none.
+  const sort = within(table).getByRole("button", { name: check.sort.column });
   await user.click(sort);
   expect(names(table)).toEqual(check.sort.ascending);
   await user.click(sort);
-  expect(names(table)).toEqual([...check.sort.ascending].reverse());
+  expect(names(table)).toEqual(check.sort.descending ?? [...check.sort.ascending].reverse());
   await user.click(sort);
 
   await user.click(within(grid).getByText(en.grid.filter));
