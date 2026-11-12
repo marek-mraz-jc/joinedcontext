@@ -221,6 +221,13 @@ async fn realm_info_discovery_and_jwks() {
         let d: Value = serde_json::from_str(&body).unwrap();
         assert!(d.get("registration_endpoint").is_none());
         assert_eq!(d["code_challenge_methods_supported"], json!(["S256"]));
+        // Public clients (CIMD claude.ai) authenticate with `none` (RFC 8414 2).
+        assert!(
+            d["token_endpoint_auth_methods_supported"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("none"))
+        );
     }
     let (st, h, body) = get(
         &app,
