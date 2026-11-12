@@ -222,7 +222,8 @@ pub(crate) fn limits_vars(cfg: &crate::config::Config) -> BTreeMap<String, Strin
 }
 
 /// The Portal's router behind the host jc placed the request on (`Mount`, a trusted proxy's
-/// `X-Forwarded-Host` applied), which pins an Organization's host (`organization_host`).
+/// `X-Forwarded-Host` applied) and the Organization jc's host registry decided for it, which
+/// pin the request to that Organization (`organization_host`).
 pub(crate) fn with_request_host(router: Router) -> Router {
     router.layer(axum::middleware::from_fn(
         |mut req: axum::extract::Request, next: axum::middleware::Next| async move {
@@ -230,6 +231,12 @@ pub(crate) fn with_request_host(router: Router) -> Router {
             if let Some(host) = host {
                 req.extensions_mut()
                     .insert(joinedcontext_portal::organization_host::RequestHost(host));
+            }
+            let org = req.extensions().get::<jc_router::Organization>().cloned();
+            if let Some(org) = org {
+                req.extensions_mut().insert(
+                    joinedcontext_portal::organization_host::RequestOrganization(org.0),
+                );
             }
             next.run(req).await
         },

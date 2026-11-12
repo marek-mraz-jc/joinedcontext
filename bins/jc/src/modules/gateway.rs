@@ -729,35 +729,36 @@ pub fn apps_router(
         .into_axum_router())
 }
 
-/// `router` with the Organization of each request's host in its extensions
-/// (`context_gateway::app::HostOrganization`), from the host `jc-router` resolved (its
-/// `Mount`), for the `[[organizations]]` API, MCP and Portal hosts: there the gateway lists that
+/// `router` with the Organization `jc-router` decided for each request
+/// (`jc_router::Organization`: a bound host's row or the first path segment of a shared host)
+/// in its extensions as `context_gateway::app::HostOrganization`: there the gateway lists that
 /// Organization's Endpoints alone.
 ///
-/// Beside it goes the host's link base (`context_gateway::app::HostBase`): an API or MCP host
-/// links itself, the Portal host its Organization's API host, so an answer on one
-/// Organization's host links no address of another's or of the deployment's.
+/// Beside it goes the link base (`context_gateway::app::HostBase`): an API or MCP host links
+/// itself, any other address of the Organization its API host, so an answer for one
+/// Organization links no address of another's or of the deployment's.
 pub fn by_organization(
     router: Router,
     orgs: &[crate::config::OrganizationSection],
     scheme: &str,
 ) -> Router {
-    let hosts: std::sync::Arc<BTreeMap<String, (String, String)>> = std::sync::Arc::new(
-        orgs.iter()
-            .flat_map(|org| {
-                let base = |h: &str| format!("{scheme}://{h}");
-                [
-                    (&org.hosts.api, base(&org.hosts.api)),
-                    (&org.hosts.mcp, base(&org.hosts.mcp)),
-                    (&org.hosts.portal, base(&org.hosts.api)),
-                ]
-                .map(|(h, link)| (bare(h).to_owned(), (org.name.clone(), link)))
-            })
-            .collect(),
-    );
+    let base = |h: &str| format!("{scheme}://{h}");
+    // Organization -> (its API link base, its own API and MCP hosts with their link base).
+    let links: std::sync::Arc<BTreeMap<String, (String, BTreeMap<String, String>)>> =
+        std::sync::Arc::new(
+            orgs.iter()
+                .map(|org| {
+                    let own = [&org.hosts.api, &org.hosts.mcp]
+                        .map(|h| (bare(h).to_owned(), base(h)))
+                        .into_iter()
+                        .collect();
+                    (org.name.clone(), (base(&org.hosts.api), own))
+                })
+                .collect(),
+        );
     router.layer(axum::middleware::from_fn(
         move |mut req: Request, next: Next| {
-            let hosts = hosts.clone();
+            let links = links.clone();
             async move {
                 // Only jc places it: whatever a request carried is dropped first.
                 req.extensions_mut()
@@ -766,8 +767,13 @@ pub fn by_organization(
                     .remove::<context_gateway::app::HostBase>();
                 let org = req
                     .extensions()
-                    .get::<Mount>()
-                    .and_then(|m| hosts.get(bare(&m.host)).cloned());
+                    .get::<jc_router::Organization>()
+                    .and_then(|org| {
+                        let (api, own) = links.get(&org.0)?;
+                        let host = req.extensions().get::<Mount>().map(|m| bare(&m.host));
+                        let link = host.and_then(|h| own.get(h)).unwrap_or(api);
+                        Some((org.0.clone(), link.clone()))
+                    });
                 if let Some((org, link)) = org {
                     req.extensions_mut()
                         .insert(context_gateway::app::HostOrganization(org));

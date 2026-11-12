@@ -81,6 +81,11 @@ pub fn parse_catalogues(raw: &str) -> Result<Vec<OrganizationCatalogue>, String>
 #[derive(Clone, Debug)]
 pub struct RequestHost(pub String);
 
+/// The Organization the router that placed the request decided for it (jc's host registry: a
+/// bound host's row or a shared host's first path segment). It wins over [`RequestHost`].
+#[derive(Clone, Debug)]
+pub struct RequestOrganization(pub String);
+
 tokio::task_local! {
     static PINNED: OrganizationHost;
 }
@@ -175,6 +180,11 @@ pub async fn middleware(State(state): State<AppState>, request: Request, next: N
     if hosts.is_empty() {
         return next.run(request).await;
     }
+    let decided = request
+        .extensions()
+        .get::<RequestOrganization>()
+        .and_then(|org| hosts.iter().find(|h| h.organization == org.0))
+        .cloned();
     let host = request
         .extensions()
         .get::<RequestHost>()
@@ -186,7 +196,8 @@ pub async fn middleware(State(state): State<AppState>, request: Request, next: N
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_owned)
         });
-    let Some(pin) = host.as_deref().and_then(|h| for_host(hosts, h)).cloned() else {
+    let Some(pin) = decided.or_else(|| host.as_deref().and_then(|h| for_host(hosts, h)).cloned())
+    else {
         return next.run(request).await;
     };
     PINNED

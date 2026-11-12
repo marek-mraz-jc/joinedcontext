@@ -14,7 +14,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use jc_router::{JcRouterBuilder, Mount, MountSpec, RouterError};
+use jc_router::{HostTable, JcRouterBuilder, Mount, MountSpec, RouterError};
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -231,11 +231,51 @@ pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
     check_organization_hosts(cfg, &plans)?;
     // Dry run of the router table: overlap is refused before any module state exists.
     let mut dry = JcRouterBuilder::new(cfg.scheme.clone(), cfg.base_host.clone());
+    if let Some(table) = host_table(cfg, &plans)? {
+        dry = dry.hosts(table);
+    }
     for spec in plans.iter().flat_map(MountPlan::specs) {
         dry = dry.mount(spec.clone(), Router::new());
     }
     dry.build()?;
     Ok(plans)
+}
+
+/// The host registry of a deployment with Organizations (docs/API/15-addresses-v1.md §2): each
+/// `[[organizations]]` host and `[[hosts]]` row bound to its Organization; the base host, every
+/// other host a module is mounted on and the loopback names shared. `None` without
+/// Organizations: a one-Organization deployment answers every host as before.
+fn host_table(cfg: &Config, plans: &[MountPlan]) -> Result<Option<HostTable>, RouterError> {
+    if cfg.organizations.is_empty() {
+        return Ok(None);
+    }
+    let mut table = HostTable::new();
+    let mut bound = std::collections::BTreeSet::new();
+    for org in &cfg.organizations {
+        table = table.organization(&org.name)?;
+        for (_, host) in org.hosts.by_module() {
+            table = table.bound(host, &org.name, "/")?;
+            bound.insert(host.split(':').next().unwrap_or(host).to_owned());
+        }
+    }
+    for row in &cfg.hosts {
+        table = table.bound(
+            &row.host,
+            &row.organization,
+            row.root.as_deref().unwrap_or("/"),
+        )?;
+        bound.insert(row.host.split(':').next().unwrap_or(&row.host).to_owned());
+    }
+    let mounted = plans
+        .iter()
+        .flat_map(MountPlan::specs)
+        .filter_map(|spec| spec.host.as_deref());
+    for host in mounted.chain([cfg.base_host.as_str(), "localhost", "127.0.0.1", "[::1]"]) {
+        if !bound.contains(host.split(':').next().unwrap_or(host)) {
+            table = table.shared(host)?;
+        }
+    }
+    Ok(Some(table))
 }
 
 /// The entries of `module` on the `[[organizations]]` hosts: each answers its whole host, and
@@ -440,6 +480,9 @@ pub async fn build_router(
     }
     for identity in &cfg.trusted_proxy_identities {
         builder = builder.trust_identity(identity.clone());
+    }
+    if let Some(table) = host_table(cfg, &plans)? {
+        builder = builder.hosts(table);
     }
     let mut portal = None;
     let mut gateway = None;

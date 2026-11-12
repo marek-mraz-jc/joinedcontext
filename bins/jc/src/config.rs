@@ -566,6 +566,55 @@ fn check_organizations(orgs: &mut [OrganizationSection]) -> Result<(), ConfigErr
     Ok(())
 }
 
+/// One `[[hosts]]` entry (docs/API/15-addresses-v1.md §2): a host bound to an
+/// `[[organizations]]` entry, its root mapped to `root` below the Organization (`/` for
+/// `/{org}/`, `/opendata` for its catalogue). Every request on it belongs to that Organization.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostSection {
+    pub host: String,
+    pub organization: String,
+    #[serde(default)]
+    pub root: Option<String>,
+}
+
+/// `[[hosts]]` checked against the `[[organizations]]`: a plain host each, bound to an
+/// Organization of this deployment, at a clean root, and no host twice or an Organization's own.
+fn check_hosts(
+    hosts: &mut [HostSection],
+    orgs: &[OrganizationSection],
+) -> Result<(), ConfigError> {
+    let bad = |m: String| Err(ConfigError::Organization(m));
+    let mut seen: std::collections::BTreeSet<String> = orgs
+        .iter()
+        .flat_map(|o| o.hosts.by_module().map(|(_, h)| bare_host(h).to_owned()))
+        .collect();
+    for row in hosts.iter_mut() {
+        row.host = row.host.trim().to_ascii_lowercase();
+        if !valid_host(&row.host) {
+            return bad(format!("[[hosts]] '{}' is not a plain host name", row.host));
+        }
+        if !orgs.iter().any(|o| o.name == row.organization) {
+            return bad(format!(
+                "[[hosts]] {}: no [[organizations]] {}",
+                row.host, row.organization
+            ));
+        }
+        let root = row.root.as_deref().unwrap_or("/");
+        let root = jc_router::normalize_prefix(root)
+            .map_err(|e| ConfigError::Organization(format!("[[hosts]] {}: {e}", row.host)))?;
+        row.root = Some(if root.is_empty() { "/".into() } else { root });
+        if !seen.insert(bare_host(&row.host).to_owned()) {
+            return bad(format!("[[hosts]] {}: the host has another row", row.host));
+        }
+    }
+    Ok(())
+}
+
+fn bare_host(host: &str) -> &str {
+    host.split(':').next().unwrap_or(host)
+}
+
 /// `8-4-4-4-12` hex digits.
 fn is_uuid(s: &str) -> bool {
     let parts: Vec<&str> = s.split('-').collect();
@@ -725,6 +774,8 @@ pub struct FileConfig {
     pub remote: Option<RemoteSection>,
     #[serde(default)]
     pub organizations: Vec<OrganizationSection>,
+    #[serde(default)]
+    pub hosts: Vec<HostSection>,
 }
 
 /// Errors while assembling the configuration.
@@ -820,6 +871,8 @@ pub struct Config {
     pub remote_modules: BTreeMap<Module, String>,
     /// `[[organizations]]`, checked: each Organization on its own hosts.
     pub organizations: Vec<OrganizationSection>,
+    /// `[[hosts]]`, checked: further hosts bound to one of the `organizations`.
+    pub hosts: Vec<HostSection>,
 }
 
 impl Config {
@@ -1016,6 +1069,8 @@ impl Config {
         };
         let mut organizations = file.organizations;
         check_organizations(&mut organizations)?;
+        let mut hosts = file.hosts;
+        check_hosts(&mut hosts, &organizations)?;
         let remote_modules = match &file.remote {
             Some(remote) => remote_modules(remote, &roles)?,
             None => BTreeMap::new(),
@@ -1056,6 +1111,7 @@ impl Config {
             remote: file.remote,
             remote_modules,
             organizations,
+            hosts,
         })
     }
 }

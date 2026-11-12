@@ -83,6 +83,15 @@ pub struct HostTable {
     organizations: BTreeSet<String>,
 }
 
+/// `host` without a `:port` suffix; an IPv6 literal keeps its brackets.
+fn without_port(host: &str) -> &str {
+    host.rsplit_once(':')
+        .filter(|(name, port)| {
+            !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) && !name.ends_with(':')
+        })
+        .map_or(host, |(name, _)| name)
+}
+
 /// Whether `segment` has the shape of an Organization id (`[a-z][a-z0-9_-]{1,62}` with a `_`):
 /// no route segment has one, so an unknown one is an unknown Organization, not a path.
 fn id_shaped(segment: &str) -> bool {
@@ -139,7 +148,7 @@ impl HostTable {
     }
 
     fn row(mut self, host: &str, row: HostRow) -> Result<Self, RouterError> {
-        let host = host.trim().to_ascii_lowercase();
+        let host = without_port(host.trim()).to_ascii_lowercase();
         if host.is_empty() || host.contains('/') || host.contains('_') {
             return Err(RouterError::InvalidHostRow(format!(
                 "'{host}' is not a host name"
@@ -165,8 +174,8 @@ impl HostTable {
     /// wildcard one label under it.
     fn row_of(&self, host_with_port: &str, host_only: &str) -> Option<&HostRow> {
         self.rows
-            .get(host_with_port)
-            .or_else(|| self.rows.get(host_only))
+            .get(host_only)
+            .or_else(|| self.rows.get(host_with_port))
             .or_else(|| {
                 self.rows.iter().find_map(|(h, row)| {
                     let suffix = wildcard_suffix(h)?;

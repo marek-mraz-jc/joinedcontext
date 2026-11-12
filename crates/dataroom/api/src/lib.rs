@@ -174,6 +174,12 @@ pub struct DataroomState {
     /// The installation branding of one catalogue, in place of [`Self::installation_branding`]
     /// (each Organization's own live addresses).
     pub catalogue_branding: Arc<BTreeMap<CatalogueId, BrandingBlock>>,
+    /// The catalogue of each Organization the host router may decide for a request
+    /// (`jc_router::Organization`).
+    pub organization_catalogues: Arc<BTreeMap<String, CatalogueId>>,
+    /// Each catalogue's canonical public URL (scheme, host, prefix): every absolute id and link
+    /// names it, whichever registered host the catalogue was read on, so an id never moves.
+    pub catalogue_bases: Arc<BTreeMap<CatalogueId, String>>,
 }
 
 /// Where a request came in, as the host's router resolved it (`jc_router::Mount`: the scheme
@@ -185,6 +191,8 @@ pub struct RequestOrigin {
     /// The host with its port, lowercased.
     pub host: String,
     pub path_prefix: String,
+    /// The Organization the router decided for the request, if any.
+    pub organization: Option<String>,
 }
 
 impl RequestOrigin {
@@ -211,6 +219,10 @@ async fn with_origin(req: axum::extract::Request, next: axum::middleware::Next) 
                 scheme: m.scheme.clone(),
                 host: m.host.to_ascii_lowercase(),
                 path_prefix: m.path_prefix.clone(),
+                organization: req
+                    .extensions()
+                    .get::<jc_router::Organization>()
+                    .map(|o| o.0.clone()),
             };
             ORIGIN.scope(origin, next.run(req)).await
         }
@@ -242,7 +254,21 @@ impl DataroomState {
             assets: Arc::new(RwLock::new(BTreeMap::new())),
             loopback_default: true,
             catalogue_branding: Arc::new(BTreeMap::new()),
+            organization_catalogues: Arc::new(BTreeMap::new()),
+            catalogue_bases: Arc::new(BTreeMap::new()),
         }
+    }
+
+    /// The catalogue of each Organization, by its name.
+    pub fn with_organization_catalogues(mut self, by: BTreeMap<String, CatalogueId>) -> Self {
+        self.organization_catalogues = Arc::new(by);
+        self
+    }
+
+    /// Each catalogue's canonical public URL, e.g. `http://opendata.city.test`.
+    pub fn with_catalogue_bases(mut self, by: BTreeMap<CatalogueId, String>) -> Self {
+        self.catalogue_bases = Arc::new(by);
+        self
     }
 
     /// Off: a request on a loopback name reads no catalogue (several catalogues by host).
@@ -335,7 +361,15 @@ impl DataroomState {
             .map(|h| h.split(':').next().unwrap_or(h).trim());
         let loopback = host.is_none_or(|h| h.is_empty() || h == "localhost" || h == "127.0.0.1");
 
-        let mut cat = if let Some(h) = host.filter(|_| !loopback || !self.loopback_default) {
+        let decided = origin.as_ref().and_then(|o| o.organization.as_deref());
+        let mut cat = if let Some(org) = decided {
+            let found = match self.organization_catalogues.get(org) {
+                Some(id) => self.store.get_catalogue(self.default_org_id, *id).await?,
+                None => None,
+            };
+            // The same answer as an unknown host: the name is not echoed.
+            found.ok_or_else(|| DataroomError::NotFound("no catalogue here".into()))?
+        } else if let Some(h) = host.filter(|_| !loopback || !self.loopback_default) {
             match self.store.resolve_host(h).await? {
                 Some(c) => c,
                 None => {
@@ -350,11 +384,13 @@ impl DataroomState {
                 .await?
                 .ok_or_else(|| DataroomError::NotFound("default catalogue not found".into()))?
         };
-        if let Some(o) = &origin {
-            cat.public_base = Some(o.base());
-        } else if cat.org_id == self.default_org_id && cat.id == self.default_catalogue_id {
-            cat.public_base.clone_from(&self.public_base);
-        }
+        let default = cat.org_id == self.default_org_id && cat.id == self.default_catalogue_id;
+        cat.public_base = match self.catalogue_bases.get(&cat.id) {
+            Some(base) => Some(base.clone()),
+            None if default && self.public_base.is_some() => self.public_base.clone(),
+            // No canonical URL configured: the origin the router resolved (a registered host).
+            None => origin.as_ref().map(RequestOrigin::base),
+        };
 
         let raw_token = headers
             .get(header::AUTHORIZATION)
