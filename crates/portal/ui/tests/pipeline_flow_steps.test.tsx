@@ -263,16 +263,18 @@ describe("the canvas and the step's block", () => {
         processors.length,
       );
     }
-    const awk = within(palette).getByTestId("palette-processor-awk").closest("li");
-    expect(awk).toHaveTextContent("custom functions");
-    expect(awk).not.toHaveTextContent("#awk-functions");
+    const unarchive = within(palette).getByTestId("palette-processor-unarchive").closest("li");
+    expect(unarchive).toHaveTextContent("multiple messages within a batch");
+    expect(unarchive).not.toHaveTextContent("/docs/configuration/batching");
+    // Only what the runner builds (T-6825): jq is in the Bento catalogue, not in ekiben.
+    expect(within(palette).queryByTestId("palette-processor-jq")).toBeNull();
   });
 
   it("puts a clicked processor behind the selected node and selects it", async () => {
     const { onChange, onSelect } = canvas(withCompute, "compute");
-    await userEvent.click(screen.getByTestId("palette-processor-jq"));
+    await userEvent.click(screen.getByTestId("palette-processor-dedupe"));
     expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ processors: [{ step: { processor: { jq: {} } }, after: true }] }),
+      expect.objectContaining({ processors: [{ step: { processor: { dedupe: {} } }, after: true }] }),
     );
     expect(onSelect).toHaveBeenCalledWith("step-0");
   });

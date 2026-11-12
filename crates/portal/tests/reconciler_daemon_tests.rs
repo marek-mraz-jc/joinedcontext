@@ -559,9 +559,9 @@ mod pass_edges {
     /// A DataSource that names `secret` for its password, or no secret at all.
     fn data_source(project: &str, name: &str, secret: Option<&str>) -> String {
         let env_var = name.to_uppercase().replace('-', "_");
-        let (sasl, secrets) = match secret {
+        let (auth, secrets) = match secret {
             Some(secret) => (
-                format!("    sasl:\n      password: \"${{{env_var}}}\"\n"),
+                format!("    auth:\n      user_jwt: \"${{{env_var}}}\"\n"),
                 format!(
                     "  secrets:\n    - {{ name: {secret}, key: password, envVar: {env_var} }}\n"
                 ),
@@ -569,7 +569,7 @@ mod pass_edges {
             None => (String::new(), String::new()),
         };
         format!(
-            "apiVersion: joinedcontext.com/v1alpha1\nkind: DataSource\nmetadata:\n  name: {name}\n  namespace: {project}\nspec:\n  type: kafka\n  input:\n    addresses: [\"broker.example.fi:9092\"]\n    topics: [\"vehicles\"]\n{sasl}{secrets}"
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: DataSource\nmetadata:\n  name: {name}\n  namespace: {project}\nspec:\n  type: nats\n  input:\n    urls: [\"nats://broker.example.fi:4222\"]\n    subject: vehicles\n{auth}{secrets}"
         )
     }
 

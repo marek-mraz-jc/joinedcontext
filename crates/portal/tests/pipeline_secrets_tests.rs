@@ -34,12 +34,12 @@ metadata:
   name: mesto-mqtt
   namespace: helsinki
 spec:
-  type: kafka
+  type: nats
   input:
-    addresses: ["broker.example.fi:9092"]
-    topics: ["vehicles"]
-    sasl:
-      password: "${MQTT_PASSWORD}"
+    urls: ["nats://broker.example.fi:4222"]
+    subject: vehicles
+    auth:
+      user_jwt: "${MQTT_PASSWORD}"
   secrets:
     - { name: mqtt-mesto, key: password, envVar: MQTT_PASSWORD }
 "#;

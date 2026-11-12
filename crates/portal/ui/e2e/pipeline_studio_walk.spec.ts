@@ -389,6 +389,31 @@ test.describe("pipeline studio walk (CIVITAS/CORE comparison)", () => {
     });
   }
 
+  // T-6825: the palette offers only what the pipeline runner (ekiben) builds; jq is in the
+  // Bento catalogue and not in the runner, so a search for it finds nothing.
+  test("offers only the processors the runner builds", async ({ page }) => {
+    await stubApi(page, {});
+    await page.goto("/projects/helsinki/pipelines?lang=en");
+    await page.getByRole("button", { name: "New pipeline" }).first().click();
+    const dialog = page.getByTestId("form-page");
+    await dialog.getByText("More options").click();
+    await dialog.getByText("Advanced editor").click();
+    await page.getByLabel("Find a processor").fill("dedupe");
+    await expect(page.getByTestId("palette-found-dedupe")).toBeVisible();
+    const both = async (name: string) => {
+      for (const width of [1440, 400]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.getByLabel("Find a processor").scrollIntoViewIfNeeded();
+        await shot(page, `${name}-${width}`);
+      }
+    };
+    await both("palette-runner-found");
+    await page.getByLabel("Find a processor").fill("jq");
+    await expect(page.getByText('No processor matches "jq".', { exact: false })).toBeVisible();
+    await expect(page.getByTestId("palette-found-jq")).toHaveCount(0);
+    await both("palette-runner-none");
+  });
+
   // A source reads from outside the pipeline: it has no input port to wire into (WireRefusal
   // `intoSource` in pipelineGraph.ts for the keyboard path).
   test("offers no wire into a source", async ({ page }) => {

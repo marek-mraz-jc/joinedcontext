@@ -18,14 +18,17 @@ import type { ProcessorForms } from "../src/pages/pipelines/processorForm";
 import { errorAt, fromFormData, toFormData } from "../src/pages/pipelines/processorForm";
 import { YamlFieldError } from "../src/schemas/kinds";
 import formsJson from "../src/schemas/bento-processor-forms.json";
+import processorsJson from "../src/schemas/bento-processors.json";
 import { expectNoViolations } from "./checks";
 
 const forms = (formsJson as unknown as ProcessorForms).processors;
 
 describe("the generated forms", () => {
-  it("has a form for every processor the palette offers, and nothing else", () => {
+  it("has a form for every processor the palette offers, and only for catalogue processors", () => {
     const palette = PROCESSOR_GROUPS.flatMap(({ processors }) => processors.map(({ name }) => name));
-    expect(Object.keys(forms).sort()).toEqual([...palette].sort());
+    expect(Object.keys(forms)).toEqual(expect.arrayContaining(palette));
+    const catalogue = new Set(processorsJson.map(({ name }) => name));
+    expect(Object.keys(forms).every((name) => catalogue.has(name))).toBe(true);
   });
 
   it("requires what the runner requires and offers a closed list as a select", () => {

@@ -131,6 +131,21 @@ test.describe("ready-made set-ups on Data sources", () => {
     await shot(page, "wizard-refused");
   });
 
+  // T-6825: the type picker offers only inputs the pipeline runner (ekiben) builds and the
+  // platform accepts; the server refuses any other one on save with a 422 naming spec.type.
+  test("the type picker offers only the inputs the runner builds", async ({ page }) => {
+    await stubApi(page);
+    await page.goto(`/projects/${PROJECT}/datasources?lang=en`);
+    await page.getByRole("button", { name: "New data source" }).first().click();
+    const type = page.getByTestId("form-page").getByLabel("Type", { exact: true });
+    await expect(type.locator('option[value="nats"]')).toHaveCount(1);
+    const offered = await type.locator("option").evaluateAll((options) => options.map((o) => (o as HTMLOptionElement).value));
+    for (const name of ["kafka", "amqp_0_9", "sql_select", "aws_s3", "stdin", "http_server"]) expect(offered).not.toContain(name);
+    expect(offered).toEqual(expect.arrayContaining(["http_client", "nats", "nats_jetstream", "csv", "websocket"]));
+    await type.selectOption("nats");
+    await shot(page, "runner-input-nats");
+  });
+
   test("a person who may run no set-up sees Data sources without the section", async ({ page }) => {
     await stubApi(page, { blueprints: [] });
     await page.goto(`/projects/${PROJECT}/datasources?lang=en`);

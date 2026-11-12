@@ -2797,7 +2797,7 @@
       "removeNode": "Entfernen",
       "search": "Prozessor finden",
       "searchPlaceholder": "Name, Kategorie oder was er tut",
-      "searchNone": "Kein Prozessor passt zu „{query}“.",
+      "searchNone": "Kein Prozessor passt zu „{query}“. Die Palette bietet nur, was der Pipeline-Runner ausführt: versuchen Sie ein allgemeineres Wort wie „json“.",
       "searchFound": "{count, plural, one {# Prozessor gefunden} other {# Prozessoren gefunden}}",
       "wire": {
         "intoSource": "Eine Quelle liest von außerhalb der Pipeline; nichts führt in sie hinein.",

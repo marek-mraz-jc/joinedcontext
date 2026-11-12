@@ -850,6 +850,51 @@ async fn a_planned_data_source_is_sampled_before_its_approval() {
     assert!(harness.to_string().contains(url), "{harness}");
 }
 
+/// T-6825: an input the pipeline runner (ekiben) does not build is refused when it is saved,
+/// through the REST door (400) and through the operation MCP calls (422), naming the field and
+/// the input, instead of a stream that stops at its first run.
+#[tokio::test]
+async fn a_data_source_of_an_input_the_runner_does_not_build_is_refused_on_save() {
+    let state = state("unbuilt", None);
+    let manifest = |kind: &str| {
+        json!({ "apiVersion": "joinedcontext.com/v1alpha1", "kind": "DataSource",
+            "metadata": { "name": "sensors", "namespace": "unbuilt" },
+            "spec": { "type": kind, "input": {
+                "addresses": ["broker.example.fi:9092"], "topics": ["vehicles"] } } })
+    };
+    let rest = send(
+        &state,
+        person("dev"),
+        "POST",
+        "/api/v1/projects/unbuilt/datasources",
+        Some(manifest("kafka")),
+    )
+    .await;
+    let mcp = send(
+        &state,
+        person("dev"),
+        "POST",
+        &op("unbuilt", "jc_change_plan"),
+        Some(
+            json!({ "changes": [{ "op": "create", "kind": "DataSource", "name": "sensors",
+            "manifest": manifest("kafka") }] }),
+        ),
+    )
+    .await;
+    // REST answers every invalid manifest 400 (its OpenAPI), the operation MCP calls 422.
+    for (door, answer, status) in [
+        ("REST", rest, StatusCode::BAD_REQUEST),
+        ("MCP", mcp, StatusCode::UNPROCESSABLE_ENTITY),
+    ] {
+        assert_eq!(answer.status, status, "{door}: {}", answer.text);
+        assert!(
+            answer.text.contains("spec.type") && answer.text.contains("`kafka`"),
+            "{door}: {}",
+            answer.text
+        );
+    }
+}
+
 /// T-6269: a planned source nobody approved is held to public addresses, to its own plan and to
 /// the caller who planned it.
 #[tokio::test]
