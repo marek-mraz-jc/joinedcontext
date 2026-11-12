@@ -51,6 +51,7 @@ use crate::api::odata::{
     bad, key_value, limits, not_found, not_implemented, rows_of, ListSet, Refusal, MAX_ROWS,
     MAX_TOP, NAMESPACE, SERVED,
 };
+use crate::api::odata_ops;
 use crate::api::ops::caller_of;
 use crate::auth::session::{CurrentUser, Front};
 use crate::ops::Caller;
@@ -944,6 +945,7 @@ async fn resource(read: &Read<'_>, target: &str) -> Response {
                 return refused(not_found(format!("no project {project} you may read")));
             }
             let row = project_row(read.state, &project, &read.org);
+            let etag = project_etag(read.state, &project, &read.org);
             let mut answer = by_key(
                 read,
                 PROJECTS,
@@ -963,6 +965,20 @@ async fn resource(read: &Read<'_>, target: &str) -> Response {
                     return *r;
                 }
                 answer = ok_json(&body);
+            }
+            // The project's ETag, which a Change-proposing action on it sends as If-Match.
+            if answer.status() == StatusCode::OK {
+                let bytes = axum::body::to_bytes(answer.into_body(), usize::MAX)
+                    .await
+                    .unwrap_or_default();
+                let mut body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+                if let Value::Object(members) = &mut body {
+                    members.insert(ETAG.into(), Value::String(etag.clone()));
+                }
+                answer = ok_json(&body);
+                if let Ok(tag) = HeaderValue::from_str(&etag) {
+                    answer.headers_mut().insert(header::ETAG, tag);
+                }
             }
             answer
         }
@@ -1269,8 +1285,8 @@ fn manifest_kind(set: &ListSet) -> bool {
 }
 
 /// The CSDL XML of the caller: the bound actions they may call inside the schema.
-fn xml_for(base: &str, rights: Rights) -> String {
-    let mut actions = String::new();
+fn xml_for(base: &str, rights: Rights, offered: &[&'static crate::ops::Operation]) -> String {
+    let mut actions = odata_ops::xml(offered);
     for (name, binding, parameters) in bound_actions(rights) {
         actions.push_str(&format!(
             r#"<Action Name="{name}" IsBound="true"><Parameter Name="bindingParameter" Type="{binding}" Nullable="false"/>"#
@@ -1291,11 +1307,14 @@ fn xml_for(base: &str, rights: Rights) -> String {
 }
 
 /// The CSDL JSON of the caller: each action's overloads under its name.
-fn json_for(base: &str, rights: Rights) -> String {
+fn json_for(base: &str, rights: Rights, offered: &[&'static crate::ops::Operation]) -> String {
     let Ok(mut doc) = serde_json::from_str::<Value>(base) else {
         return base.to_owned();
     };
     if let Some(schema) = doc.get_mut(NAMESPACE).and_then(Value::as_object_mut) {
+        for (name, overload) in odata_ops::json(offered) {
+            schema.insert(name.to_owned(), Value::Array(vec![overload]));
+        }
         for (name, binding, parameters) in bound_actions(rights) {
             let mut params =
                 vec![json!({ "$Name": "bindingParameter", "$Type": binding, "$Nullable": false })];
@@ -1317,7 +1336,12 @@ fn json_for(base: &str, rights: Rights) -> String {
     doc.to_string()
 }
 
-fn metadata(headers: &HeaderMap, query: &str, rights: Rights) -> Response {
+fn metadata(
+    headers: &HeaderMap,
+    query: &str,
+    rights: Rights,
+    offered: &[&'static crate::ops::Operation],
+) -> Response {
     let json_asked = query.split('&').any(|p| {
         p.split_once('=').is_some_and(|(n, v)| {
             n.replacen("%24", "$", 1).eq_ignore_ascii_case("$format")
@@ -1337,9 +1361,9 @@ fn metadata(headers: &HeaderMap, query: &str, rights: Rights) -> Response {
     match body {
         Ok(text) => {
             let text = if json_asked {
-                json_for(text, rights)
+                json_for(text, rights, offered)
             } else {
-                xml_for(text, rights)
+                xml_for(text, rights, offered)
             };
             (StatusCode::OK, headers_for(content_type), text).into_response()
         }
@@ -1394,15 +1418,18 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
     if rel == "$batch" {
         return refused(not_implemented("$batch"));
     }
-    let action = rel.rsplit_once('/').and_then(|(entity, last)| {
-        Some((
-            entity.to_owned(),
-            last.strip_prefix(ACTION_PREFIX)?.to_owned(),
-        ))
+    // `{entity}/JoinedContext.Portal.{name}`: split at the namespace, so a `/` inside a
+    // function's quoted literal stays in its call.
+    let action = rel.find(&format!("/{ACTION_PREFIX}")).map(|at| {
+        (
+            rel[..at].to_owned(),
+            rel[at + 1 + ACTION_PREFIX.len()..].to_owned(),
+        )
     });
-    let action = match (&parts.method, action) {
-        (&Method::POST, Some(action)) => Some(action),
-        (&Method::GET | &Method::HEAD, None) => None,
+    let (action, called) = match (&parts.method, action) {
+        (&Method::POST, Some(action)) => (Some(action), None),
+        (&Method::GET, Some(function)) => (None, Some(function)),
+        (&Method::GET | &Method::HEAD, None) => (None, None),
         _ => {
             let mut r = error(
                 StatusCode::METHOD_NOT_ALLOWED,
@@ -1433,6 +1460,9 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
             "this address serves several Organizations; read one at /{org}/api/v1/",
         ));
     };
+    if let Some((entity, call)) = called {
+        return function(&state, user, front, &org, &entity, &call, &query).await;
+    }
     if let Some((entity, name)) = action {
         let call = Call {
             state: &state,
@@ -1442,7 +1472,11 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
             headers: &parts.headers,
             body,
         };
-        return act(call, &entity, &name).await;
+        return if odata_ops::form(&name).is_some() {
+            operation_action(call, &entity, &name).await
+        } else {
+            act(call, &entity, &name).await
+        };
     }
     let metadata_asked = rel == "$metadata";
     if let Some(r) = refuse_options(&query, metadata_asked) {
@@ -1456,7 +1490,14 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
         );
     }
     if metadata_asked {
-        return metadata(&parts.headers, &query, rights(&state, &user, &org));
+        let projects = readable_projects(&state, &user, &org);
+        let offered = odata_ops::offered(&state, &user, front, &projects);
+        return metadata(
+            &parts.headers,
+            &query,
+            rights(&state, &user, &org),
+            &offered,
+        );
     }
     if rel.is_empty() {
         return service_document(&state);
@@ -1504,10 +1545,11 @@ pub fn is_odata(path: &str, query: Option<&str>, headers: &HeaderMap) -> bool {
     rel.is_empty()
         || rel.starts_with("$metadata")
         || rel == "$batch"
-        || rel
-            .split('/')
-            .enumerate()
-            .any(|(i, segment)| segment.starts_with('$') || (i == 0 && segment.contains('(')))
+        || rel.split('/').enumerate().any(|(i, segment)| {
+            segment.starts_with('$')
+                || (i == 0 && segment.contains('('))
+                || segment.starts_with(ACTION_PREFIX)
+        })
         || headers.contains_key("odata-version")
         || headers.contains_key("odata-maxversion")
         || query.is_some_and(|q| {
@@ -1772,6 +1814,145 @@ async fn act_inner(call: Call<'_>, entity: &str, name: &str) -> Result<Response,
             "{} has no action {name}; $metadata lists the actions you may call",
             set.type_name
         )))),
+    }
+}
+
+/// The Organization's projects the caller may read.
+fn readable_projects(state: &AppState, user: &CurrentUser, org: &str) -> Vec<String> {
+    state
+        .mirror
+        .namespaces()
+        .into_iter()
+        .filter(|project| readable(state, user, org, project))
+        .collect()
+}
+
+/// A project's `ETag`: its manifest's (API/13 §3), else a hash of the row the caller reads.
+fn project_etag(state: &AppState, project: &str, org: &str) -> String {
+    match state
+        .mirror
+        .get(crate::permissions::ORG_NAMESPACE, "Project", project)
+    {
+        Some(manifest) => manifest.etag(),
+        None => {
+            let Value::Object(row) = project_row(state, project, org) else {
+                return String::new();
+            };
+            let set = &SERVED.sets[0];
+            etag_of(state, set, project, project, &row)
+        }
+    }
+}
+
+/// The project an operation is bound to: `projects('p')` or `projects/p`, readable in `org`.
+fn operation_project(
+    state: &AppState,
+    user: &CurrentUser,
+    org: &str,
+    entity: &str,
+) -> Result<String, Refused> {
+    match bound_to(entity)? {
+        (project, None) if readable(state, user, org, &project) => Ok(project),
+        (project, None) => Err(no(not_found(format!("no project {project} you may read")))),
+        (_, Some(_)) => Err(no(not_found(
+            "the registry's functions and actions are bound to a project, e.g. \
+             projects('air')/JoinedContext.Portal.jc_schema_get(kind='Endpoint')",
+        ))),
+    }
+}
+
+/// `GET {project}/JoinedContext.Portal.{name}(...)`: a read-only operation of the registry.
+async fn function(
+    state: &AppState,
+    user: CurrentUser,
+    front: Front,
+    org: &str,
+    entity: &str,
+    call: &str,
+    query: &str,
+) -> Response {
+    let answer = async {
+        let project = operation_project(state, &user, org, entity)?;
+        let (name, params) = odata_ops::function_call(call, query)
+            .map_err(|(status, slug, message)| Box::new(error(status, slug, &message)))?;
+        let op = crate::ops::find(&name)
+            .filter(|_| odata_ops::form(&name) == Some(odata_ops::Form::Function))
+            .ok_or_else(|| {
+                no(not_found(format!(
+                    "a project has no function {name}; $metadata lists the ones you may call"
+                )))
+            })?;
+        let root = service_root(state);
+        Ok::<_, Refused>(
+            odata_ops::answer(
+                state,
+                user,
+                front,
+                &project,
+                op,
+                Value::Object(params),
+                &root,
+            )
+            .await,
+        )
+    };
+    match answer.await {
+        Ok(response) if response.status().is_success() => response,
+        Ok(response) => as_odata_error(response).await,
+        Err(refusal) => *refusal,
+    }
+}
+
+/// `POST {project}/JoinedContext.Portal.{name}`: a writing operation of the registry, its input
+/// the body; a Change-proposing one after `If-Match` with the project's `ETag`.
+async fn operation_action(call: Call<'_>, entity: &str, name: &str) -> Response {
+    let Call {
+        state,
+        user,
+        front,
+        org,
+        headers,
+        body,
+    } = call;
+    let answer = async {
+        let project = operation_project(state, &user, org, entity)?;
+        let op =
+            crate::ops::find(name).ok_or_else(|| no(not_found(format!("no action {name}"))))?;
+        let mut input = if body.is_empty() {
+            Value::Object(Map::new())
+        } else {
+            match serde_json::from_slice::<Value>(&body) {
+                Ok(input @ Value::Object(_)) => input,
+                _ => {
+                    return Err(no(bad(
+                        "an action's parameters are a JSON object, as $metadata names them",
+                    )))
+                }
+            }
+        };
+        if name == "jc_project_create" {
+            // A project opens in the Organization whose service was called, never another.
+            match input.get("organization") {
+                None | Some(Value::Null) => {
+                    input["organization"] = Value::String(org.to_owned());
+                }
+                Some(Value::String(named)) if named == org => {}
+                Some(_) => {
+                    return Err(no(bad(format!(
+                        "organization is {org}, the Organization of this service, or left out"
+                    ))))
+                }
+            }
+        } else if odata_ops::form(name) == Some(odata_ops::Form::ProposingAction) {
+            precondition(headers, &project_etag(state, &project, org))?;
+        }
+        let root = service_root(state);
+        Ok::<_, Refused>(odata_ops::answer(state, user, front, &project, op, input, &root).await)
+    };
+    match answer.await {
+        Ok(response) if response.status().is_success() => response,
+        Ok(response) => as_odata_error(response).await,
+        Err(refusal) => *refusal,
     }
 }
 

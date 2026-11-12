@@ -151,7 +151,7 @@ fn fields_of(op: &ops::Operation, key: &str) -> Vec<Field> {
 }
 
 /// An OData simple identifier: what a property, parameter and action name may be.
-fn identifier(name: &str) -> bool {
+pub(crate) fn identifier(name: &str) -> bool {
     let mut chars = name.chars();
     chars
         .next()
@@ -214,7 +214,7 @@ pub(crate) static SERVED: LazyLock<Served> = LazyLock::new(|| {
 });
 
 /// The EDM type of an action parameter from its JSON schema; anything not primitive is untyped.
-fn edm_type(member: &Value) -> &'static str {
+pub(crate) fn edm_type(member: &Value) -> &'static str {
     match (
         member.get("type").and_then(Value::as_str),
         member.get("format").and_then(Value::as_str),
