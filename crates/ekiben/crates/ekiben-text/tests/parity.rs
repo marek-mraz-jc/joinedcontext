@@ -45,9 +45,15 @@ async fn run(case: &Json) -> (String, bool) {
         procs.push(serde_json::json!({"msgpack": {"operator": "to_json"}}));
     }
     let hexed = case["processor"]["msgpack"]["operator"] == "from_json" && procs.len() == 1;
-    let mut part = Part::new(Bytes::from(
-        case["input"].as_str().unwrap_or_default().to_string(),
-    ));
+    let input = match case["input_hex"].as_str() {
+        Some(h) => hex::decode(h).expect("input_hex"),
+        None => case["input"]
+            .as_str()
+            .unwrap_or_default()
+            .as_bytes()
+            .to_vec(),
+    };
+    let mut part = Part::new(Bytes::from(input));
     part.meta_set_str("source", "eea");
     let mut batch = vec![part];
     for conf in &procs {

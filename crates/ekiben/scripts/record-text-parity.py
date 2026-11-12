@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Records Bento 1.22.0's output for the ekiben-text parity cases (jq, jmespath, grok, msgpack).
+"""Records Bento 1.22.0's output for the ekiben-text parity cases (jq, jmespath, grok, msgpack, parse_log).
 
-crates/ekiben-text/tests/parity/cases.json lists cases {name, processor, input}; each input runs through
+crates/ekiben-text/tests/parity/cases.json lists cases {name, processor, input} (`input_hex` for bytes that are not UTF-8); each input runs through
 .bento/bento (scripts/reference-bento.sh) as one message with only the metadata `source: eea`, then the
 processor, then a mapping writing each message as its content (hex for MessagePack output) or
 "ERROR: " + error(). `expected` is that stdout. A case named "... then to_json" reads MessagePack back with
@@ -26,7 +26,7 @@ def run(case):
     body = 'content().encode("hex")' if hexed else "content().string()"
     with tempfile.TemporaryDirectory() as d:
         inp = Path(d) / "in"
-        inp.write_bytes(case["input"].encode())
+        inp.write_bytes(bytes.fromhex(case["input_hex"]) if "input_hex" in case else case["input"].encode())
         conf = f"""
 input:
   file: {{ paths: [ {json.dumps(str(inp))} ], scanner: {{ to_the_end: {{}} }} }}

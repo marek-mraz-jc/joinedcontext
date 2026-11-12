@@ -1351,6 +1351,7 @@ dependencies = [
  "base64 0.23.1",
  "bytes",
  "chrono",
+ "chrono-tz",
  "ekiben-bloblang",
  "ekiben-core",
  "ekiben-io-file",
