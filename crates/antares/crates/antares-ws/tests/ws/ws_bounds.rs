@@ -266,7 +266,7 @@ async fn ws_a_handshake_on_a_connection_that_cannot_upgrade_is_426() -> Result<(
         .header("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
         .body(axum::body::Body::empty())
         .map_err(|e| e.to_string())?;
-    let resp = app.oneshot(req).await.map_err(|e| e.to_string())?;
+    let Ok(resp) = app.oneshot(req).await;
     assert_eq!(resp.status(), 426);
     assert_eq!(hub.connections(), 0);
     Ok(())
