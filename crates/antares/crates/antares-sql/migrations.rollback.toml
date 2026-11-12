@@ -140,3 +140,7 @@ note = "entity_value_rows also gives each Entity's scopes as attr scope rows; an
 [0033]
 rollback = "compatible"
 note = "adds entity_id_remap and the remint functions; an older release never reads the map, so after a remint it answers a GET of an old id 404 until the roll-forward"
+
+[0034]
+rollback = "compatible"
+note = "replaces the remint functions and adds antares_remint_batched; an older release calls none of them"

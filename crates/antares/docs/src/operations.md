@@ -476,9 +476,10 @@ Every Entity URN names the Organization owning the data,
 `urn:ngsi-ld:{Type}:{orgId}:{rest}` with `orgId` the verified domain reversed
 (`sk_bbsk`, ADR-N-068). Ids written before carry the dotted domain
 (`urn:ngsi-ld:KPI:bbsk.sk:...`). Migration 0033 (T-6770) installs the
-functions that rename them; nothing calls them. The deployer runs them by
-hand, one Tenant per transaction, as the database owner (a role with
-superuser or BYPASSRLS; the broker's role is refused):
+functions that rename them, and 0034 (T-6830) the batched form; nothing
+calls them. The deployer runs them by hand, one Tenant at a time, as the
+database owner (a role with superuser or BYPASSRLS; the broker's role is
+refused):
 
 - `antares_remint(tenant, from, to)` renames every id of the Tenant whose
   fourth segment is `from`: the Entity, its temporal Entity, its history in
@@ -489,6 +490,23 @@ superuser or BYPASSRLS; the broker's role is refused):
   into `entity_id_remap` and returns the counts per table as JSON. It
   refuses, renaming nothing, when a new id already exists. Writers wait on
   its table locks until the transaction ends; readers go on.
+- `CALL antares_remint_batched(tenant, from, to, 1000)` does the same in
+  one transaction per range of 1000 Entity ids (by id order), with each
+  range's history, so a writer waits on one range's locks, not the
+  Tenant's. It first checks every new id for a clash and renames nothing on
+  one. It returns the summed counts and `batches`; a NOTICE per committed
+  range shows progress. Call it outside a transaction block (`psql -c`, no
+  `BEGIN`): it commits itself. Between two
+  commits a Relationship may name a new id whose range is still to come
+  (404 until that range commits). A range that deadlocks with a writer or
+  waits on one past the 30 s lock timeout rolls back alone and is tried
+  again, up to five times. A run that stops keeps the ranges it committed:
+  call it again with the same arguments and it renames the rest. Budget
+  (jc-dev copy, 2026-11-12, one Postgres 16 container on a shared disk,
+  4 MB work_mem): about 4 s per range, longest 5.5 s, so a writer waits at
+  most one range; praha-mesto (1.19 M ids) runs about 85 min, about 4 ms
+  an id, most of it moving about 16 `entity_values` rows per id. 0033's
+  single transaction held the locks 49 min for helsinki (211 k ids).
 - A `GET /ngsi-ld/v1/entities/{old id}` answers the Entity under its new id
   for twelve months after the remint, through the same Policy gate as the
   new id. Writes to an old id are not redirected.
@@ -519,9 +537,11 @@ Steps, rehearsal first:
    SELECT * FROM antares_remint_digest('<tenant>', 'bbsk.sk', 'sk_bbsk');
    ```
 
-4. `BEGIN; SELECT antares_remint('<tenant>', 'bbsk.sk', 'sk_bbsk'); COMMIT;`
+4. `psql -c "CALL antares_remint_batched('<tenant>', 'bbsk.sk', 'sk_bbsk', 1000)"`
    once per Tenant and per old segment (`banskabystrica.sk` ->
-   `sk_banskabystrica` likewise).
+   `sk_banskabystrica` likewise). A refusal "Tenant ... already holds `<new
+   id>`" means the Tenant has the same local id under both segments; resolve
+   it as "Duplicate ids under two segments" below, then call again.
 5. After: `SELECT * FROM antares_remint_digest('<tenant>', 'sk_bbsk',
    'sk_bbsk');` equals step 3's digest row for row; the count by owner
    segment shows no `bbsk.sk` row and the `sk_bbsk` row holds the sum.
@@ -529,6 +549,49 @@ Steps, rehearsal first:
    broker: each answers 200 with its new id.
 7. Only with 3-6 recorded: the same on jc-dev, then jc-prod, each after its
    own `pg_dump`. Restart nothing: the broker reads the map on demand.
+
+### Duplicate ids under two segments
+
+A Tenant can hold one local id under two segments that map to one owner:
+`urn:ngsi-ld:T:hel.fi:x` and `urn:ngsi-ld:T:banskabystrica.sk:x` when both
+domains belong to the Tenant's Organization, or a dotted id beside its
+minted `fi_hel` form. The remint refuses such a Tenant ("already holds"),
+renaming nothing. List the pairs with their last writes (`<from2>` is the
+other segment, or `<to>` itself):
+
+```sql
+SELECT a.id AS a_id, b.id AS b_id, a.modified_at AS a_at, b.modified_at AS b_at
+  FROM entities a JOIN entities b
+    ON b.tenant_id = a.tenant_id
+   AND remint_id(b.id, '<from2>', '<to>') = remint_id(a.id, '<from>', '<to>')
+ WHERE a.tenant_id = '<tenant>' AND split_part(a.id, ':', 4) = '<from>'
+   AND b.id <> a.id;
+```
+
+Decision rule: the newer write wins, as an upsert of one id would have
+decided. Take the step 1 `pg_dump` first (it keeps the older copy), then
+delete the older copy of each pair through the broker API as the Tenant's
+writer: `POST /ngsi-ld/v1/entityOperations/delete` with its ids, and
+`DELETE /ngsi-ld/v1/temporal/entities/{id}` for each that has history.
+Then run the remint, which renames the newer copy. When a pipeline still
+writes both segments, fix its mapping first, or the pairs come back.
+
+jc-dev copy of 2026-11-12 (pairs in `entities`, owner `fi_hel`, the zilina
+Tenants `sk_zilina`; "newer" = which segment
+holds the later write):
+
+| Tenant | Segments | Pairs | Second newer | Temporal (1st / 2nd) |
+| --- | --- | --- | --- | --- |
+| ovzdusie | hel.fi, banskabystrica.sk | 1 | 1 | 1 / 1 |
+| banskabystrica-kpi | hel.fi, banskabystrica.sk | 3 | 2 | 3 / 3 |
+| bbsk-kpi | hel.fi, bbsk.sk | 28 | 0 | 28 / 28 |
+| zilina-verejne | hel.fi, zilina.sk | 110 | 6 | 1 / 1 |
+| zilina-uniza | hel.fi, zilina.sk | 787 | 787 | 0 / 0 |
+| zilina-mesto | hel.fi, zilina.sk | 6425 | 3632 | 6425 / 6425 |
+| banskabystrica-verejne | hel.fi, banskabystrica.sk | 210 | 79 | 0 / 3 |
+
+Every pair was written on 2026-11-11 or 2026-11-12, so both segments came
+from pipelines live in the week of the URN owner change.
 
 ## Where the proofs run
 
