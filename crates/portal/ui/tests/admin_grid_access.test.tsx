@@ -27,6 +27,8 @@ function stub(answer: Answer, failing?: string) {
       const json = (body: unknown, status = 200, type = "application/json") =>
         new Response(JSON.stringify(body), { status, headers: { "Content-Type": type } });
       if (path.endsWith("/auth/me")) return json({ subject: "s1", username: "jana", roles: [] });
+      // The gateway admits the reader (T-6802); tests/endpoint_admission.test.tsx holds the refusal.
+      if (path.endsWith("/admission")) return json({ admitted: true });
       if (failing && path.endsWith(failing)) {
         return json({ type: "about:blank", title: "Unavailable", status: 503, detail: "The store did not answer." }, 503, "application/problem+json");
       }

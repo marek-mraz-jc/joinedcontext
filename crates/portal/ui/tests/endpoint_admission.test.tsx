@@ -12,6 +12,7 @@ import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { EndpointPage } from "../src/pages/endpoints/EndpointPage";
 import { EffectivePermissions } from "../src/pages/access/EffectivePermissions";
+import { REQUEST_ACCESS_ANCHOR } from "../src/components/endpoints/EndpointAdmission";
 
 const PROJECT = "helsinki";
 const NAME = "app-air-quality";
@@ -74,8 +75,8 @@ describe("the Endpoint page for a person the gateway does not admit", () => {
     const asked = serve(false);
     show(() => <EndpointPage project={PROJECT} name={NAME} />);
     expect(await screen.findByText(en.endpoints.refused.title)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: en.endpoints.refused.action })).toHaveAttribute("href", "#request-access");
-    expect(document.getElementById("request-access")).not.toBeNull();
+    expect(screen.getByRole("link", { name: en.endpoints.refused.action })).toHaveAttribute("href", `#${REQUEST_ACCESS_ANCHOR}`);
+    expect(document.getElementById(REQUEST_ACCESS_ANCHOR)).not.toBeNull();
     // Let every query the page started settle before counting.
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(gatewayReads(asked)).toEqual([]);
@@ -96,7 +97,7 @@ describe("settings/access for a person the gateway does not admit", () => {
     expect(await screen.findByText(en.endpoints.refused.title)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: en.endpoints.refused.action })).toHaveAttribute(
       "href",
-      `/projects/${PROJECT}/endpoints/${NAME}#request-access`,
+      `/projects/${PROJECT}/endpoints/${NAME}#${REQUEST_ACCESS_ANCHOR}`,
     );
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(gatewayReads(asked)).toEqual([]);
