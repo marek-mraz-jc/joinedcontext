@@ -2618,8 +2618,6 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
- "tikv-jemalloc-ctl",
- "tikv-jemallocator",
 ]
 
 [[package]]
