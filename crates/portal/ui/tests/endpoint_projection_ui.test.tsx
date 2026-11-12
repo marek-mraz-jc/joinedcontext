@@ -120,6 +120,10 @@ function renderEndpoints({ compiled = true } = {}) {
     if (url.pathname.endsWith("/auth/me")) {
       return json(IDENTITY);
     }
+    // The gateway admits this editor, so the edit form opens its schema panel (T-6802).
+    if (url.pathname.endsWith("/admission")) {
+      return json({ admitted: true });
+    }
     // The check is a dry run: it answers a verdict and writes nothing (AG-62, PF-57).
     if (request instanceof Request && isCheck(request, url)) {
       return greenVerdict(request, { valid: true, lane: "yellow" }).then((body) => json(body));
