@@ -242,13 +242,20 @@ class Suite:
         what the bundle holds, and every surface must agree with the live count instead.
         A type of expiring entities keeps changing while the suite reads it (helsinki linked-events
         wrote 100 Events every few seconds in smoke 43161732041: 99, 393, 447 within one Endpoint):
-        its seeded rows count at most the bundle's, and each surface shows at least those."""
+        its seeded rows count at most the bundle's, and each surface shows at least those.
+        A Pipeline goes on writing while the suite reads the type (linked-events wrote 100 new
+        Events between the live count 98 and the OData and OGC reads 198 in smoke 43192355831,
+        and its first page landed after a live count of 2 in smoke 43202171779): a type some
+        Policy of the space grants a write to is checked here whatever the live count reads, and
+        once the seeded rows match, each surface shows at least the live count read here."""
         for t, count in want.items():
             if count is None:
                 continue
             live = self.live_count(e, token, t)
-            if live is None or live <= count:
+            writable = bool(e.written & {t, "*"}) and not tenant[t].get("expires")
+            if not writable and (live is None or live <= count):
                 continue
+            live = max(live or 0, count)
             seeded = self.live_count(e, token, t, ex.seeded_ids(t))
             path = f"GET /api/endpoint/{e.slug}/ngsi-ld/v1/entities?type={q(t)}&idPattern={q(ex.seeded_ids(t))}&count=true"
             if tenant[t].get("expires"):
@@ -260,10 +267,12 @@ class Suite:
                     self.moving[(e.slug, t)] = seeded
                 continue
             self.r.check(f"{who}.count.seeded", f"{e.slug} {t}", path,
-                         f"{count} (the bundle's rows; {live - count} more written by the rehearsal's Pipelines)",
+                         f"{count} (the bundle's rows; {live - count} more written by the rehearsal's Pipelines"
+                         + (", which may write more while the suite reads)" if writable else ")"),
                          f"count={seeded}", seeded == count)
             if seeded == count:
                 want[t] = live
+                self.moving[(e.slug, t)] = live
 
     def written(self, e, token, who, grants, extra: list) -> set:
         """Of the listed types the bundle holds no row of, those a granting Policy names and the
@@ -322,7 +331,7 @@ class Suite:
         if count is None:
             self.r.add(f"{who}.count", target, f"GET {path}", "a count (not comparable: " + (narrowed or "overlapping idPatterns") + ")",
                        f"{st} count={actual}", "pass" if st == 200 and actual is not None else "fail")
-        elif slot.get("expires"):
+        elif slot.get("expires") or (e.slug, t) in self.moving:
             ok = st == 200 and actual is not None and self.agrees(e, t, int(actual), count)
             floor = self.moving.get((e.slug, t))
             self.r.check(f"{who}.count", target, f"GET {path}",
