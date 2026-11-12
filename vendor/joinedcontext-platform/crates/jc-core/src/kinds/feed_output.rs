@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use serde_norway::Value;
 
 use super::ical_mapping::{
-    effective_filter, fits, is_language, is_name, is_path, is_plain, query_gaps, resolve, Accepts,
-    Model,
+    effective_filter, fits, is_language, is_name, is_path, is_plain, query_gaps, query_model_gaps,
+    resolve, Accepts, Model,
 };
 
 /// The most outputs one Endpoint lists (EP-151).
@@ -453,6 +453,17 @@ impl FeedOutput {
                 }
             }
         }
+        let filter = self.effective_filter();
+        gaps.extend(
+            query_model_gaps(
+                &model,
+                Some(&filter).filter(|f| !f.is_empty()),
+                self.query.is_some(),
+                &self.types(),
+            )
+            .into_iter()
+            .map(|gap| format!("feed output `{name}`: {gap}")),
+        );
         gaps
     }
 }

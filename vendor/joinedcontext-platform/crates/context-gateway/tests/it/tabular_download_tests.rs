@@ -466,6 +466,28 @@ async fn a_feeds_csv_refuses_what_would_widen_its_output() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// T-6762: a stored preset `query` that does not read is 404 and never reaches the broker; the
+/// output is not served as the whole view.
+#[tokio::test]
+async fn a_feeds_csv_whose_stored_query_does_not_read_is_not_found() {
+    let broker = BrokerStub::start(vec![json!([reading(1)])]).await;
+    let mut stored = endpoint(vec![Representation::Csv], None);
+    stored.calendars = vec![serde_norway::from_str(
+        "name: events\nsources: [{ type: AirQualityObserved }]\nquery: 'q=pm10%3E0&q=pm10%3C9'\n",
+    )
+    .expect("the output parses")];
+    let (status, _, body) = download(
+        gateway(&broker.url, stored),
+        &format!("/api/endpoint/{SLUG}/feeds/events.csv"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(
+        broker.hops().is_empty(),
+        "an unreadable preset reached the broker"
+    );
+}
+
 /// T-6760: the output's table keeps `file.csv`'s rules: the row ceiling answers 413, a strong
 /// ETag answers 304, an attribute the view hides is no column and a formula cell is inert.
 #[tokio::test]

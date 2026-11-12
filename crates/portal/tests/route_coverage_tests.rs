@@ -102,6 +102,7 @@ const ROUTE_COVERAGE: &[(&str, &str, &str)] = &[
 ("GET", "/organization/setup", "a summary for the setup page, read from manifests the operations registry already reaches and from the deployment; it writes nothing (T-2748, API/01 §25)"),
 ("GET", "/projects/{project}/endpoints/{name}/quality", "the dataset's quality score, a reading about the data the Endpoint page shows and not a manifest (T-5112)"),
 ("POST", "/projects/{project}/endpoints/{name}/preview", "the filter editor's proof, one page through a draft a person is typing (EP-85); jc_endpoint_preview answers the same for a client (JC2-33)"),
+("POST", "/projects/{project}/endpoints/{name}/ical-preview", "the calendar preset's preview in the Endpoint form: its first entries through the saved view, as the person (API/02 §4a, T-6762)"),
 ("POST", "/projects/{project}/kpis/check", "the KPI editor's check as a person types, and its preview on the sources' current pages; the assistant proposes a KPI and the proposal's dry run holds it (PL-105)"),
 ("GET", "/projects/{project}/endpoints/{name}/access/matrix", "the Endpoint page's Access tab: who may do what, from the gateway's grant documents; no tool asks it (API/01 §57, EP-103)"),
 ("POST", "/projects/{project}/access/explore", "an administrator's look at what another principal reaches, from the Access explorer (API/01 §41, EP-103); jc_access_explore answers the same (JC2-33)"),

@@ -2513,7 +2513,7 @@
     },
     "src/components/forms/widgets/RepresentationOutputsField.tsx": {
       "controls": {
-        "Button": 4
+        "Button": 5
       },
       "tests": [
         "representation_outputs_field.test.tsx"
