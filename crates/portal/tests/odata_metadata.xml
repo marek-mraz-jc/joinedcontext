@@ -1,0 +1,591 @@
+<?xml version="1.0" encoding="utf-8"?>
+<edmx:Edmx xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx" Version="4.01">
+  <edmx:DataServices>
+    <Schema xmlns="http://docs.oasis-open.org/odata/ns/edm" Namespace="JoinedContext.Portal">
+      <EntityType Name="Organization">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="Project">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="ContextSpace">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="DataModel">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="Mapping">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="Policy">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="ScopeDefinition">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="Endpoint">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="ModelProjection">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="SharedSpaceReference">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="ContextSourceRegistration">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="Subscription">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="ServiceAccount">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="Pipeline">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="DataSource">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="App">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="CkanInstance">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="KnowledgeSource">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="AssistantDeployment">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="McpServer">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="MqttBroker">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="Blueprint">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="AgentProfile">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="DataSpaceParticipant">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="DataOffer">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="DataAgreement">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="SyncSource">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="Bundle">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="UiSchema">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="Role">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="RoleBinding">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="Group">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="DelegationPolicy">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="ContextBroker">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="Environment">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="Dashboard">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="Layer">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="Entity">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="Change">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="lane" Type="Edm.String"/>
+        <Property Name="mergeRequest" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="proposedBy" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="Workspace">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="baseRevision" Type="Edm.String"/>
+        <Property Name="branch" Type="Edm.String"/>
+        <Property Name="changes" Type="Edm.Int64"/>
+        <Property Name="createdAt" Type="Edm.String"/>
+        <Property Name="expiresAt" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="owner" Type="Edm.String"/>
+        <Property Name="previewState" Type="Edm.String"/>
+        <Property Name="project" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+      </EntityType>
+      <EntityType Name="EndpointRow">
+        <Key>
+          <PropertyRef Name="id"/>
+        </Key>
+        <Property Name="id" Type="Edm.String" Nullable="false"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="description" Type="Edm.String"/>
+        <Property Name="contextSpace" Type="Edm.String"/>
+        <Property Name="slug" Type="Edm.String"/>
+        <Property Name="audience" Type="Edm.String"/>
+        <Property Name="mcp" Type="Edm.Boolean" Nullable="false"/>
+        <Property Name="source" Type="Edm.String"/>
+        <Property Name="kind" Type="Edm.String" Nullable="false"/>
+        <Property Name="reference" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="representations" Type="Edm.String"/>
+        <Property Name="calls7d" Type="Edm.Int64"/>
+        <Property Name="search" Type="Edm.String" Nullable="false"/>
+      </EntityType>
+      <Action Name="jc_data_write"><Parameter Name="action" Type="Edm.String" Nullable="false"/><Parameter Name="endpoint" Type="Edm.String" Nullable="false"/><Parameter Name="entities" Type="Edm.Untyped"/><Parameter Name="ids" Type="Edm.Untyped"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_endpoint_propose"><Parameter Name="allowedProjects" Type="Edm.Untyped"/><Parameter Name="audience" Type="Edm.String"/><Parameter Name="contextSpace" Type="Edm.String"/><Parameter Name="draft" Type="Edm.Untyped"/><Parameter Name="entityTypes" Type="Edm.Untyped"/><Parameter Name="hiddenAttributes" Type="Edm.Untyped"/><Parameter Name="manifest" Type="Edm.Untyped"/><Parameter Name="name" Type="Edm.String"/><Parameter Name="rateLimits" Type="Edm.Untyped"/><Parameter Name="representations" Type="Edm.Untyped"/><Parameter Name="title" Type="Edm.String"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_change_approve"><Parameter Name="confirm" Type="Edm.String"/><Parameter Name="id" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_draft_put"><Parameter Name="expectedVersion" Type="Edm.Int64"/><Parameter Name="kind" Type="Edm.String" Nullable="false"/><Parameter Name="manifest" Type="Edm.Untyped" Nullable="false"/><Parameter Name="name" Type="Edm.String" Nullable="false"/><Parameter Name="workspace" Type="Edm.String"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_draft_drop"><Parameter Name="kind" Type="Edm.String" Nullable="false"/><Parameter Name="name" Type="Edm.String" Nullable="false"/><Parameter Name="workspace" Type="Edm.String"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_space_complete"><Parameter Name="description" Type="Edm.String"/><Parameter Name="files" Type="Edm.Untyped"/><Parameter Name="propose" Type="Edm.Boolean"/><Parameter Name="space" Type="Edm.String"/><Parameter Name="typeName" Type="Edm.String"/><Parameter Name="upload" Type="Edm.Boolean"/><Parameter Name="url" Type="Edm.String"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_resource_propose"><Parameter Name="draft" Type="Edm.Untyped"/><Parameter Name="manifest" Type="Edm.Untyped"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_resource_delete"><Parameter Name="confirm" Type="Edm.String" Nullable="false"/><Parameter Name="kind" Type="Edm.String" Nullable="false"/><Parameter Name="name" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_change_reject"><Parameter Name="id" Type="Edm.String" Nullable="false"/><Parameter Name="reason" Type="Edm.String"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_run_create"><Parameter Name="appClass" Type="Edm.String" Nullable="false"/><Parameter Name="appName" Type="Edm.String" Nullable="false"/><Parameter Name="dataNeeds" Type="Edm.Untyped" Nullable="false"/><Parameter Name="endpointName" Type="Edm.String"/><Parameter Name="endpointNames" Type="Edm.Untyped"/><Parameter Name="kind" Type="Edm.String"/><Parameter Name="profile" Type="Edm.String"/><Parameter Name="prompt" Type="Edm.String" Nullable="false"/><Parameter Name="unattended" Type="Edm.Boolean"/><Parameter Name="visibility" Type="Edm.String"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_run_cancel"><Parameter Name="id" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_run_publish"><Parameter Name="id" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_run_answer"><Parameter Name="answers" Type="Edm.Untyped" Nullable="false"/><Parameter Name="id" Type="Edm.String" Nullable="false"/><Parameter Name="questionId" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_run_message"><Parameter Name="endpointNames" Type="Edm.Untyped"/><Parameter Name="id" Type="Edm.String" Nullable="false"/><Parameter Name="text" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_flow_start"><Parameter Name="blueprint" Type="Edm.String" Nullable="false"/><Parameter Name="parameters" Type="Edm.Untyped" Nullable="false"/><Parameter Name="version" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_pipeline_run"><Parameter Name="name" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_project_create"><Parameter Name="description" Type="Edm.String"/><Parameter Name="displayName" Type="Edm.String"/><Parameter Name="name" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_project_delete"><Parameter Name="name" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_project_import"><Parameter Name="bundle" Type="Edm.String" Nullable="false"/><Parameter Name="conflictPolicy" Type="Edm.String"/><Parameter Name="dryRun" Type="Edm.Boolean"/><Parameter Name="orgDomain" Type="Edm.String"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_model_source_put"><Parameter Name="dryRun" Type="Edm.Boolean"/><Parameter Name="name" Type="Edm.String" Nullable="false"/><Parameter Name="source" Type="Edm.String" Nullable="false"/><Parameter Name="space" Type="Edm.String"/><Parameter Name="version" Type="Edm.String"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_syncsource_sync"><Parameter Name="name" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_syncsource_pause"><Parameter Name="name" Type="Edm.String" Nullable="false"/><Parameter Name="paused" Type="Edm.Boolean" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_syncsource_detach"><Parameter Name="name" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_workspace_open"><Parameter Name="name" Type="Edm.String" Nullable="false"/><Parameter Name="scope" Type="Edm.Untyped"/><Parameter Name="title" Type="Edm.String"/><Parameter Name="ttlDays" Type="Edm.Int64"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_workspace_update_from_main"><Parameter Name="name" Type="Edm.String" Nullable="false"/><Parameter Name="resolutions" Type="Edm.Untyped"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_workspace_propose"><Parameter Name="name" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_workspace_discard"><Parameter Name="name" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_workspace_preview_start"><Parameter Name="name" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_workspace_preview_stop"><Parameter Name="name" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_person_create"><Parameter Name="email" Type="Edm.String" Nullable="false"/><Parameter Name="firstName" Type="Edm.String" Nullable="false"/><Parameter Name="lastName" Type="Edm.String" Nullable="false"/><Parameter Name="locale" Type="Edm.String"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_person_edit"><Parameter Name="email" Type="Edm.String"/><Parameter Name="firstName" Type="Edm.String"/><Parameter Name="id" Type="Edm.String" Nullable="false"/><Parameter Name="lastName" Type="Edm.String"/><Parameter Name="locale" Type="Edm.String"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_person_disable"><Parameter Name="id" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_person_enable"><Parameter Name="id" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_person_sign_out"><Parameter Name="id" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_change_plan"><Parameter Name="changes" Type="Edm.Untyped" Nullable="false"/><Parameter Name="workspace" Type="Edm.String"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_change_revert_plan"><Parameter Name="id" Type="Edm.String" Nullable="false"/><Parameter Name="workspace" Type="Edm.String"/><ReturnType Type="Edm.Untyped"/></Action><Action Name="jc_change_apply"><Parameter Name="planId" Type="Edm.String" Nullable="false"/><ReturnType Type="Edm.Untyped"/></Action><EntityContainer Name="Service">
+        <EntitySet Name="organizations" EntityType="JoinedContext.Portal.Organization"/>
+        <EntitySet Name="projects" EntityType="JoinedContext.Portal.Project"/>
+        <EntitySet Name="spaces" EntityType="JoinedContext.Portal.ContextSpace"/>
+        <EntitySet Name="datamodels" EntityType="JoinedContext.Portal.DataModel"/>
+        <EntitySet Name="mappings" EntityType="JoinedContext.Portal.Mapping"/>
+        <EntitySet Name="policies" EntityType="JoinedContext.Portal.Policy"/>
+        <EntitySet Name="scopedefinitions" EntityType="JoinedContext.Portal.ScopeDefinition"/>
+        <EntitySet Name="endpoints" EntityType="JoinedContext.Portal.Endpoint"/>
+        <EntitySet Name="projections" EntityType="JoinedContext.Portal.ModelProjection"/>
+        <EntitySet Name="shared" EntityType="JoinedContext.Portal.SharedSpaceReference"/>
+        <EntitySet Name="csrs" EntityType="JoinedContext.Portal.ContextSourceRegistration"/>
+        <EntitySet Name="subscriptions" EntityType="JoinedContext.Portal.Subscription"/>
+        <EntitySet Name="serviceaccounts" EntityType="JoinedContext.Portal.ServiceAccount"/>
+        <EntitySet Name="pipelines" EntityType="JoinedContext.Portal.Pipeline"/>
+        <EntitySet Name="datasources" EntityType="JoinedContext.Portal.DataSource"/>
+        <EntitySet Name="apps" EntityType="JoinedContext.Portal.App"/>
+        <EntitySet Name="ckaninstances" EntityType="JoinedContext.Portal.CkanInstance"/>
+        <EntitySet Name="knowledgesources" EntityType="JoinedContext.Portal.KnowledgeSource"/>
+        <EntitySet Name="assistantdeployments" EntityType="JoinedContext.Portal.AssistantDeployment"/>
+        <EntitySet Name="mcpservers" EntityType="JoinedContext.Portal.McpServer"/>
+        <EntitySet Name="mqttbrokers" EntityType="JoinedContext.Portal.MqttBroker"/>
+        <EntitySet Name="blueprints" EntityType="JoinedContext.Portal.Blueprint"/>
+        <EntitySet Name="agentprofiles" EntityType="JoinedContext.Portal.AgentProfile"/>
+        <EntitySet Name="dataspaceparticipants" EntityType="JoinedContext.Portal.DataSpaceParticipant"/>
+        <EntitySet Name="dataoffers" EntityType="JoinedContext.Portal.DataOffer"/>
+        <EntitySet Name="dataagreements" EntityType="JoinedContext.Portal.DataAgreement"/>
+        <EntitySet Name="syncsources" EntityType="JoinedContext.Portal.SyncSource"/>
+        <EntitySet Name="bundles" EntityType="JoinedContext.Portal.Bundle"/>
+        <EntitySet Name="uischemas" EntityType="JoinedContext.Portal.UiSchema"/>
+        <EntitySet Name="roles" EntityType="JoinedContext.Portal.Role"/>
+        <EntitySet Name="rolebindings" EntityType="JoinedContext.Portal.RoleBinding"/>
+        <EntitySet Name="groups" EntityType="JoinedContext.Portal.Group"/>
+        <EntitySet Name="delegationpolicies" EntityType="JoinedContext.Portal.DelegationPolicy"/>
+        <EntitySet Name="contextbrokers" EntityType="JoinedContext.Portal.ContextBroker"/>
+        <EntitySet Name="environments" EntityType="JoinedContext.Portal.Environment"/>
+        <EntitySet Name="dashboards" EntityType="JoinedContext.Portal.Dashboard"/>
+        <EntitySet Name="layers" EntityType="JoinedContext.Portal.Layer"/>
+        <EntitySet Name="entities" EntityType="JoinedContext.Portal.Entity"/>
+        <EntitySet Name="changes" EntityType="JoinedContext.Portal.Change"/>
+        <EntitySet Name="workspaces" EntityType="JoinedContext.Portal.Workspace"/>
+        <EntitySet Name="endpointList" EntityType="JoinedContext.Portal.EndpointRow"/>
+      <ActionImport Name="jc_data_write" Action="JoinedContext.Portal.jc_data_write"/><ActionImport Name="jc_endpoint_propose" Action="JoinedContext.Portal.jc_endpoint_propose"/><ActionImport Name="jc_change_approve" Action="JoinedContext.Portal.jc_change_approve"/><ActionImport Name="jc_draft_put" Action="JoinedContext.Portal.jc_draft_put"/><ActionImport Name="jc_draft_drop" Action="JoinedContext.Portal.jc_draft_drop"/><ActionImport Name="jc_space_complete" Action="JoinedContext.Portal.jc_space_complete"/><ActionImport Name="jc_resource_propose" Action="JoinedContext.Portal.jc_resource_propose"/><ActionImport Name="jc_resource_delete" Action="JoinedContext.Portal.jc_resource_delete"/><ActionImport Name="jc_change_reject" Action="JoinedContext.Portal.jc_change_reject"/><ActionImport Name="jc_run_create" Action="JoinedContext.Portal.jc_run_create"/><ActionImport Name="jc_run_cancel" Action="JoinedContext.Portal.jc_run_cancel"/><ActionImport Name="jc_run_publish" Action="JoinedContext.Portal.jc_run_publish"/><ActionImport Name="jc_run_answer" Action="JoinedContext.Portal.jc_run_answer"/><ActionImport Name="jc_run_message" Action="JoinedContext.Portal.jc_run_message"/><ActionImport Name="jc_flow_start" Action="JoinedContext.Portal.jc_flow_start"/><ActionImport Name="jc_pipeline_run" Action="JoinedContext.Portal.jc_pipeline_run"/><ActionImport Name="jc_project_create" Action="JoinedContext.Portal.jc_project_create"/><ActionImport Name="jc_project_delete" Action="JoinedContext.Portal.jc_project_delete"/><ActionImport Name="jc_project_import" Action="JoinedContext.Portal.jc_project_import"/><ActionImport Name="jc_model_source_put" Action="JoinedContext.Portal.jc_model_source_put"/><ActionImport Name="jc_syncsource_sync" Action="JoinedContext.Portal.jc_syncsource_sync"/><ActionImport Name="jc_syncsource_pause" Action="JoinedContext.Portal.jc_syncsource_pause"/><ActionImport Name="jc_syncsource_detach" Action="JoinedContext.Portal.jc_syncsource_detach"/><ActionImport Name="jc_workspace_open" Action="JoinedContext.Portal.jc_workspace_open"/><ActionImport Name="jc_workspace_update_from_main" Action="JoinedContext.Portal.jc_workspace_update_from_main"/><ActionImport Name="jc_workspace_propose" Action="JoinedContext.Portal.jc_workspace_propose"/><ActionImport Name="jc_workspace_discard" Action="JoinedContext.Portal.jc_workspace_discard"/><ActionImport Name="jc_workspace_preview_start" Action="JoinedContext.Portal.jc_workspace_preview_start"/><ActionImport Name="jc_workspace_preview_stop" Action="JoinedContext.Portal.jc_workspace_preview_stop"/><ActionImport Name="jc_person_create" Action="JoinedContext.Portal.jc_person_create"/><ActionImport Name="jc_person_edit" Action="JoinedContext.Portal.jc_person_edit"/><ActionImport Name="jc_person_disable" Action="JoinedContext.Portal.jc_person_disable"/><ActionImport Name="jc_person_enable" Action="JoinedContext.Portal.jc_person_enable"/><ActionImport Name="jc_person_sign_out" Action="JoinedContext.Portal.jc_person_sign_out"/><ActionImport Name="jc_change_plan" Action="JoinedContext.Portal.jc_change_plan"/><ActionImport Name="jc_change_revert_plan" Action="JoinedContext.Portal.jc_change_revert_plan"/><ActionImport Name="jc_change_apply" Action="JoinedContext.Portal.jc_change_apply"/></EntityContainer>
+    </Schema>
+  </edmx:DataServices>
+</edmx:Edmx>
