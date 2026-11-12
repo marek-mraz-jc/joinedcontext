@@ -772,7 +772,8 @@ impl ViewOps {
                     attrs,
                     ..policy::Operation::new(clause)
                 };
-                let gated = antares_api::policy::gate(engine, &self.tenant, &caller.0, &asked);
+                // No answer leaves here, so a metadata narrowing is nothing to hold.
+                let gated = antares_api::policy::narrowing(engine, &self.tenant, &caller.0, &asked);
                 // The engine learns the view in process (T-3702), as for a run.
                 antares_api::policy::through_view(self.view.id(), gated).await
             }

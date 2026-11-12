@@ -1769,20 +1769,29 @@ pub async fn gate(
     headers: &HeaderMap,
     op: &Operation<'_>,
 ) -> Result<std::sync::Arc<Filter>, Denied> {
+    let f = narrowing(engine, tenant, headers, op).await?;
+    metadata::hold(f.metadata.as_deref())?;
+    Ok(f)
+}
+
+/// The engine's [`Filter`] for `op`, without handing its metadata members to
+/// the layer that strips an answer: for a caller that serves no answer of
+/// its own and only asks what is shown (`ViewOps::visible`, T-6768). The
+/// read it then makes passes [`gate`](fn@gate), which strips that answer.
+pub async fn narrowing(
+    engine: &dyn PolicyEngine,
+    tenant: &antares_model::TenantId,
+    headers: &HeaderMap,
+    op: &Operation<'_>,
+) -> Result<std::sync::Arc<Filter>, Denied> {
     match decide(engine, &subject_of(tenant, headers), op).await {
         Decision::Allow => Ok(unnarrowed()),
         // On a write by id the filter is the condition ([`Condition::of`]);
         // `resolve` lets an `AllowIf` through nowhere else, and turns a
         // `Filter` there into a deny, so a handler of such a clause reads
         // what it gets back as the condition and nothing else.
-        Decision::Filter(f) => {
-            metadata::hold(f.metadata.as_deref())?;
-            Ok(f)
-        }
-        Decision::AllowIf(f) => {
-            metadata::hold(f.metadata.as_deref())?;
-            Ok(std::sync::Arc::new(f))
-        }
+        Decision::Filter(f) => Ok(f),
+        Decision::AllowIf(f) => Ok(std::sync::Arc::new(f)),
         Decision::Deny(why) => Err(Denied(why)),
     }
 }

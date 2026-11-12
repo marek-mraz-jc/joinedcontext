@@ -6,7 +6,7 @@
 
 use crate::common::{get, prop, put_view, send};
 use antares_ops::policy::{
-    Decision, DecisionFuture, Filter, NotifyDecision, Operation, PolicyEngine, Subject,
+    Decision, DecisionFuture, Filter, Metadata, NotifyDecision, Operation, PolicyEngine, Subject,
 };
 use antares_ops::test_kit::{q_filter, TestBroker};
 use axum::http::{Method, StatusCode};
@@ -157,6 +157,24 @@ async fn a_row_the_policy_hides_changes_the_counts() -> Result<(), String> {
         pairs(&[("Banská Bystrica", 1), ("Sliač", 1)])
     );
     assert_eq!(query_count(&app, "category==\"music\"").await, 1);
+    Ok(())
+}
+
+/// T-6768: a Policy that passes only some metadata members still lets the values be counted;
+/// the Entity read under it is stripped, and a value is never a metadata member.
+#[tokio::test]
+async fn a_metadata_narrowing_still_counts_the_values() -> Result<(), String> {
+    let no_metadata = Filter {
+        metadata: Some(Box::new(Metadata::default())),
+        ..Filter::default()
+    };
+    let (_broker, app) = fixture(Some(no_metadata)).await?;
+    let a = get(&app, &format!("{FACETS}?attr=address.addressLocality")).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.text);
+    assert_eq!(
+        counts(&a.json),
+        pairs(&[("Zvolen", 2), ("Banská Bystrica", 1), ("Sliač", 1)])
+    );
     Ok(())
 }
 
