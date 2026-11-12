@@ -111,6 +111,21 @@ def test_expected_counts_follow_the_policy_patterns(tmp_path):
     assert ex.expected_types(eps["closed"], staff, tenant)[0] == {"AirQualityObserved": 3}
 
 
+def test_a_short_current_retention_rule_makes_its_type_expire(tmp_path):
+    # T-6833: helsinki's `Vehicle current: PT5M` deleted the bundle's 2 Vehicles 5 min after the
+    # import, and the mcp suite read helsinki-transport 25 min later: total 0, three rows red.
+    b = bundle(tmp_path)
+    (b / "gitea" / "files" / "org" / "city" / "spaces" / "air" / "space.yaml").write_text(
+        "kind: ContextSpace\nmetadata: {name: air, namespace: city}\nspec:\n  urnSegment: city-air-pinned\n"
+        "  retention:\n    - {entityType: AirQualityObserved, current: PT5M, history: PT5M}\n"
+        "    - {entityType: Road, current: P30D}\n")
+    eps = {e.name: e for e in ex.load_endpoints(b / "gitea" / "files")}
+    tenant = ex.build_index(b, ex.patterns_needed(eps.values()))["tenants"]["city-air-pinned"]
+    assert tenant["AirQualityObserved"]["expires"] is True
+    assert tenant["Road"]["expires"] is False                 # a month outlasts any run
+    assert ex.duration("PT1H30M") == ex.dt.timedelta(minutes=90) and ex.duration("P1Y") is None
+
+
 # ------------------------------------------------------------------ fake gateway
 
 

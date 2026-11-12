@@ -219,6 +219,41 @@ def patterns_needed(endpoints) -> dict:
     return {k: sorted(v) for k, v in need.items()}
 
 
+_DURATION = re.compile(r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$")
+# A `current` retention rule at most this long removes the imported rows during a run (the
+# rehearsal keeps one day): the rows of its type are as transient as rows carrying expiresAt.
+TRANSIENT = dt.timedelta(days=1)
+
+
+def duration(s) -> dt.timedelta | None:
+    """An ISO 8601 day-time duration (P1D, PT5M, PT1H30M); None for any other form."""
+    m = _DURATION.match(str(s or ""))
+    if not m or not any(m.groups()):
+        return None
+    d, h, mi, se = (int(x or 0) for x in m.groups())
+    return dt.timedelta(days=d, hours=h, minutes=mi, seconds=se)
+
+
+def transient_types(files: Path) -> set:
+    """(tenant, short type) of every space retention rule whose `current` is at most TRANSIENT:
+    the broker deletes such an Entity once it has not been modified for that long (T-3900), so a
+    bundle's rows of the type are gone minutes after the import (T-6833: helsinki's Vehicle rule
+    PT5M emptied helsinki-transport before the mcp suite read it)."""
+    out = set()
+    for f in files.glob("*/*/spaces/*/space.yaml"):
+        for d in _load_yaml(f):
+            if d.get("kind") != "ContextSpace":
+                continue
+            spec = d.get("spec") or {}
+            tenant = urn_segment(d["metadata"].get("namespace") or f.parts[-4], d["metadata"]["name"],
+                                 spec.get("urnSegment"))
+            for rule in spec.get("retention") or []:
+                keep = duration(rule.get("current")) if isinstance(rule, dict) else None
+                if keep is not None and keep <= TRANSIENT and rule.get("entityType"):
+                    out.add((tenant, short_type(str(rule["entityType"]))))
+    return out
+
+
 def build_index(export: Path, patterns: dict) -> dict:
     """One pass over entities.jsonl and temporal.jsonl.
 
@@ -256,6 +291,9 @@ def build_index(export: Path, patterns: dict) -> dict:
                 if rx.search(eid):
                     slot["patterns"][p] = slot["patterns"].get(p, 0) + 1
                     slot.setdefault("psample", {}).setdefault(p, eid)
+    for tenant, st in transient_types(export / "gitea" / "files"):
+        if st in tenants.get(tenant, {}):
+            tenants[tenant][st]["expires"] = True
     temporal: dict = {}
     with (export / "antares" / "temporal.jsonl").open("rb") as fh:
         for raw in fh:
@@ -290,7 +328,7 @@ def build_index(export: Path, patterns: dict) -> dict:
 def load_index(export: Path, endpoints, cache_dir: Path, log=print) -> dict:
     manifest = json.loads((export / "manifest.json").read_text())
     patterns = patterns_needed(endpoints)
-    key = hashlib.sha256(json.dumps(["index-v4", manifest.get("exportedAt"), str(export.resolve()),
+    key = hashlib.sha256(json.dumps(["index-v5", manifest.get("exportedAt"), str(export.resolve()),
                                      sorted((list(k), v) for k, v in patterns.items())]).encode()).hexdigest()[:16]
     cache = cache_dir / f"index-{key}.json"
     if cache.exists():
