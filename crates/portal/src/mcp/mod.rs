@@ -1075,7 +1075,7 @@ pub fn tool_definition(op: &crate::ops::OperationSummary) -> Value {
         "name": op.name,
         "title": op.title,
         "description": op.description,
-        "inputSchema": mcp_input_schema(op.input_schema.clone()),
+        "inputSchema": mcp_input_schema(op.input_schema.clone(), may_ask(op)),
         "outputSchema": op.output_schema,
         "annotations": {
             "readOnlyHint": op.annotations.read_only_hint,
@@ -1103,7 +1103,15 @@ pub fn tool_definition(op: &crate::ops::OperationSummary) -> Value {
 /// Ensures the tool's input schema exposes `project` as a required parameter for MCP callers.
 /// The schema's own description goes: the tool's description says what the call takes, and a
 /// model reads every listed tool on every turn (T-6058).
-fn mcp_input_schema(mut schema: Value) -> Value {
+/// Whether a call of the operation may ask the person before it runs (AG-63): the condition
+/// `answer_call` applies, with a blueprint flow's lane known only from its input.
+fn may_ask(op: &crate::ops::OperationSummary) -> bool {
+    op.lane != crate::change::Lane::Green
+        || op.annotations.destructive_hint
+        || op.name == "jc_flow_start"
+}
+
+fn mcp_input_schema(mut schema: Value, asks: bool) -> Value {
     if !schema.is_object() {
         schema = json!({ "type": "object" });
     }
@@ -1119,6 +1127,23 @@ fn mcp_input_schema(mut schema: Value) -> Value {
                     "project".to_string(),
                     // What a project is, is said once in INSTRUCTIONS (T-6058).
                     json!({ "type": "string", "maxLength": 63, "description": "Project slug, e.g. ovzdusie" }),
+                );
+            }
+            // The answer a client sends back in the arguments (T-6361); a closed schema without
+            // it tells the model it may not (T-6829).
+            if asks {
+                props_map.insert(
+                    "elicitation".to_string(),
+                    json!({
+                        "type": "object",
+                        "description": "Only when this call asked a question: the elicitationId it named, sent again with the same arguments once the person decided in the Portal",
+                        "properties": {
+                            "elicitationId": { "type": "string", "maxLength": 64, "description": "e.g. eli-f572fe8dfd83b1cd" },
+                            "action": { "type": "string", "enum": ["accept", "decline", "cancel"], "description": "decline withdraws the question; accept when absent" }
+                        },
+                        "required": ["elicitationId"],
+                        "additionalProperties": false
+                    }),
                 );
             }
         }
@@ -1789,6 +1814,27 @@ mod tests {
         assert_eq!(tool["inputSchema"]["required"], json!(["kind", "project"]));
         assert_eq!(tool["annotations"]["readOnlyHint"], true);
         assert_eq!(tool["_meta"]["joinedcontext.com/requires"]["verb"], "read");
+    }
+
+    /// T-6829: a tool that may ask the person lists `elicitation` in its closed input schema, so a
+    /// client that fills only arguments may send the answer the question tells it to send
+    /// (T-6361); a green read never asks and does not list it.
+    #[test]
+    fn a_tool_that_may_ask_lists_the_elicitation_answer_in_its_schema() {
+        for op in crate::ops::registry() {
+            let tool = tool_definition(&crate::ops::summary(op));
+            let listed = tool["inputSchema"]["properties"].get("elicitation");
+            assert_eq!(listed.is_some(), may_ask(&crate::ops::summary(op)), "{}", op.name);
+        }
+        let create = tool_definition(&crate::ops::summary(
+            crate::ops::find("jc_project_create").expect("registered"),
+        ));
+        assert_eq!(create["inputSchema"]["additionalProperties"], false);
+        let answer = &create["inputSchema"]["properties"]["elicitation"];
+        assert_eq!(answer["required"], json!(["elicitationId"]));
+        assert_eq!(answer["additionalProperties"], false);
+        let read = crate::ops::find("jc_schema_get").expect("registered");
+        assert!(!may_ask(&crate::ops::summary(read)));
     }
     use crate::reconciler::SyncStatus;
 
