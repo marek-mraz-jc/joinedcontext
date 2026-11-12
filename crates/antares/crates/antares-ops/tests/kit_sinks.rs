@@ -104,7 +104,7 @@ impl Surface for Who {
 }
 
 async fn call(app: &Router, req: Request<Body>) -> Result<(StatusCode, Value), String> {
-    let res = app.clone().oneshot(req).await.map_err(|e| e.to_string())?;
+    let Ok(res) = app.clone().oneshot(req).await;
     let status = res.status();
     let bytes = res
         .into_body()

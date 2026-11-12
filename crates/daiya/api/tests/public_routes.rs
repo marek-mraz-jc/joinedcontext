@@ -427,7 +427,8 @@ fn the_limiter_resets_after_its_window_and_bounds_its_table() {
     limiter.check_rate_limit(a).unwrap();
 
     // A full table refuses a new address while every window is live, and frees expired ones.
-    let full = PublicRateLimiter::new(5, 1);
+    // Filling 65,536 addresses takes over a second on a CI runner, so the window is 5 s.
+    let full = PublicRateLimiter::new(5, 5);
     for i in 0..PublicRateLimiter::MAX_TRACKED_ADDRESSES {
         full.check_rate_limit(IpAddr::V6(Ipv6Addr::from(i as u128)))
             .unwrap();
@@ -436,7 +437,7 @@ fn the_limiter_resets_after_its_window_and_bounds_its_table() {
     assert!(full.check_rate_limit(newcomer).is_err());
     full.check_rate_limit(IpAddr::V6(Ipv6Addr::from(7u128)))
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::thread::sleep(std::time::Duration::from_millis(5100));
     full.check_rate_limit(newcomer).unwrap();
 }
 

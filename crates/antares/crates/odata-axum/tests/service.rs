@@ -156,11 +156,7 @@ async fn call(app: &Router, method: &str, uri: &str) -> Result<(StatusCode, Valu
             Body::empty()
         })
         .map_err(|e| e.to_string())?;
-    let response = app
-        .clone()
-        .oneshot(request)
-        .await
-        .map_err(|e| e.to_string())?;
+    let Ok(response) = app.clone().oneshot(request).await;
     let status = response.status();
     let bytes = response
         .into_body()

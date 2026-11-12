@@ -116,7 +116,7 @@ async fn call(
         .uri(uri)
         .body(Body::empty())
         .map_err(|e| e.to_string())?;
-    let response = app.oneshot(request).await.map_err(|e| e.to_string())?;
+    let Ok(response) = app.oneshot(request).await;
     let status = response.status();
     let etag = response
         .headers()
