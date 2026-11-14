@@ -64,7 +64,7 @@ MCP_CLIENT = "mcp-local"  # the realm's public client for a local MCP client
 # Project-scoped reads every Organization's people use; each is checked both ways.
 PROJECT_READS = ["", "/spaces", "/endpoints", "/pipelines", "/apps", "/datamodels", "/datasources",
                  "/changes", "/dashboards", "/policies", "/rolebindings", "/ckaninstances",
-                 "/serviceaccounts", "/activity", "/syncsources", "/mqttbrokers", "/drafts"]
+                 "/serviceaccounts", "/activity", "/syncsources", "/mqttbrokers", "/drafts", "/export"]
 
 
 def organization_hosts(jc_toml: Path) -> dict:
@@ -269,9 +269,11 @@ class Suite:
                     d = re.search(r"organizationDefault:\s*([\w.-]+)", f.read_text())
                     if d:
                         ckan.append(d.group(1))
+                spaces = sorted(f.parent.name for f in (files / CONFIG[0] / p).glob("spaces/*/space.yaml"))
                 exp[org]["projects"][p] = {k: sorted(set(v)) for k, v in kinds.items()} | {"ckanOrgs": ckan,
                                                                                           "closed": closed,
-                                                                                          "readable": readable}
+                                                                                          "readable": readable,
+                                                                                          "spaces": spaces}
         self.exp = exp
         orgs = files / CONFIG[0] / CONFIG[1] / "organizations"
         self.installation = next((f.stem for f in orgs.glob("*.yaml")
@@ -532,6 +534,8 @@ class Suite:
                 calls = [f"/api/v1/projects/{project}{suffix}" for suffix in PROJECT_READS]
                 calls += [f"/api/v1/projects/{project}/endpoints/{n}" for n in objs["Endpoint"][:2]]
                 calls += [f"/api/v1/projects/{project}/pipelines/{n}" for n in objs["Pipeline"][:2]]
+                # the audit feed of each space (temporal-audit), as the activity feed is above
+                calls += [f"/api/v1/projects/{project}/spaces/{n}/temporal-audit" for n in objs.get("spaces", [])[:2]]
                 for call in calls:
                     st_own, _, _ = self.session(f"{owner}-admin").call("GET", call)
                     if st_own != 200:  # a read the Organization's admin lacks: the operator's 200 shows the route
@@ -550,8 +554,21 @@ class Suite:
                                 if st not in DENIED:
                                     self.rows[-1]["result"] = "fail"
                                 continue
-                            self.row(rid, f"{other}->{owner}", f"GET {call}", "403/404 (control 200)",
-                                     f"{st} {body[:120]!r}" if st not in DENIED else str(st), st in DENIED)
+                            # the refusal's body names nothing of the owner beyond what the call asked for
+                            text = body.decode(errors="replace")
+                            named = sorted(m for m, o in self.marks_of(other).items()
+                                           if o == owner and m.strip('"') not in call and m in text)
+                            self.row(rid, f"{other}->{owner}", f"GET {call}", "403/404 naming nothing of it (control 200)",
+                                     f"{st} {body[:120]!r}" if st not in DENIED or named else str(st) + f", names {named[:3]}",
+                                     st in DENIED and not named)
+                    if call.endswith("/export"):  # the own export: the project's, nothing of another
+                        st_e, _, raw = self.session(f"{owner}-admin").call("GET", call)
+                        text = raw.decode(errors="replace")
+                        named = sorted(m for m, o in self.marks_of(owner).items() if m in text)
+                        self.row(f"export.{owner}-admin.{project}", owner, f"GET {call} as mo-{owner}-admin",
+                                 f"200 holding {project}, nothing of another Organization",
+                                 f"{st_e}, {len(raw)} bytes, foreign {named[:3]}",
+                                 st_e == 200 and project in text and not named)
 
     def check_writes(self):
         """A foreign org admin's DELETE of an Endpoint is refused and the Endpoint stays."""
@@ -628,6 +645,13 @@ class Suite:
                 self.row(f"mcp.{key}.tools-list", org, "POST /api/v1/mcp tools/list", "200 with tools",
                          f"{st}, {len(tools)} tools", st == 200 and bool(tools))
                 self.mcp_calls(key, org, h, auth)
+
+    def marks_of(self, org):
+        """foreign_marks(org), once per run."""
+        held = self.__dict__.setdefault("_marks", {})
+        if org not in held:
+            held[org] = self.foreign_marks(org)
+        return held[org]
 
     def foreign_marks(self, org):
         """Text that names another Organization's objects: its persons' usernames, its projects
@@ -827,6 +851,8 @@ class Suite:
                              "200 (an own Endpoint the readable list names)", f"exchange {st}, read {code}", code == 200 if tok else None,
                              "" if tok else "the realm refused the exchange: no endpoint:{slug} scope linked to "
                              "portal-api (dev links them by its admin-permissions CronJob; jc has none)")
+                    if tok and code == 200:
+                        self.check_temporal(key, org, slug, tok, foreign)
                 for slug, (p, name, aud) in sorted(foreign.items())[:6]:
                     st, tok = self.exchange(key, slug)
                     code = self.client(self.home(key), "api").call("GET", f"/api/endpoint/{slug}/ngsi-ld/v1/types",
@@ -838,6 +864,34 @@ class Suite:
                              (code in (401, *DENIED)) if tok else (True if self.exchange_ok else None),
                              "" if tok or self.exchange_ok else "the realm refuses every exchange here, the own "
                              "control too: a refusal proves nothing")
+
+    def check_temporal(self, key, org, slug, tok, foreign):
+        """History through the gateway (DAT-19): the own Endpoint's temporal and aggregated reads
+        answer its entities (present, the control); the same token on another Organization's
+        Endpoint answers nothing of it (absent)."""
+        api = self.client(self.home(key), "api")
+        auth = {"Authorization": f"Bearer {tok}"}
+        base = f"/api/endpoint/{slug}/ngsi-ld/v1"
+        st, body = api.json("GET", f"{base}/types", headers=auth)
+        listed = body.get("typeList", []) if isinstance(body, dict) else \
+            [t for b in body or [] if isinstance(b, dict) for t in b.get("typeList", [])]
+        kind = urllib.parse.quote(str(listed[0])) if listed else None
+        at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        reads = {"temporal": f"/temporal/entities?type={kind}&lastN=1",
+                 "aggregated": f"/temporal/entities?type={kind}&timerel=before&timeAt={at}&aggrMethods=totalCount"
+                               f"&aggrPeriodDuration=P1D&format=aggregatedValues"}
+        for name, q in reads.items():
+            st, body = api.json("GET", base + q, headers=auth) if kind else (None, None)
+            n = len(body) if isinstance(body, list) else 0
+            self.row(f"data.{key}.{name}.own", org, f"GET {base}{q}", "200 with >= 1 entity of the first type",
+                     f"types {st if not kind else len(listed)}, {st}, {n} entities", bool(kind) and st == 200 and n > 0)
+            for fslug, (p, ename, _) in sorted(foreign.items())[:6]:
+                other = next(o for o, oe in self.exp.items() if p in oe["projects"])
+                st, raw = api.json("GET", f"/api/endpoint/{fslug}/ngsi-ld/v1{q}", headers=auth) if kind else (None, None)
+                self.row(f"data.{key}.{name}.{p}/{ename}", f"{org}->{other}",
+                         f"GET /api/endpoint/{fslug}/ngsi-ld/v1{q} with the own Endpoint's token",
+                         "401/403/404 (the own read: 200)", f"{st} {str(raw)[:80]}" if st not in (401, *DENIED) else str(st),
+                         st in (401, *DENIED) if kind else None, "" if kind else "the own Endpoint lists no type")
 
     def exchange(self, key, slug):
         """(status, token) of the Portal's token exchange of the person's mcp:portal token for one
@@ -881,16 +935,20 @@ class Suite:
                          f"{st}, total {(body or {}).get('total')}, other publishers {wrong}",
                          st == 200 and not wrong and (bool((body or {}).get("total")) or not rs))
                 for kind, path in (("page", f"/opendata/organization/{c}"),
-                                   ("dcat", f"/opendata/publisher/{c}/catalog.jsonld")):
+                                   ("dcat", f"/opendata/publisher/{c}/catalog.jsonld"),
+                                   ("ttl", f"/opendata/publisher/{c}/catalog.ttl"),
+                                   ("atom", f"/opendata/feeds/organization/{c}.atom")):
                     st, _, raw = h.call("GET", path)
                     text = raw.decode(errors="replace")
                     other_names = {r.get("name") for r in results
                                    if (r.get("organization") or {}).get("name") in others}
                     leaked = sorted(n for n in other_names if n and re.search(rf"dataset/{re.escape(n)}(?![\w-])", text))
                     empty = st == 404 and not names and not leaked
-                    self.row(f"catalogue.{org}.{c}.{kind}", org, f"GET {path}", "200, no dataset of another org",
-                             f"{st}, {len(names)} own, leaked {leaked[:3]}",
-                             None if empty else (st == 200 and not leaked),
+                    # the positive control: an own dataset is in the feed when the search lists one
+                    own = not names or any(re.search(rf"dataset/{re.escape(n)}(?![\w-])", text) for n in names if n)
+                    self.row(f"catalogue.{org}.{c}.{kind}", org, f"GET {path}", "200, an own dataset, no dataset of another org",
+                             f"{st}, {len(names)} own, own in it {own}, leaked {leaked[:3]}",
+                             None if empty else (st == 200 and own and not leaked),
                              f"no dataset published to {c} yet: dataroom has no such organisation" if empty else "")
 
     def check_catalogue_hosts(self):
@@ -916,7 +974,8 @@ class Suite:
             h = self.client(org, "opendata")
             other_names = {n for o, ns in found.items() if o != org for n in ns} - found[org]
             for kind, path in (("search", "/api/3/action/package_search?rows=1000"), ("list", "/api/3/action/package_list"),
-                               ("dcat", "/catalog.jsonld"), ("sitemap", "/sitemap.xml"), ("home", "/")):
+                               ("dcat", "/catalog.jsonld"), ("ttl", "/catalog.ttl"), ("atom", "/feeds/dataset.atom"),
+                               ("sitemap", "/sitemap.xml"), ("home", "/")):
                 st, _, raw = h.call("GET", path)
                 text = raw.decode(errors="replace")
                 # A dataset by its identity: a name the API lists, or its page's link. A bare word
@@ -928,9 +987,13 @@ class Suite:
                 else:
                     leaked = sorted(n for n in other_names if n and re.search(rf"/dataset/{re.escape(n)}(?![\w-])", text))
                 hosts = sorted({hh for o, hs in self.hosts.items() if o != org for hh in hs.values() if hh in text})
+                # the positive control of a feed: one of its own datasets is in it
+                own = kind not in ("dcat", "ttl", "atom") or not found[org] or \
+                    any(re.search(rf"/dataset/{re.escape(n)}(?![\w-])", text) for n in found[org] if n)
                 self.row(f"catalogue.{org}.{kind}.no-foreign", org, f"GET {{opendata}}{path}",
-                         "200, no dataset or host of another org", f"{st}, leaked {leaked[:3]}, hosts {hosts}",
-                         st == 200 and not leaked and not hosts)
+                         "200, no dataset or host of another org (a feed: an own dataset in it)",
+                         f"{st}, own in it {own}, leaked {leaked[:3]}, hosts {hosts}",
+                         st == 200 and own and not leaked and not hosts)
 
     def check_hosts(self):
         """What only the Organizations' own hosts show (host mode)."""
@@ -1097,7 +1160,7 @@ class Suite:
                          "404 of an unknown path, naming nothing", f"{st} {text[:60]}",
                          st == 404 and other not in text)
 
-    GLOBAL_READS = ["/api/v1/endpoints", "/api/v1/shared-apps", "/api/v1/connectors", "/api/v1/connectors/pending",
+    GLOBAL_READS = ["/api/v1/activity", "/api/v1/endpoints", "/api/v1/shared-apps", "/api/v1/connectors", "/api/v1/connectors/pending",
                     "/api/v1/blueprints", "/api/v1/alerts", "/api/v1/alerts/notices", "/api/v1/notifications",
                     "/api/v1/organization/agents", "/api/v1/organization/agents/activity",
                     "/api/v1/organization/brokers", "/api/v1/organization/connectors", "/api/v1/organization/costs",
@@ -1274,7 +1337,7 @@ class Suite:
             names = {}
             for e in self.exp.values():
                 for o in e["projects"].values():
-                    for n in [*o["Endpoint"], *o["Pipeline"], *o["Dashboard"], *o["ckanOrgs"], *o["closed"]]:
+                    for n in [*o["Endpoint"], *o["Pipeline"], *o["Dashboard"], *o["ckanOrgs"], *o["closed"], *o.get("spaces", [])]:
                         names[n] = "{n}"
             for org, e in self.exp.items():
                 names.update({p: "{o}" for p in e["projects"]} | {org: "{o}"})

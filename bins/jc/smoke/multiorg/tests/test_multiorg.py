@@ -210,6 +210,89 @@ def test_global_reads_give_each_pair_a_row_also_for_an_empty_organization(tmp_pa
                     "global.ctl-a-admin.none-of.hel": "fail", "global.ctl-a-member.none-of.hel": "pass"}
 
 
+def test_a_forged_host_that_switches_the_organization_or_the_issuer_fails_its_row(tmp_path):
+    # T-6856 (I-7, I-8): hel's admin with zilina's host must answer what it answers plainly.
+    class Session:
+        def __init__(self, switched):
+            self.switched = switched
+
+        def json(self, method, path, headers=None, form=None, body=None):
+            forged = bool(headers)
+            if path == "/api/v1/projects":
+                return 200, {"items": [{"name": "zilina" if forged and self.switched else "helsinki"}]}
+            if path.endswith("openid-configuration"):
+                return 200, {"issuer": "http://forged.example/id" if forged and self.switched else "http://base/id"}
+            return 404, None
+
+    for switched in (False, True):
+        (tmp_path / str(switched)).mkdir()
+        s = suite.Suite(args(tmp_path / str(switched)))
+        s.exp = {"hel": {"projects": {"helsinki": EMPTY}}, "zilina": {"projects": {"zilina": EMPTY}}}
+        h = Session(switched)
+        s.session = lambda key, on=None, h=h: h
+        s.client = lambda org=None, kind="portal", h=h: h
+        s.check_forged()
+        got = {r["id"]: r["result"] for r in s.rows}
+        want = "fail" if switched else "pass"
+        assert got["forged.hel-admin.control"] == "pass"
+        assert got["forged.hel-admin.xfh.zilina"] == got["forged.hel-admin.host.zilina"] == want
+        assert got["forged.issuer.host"] == got["forged.issuer.xfh"] == want
+        assert next(r for r in s.rows if r["id"] == "forged.hel-admin.host.zilina")["target"] == "hel->zilina"
+
+
+def test_a_refusal_that_names_the_owners_objects_fails_its_isolation_row(tmp_path):
+    # T-6855: a 404 that answers with another Organization's Endpoint name or person names it.
+    class Session:
+        def __init__(self, key):
+            self.key = key
+
+        def call(self, method, path):
+            if self.key.startswith("hel-"):
+                return 200, {}, b"{}"
+            return 404, {}, b'{"detail": "no project; did you mean mo-hel-admin?"}' if path.endswith("/drafts") else b"{}"
+
+    s = suite.Suite(args(tmp_path))
+    s.exp = {"hel": {"projects": {"helsinki": EMPTY}}, "zilina": {"projects": {}}}
+    s.session = lambda key, on=None: Session(key)
+    s.check_project_reads()
+    got = {r["id"]: r["result"] for r in s.rows}
+    assert got["isolation.zilina-admin.helsinki/drafts"] == "fail" and got["isolation.zilina-admin.helsinki/spaces"] == "pass"
+    assert got["export.hel-admin.helsinki"] == "fail"  # the own export did not name helsinki
+
+
+def test_an_operators_installation_organization_gets_operator_rows_and_no_refusal_rows(tmp_path):
+    # T-6850: ops holds the installation role and no data; its admin is an operator.
+    class Session:
+        def __init__(self, key):
+            self.key = key
+
+        def json(self, method, path, body=None, headers=None):
+            operator = self.key in ("platform", "ops-admin")
+            if method == "POST":
+                return (200, {}) if operator else (403, {})
+            if path.startswith("/api/v1/organization/people"):
+                return 200, {"items": [{"email": f"mo-{o}-{k}@x.invalid"} for o in ("ops", "hel") for k in ("admin", "member")]}
+            return (200, {}) if operator else (403, {})
+
+        def call(self, method, path, headers=None):
+            return 200, {}, b"{}"
+
+    s = suite.Suite(args(tmp_path))
+    s.exp, s.installation = {"ops": {"projects": {}}, "hel": {"projects": {"helsinki": EMPTY}}}, "ops"
+    s.people = {"platform": {"id": "u-p"}}
+    s.session = lambda key, on=None: Session(key)
+    s.check_operators()
+    got = {r["id"]: r["result"] for r in s.rows}
+    assert got["operators.installation.ops-admin.propose.groups"] == got["operators.platform.propose.groups"] == "pass"
+    assert got["operators.hel-admin.propose.groups"] == "pass" and "operators.ops-admin.propose.groups" not in got
+    assert got["operators.installation.ops-admin.people"] == "pass"
+    assert "operators.ops-admin.org-namespace.rolebindings" not in got and got["operators.hel-admin.org-namespace.rolebindings"] == "pass"
+    # an installation that holds data has no operators' Organization: no operator row
+    s.rows, s.installation = [], "hel"
+    s.check_operators()
+    assert s.rows == []
+
+
 _cspec = importlib.util.spec_from_file_location("smoke_multiorg_compose", HERE.parent / "compose.py")
 compose = importlib.util.module_from_spec(_cspec)
 _cspec.loader.exec_module(compose)
