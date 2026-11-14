@@ -183,6 +183,7 @@ async fn build_entity_table(
     set_name: &str,
     key_parens: Option<&str>,
     raw_query: Option<&str>,
+    only_repo: Option<RepoId>,
 ) -> ShakoResult<MemoryTable> {
     let model = Arc::new(state.registry.service.model());
     let info = state
@@ -213,6 +214,9 @@ async fn build_entity_table(
                 )
                 .allowed
         })
+        // A collection navigated from one repository holds that repository's rows whatever the
+        // caller's `$filter` says.
+        .filter(|r| only_repo.is_none_or(|id| r.id == id))
         .collect();
 
     let rows: Vec<Value> = match set_name {
@@ -430,8 +434,29 @@ async fn build_entity_table(
             })
             .collect(),
         "PushMirrors" => {
-            let visible_ids: std::collections::BTreeSet<RepoId> =
-                visible_repos.iter().map(|r| r.id).collect();
+            // A mirror's address and last error are Admin reads, as the repository's own list.
+            let visible_ids: std::collections::BTreeSet<RepoId> = visible_repos
+                .iter()
+                .filter(|r| {
+                    state
+                        .authorizer
+                        .check(
+                            ctx,
+                            Action::Admin,
+                            &ObjectTarget::Repository {
+                                instance_id: r.instance_id,
+                                org_id: r.org_id,
+                                project_id: (!r.project_id.is_empty())
+                                    .then(|| r.project_id.clone()),
+                                owner: r.owner.clone(),
+                                repo: r.name.clone(),
+                                git_ref: None,
+                            },
+                        )
+                        .allowed
+                })
+                .map(|r| r.id)
+                .collect();
             state
                 .store()
                 .list_push_mirrors(ctx.instance_id, ctx.org_id, None)
@@ -787,8 +812,9 @@ async fn collection_answer(
     mount: &Mount,
     set_name: &str,
     raw_q: Option<&str>,
+    only_repo: Option<RepoId>,
 ) -> ShakoResult<Value> {
-    let table = build_entity_table(state, ctx, mount, set_name, None, raw_q).await?;
+    let table = build_entity_table(state, ctx, mount, set_name, None, raw_q, only_repo).await?;
     let scope = scope_for_context(ctx, state.authorizer.as_ref());
     let (opts, expand_props) =
         parse_odata_options_with_expand(&table.info().model, set_name, raw_q)?;
@@ -821,7 +847,8 @@ async fn entity_answer(
     raw_q: Option<&str>,
 ) -> ShakoResult<Value> {
     let key_parens = format!("'{key}'");
-    let table = build_entity_table(state, ctx, mount, set_name, Some(&key_parens), raw_q).await?;
+    let table =
+        build_entity_table(state, ctx, mount, set_name, Some(&key_parens), raw_q, None).await?;
     let scope = scope_for_context(ctx, state.authorizer.as_ref());
     let (_, expand_props) = parse_odata_options_with_expand(&table.info().model, set_name, raw_q)?;
     let opts =
@@ -900,7 +927,7 @@ async fn odata_single_get(
             )
             .await
         }
-        None => collection_answer(&state, &ctx, &mount, short_name, raw_q.as_deref()).await,
+        None => collection_answer(&state, &ctx, &mount, short_name, raw_q.as_deref(), None).await,
     };
     match res {
         Ok(v) => (StatusCode::OK, Json(v)).into_response(),
@@ -1021,6 +1048,7 @@ async fn repo_navigation_get(
                 mount,
                 "PushMirrors",
                 Some(&query_within_repo(repo.id, raw_q)),
+                Some(repo.id),
             )
             .await
         }
@@ -1035,6 +1063,7 @@ async fn repo_navigation_get(
                 mount,
                 op_short,
                 Some(&query_within_repo(repo.id, raw_q)),
+                Some(repo.id),
             )
             .await
         }
@@ -1145,6 +1174,7 @@ async fn odata_two_segment_get(
         set_name,
         key_parens,
         raw_q.as_deref(),
+        None,
     )
     .await
     {
@@ -2097,7 +2127,8 @@ pub async fn exec_odata_operation(
             };
             let filter_q = text(&body, "Filter").map(|f| format!("$filter={f}"));
             let table =
-                build_entity_table(state, ctx, mount, set_name, None, filter_q.as_deref()).await?;
+                build_entity_table(state, ctx, mount, set_name, None, filter_q.as_deref(), None)
+                    .await?;
             let scope = scope_for_context(ctx, state.authorizer.as_ref());
             let (opts, _) = parse_odata_options_with_expand(
                 &table.info().model,

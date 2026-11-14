@@ -566,6 +566,13 @@ pub async fn commit_files(
             }
             None => None,
         };
+        // The same scan a push passes (SEC-06): an API or MCP commit is no way around it.
+        if let Some(reason) = content
+            .as_deref()
+            .and_then(|bytes| shako_git::scan_blob_for_secrets(&clean, bytes))
+        {
+            return Err(ShakoError::Unprocessable(reason));
+        }
         changed_paths.push(clean.clone());
         ops.push(FileChangeOp {
             operation: item.operation,
@@ -930,7 +937,14 @@ pub async fn patch_pull_request(
     if let Some(b) = patch.body {
         pr.body = b;
     }
-    if let Some(base) = patch.base {
+    if let Some(base) = patch.base.filter(|b| *b != pr.base_ref) {
+        // A merged pull request records where it landed: its target stays.
+        if pr.merged {
+            return Err(ShakoError::Unprocessable(
+                "a merged pull request keeps its base branch".into(),
+            ));
+        }
+        validate_branch_name(&base)?;
         pr.base_ref = base;
     }
     let saved = state.store().update_pull_request(pr).await?;
