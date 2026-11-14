@@ -3722,17 +3722,26 @@ async fn cache_key(ask: &Ask<'_>, history: &[Turn], question: &str) -> Option<[u
         }),
     };
     match read {
-        // The local day is part of the key, so an answer about "today" is not kept past it.
+        // The local day is part of the key, so an answer about "today" is not kept past it; so
+        // are the connectors the answer reads, so a question that switched some off never
+        // answers one that did not.
         Ok(digest) => Some(AnswerCache::key(
             ask.deployment,
             question,
-            &format!("{digest}@{}", local_day(ask)),
+            &kept_index(&digest, &local_day(ask).to_string(), ask.connectors),
         )),
         Err(why) => {
             tracing::warn!(deployment = %ask.deployment, %why, "the index digest failed; no cache");
             None
         }
     }
+}
+
+/// What a kept answer was made from: the index digest, the local day and the connectors read.
+fn kept_index(digest: &str, day: &str, connectors: &[Connected]) -> String {
+    let mut slugs: Vec<&str> = connectors.iter().map(|c| c.surface.slug.as_str()).collect();
+    slugs.sort_unstable();
+    format!("{digest}@{day}#{}", slugs.join(","))
 }
 
 /// A judge call's reply and how long it took.
@@ -6308,6 +6317,33 @@ mod tests {
         let answer = vec![Event::Answer("Od 9:00 [1].".into())];
         cache.put(key, "bb/public", answer.clone(), CACHE_LIFE);
         assert_eq!(cache.get(&key).map(|(a, _)| a), Some(answer));
+    }
+
+    /// A question that switches connectors off is kept apart from one that reads them all, so a
+    /// visitor's narrowed answer never answers the next visitor.
+    #[test]
+    fn a_kept_answer_is_keyed_by_the_connectors_it_read() {
+        let connector = |slug: &str| Connected {
+            titles: Default::default(),
+            endpoint: slug.into(),
+            title: None,
+            surface: super::super::mcp::Surface {
+                gateway: "http://gateway".into(),
+                slug: slug.into(),
+                timeout: Duration::from_secs(1),
+                token: None,
+            },
+            tools: Vec::new(),
+            label: None,
+            siblings: Vec::new(),
+            dataset: None,
+        };
+        let both = [connector("parking"), connector("roads")];
+        let index = kept_index("10:99", "2026-11-14", &both);
+        assert_ne!(index, kept_index("10:99", "2026-11-14", &[]));
+        assert_ne!(index, kept_index("10:99", "2026-11-14", &both[..1]));
+        let swapped = [connector("roads"), connector("parking")];
+        assert_eq!(index, kept_index("10:99", "2026-11-14", &swapped));
     }
 
     /// T-4731: a kept answer is the events the visitor was sent, tables and follow-ups included,
