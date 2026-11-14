@@ -450,6 +450,8 @@ pub async fn delete_with_identity(
         return Err(not_found());
     }
     effective.check(kind_info.kind, jc_core::kinds::Verb::Delete, Some(&target))?;
+    // ODP-09: an Organization keeps its default portal.
+    crate::portals::deletion(&mirror, kind_info.kind, project, name)?;
     // PF-03: the last administrator of the organization is not removed by any door.
     crate::permissions::keeps_an_administrator(
         &mirror,

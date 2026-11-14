@@ -7,7 +7,7 @@
 //! - `import-ckan`: imports datasets and organizations from a CKAN Action API JSON dump or URL.
 
 pub mod writer;
-pub use writer::{CatalogueSpec, CatalogueWriter};
+pub use writer::{CatalogueSpec, CatalogueWriter, PortalRoute};
 
 use chrono::Utc;
 use clap::{Parser, Subcommand};
@@ -191,6 +191,8 @@ fn new_catalogue(org_id: OrgId, catalogue_id: CatalogueId, name: &str, host: &st
         modified: Utc::now(),
         deleted: None,
         public_base: None,
+        portal_base: None,
+        left_hosts: Vec::new(),
     }
 }
 
@@ -588,6 +590,8 @@ mod tests {
                 modified: Utc::now(),
                 deleted: None,
                 public_base: None,
+                portal_base: None,
+                left_hosts: Vec::new(),
             })
             .await
             .unwrap();

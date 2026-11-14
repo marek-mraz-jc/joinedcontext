@@ -313,6 +313,7 @@ fn check_organization_hosts(cfg: &Config, plans: &[MountPlan]) -> Result<(), Sta
         .flat_map(|org| {
             org.hosts
                 .by_module()
+                .into_iter()
                 .map(|(_, host)| (bare(host), org.name.as_str()))
         })
         .collect();

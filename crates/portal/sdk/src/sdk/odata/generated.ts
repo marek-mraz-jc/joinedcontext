@@ -425,6 +425,18 @@ export interface Policy {
   "@odata.etag"?: string;
 }
 
+export interface Portal {
+  kind?: string | null;
+  name: string;
+  notServing?: string | null;
+  phase?: string | null;
+  sourceUrl?: string | null;
+  space?: string | null;
+  title?: string | null;
+  url?: string | null;
+  "@odata.etag"?: string;
+}
+
 export interface Project {
   name: string;
   organization?: string | null;
@@ -616,6 +628,7 @@ export interface EntitySets {
   organizationRoles: OrganizationRole;
   pipelines: Pipeline;
   policies: Policy;
+  portals: Portal;
   projections: ModelProjection;
   projects: Project;
   repositories: Repository;
@@ -671,6 +684,7 @@ export const ENTITY_KEYS: { readonly [S in keyof EntitySets]: readonly string[] 
   organizationRoles: ["name"],
   pipelines: ["project","name"],
   policies: ["project","name"],
+  portals: ["name"],
   projections: ["project","name"],
   projects: ["name"],
   repositories: ["project","name"],
@@ -885,7 +899,7 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   jc_workspace_propose: ["Project"],
   jc_workspace_update_from_main: ["Project"],
   propose_create: ["Project"],
-  propose_delete: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Role","RoleBinding","ScopeDefinition","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],
-  propose_update: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Role","RoleBinding","ScopeDefinition","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],
+  propose_delete: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Portal","Role","RoleBinding","ScopeDefinition","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],
+  propose_update: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Portal","Role","RoleBinding","ScopeDefinition","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],
   reject: ["Change"],
 };

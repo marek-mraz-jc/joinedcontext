@@ -136,6 +136,28 @@ pub(crate) fn organization_vars(
         .map(|org| format!("{}={scheme}://{}", org.name, org.hosts.portal))
         .collect();
     out.insert("JC_PORTAL_ORGANIZATION_HOSTS".to_owned(), hosts.join(","));
+    // ODP-08, ODP-09: the hosts a Portal manifest may take, and the deployment's cap.
+    let portal_hosts: Vec<String> = cfg
+        .organizations
+        .iter()
+        .flat_map(|org| {
+            org.hosts
+                .portals
+                .iter()
+                .map(|h| format!("{}={h}", org.name))
+        })
+        .collect();
+    out.insert("JC_PORTAL_PORTAL_HOSTS".to_owned(), portal_hosts.join(","));
+    out.insert(
+        "JC_PORTAL_HARVEST_HOSTS".to_owned(),
+        cfg.dataroom.harvest_hosts().join(","),
+    );
+    out.insert(
+        "JC_PORTAL_PORTALS_MAX".to_owned(),
+        cfg.dataroom
+            .portals_max(cfg.organizations.len())
+            .to_string(),
+    );
     if cfg.roles.contains(&Module::Dataroom) {
         let reach = crate::siblings::reach(listener);
         let catalogues: Vec<serde_json::Value> = cfg

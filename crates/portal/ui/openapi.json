@@ -33791,7 +33791,8 @@
                       "ContextBroker",
                       "Environment",
                       "Dashboard",
-                      "Layer"
+                      "Layer",
+                      "Portal"
                     ],
                     "examples": [
                       "Pipeline"

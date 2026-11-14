@@ -61,6 +61,9 @@ const ORDER: &[(u8, &str)] = &[
     (WAVE_FEDERATION, "ContextSourceRegistration"),
     (WAVE_FEDERATION, "DataOffer"),
     (WAVE_FEDERATION, "DataAgreement"),
+    // A Portal is a catalogue of its Organization: it lists the Endpoints published above
+    // and harvests other catalogues (DCAT-AP federation), so it follows both (ODP-08, ODP-10).
+    (WAVE_FEDERATION, "Portal"),
     // A DataSource converges before the pipelines that render their input from it.
     (WAVE_RUNTIME, "DataSource"),
     (WAVE_RUNTIME, "Pipeline"),
