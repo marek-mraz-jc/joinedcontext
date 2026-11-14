@@ -10,9 +10,9 @@
 //! read under the view first, so a hidden one answers like an absent one
 //! and nothing is written.
 
-use crate::edm::Set;
+use crate::edm::{Member, Set, Written};
 use crate::paths::nav_of;
-use crate::read::{encode, resource, set_of, Reads};
+use crate::read::{body_resource, encode, set_of, Reads};
 use crate::write::{
     attribute, body_error, id_of, no_content, referenced, send, typed, visible, NGSI_LD_NULL,
 };
@@ -40,11 +40,7 @@ pub(crate) async fn property(
     let read_only = BodyError::ReadOnly {
         property: name.to_owned(),
     };
-    let member = set
-        .members
-        .get(name)
-        .filter(|m| m.shape.writable())
-        .ok_or(body_error(&read_only, version))?;
+    let member = changeable(set, name).ok_or(body_error(&read_only, version))?;
     let id = id_of(set, key, version)?;
     let target = attrs_of(&id, Some(&member.iri), set);
     if method == Method::DELETE {
@@ -60,7 +56,7 @@ pub(crate) async fn property(
         .await?;
         return Ok(no_content(version));
     }
-    let resource = resource(reads, set_name, version)?;
+    let resource = body_resource(reads, set_name, version)?;
     let value = read_property_body(&resource, name, body, &BodyLimits::strict())
         .map_err(|e| body_error(&e, version))?;
     let named = [(name.to_owned(), value)];
@@ -95,6 +91,10 @@ pub(crate) async fn reference(
 ) -> Result<Response, ODataErrorResponse> {
     let version = ctx.version;
     let set = set_of(reads, set_name, version)?;
+    let read_only = BodyError::ReadOnly {
+        property: nav.to_owned(),
+    };
+    changeable(set, nav).ok_or(body_error(&read_only, version))?;
     let id = id_of(set, key, version)?;
     let (iri, _, _) = nav_of(set, nav);
     let list = set.members.get(nav).is_some_and(|m| m.list);
@@ -103,7 +103,7 @@ pub(crate) async fn reference(
         send(reads, caller, op, Method::DELETE, target, None, version).await?;
         return Ok(no_content(version));
     }
-    let resource = resource(reads, set_name, version)?;
+    let resource = body_resource(reads, set_name, version)?;
     let targets = read_reference_body(ctx, &resource, nav, body, &BodyLimits::strict())
         .map_err(|e| body_error(&e, version))?;
     let mut urns = Vec::with_capacity(targets.len());
@@ -121,6 +121,16 @@ pub(crate) async fn reference(
     let target = attrs_of(&id, None, set);
     send(reads, caller, op, Method::POST, target, Some(doc), version).await?;
     Ok(no_content(version))
+}
+
+/// The member `name` of `set` a write below the Entity may change, by any method: one a
+/// write may name that is neither the key (E2a) nor computed nor immutable.
+fn changeable<'s>(set: &'s Set, name: &str) -> Option<&'s Member> {
+    set.members.get(name).filter(|m| {
+        m.shape.writable()
+            && m.written == Written::Always
+            && set.identifier.as_ref().is_none_or(|key| key.member != name)
+    })
 }
 
 /// The full list of a collection navigation: a `ListRelationship` keeps

@@ -1062,7 +1062,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         });
     } else if let Some(late) = built.gateway {
         if cfg.portal_siblings
-            && let Err(e) = crate::provision::forge(&siblings, &setup).await
+            && let Err(e) = crate::provision::forge(&siblings, &setup, cfg).await
         {
             let _ = running.stop().await;
             return Err(e);
@@ -1109,8 +1109,11 @@ async fn portal_attempt(
     // for every lifetime once they sit inside a spawned task (rust-lang/rust#102211).
     type Step<'a, T> = std::pin::Pin<Box<dyn Future<Output = Result<T, StartError>> + Send + 'a>>;
     if cfg.portal_siblings {
-        let forge: Step<'_, ()> =
-            Box::pin(crate::provision::forge(&shared.siblings, &shared.setup));
+        let forge: Step<'_, ()> = Box::pin(crate::provision::forge(
+            &shared.siblings,
+            &shared.setup,
+            &cfg,
+        ));
         forge.await?;
     }
     let ctx = shared.ctx();

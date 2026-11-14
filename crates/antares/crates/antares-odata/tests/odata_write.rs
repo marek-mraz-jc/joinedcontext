@@ -916,6 +916,44 @@ async fn odata_bind_keeps_the_engines_refusal_of_its_target() {
     );
 }
 
+/// A client that names no OData version (4.0) writes an `Edm.Untyped` member as a 4.01
+/// client does: the 4.0 document serves it as a dynamic property of an open type.
+#[tokio::test(flavor = "multi_thread")]
+async fn odata_a_4_0_client_writes_an_untyped_member() {
+    let (_b, app) = city().await.expect("broker");
+    let created =
+        json!({"id": "urn:ngsi-ld:Car:42", "scope": ["/a"], "address": {"street": "Hlavná 3"}})
+            .to_string();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(format!("{ROOT}/Car"))
+        .header("NGSILD-Tenant", "city")
+        .header("Content-Type", "application/json")
+        .header("Content-Length", created.len())
+        .body(Body::from(created))
+        .unwrap_or_default();
+    let Ok(resp) = app.clone().oneshot(req).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let (_, car) = stored(&app, "urn:ngsi-ld:Car:42").await;
+    assert_eq!(
+        car[format!("{CITY}address")]["value"]["street"],
+        "Hlavná 3",
+        "{car}"
+    );
+    // a member no model names stays unknown
+    let unknown = json!({"id": "urn:ngsi-ld:Car:43", "scope": ["/a"], "nope": 1}).to_string();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(format!("{ROOT}/Car"))
+        .header("NGSILD-Tenant", "city")
+        .header("Content-Type", "application/json")
+        .header("Content-Length", unknown.len())
+        .body(Body::from(unknown))
+        .unwrap_or_default();
+    let Ok(resp) = app.clone().oneshot(req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
 /// T-5206 finding 4: an inlined object slot (`Edm.Untyped`, kind Property) is written as a
 /// Property with its `value` by POST and PATCH, never turned into a JsonProperty.
 #[tokio::test(flavor = "multi_thread")]

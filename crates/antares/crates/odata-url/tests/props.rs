@@ -315,7 +315,8 @@ mod strategy {
             prop::option::of(expand()),
             prop::option::of(orderby),
             prop::option::of(any::<u64>()),
-            prop::option::of(any::<u64>()),
+            // `$skip` within its bound (ODA-04); past it is refused, tests/limits.rs
+            prop::option::of(0..=10_000u64),
             prop::option::of(any::<bool>()),
             prop::option::of(format()),
         );

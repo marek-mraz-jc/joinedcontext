@@ -1522,6 +1522,15 @@ async fn a_long_call_answers_a_task_the_caller_polls_and_a_short_one_answers_inl
         "{inline}"
     );
     assert!(inline["result"].get("task").is_none());
+
+    // A tool that answers inline is no task: asked for one, the call is refused and runs nothing.
+    let short_task = send(json!({
+        "jsonrpc": "2.0", "id": 7, "method": "tools/call",
+        "params": { "name": "jc_catalog_search", "project": "ovzdusie", "task": {},
+                    "arguments": { "q": "air" } }
+    }))
+    .await;
+    assert_eq!(short_task["error"]["code"], json!(-32602), "{short_task}");
 }
 
 /// AG-63, T-0836: a Red call runs nothing on the agent's word. The first call answers the
@@ -1812,6 +1821,73 @@ async fn a_proposal_without_a_verdict_names_verdict_required_on_the_mcp_door() {
     assert!(
         uris.contains(&"jc://ovzdusie/drafts/DataSource/unchecked"),
         "the gate let the proposal through: {uris:?}"
+    );
+}
+
+/// AG-63: a question about a draft is bound to the draft's content; a draft rewritten after the
+/// person accepted answers no open question.
+#[tokio::test]
+async fn a_draft_rewritten_after_the_person_accepted_answers_no_open_question() {
+    let (app, issuer, signer, kid) = setup_app_and_keys().await;
+    let token = sign_token(
+        &signer,
+        &kid,
+        &issuer,
+        PORTAL_AUDIENCE,
+        "steward.user",
+        &["portal-approver"],
+        &["platform-admins"],
+    );
+    let put = |url: &'static str| {
+        rpc(
+            app.clone(),
+            &token,
+            json!({
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": { "name": "jc_draft_put", "arguments": {
+                    "project": "ovzdusie", "kind": "DataSource", "name": "swapped",
+                    "manifest": { "apiVersion": "joinedcontext.com/v1", "kind": "DataSource",
+                        "metadata": { "name": "swapped", "namespace": "ovzdusie" },
+                        "spec": { "protocol": "http", "url": url } }
+                } }
+            }),
+        )
+    };
+    let propose = |elicitation: Option<&str>| {
+        let mut params = json!({ "name": "jc_resource_propose", "arguments": {
+            "project": "ovzdusie", "draft": { "kind": "DataSource", "name": "swapped" }
+        } });
+        if let Some(id) = elicitation {
+            params["elicitation"] = json!({ "elicitationId": id, "action": "accept" });
+        }
+        rpc(
+            app.clone(),
+            &token,
+            json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": params }),
+        )
+    };
+    let first = put("https://example.org/air").await;
+    assert_eq!(first["result"]["isError"], false, "{first}");
+    let asked = propose(None).await;
+    let elicitation_id = asked["result"]["_meta"]["joinedcontext.com/elicitation"]["elicitation"]
+        ["elicitationId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a question: {asked}"))
+        .to_owned();
+    let page = format!("/api/v1/projects/ovzdusie/mcp-elicitations/{elicitation_id}/decision");
+    let person = session_cookie("steward.user");
+    let (status, decided) = decide(&app, &page, ("cookie", &person), Some("accept")).await;
+    assert_eq!(status, StatusCode::OK, "{decided}");
+
+    let second = put("https://example.org/other").await;
+    assert_eq!(second["result"]["isError"], false, "{second}");
+    let replayed = propose(Some(&elicitation_id)).await;
+    assert!(
+        replayed["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("belongs to no open question"),
+        "{replayed}"
     );
 }
 

@@ -779,7 +779,8 @@ async fn answer_call(
     let lane = crate::ops::lane_for(op, &caller.identity, state, project, &input);
     if lane != crate::change::Lane::Green || op.annotations.destructive_hint {
         let owner = caller.identity.subject.as_str();
-        let digest = elicitation::digest_of(&input);
+        let digest =
+            elicitation::digest_of(&bound_to(state, &caller.identity, project, &input).await);
         match params.get("elicitation").or(answered_in_arguments.as_ref()) {
             None => {
                 // An input the operation refuses is refused before the person is asked to confirm it.
@@ -893,6 +894,25 @@ async fn answer_call(
         .as_ref()
         .is_some_and(|access| access.connector().is_some());
     if !through_connector && params.get("task").is_some() {
+        // Only a tool listed with `taskSupport: optional` runs as a task, and a running task
+        // keeps its parallel slot after this request answered (AG-60).
+        if !tasks::is_long(op.name) {
+            return error(
+                id,
+                -32602,
+                "this tool answers inline: send it without `task`",
+            );
+        }
+        let Ok(in_flight) = state.mcp_enter(&[(&caller.identity.subject, MAX_PARALLEL_CALLS)])
+        else {
+            return result(
+                id,
+                failure_result(&format!(
+                    "{MAX_PARALLEL_CALLS} of your calls are running now, the most at once; start \
+                     this task when one of them has answered (AG-60)"
+                )),
+            );
+        };
         let owner = caller.identity.subject.clone();
         let state_for_task = state.clone();
         let project = project.to_owned();
@@ -901,6 +921,7 @@ async fn answer_call(
         let task = state.mcp_tasks.start(
             &owner,
             crate::change::PROPOSED_VIA.scope(via.clone(), async move {
+                let _in_flight = in_flight;
                 let op = crate::ops::find(op_name).expect("the operation was found above");
                 let mut outcome =
                     match crate::ops::call(op, &caller, &state_for_task, &project, input).await {
@@ -1218,6 +1239,26 @@ fn confirm_url(state: &AppState, project: &str, id: &str) -> String {
 }
 
 /// The Portal path of what a call would change, which the decision page links to.
+/// What a question is bound to: the arguments, and the content of a draft they name, so a draft
+/// rewritten after the person decided answers no open question (AG-63).
+async fn bound_to(
+    state: &AppState,
+    identity: &crate::auth::session::Identity,
+    project: &str,
+    input: &Value,
+) -> Value {
+    let Some(Ok(draft)) = input
+        .get("draft")
+        .map(|draft| serde_json::from_value::<crate::ops::drafts::DraftRef>(draft.clone()))
+    else {
+        return input.clone();
+    };
+    match crate::ops::drafts::readable_draft(state, identity, project, &draft).await {
+        Ok(draft) => json!({ "arguments": input, "draft": draft.manifest }),
+        Err(_) => input.clone(),
+    }
+}
+
 fn resource_path(project: &str, kind: &str, input: &Value) -> String {
     let named = input
         .get("kind")
