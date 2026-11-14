@@ -8,6 +8,7 @@ import { FileList } from "./ComparePage";
 import { Alert, Button, EmptyState, PageHeader, PageLoading, RadioGroup } from "../../components/ui";
 import { ResourcePageFailed } from "../../components/ui/PageState";
 import { useAuth } from "../../auth/AuthProvider";
+import { isWorkspaceOwner } from "./owner";
 
 
 function valueText(value: unknown): string {
@@ -56,10 +57,7 @@ export function BringBackPage({
       ),
   });
 
-  const isOwner =
-    identity &&
-    (identity.email === workspace.data?.owner ||
-      identity.username === workspace.data?.owner);
+  const isOwner = isWorkspaceOwner(identity, workspace.data?.owner);
 
   const update = useMutation({
     mutationFn: async () => {

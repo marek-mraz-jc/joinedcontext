@@ -26,6 +26,9 @@ export function isTyping(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   return (
     target.isContentEditable ||
+    // Monaco types through an EditContext `div role=textbox` in Chromium, which is neither of the others.
+    target.getAttribute("role") === "textbox" ||
+    target.closest(".monaco-editor") !== null ||
     target instanceof HTMLInputElement ||
     target instanceof HTMLTextAreaElement ||
     target instanceof HTMLSelectElement
@@ -47,7 +50,7 @@ function formToSave(doc: Document): HTMLFormElement | null {
 
 function marked(doc: Document, id: "save" | "new" | "test"): HTMLElement | null {
   const scope = doc.querySelector("[role=dialog]") ?? doc;
-  return scope.querySelector<HTMLElement>(`[data-shortcut="${id}"]:not(:disabled)`);
+  return scope.querySelector<HTMLElement>(`[data-shortcut="${id}"]:not(:disabled):not([aria-disabled="true"])`);
 }
 
 /** The rows of the page's lists, each the link `RecordLink` renders for it. */

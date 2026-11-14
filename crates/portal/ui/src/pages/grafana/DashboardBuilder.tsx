@@ -1148,7 +1148,7 @@ export function DashboardBuilderPage({ project, uid }: { project: string; uid?: 
         <BoardSettings board={work.board} start={start.data} onChange={work.setBoard} />
         <VariablesEditor project={project} board={work.board} onChange={work.setBoard} />
       </fieldset>
-      <div className={`grid items-start gap-card [&>*]:min-w-0 ${work.board.panels.length ? "xl:grid-cols-[minmax(0,1fr)_28rem]" : ""}`}>
+      <div className={`grid items-start gap-section [&>*]:min-w-0 ${work.board.panels.length ? "xl:grid-cols-[minmax(0,1fr)_28rem]" : ""}`}>
         <Card as="section" aria-labelledby="builder-panels">
           <CardHeader
             as="h2"

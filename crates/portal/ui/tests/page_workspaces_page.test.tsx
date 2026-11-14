@@ -140,6 +140,19 @@ describe("the workspaces page", () => {
     expect(calls().filter((call) => call.startsWith("DELETE"))).toEqual([]);
   });
 
+  it("a_discard_the_server_refuses_keeps_the_dialog_open_and_says_why", async () => {
+    await renderRoute({
+      path: PATH,
+      answer: (path, request) =>
+        request.method === "DELETE" ? problem(409, "The copy has a change waiting for approval.") : answering([workspace()])(path),
+    });
+    await userEvent.click(await screen.findByRole("button", { name: en.workspaces.discard }));
+    const dialog = await screen.findByRole("alertdialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: en.workspaces.discard }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("The copy has a change waiting for approval.");
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+  });
+
   it("survives_0_1_and_500_copies", async () => {
     for (const count of [0, 1, 500]) {
       const items = Array.from({ length: count }, (_, index) =>

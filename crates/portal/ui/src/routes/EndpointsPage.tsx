@@ -1400,6 +1400,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
   const addButton = (
     <PermissionGuard project={project} kind="Endpoint" verb="propose">
       <Button
+        data-shortcut="new"
         variant="primary"
         icon={<Icon name="plus" className="size-4" />}
         onClick={() => (formRoute ? formRoute.openNew() : startNew(spaceNames[0] ?? "", catalogPrefill))}

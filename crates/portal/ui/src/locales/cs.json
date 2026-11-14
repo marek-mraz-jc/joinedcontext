@@ -11112,6 +11112,7 @@
     "notAllowed": "Uložené konverzace čte jen správce asistenta, který schvaluje jeho nasazení. Požádejte ho o toto právo.",
     "empty": "Žádné uložené konverzace",
     "emptyHint": "Konverzace se tu objeví, až se návštěvníci začnou ptát, a zůstanou tak dlouho, jak určuje transcriptRetention nasazení.",
+    "previous": "Předchozí strana",
     "next": "Další strana",
     "detail": "Konverzace",
     "erase": "Smazat konverzaci",
