@@ -1175,12 +1175,12 @@ mod tests {
             harvest_hosts: Vec::new(),
         }];
         writer.upsert(default).await.unwrap();
-        for (name, slug, tag, published) in [
-            ("air", "airslug", "mobility", true),
-            ("bikes", "bikeslug", "mobility", false),
-            ("noise", "noiseslug", "noise", true),
+        for (name, tag, published) in [
+            ("air", "mobility", true),
+            ("bikes", "mobility", false),
+            ("noise", "noise", true),
         ] {
-            let package = endpoint_package(name, slug, tag, published);
+            let package = endpoint_package(name, &format!("{name}slug"), tag, published);
             let made = action(
                 &router,
                 &host,
