@@ -29,6 +29,10 @@ use std::sync::{Arc, LazyLock};
 /// Every served file: (path under the mount, bytes). `.mjs` modules are stored gzipped.
 const FILES: &[(&str, &[u8])] = &[
     (
+        "csv.js",
+        include_bytes!("../../../../vendor/viz/site/csv.js"),
+    ),
+    (
         "embed.js",
         include_bytes!("../../../../vendor/viz/site/embed.js"),
     ),

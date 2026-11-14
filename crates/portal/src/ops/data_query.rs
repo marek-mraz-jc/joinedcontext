@@ -76,7 +76,7 @@ pub struct Temporal {
     pub aggr_period_duration: Option<String>,
 }
 
-fn input_schema() -> Value {
+pub(super) fn input_schema() -> Value {
     use bounds::*;
     json!({
         "type": "object",

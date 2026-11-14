@@ -720,6 +720,7 @@ export interface Functions {
   jc_pipeline_metrics: { name: string };
   jc_pipeline_validate: { draft?: unknown; pipeline?: unknown; records: unknown; space?: string; type?: string };
   jc_project_export: { format?: string; kinds?: string; names?: string; revision?: string };
+  jc_render: { data: unknown; description?: string; encoding?: unknown; height?: number; mark: string; title?: string; width?: number };
   jc_repository_commit: { repository: string; sha: string };
   jc_repository_commits: { cursor?: number; limit?: number; path?: string; ref?: string; repository: string };
   jc_repository_file: { path: string; ref?: string; repository: string };
@@ -769,6 +770,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   jc_pipeline_metrics: ["Project"],
   jc_pipeline_validate: ["Project"],
   jc_project_export: ["Project"],
+  jc_render: ["Project"],
   jc_repository_commit: ["Project"],
   jc_repository_commits: ["Project"],
   jc_repository_file: ["Project"],

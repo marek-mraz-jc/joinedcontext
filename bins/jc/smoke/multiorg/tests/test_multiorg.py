@@ -166,17 +166,19 @@ def test_a_bundle_with_a_pair_of_organizations_without_a_row_fails_setup(tmp_pat
 
 def test_skips_are_counted_per_row_template_and_may_not_outgrow_the_bound(tmp_path):
     bound = json.loads(suite.BOUND.read_text())
-    assert bound["path"]["people.{o}-admin.own"] == 2  # the three-Organization bundle's two
-    exp = {o: {"projects": {p: EMPTY}} for o, p in (("hel", "helsinki"), ("zilina", "zilina"), ("bbsk", "bbsk"))}
-    rows = [row(f"people.{o}-admin.own", o, "skip") for o in ("zilina", "bbsk")]
+    # the six-Organization bundle's five: every Organization but the installation's (the gap)
+    assert bound["path"]["people.{o}-admin.own"] == 5
+    orgs = ("hel", "zilina", "barcelona", "bbsk", "ctl-a", "ctl-b")
+    exp = {o: {"projects": {f"{o}-p": EMPTY}} for o in orgs}
+    rows = [row(f"people.{o}-admin.own", o, "skip") for o in orgs[1:]]
     s, n = counted(tmp_path, [dict(r) for r in rows], exp, full=False)
-    assert n["skipsByTemplate"] == {"people.{o}-admin.own": 2} and not [r for r in s.rows if r["result"] == "fail"]
+    assert n["skipsByTemplate"] == {"people.{o}-admin.own": 5} and not [r for r in s.rows if r["result"] == "fail"]
     rows.append(row("people.hel-admin.own", "hel", "skip"))
     # a template the bound does not name may skip nothing
     rows.append(row("operators.hel-admin.propose.groups", "hel", "skip"))
     s, n = counted(tmp_path, rows, exp, full=False)
     over = sorted((r["id"], r["actual"]) for r in s.rows if r["result"] == "fail" and r["id"].startswith("skips."))
-    assert over == [("skips.operators.{o}-admin.propose.groups", "1"), ("skips.people.{o}-admin.own", "3")]
+    assert over == [("skips.operators.{o}-admin.propose.groups", "1"), ("skips.people.{o}-admin.own", "6")]
 
 
 def test_a_template_names_organizations_and_projects_alike_and_the_longest_name_first(tmp_path):
@@ -208,6 +210,120 @@ def test_global_reads_give_each_pair_a_row_also_for_an_empty_organization(tmp_pa
     pair = {r["id"]: r["result"] for r in s.rows if ".none-of." in r["id"]}
     assert pair == {"global.hel-admin.none-of.ctl-a": "pass", "global.hel-member.none-of.ctl-a": "pass",
                     "global.ctl-a-admin.none-of.hel": "fail", "global.ctl-a-member.none-of.hel": "pass"}
+
+
+def test_the_history_control_is_a_public_endpoint_of_a_space_granting_public_history_of_a_held_type(tmp_path):
+    # T-6854: the own temporal read needs a Policy granting the Endpoint's role retrieveTemporal.
+    exp = tmp_path / "history"
+    space = exp / "gitea/files/joinedcontext/helsinki/spaces/air"
+    (space / "endpoints").mkdir(parents=True)
+    (space / "policies").mkdir()
+    (exp / "gitea/files/joinedcontext/configuration/organizations").mkdir(parents=True)
+    (space / "space.yaml").write_text("kind: ContextSpace\n")
+    for name, slug, aud in (("air-open", "aaaa2222", "public"), ("air-closed", "bbbb3333", "organization")):
+        (space / f"endpoints/{name}.yaml").write_text(
+            f"kind: Endpoint\nmetadata:\n  name: {name}\nspec:\n  slug: {slug}\n  audience: {aud}\n")
+    (space / "policies/air-history.yaml").write_text(
+        "kind: Policy\nspec:\n  assignee: { kind: role, id: public }\n"
+        "  information:\n  - entities:\n    - type: AirQualityObserved\n  operations:\n  - retrieveTemporal\n")
+    (space / "policies/air-now.yaml").write_text(
+        "kind: Policy\nspec:\n  assignee:\n    id: endpoint:helsinki/air-closed\n    kind: role\n"
+        "  information:\n  - entities:\n    - type: AirQualityObserved\n  operations:\n  - retrieveOps\n")
+    (exp / "manifest.json").write_text(json.dumps({"multiorg": {"organizations": {"hel": {"projects": ["helsinki"]}}}}))
+    s = suite.Suite(args(tmp_path))
+    s.export = exp
+    e = s.expectations()["hel"]["projects"]["helsinki"]
+    assert e["history"] == {} and e["spaces"] == ["air"]  # a grant without history in the bundle is no control
+    (exp / "antares").mkdir()
+    (exp / "antares/temporal.jsonl").write_text(json.dumps({"tenant": "air", "id": "urn:ngsi-ld:AirQualityObserved:1",
+                                                            "type": "AirQualityObserved"}) + "\n")
+    s.exp = {}
+    e = s.expectations()["hel"]["projects"]["helsinki"]
+    assert e["history"] == {"air": (["AirQualityObserved"], [("air-open", "aaaa2222")])}
+
+
+def test_a_forged_host_that_switches_the_organization_or_the_issuer_fails_its_row(tmp_path):
+    # T-6856 (I-7, I-8): hel's admin with zilina's host must answer what it answers plainly.
+    class Session:
+        def __init__(self, switched):
+            self.switched = switched
+
+        def json(self, method, path, headers=None, form=None, body=None):
+            forged = bool(headers)
+            if path == "/api/v1/projects":
+                return 200, {"items": [{"name": "zilina" if forged and self.switched else "helsinki"}]}
+            if path.endswith("openid-configuration"):
+                return 200, {"issuer": "http://forged.example/id" if forged and self.switched else "http://base/id"}
+            return 404, None
+
+    for switched in (False, True):
+        (tmp_path / str(switched)).mkdir()
+        s = suite.Suite(args(tmp_path / str(switched)))
+        s.exp = {"hel": {"projects": {"helsinki": EMPTY}}, "zilina": {"projects": {"zilina": EMPTY}}}
+        h = Session(switched)
+        s.session = lambda key, on=None, h=h: h
+        s.client = lambda org=None, kind="portal", h=h: h
+        s.check_forged()
+        got = {r["id"]: r["result"] for r in s.rows}
+        want = "fail" if switched else "pass"
+        assert got["forged.hel-admin.control"] == "pass"
+        assert got["forged.hel-admin.xfh.zilina"] == got["forged.hel-admin.host.zilina"] == want
+        assert got["forged.issuer.host"] == got["forged.issuer.xfh"] == want
+        assert next(r for r in s.rows if r["id"] == "forged.hel-admin.host.zilina")["target"] == "hel->zilina"
+
+
+def test_a_refusal_that_names_the_owners_objects_fails_its_isolation_row(tmp_path):
+    # T-6855: a 404 that answers with another Organization's Endpoint name or person names it.
+    class Session:
+        def __init__(self, key):
+            self.key = key
+
+        def call(self, method, path):
+            if self.key.startswith("hel-"):
+                return 200, {}, b"{}"
+            return 404, {}, b'{"detail": "no project; did you mean mo-hel-admin?"}' if path.endswith("/drafts") else b"{}"
+
+    s = suite.Suite(args(tmp_path))
+    s.exp = {"hel": {"projects": {"helsinki": EMPTY | {"Endpoint": ["hel-bikes"]}}}, "zilina": {"projects": {}}}
+    s.session = lambda key, on=None: Session(key)
+    s.check_project_reads()
+    got = {r["id"]: r["result"] for r in s.rows}
+    assert got["isolation.zilina-admin.helsinki/drafts"] == "fail" and got["isolation.zilina-admin.helsinki/spaces"] == "pass"
+    assert got["export.hel-admin.helsinki"] == "fail"  # the own export did not hold the named Endpoint
+    assert "isolation.zilina-admin.helsinki/export?names=hel-bikes" in got
+
+
+def test_an_operators_installation_organization_gets_operator_rows_and_no_refusal_rows(tmp_path):
+    # T-6850: ops holds the installation role and no data; its admin is an operator.
+    class Session:
+        def __init__(self, key):
+            self.key = key
+
+        def json(self, method, path, body=None, headers=None):
+            operator = self.key in ("platform", "ops-admin")
+            if method == "POST":
+                return (200, {}) if operator else (403, {})
+            if path.startswith("/api/v1/organization/people"):
+                return 200, {"items": [{"email": f"mo-{o}-{k}@x.invalid"} for o in ("ops", "hel") for k in ("admin", "member")]}
+            return (200, {}) if operator else (403, {})
+
+        def call(self, method, path, headers=None):
+            return 200, {}, b"{}"
+
+    s = suite.Suite(args(tmp_path))
+    s.exp, s.installation = {"ops": {"projects": {}}, "hel": {"projects": {"helsinki": EMPTY}}}, "ops"
+    s.people = {"platform": {"id": "u-p"}}
+    s.session = lambda key, on=None: Session(key)
+    s.check_operators()
+    got = {r["id"]: r["result"] for r in s.rows}
+    assert got["operators.installation.ops-admin.propose.groups"] == got["operators.platform.propose.groups"] == "pass"
+    assert got["operators.hel-admin.propose.groups"] == "pass" and "operators.ops-admin.propose.groups" not in got
+    assert got["operators.installation.ops-admin.people"] == "pass"
+    assert "operators.ops-admin.org-namespace.rolebindings" not in got and got["operators.hel-admin.org-namespace.rolebindings"] == "pass"
+    # an installation that holds data has no operators' Organization: no operator row
+    s.rows, s.installation = [], "hel"
+    s.check_operators()
+    assert s.rows == []
 
 
 _cspec = importlib.util.spec_from_file_location("smoke_multiorg_compose", HERE.parent / "compose.py")
@@ -243,14 +359,19 @@ def export(root, orgs, projects, installation=None):
     return root
 
 
-def test_compose_makes_organizations_of_named_projects_and_empty_controls_with_no_installation(tmp_path):
+def test_compose_makes_organizations_of_named_projects_and_empty_controls_with_an_operators_installation(tmp_path):
     src = export(tmp_path / "src", ["hel"], {"helsinki": "hel", "bbsk": "hel", "praha": "hel"}, installation="hel")
-    orgs = compose.parse_orgs(["hel=" + str(src) + ":helsinki", f"bbsk={src}:bbsk", "ctl-a="])
-    summary = compose.compose(src, orgs, tmp_path / "out", 0, per_space=2, installation=False)
-    assert {o: v["projects"] for o, v in summary["organizations"].items()} == {"hel": ["helsinki"], "bbsk": ["bbsk"], "ctl-a": []}
+    orgs = compose.parse_orgs(["ops=", "hel=" + str(src) + ":helsinki", f"bbsk={src}:bbsk", "ctl-a="])
+    summary = compose.compose(src, orgs, tmp_path / "out", 0, per_space=2, installation="ops")
+    assert {o: v["projects"] for o, v in summary["organizations"].items()} == \
+        {"ops": [], "hel": ["helsinki"], "bbsk": ["bbsk"], "ctl-a": []}
     cfg = tmp_path / "out/gitea/files/joinedcontext/configuration"
-    assert sorted(f.stem for f in (cfg / "organizations").glob("*.yaml")) == ["bbsk", "ctl-a", "hel"]
-    assert not any("installation" in f.read_text() for f in (cfg / "organizations").glob("*.yaml"))
+    assert sorted(f.stem for f in (cfg / "organizations").glob("*.yaml")) == ["bbsk", "ctl-a", "hel", "ops"]
+    # PF-121: exactly one Organization holds the role, the operators' one with no data
+    held = [f.stem for f in (cfg / "organizations").glob("*.yaml") if "installation: true" in f.read_text()]
+    assert held == ["ops"] and "\nspec:\n  installation: true\n" in (cfg / "organizations/ops.yaml").read_text()
+    with pytest.raises(SystemExit, match="--installation ops: no --org ops"):
+        compose.compose(src, compose.parse_orgs([f"hel={src}"]), tmp_path / "o", 0, installation="ops")
     bbsk = (cfg / "organizations/bbsk.yaml").read_text()
     assert "name: bbsk" in bbsk and "domain: bbsk.sk" in bbsk and "title: { en: City bbsk }" in bbsk
     assert "domain: ctl-a.example" in (cfg / "organizations/ctl-a.yaml").read_text()
@@ -375,13 +496,17 @@ def test_a_personas_file_others_can_read_is_refused(tmp_path):
 
 
 def test_a_live_run_may_skip_the_dashboards_of_organizations_whose_export_holds_none(tmp_path):
-    exp = {"hel": {"projects": {"helsinki": EMPTY | {"Dashboard": ["d"]}}}, "zilina": {"projects": {"zilina": EMPTY}}}
-    rows = [row("dashboards.zilina", "zilina", "skip")]
+    # the gate's bound: its three Organizations with no project; one more is over it
+    bound = json.loads(suite.BOUND.read_text())["path"]["dashboards.{o}"]
+    empty = [f"ctl-{i}" for i in range(bound)]
+    exp = {"hel": {"projects": {"helsinki": EMPTY | {"Dashboard": ["d"]}}}, "zilina": {"projects": {"zilina": EMPTY}}} | \
+        {o: {"projects": {}} for o in empty}
+    rows = [row(f"dashboards.{o}", o, "skip") for o in [*empty, "zilina"]]
     s, _ = counted(tmp_path, [dict(r) for r in rows], exp, full=False)
-    assert [r["id"] for r in s.rows if r["result"] == "fail"] == ["skips.dashboards.{o}"]  # the gate adds one
+    assert [r["id"] for r in s.rows if r["result"] == "fail"] == ["skips.dashboards.{o}"]
     d = tmp_path / "live"
     d.mkdir()
     s = suite.Suite(args(d))
     s.exp, s.rows, s.live = exp, [dict(r) for r in rows], True
-    s.count(False)
+    s.count(False)  # a live run adds no Dashboard: each Organization whose export holds none may skip
     assert not [r for r in s.rows if r["result"] == "fail"]
