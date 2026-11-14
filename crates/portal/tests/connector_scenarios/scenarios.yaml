@@ -2241,3 +2241,11 @@
       refused: true
       contains: ['contactEmail personal']
       absent: ['jana@example.org', 'image/png']
+    # The whole Dashboard (T-6867): the door saw only its name, so the render runs the door's checks
+    # again on each widget; the personal one is its own refused tile and the other still draws.
+    - proves: deny
+      via: connector
+      call: jc_render
+      args: { data: { dashboard: counters-board } }
+      contains: ['"mimeType":"image/png"', '"dashboard":"counters-board"', '"status":403', 'contactEmail personal', '"rows":']
+      absent: ['jana@example.org']
