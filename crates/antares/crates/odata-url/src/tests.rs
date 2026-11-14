@@ -1047,6 +1047,10 @@ fn the_canonical_form_parses_back() {
         ok("Buildings?$filter=name eq 'a%20b%23'").to_string(),
         "Buildings?$filter=name%20eq%20'a%20b%23'"
     );
+    // A nextLink is split on `&` by plain query parsers: none stands inside a literal.
+    let link = ok("Buildings?$filter=name eq 'A%26B'&$top=1").to_string();
+    assert_eq!(link, "Buildings?$filter=name%20eq%20'A%26B'&$top=1");
+    assert_eq!(link.split('&').count(), 2, "{link}");
 }
 
 #[test]
