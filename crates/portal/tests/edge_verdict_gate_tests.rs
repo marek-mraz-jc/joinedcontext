@@ -617,12 +617,13 @@ fn nobody_is_offered_an_operation_the_gate_would_refuse_them() {
             );
         }
         // A caller with no binding is offered only what the routes check for themselves, and
-        // the data read, which the Endpoint's own Policy decides (ADR-N-067).
+        // the Endpoint reads (the data read and its chart), which the Endpoint's own Policy decides
+        // (ADR-N-067).
         if who == "nobody" {
             for name in &names {
                 assert!(
                     waved_through.contains(name)
-                        || *name == joinedcontext_portal::ops::data_query::NAME,
+                        || joinedcontext_portal::ops::ENDPOINT_READS.contains(name),
                     "a stranger was offered {name}, which the registry itself gates",
                 );
             }
