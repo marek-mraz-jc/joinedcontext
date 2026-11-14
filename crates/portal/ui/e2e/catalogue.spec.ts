@@ -156,6 +156,30 @@ test.describe("the public catalogue", () => {
     });
   }
 
+  // T-6869: an open dataset read without a session names no one's access: no "Your access" button
+  // or panel on any cell, none in a row's detail, and the phone's page never scrolls sideways.
+  for (const width of [1440, 400]) {
+    test(`a signed-out dataset's grid and row detail say nothing about access (${width} px)`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await stubApi(page, []);
+      await page.goto("/catalogue/bbsk-kpi?lang=en");
+      const data = page.locator('section[aria-labelledby="catalogue-data"]');
+      const cell = data.getByRole("grid").getByText("Unemployment");
+      await expect(cell).toBeVisible();
+      await expect(page.getByRole("button", { name: /Your access/ })).toHaveCount(0);
+      await expect(page.getByText(/Your access|not allowed/)).toHaveCount(0);
+      const sideways = () => page.evaluate(() => document.scrollingElement!.scrollWidth - window.innerWidth);
+      expect(await sideways()).toBeLessThanOrEqual(0);
+      await data.scrollIntoViewIfNeeded();
+      await shot(page, `t6869-public-grid-${width}`);
+      await cell.click();
+      await expect(page.getByRole("dialog", { name: "Details: Unemployment" })).toBeVisible();
+      await expect(page.getByText(/Your access|not allowed|no access/)).toHaveCount(0);
+      expect(await sideways()).toBeLessThanOrEqual(0);
+      await shot(page, `t6869-public-row-detail-${width}`);
+    });
+  }
+
   // T-6541: Praha Tree's count outlasted the gateway's 10 s cut (503) while its rows came in 0.2 s;
   // the grid and the map show their rows and say no total instead of failing the page.
   for (const width of [1440, 400]) {

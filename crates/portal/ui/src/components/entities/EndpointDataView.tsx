@@ -433,6 +433,8 @@ export interface EndpointDataViewProps {
    * (default), or the catalogue's `https://api.{domain}`, read without a cookie or token (T-5082).
    */
   origin?: string;
+  /** Nobody is signed in (T-6869): the grid names no one's access. Reading another `origin` implies it. */
+  anonymous?: boolean;
   /** A host's own actions, shown first in the view's action group in the same look (the catalogue's Data API and Embed). */
   actions?: ReactNode;
   /** The phone's Tools menu under its button: the host is a frame as tall as its rows (T-6748). */
@@ -793,6 +795,7 @@ export function EndpointDataView({
   onOpenRow,
   csv = false,
   origin,
+  anonymous,
   actions,
   anchorMenu,
 }: EndpointDataViewProps): JSX.Element {
@@ -986,6 +989,8 @@ export function EndpointDataView({
           onGridState={onGridState}
           onQuery={onQuery}
           onRefused={setRefused}
+          // Read without a session: an open dataset names no one's access (T-6869).
+          publicView={anonymous || Boolean(origin)}
           hidden={hiddenNow}
           onHide={onHide}
           thenBy={tools.thenBy}
