@@ -682,7 +682,7 @@ impl Driver {
                         done
                     }
                     "check" => {
-                        let problems = code::problems(files);
+                        let problems = self.check_files(files);
                         if !problems.is_empty() {
                             (with_named_lines(&problems.join("\n"), files), false)
                         } else {
@@ -875,7 +875,7 @@ impl Driver {
             message.trim()
         };
         if dirty {
-            let problems = code::problems(files);
+            let problems = self.check_files(files);
             if problems.is_empty() {
                 shown = Some(
                     self.publish_code(files, message, Some(committed), false)
@@ -1835,6 +1835,33 @@ mod tests {
             "{said}"
         );
         assert!(said.contains("tell me what to change"), "{said}");
+    }
+
+    /// AP-164: an edit's check sends back a call of a service the App's layers have off, as the
+    /// first version's pass does, so no edit previews code the platform refuses at run time.
+    #[tokio::test]
+    async fn an_edits_check_names_a_call_of_a_service_that_is_off() {
+        let server = wiremock::MockServer::start().await;
+        model_checking_forever(&server).await;
+        let driver = edit_driver(&server).await;
+        let mut files = BTreeMap::from([(
+            "src/App.tsx".to_owned(),
+            "export default function App() { void jc().email.send({ to: \"me\" }); return <div />; }"
+                .to_owned(),
+        )]);
+        let mut conversation = Vec::new();
+        driver
+            .edit_turn(
+                &mut files,
+                &mut BTreeMap::new(),
+                &mut conversation,
+                "mail me",
+                None,
+            )
+            .await
+            .expect("the turn ends");
+        let said = &conversation[0].1;
+        assert!(said.contains("email service"), "{said}");
     }
 
     /// T-3077: a call that would take the run past its token budget is never made; the person
