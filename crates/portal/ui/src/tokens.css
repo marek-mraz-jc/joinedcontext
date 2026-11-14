@@ -174,11 +174,18 @@
   /* Focus ring. */
   --portal-ring-width: 2px;
   --portal-ring-offset: 2px;
+
+  /* The joinedcontext symbol (BrandMark's JcSymbol, drawn when no logo is configured): the
+     lockup's fixed colours, not the installation's brand (T-6891). */
+  --portal-symbol-ring-a: #2f3f9e;
+  --portal-symbol-ring-b: #0e8fa3;
 }
 
 
 @media (prefers-color-scheme: dark) {
   :root {
+    /* #2f3f9e on the dark surface is under 3:1; the lightened indigo keeps the ring a graphic. */
+    --portal-symbol-ring-a: #8c9cf5;
     /* Dark: the branded text colour becomes the paper, tinted a little towards the brand,
        and the branded background the ink. The scales above re-derive themselves. */
     --portal-paper: color-mix(in oklab, var(--portal-color-surface-fg) 92%, var(--portal-color-primary));
