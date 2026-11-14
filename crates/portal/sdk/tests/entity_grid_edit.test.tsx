@@ -111,6 +111,49 @@ describe("edit mode", () => {
     await waitFor(() => expect(screen.queryByText(`1 ${DEFAULT_LABELS.pending}`)).toBeNull());
   });
 
+  it("keeps a LanguageProperty's other texts, a VocabProperty's type and the instance it edits", async () => {
+    const station = {
+      id: "urn:ngsi-ld:BikeHireDockingStation:hel:helsinki:009",
+      type: "BikeHireDockingStation",
+      name: { type: "LanguageProperty", languageMap: { en: "Market", sk: "Trh" } },
+      category: { type: "VocabProperty", vocab: "dock" },
+      availableBikeNumber: [{ type: "Property", value: 7, datasetId: "urn:ngsi-ld:Dataset:sensor-a" }],
+      layout: { type: "JsonProperty", json: { slots: [1, 2] } },
+    };
+    const written: { id: string; attrs: Record<string, unknown> }[] = [];
+    const inner = fixtureSource([station]);
+    const source = { ...inner, patch: async (id: string, attrs: Record<string, unknown>) => void written.push({ id, attrs }) };
+    const config = parseGridConfig({
+      source: { kind: "fixture", name: "test" },
+      type: "BikeHireDockingStation",
+      columns: [
+        { attr: "name", label: "Name" },
+        { attr: "category", label: "Category" },
+        { attr: "availableBikeNumber", label: "Bikes" },
+        { attr: "layout", label: "Layout" },
+      ],
+      mode: "edit",
+      editableAttrs: ["name", "category", "availableBikeNumber", "layout"],
+      pageSize: 10,
+    }).config!;
+    render(<EntityGrid config={config} source={source} />);
+    await waitFor(() => expect(screen.getByDisplayValue("Market")).toBeInTheDocument());
+    // A structure is shown, never typed over as `[object Object]`.
+    expect(screen.queryByDisplayValue("[object Object]")).toBeNull();
+    fireEvent.change(screen.getByDisplayValue("Market"), { target: { value: "Square" } });
+    fireEvent.change(screen.getByDisplayValue("dock"), { target: { value: "stand" } });
+    fireEvent.change(screen.getByDisplayValue("7"), { target: { value: "8" } });
+    fireEvent.click(screen.getByRole("button", { name: DEFAULT_LABELS.review }));
+    const panel = screen.getByRole("region", { name: DEFAULT_LABELS.review });
+    fireEvent.click(within(panel).getByRole("button", { name: DEFAULT_LABELS.apply }));
+    await waitFor(() => expect(written).toHaveLength(1));
+    expect(written[0].attrs).toEqual({
+      name: { type: "LanguageProperty", languageMap: { en: "Square", sk: "Trh" } },
+      category: { type: "VocabProperty", vocab: "stand" },
+      availableBikeNumber: { type: "Property", value: 8, datasetId: "urn:ngsi-ld:Dataset:sensor-a" },
+    });
+  });
+
   it("marks a value its model refuses at the cell and holds Apply until it is corrected", async () => {
     const { written, source } = writable();
     render(

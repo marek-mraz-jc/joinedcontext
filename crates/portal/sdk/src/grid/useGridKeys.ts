@@ -1,6 +1,7 @@
 import React, { useCallback, useRef } from "react";
 import { coerce, storedText } from "./GridCellEditors";
 import { parseClipboard, planPaste } from "./paste";
+import { structured } from "./model";
 import type { ValueRule } from "./rules";
 import type { AttributeAccess } from "./source";
 import type { EntityGrid as EntityGridApi, UseEntityGridOptions, VisibleColumn } from "./useEntityGrid";
@@ -177,8 +178,8 @@ export function useGridKeys(
         }
         const cell = row.cells[column.attr];
         const one = Array.isArray(cell) ? cell[0] : cell;
-        // A geometry is drawn on the map and a relationship picked: neither is typed over.
-        if (one?.kind === "geo" || one?.kind === "relationship" || relations?.[column.attr]) {
+        // A geometry is drawn on the map and a relationship picked: neither is typed over, nor a structure.
+        if (one?.kind === "geo" || one?.kind === "relationship" || structured(one) || relations?.[column.attr]) {
           return { id: row.id, attr: column.attr, current: null };
         }
         const pending = state.edits[row.id]?.[column.attr];

@@ -1101,7 +1101,15 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
           // The cell's own kind decides how it is written: a geometry as a GeoProperty, so the
           // attribute keeps the type the model gave it (UI-72).
           // A model's relationship end is one even where the entity has no target on it yet.
-          kind: one?.kind === "relationship" || relations?.[attribute] ? "relationship" : one?.kind === "geo" ? "geo" : "property",
+          kind:
+            one?.kind === "relationship" || relations?.[attribute]
+              ? "relationship"
+              : one?.kind === "geo" || one?.kind === "language" || one?.kind === "vocab"
+                ? one.kind
+                : "property",
+          datasetId: one?.datasetId,
+          languageMap: one?.languageMap,
+          language: one?.language,
         };
       });
       return { id, changes };
