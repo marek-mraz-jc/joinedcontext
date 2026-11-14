@@ -914,6 +914,58 @@ mod tests {
         assert!(replay(&serving, settings, vec![org, public]).is_empty());
     }
 
+    /// T-6829: a project revision holding one write Policy no Endpoint binds refuses that Policy
+    /// alone; its Endpoints keep serving (jc-dev 2026-11-14: bbsk's 17 Endpoints and 162
+    /// Pipelines went Error for one leftover Policy of a space with no Endpoint).
+    #[test]
+    fn one_orphan_write_policy_refuses_only_itself_on_replay() {
+        let bounds = OrganizationBounds::default();
+        let policy = |space: &str, assignee: Value, operations: Value| {
+            json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": space },
+                    "assigner": "did:web:hel.fi", "assignee": assignee, "operations": operations })
+        };
+        let refused = replay(
+            &Mirror::new(),
+            (&bounds, None, Some("hel.fi")),
+            vec![
+                envelope("ContextSpace", "air", "ovzdusie", json!({})),
+                envelope("ContextSpace", "leftover", "ovzdusie", json!({})),
+                envelope(
+                    "Policy",
+                    "air-read",
+                    "ovzdusie",
+                    policy(
+                        "air",
+                        json!({ "kind": "role", "id": "public" }),
+                        json!(["retrieveOps"]),
+                    ),
+                ),
+                envelope(
+                    "Policy",
+                    "leftover-write",
+                    "ovzdusie",
+                    policy(
+                        "leftover",
+                        json!({ "kind": "serviceAccount", "id": "sensors" }),
+                        json!(["upsertBatch"]),
+                    ),
+                ),
+                envelope(
+                    "Endpoint",
+                    "air",
+                    "ovzdusie",
+                    json!({ "contextSpaceRef": "air", "slug": "zt4qm7ge2xdv6ksb3ncf5arw2y",
+                            "audience": "public", "enabledRepresentations": ["ngsi-ld"] }),
+                ),
+            ],
+        );
+        let names: Vec<_> = refused
+            .iter()
+            .map(|(e, _)| e.metadata.name.as_str())
+            .collect();
+        assert_eq!(names, ["leftover-write"], "{refused:?}");
+    }
+
     /// P-15: `validate --as-portal` finds in a checkout what the Portal would refuse at load,
     /// beside what `jcctl validate` finds, naming the file.
     #[test]

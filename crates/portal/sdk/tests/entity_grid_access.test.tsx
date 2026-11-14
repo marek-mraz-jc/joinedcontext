@@ -169,6 +169,35 @@ describe("the permission-aware grid", () => {
     expect(screen.queryByRole("img", { name: new RegExp(`^${DEFAULT_LABELS.locked}`) })).toBeNull();
   });
 
+  it("a_public_grid_renders_no_access_words (T-6869)", async () => {
+    const { source } = recorded();
+    const open = ACCESS.map((each) => ({ ...each, write: false, reason: "grant" as const }));
+    render(<EntityGrid config={{ ...configOf(), mode: "view" }} source={{ ...source, access: async () => open }} publicView />);
+    await screen.findByText("Kamppi");
+    // The columns still follow the server: what nobody may read is not drawn, and not counted either.
+    expect(document.body.textContent).not.toContain("secret note");
+    expect(document.querySelector(".jc-grid-info")).toBeNull();
+    fireEvent.keyDown(screen.getByRole("grid"), { key: "i" });
+    expect(screen.queryByRole("dialog", { name: /Your access/ })).toBeNull();
+    // A row's detail, opened from a cell, says when a value changed and nothing about who may read it.
+    fireEvent.click(screen.getByText("Kamppi"));
+    await screen.findByRole("dialog", { name: /Kamppi/ });
+    for (const words of [/your access/i, /\ballowed\b/i, /not allowed/i, /no access/i]) {
+      expect(document.body.textContent).not.toMatch(words);
+    }
+    expect(screen.queryAllByRole("button", { name: /Your access/ })).toEqual([]);
+  });
+
+  it("a_signed_in_grid_keeps_the_access_panel (T-6869)", async () => {
+    const { source } = recorded();
+    render(<EntityGrid config={{ ...configOf(), mode: "view" }} source={source} access={ACCESS} />);
+    await screen.findByText("Kamppi");
+    fireEvent.click(screen.getByRole("button", { name: `${DEFAULT_INSPECTOR_LABELS.title}: Name` }));
+    const panel = await screen.findByRole("dialog", { name: /Your access/ });
+    expect(within(panel).getByText(new RegExp(DEFAULT_INSPECTOR_LABELS.grant))).toBeTruthy();
+    expect(screen.getByText("1 more field is not shown: your access does not include it.")).toBeTruthy();
+  });
+
   it("reviews a GeoProperty and a Relationship change by name, label and formatted value", async () => {
     const { source } = recorded();
     render(

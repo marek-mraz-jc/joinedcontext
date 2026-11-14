@@ -2079,7 +2079,8 @@
       via: connector
       call: jc_render
       args: { mark: rule, encoding: { x: { field: id, type: nominal } }, data: { query: { endpoint: '{project}-reports', type: PotholeReport } } }
-      contains: ['"mimeType":"image/png"', '"untrusted":true', 'urn:ngsi-ld:PotholeReport:1']
+      # The chart view's points (T-6866) ride in _meta: numbers only, no entity, no personal value.
+      contains: ['"mimeType":"image/png"', '"untrusted":true', 'urn:ngsi-ld:PotholeReport:1', '"joinedcontext.com/chartPoints":[{"x":0}']
       absent: ['jana@example.org']
     - proves: deny
       via: connector

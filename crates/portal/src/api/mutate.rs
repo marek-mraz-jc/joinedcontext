@@ -2619,14 +2619,26 @@ pub(crate) fn check_unmade_writes(
         mine.status = None;
         proposed.push(mine);
     }
-    // The domain the gateway binds a reference on: the project's own first (T-6759), as
-    // `check_policy_refs` asks for, else the installation's (T-6829).
-    let domain = crate::permissions::project_domains(mirror, project)
-        .first()
-        .cloned()
+    // The domain the gateway binds a reference on: that of the Organization the Project's
+    // `spec.organizationRef` names (ADR-N-068), else the project's own (T-6759), else the
+    // installation's (T-6829).
+    let domain = crate::permissions::organization_domain(mirror, project)
+        .or_else(|| {
+            crate::permissions::project_domains(mirror, project)
+                .first()
+                .cloned()
+        })
         .unwrap_or_else(|| ground.org_domain());
     let domain = Some(domain.as_str()).filter(|d| !d.is_empty());
-    let before = unmade_writes(&current, domain);
+    // What this object adds is judged, never a peer's gap: the same set with this object as it
+    // stands now (or absent), so one refused peer of a replayed revision refuses only itself.
+    let others: Vec<ResourceEnvelope> = proposed
+        .iter()
+        .filter(|e| !same(e))
+        .chain(current.iter().filter(|e| same(e)))
+        .cloned()
+        .collect();
+    let before = unmade_writes(&others, domain);
     let field = |unmade: &jcctl::commands::validate::UnmadeWrite| {
         if unmade.id.kind == envelope.kind && unmade.id.name == envelope.metadata.name {
             return unmade.field.clone();
@@ -4943,6 +4955,54 @@ mod tests {
             &writer,
         ));
         assert!(errors[0].contains(&format!("write {OWN}")), "{errors:?}");
+    }
+
+    /// T-6829: a project of Organization hel whose own `spec.domain` sorts before hel.fi (bbsk,
+    /// banskabystrica on jc-dev) binds its write Policy on hel.fi, the domain of the Organization
+    /// its `spec.organizationRef` names; the first of its domains in order judged it on its own.
+    #[test]
+    fn a_write_policy_binds_on_the_organization_refs_domain_before_the_projects_own() {
+        let state = AppState::new(Config::for_tests(), None);
+        state.mirror.upsert(organization(
+            "hel",
+            json!({ "domain": "hel.fi", "installation": true }),
+        ));
+        state.mirror.upsert(organization(
+            "banskabystrica",
+            json!({ "domain": "banskabystrica.sk" }),
+        ));
+        let mut project = manifest(
+            "Project",
+            "ovzdusie",
+            json!({ "organizationRef": "hel", "domain": "banskabystrica.sk" }),
+        );
+        project.metadata.namespace = Some(crate::api::blueprints::ORG_NAMESPACE.into());
+        state.mirror.upsert(project);
+        state
+            .mirror
+            .upsert(manifest("ContextSpace", "ovzdusie", json!({})));
+        state.mirror.upsert(manifest(
+            "Endpoint",
+            "air-write",
+            public_air(Some(
+                "urn:ngsi-ld:Policy:hel.fi:ovzdusie-ovzdusie:air-write",
+            )),
+        ));
+        let writer = manifest(
+            "Policy",
+            "air-write",
+            space_policy(
+                "{ \"kind\": \"serviceAccount\", \"id\": \"sensors\" }",
+                &["upsertBatch"],
+            ),
+        );
+        check_unmade_writes(
+            &crate::judge::Ground::of(&state),
+            "ovzdusie",
+            Operation::Create,
+            &writer,
+        )
+        .expect("the Endpoint binds the Policy on its Organization's domain");
     }
 
     /// An `Organization` in the namespace that holds them.

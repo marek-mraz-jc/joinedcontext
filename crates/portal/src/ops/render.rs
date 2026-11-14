@@ -39,6 +39,8 @@ const MAX_SIDE: u32 = 4000;
 const MIN_SIDE: u32 = 50;
 const MAX_PNG: usize = 2 * 1024 * 1024;
 const MAX_POINTS: usize = 20_000;
+/// The most points the chart view (MCP Apps, T-6866) is handed; the PNG draws all of them.
+const MAX_VIEW_POINTS: usize = 2_000;
 const MAX_TITLE: usize = 120;
 pub(crate) const TIME_CAP: Duration = Duration::from_secs(10);
 /// Renders at once in this process: each holds at most a 4000 x 4000 RGB canvas (48 MiB).
@@ -564,14 +566,97 @@ fn cell(value: Option<&Value>, scale: Scale, cats: &mut Categories) -> Option<Ce
     }
 }
 
-/// The chart of `spec` over `rows`, and the category values it numbered.
-fn chart_of(spec: &Spec, rows: &[Map<String, Value>]) -> (Chart, Value, bool) {
+fn scale_name(scale: Scale) -> &'static str {
+    match scale {
+        Scale::Quantitative => "quantitative",
+        Scale::Temporal => "temporal",
+        Scale::Nominal => "nominal",
+    }
+}
+
+/// A chart and what the answer says of it.
+struct Charted {
+    chart: Chart,
+    /// The category values it numbered, by channel.
+    categories: Value,
+    /// More rows than [`MAX_POINTS`] were read.
+    truncated: bool,
+    /// The drawn points as the chart view reads them: only the channels' numbers and the time.
+    view_points: Vec<Value>,
+}
+
+/// One drawn point for the chart view: its channel values as numbers (a category as its index,
+/// a time as epoch milliseconds) and the row's `observedAt` as RFC 3339, nothing else of the row.
+fn view_point(point: &Point, row: &Map<String, Value>) -> Value {
+    let mut out = Map::new();
+    let cells = [("x", point.x), ("y", point.y)];
+    for (name, cell) in cells {
+        if let Some(cell) = cell {
+            let v = match cell {
+                Cell::Number(v) => json!(v),
+                Cell::Category(i) => json!(i),
+            };
+            out.insert(name.into(), v);
+        }
+    }
+    if let Some(color) = point.color {
+        out.insert("color".into(), json!(color));
+    }
+    for (name, v) in [("size", point.size), ("theta", point.theta)] {
+        if let Some(v) = v.filter(|v| v.is_finite()) {
+            out.insert(name.into(), json!(v));
+        }
+    }
+    let observed = row
+        .get("observedAt")
+        .and_then(Value::as_str)
+        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok());
+    if let Some(t) = observed {
+        let utc = t.with_timezone(&chrono::Utc);
+        out.insert(
+            "observedAt".into(),
+            json!(utc.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+        );
+    }
+    Value::Object(out)
+}
+
+/// What the chart view draws, beside the PNG: the checked spec, at most [`MAX_VIEW_POINTS`]
+/// points and whether some were left out. The answer carries it in `_meta`, never in
+/// `structuredContent` or the text (T-6866).
+fn view_of(spec: &Spec, charted: &Charted) -> Value {
+    let channel = |f: &Option<Field>| {
+        f.as_ref()
+            .map(|f| json!({ "scale": scale_name(f.scale), "title": f.title }))
+    };
+    let points: Vec<&Value> = charted.view_points.iter().take(MAX_VIEW_POINTS).collect();
+    json!({
+        "joinedcontext.com/chartSpec": {
+            "mark": mark_name(spec.mark),
+            "title": spec.title,
+            "width": spec.width,
+            "height": spec.height,
+            "x": channel(&spec.x),
+            "y": channel(&spec.y),
+            "color": channel(&spec.color),
+            "size": channel(&spec.size),
+            "theta": channel(&spec.theta),
+        },
+        "joinedcontext.com/chartPoints": points,
+        "joinedcontext.com/pointsTruncated":
+            charted.truncated || charted.view_points.len() > MAX_VIEW_POINTS,
+    })
+}
+
+/// The chart of `spec` over `rows`, the category values it numbered and its view points.
+fn chart_of(spec: &Spec, rows: &[Map<String, Value>]) -> Charted {
     let (mut xc, mut yc, mut cc) = (
         Categories::default(),
         Categories::default(),
         Categories::default(),
     );
     let mut points = Vec::new();
+    let mut view_points = Vec::new();
     for row in rows.iter().take(MAX_POINTS) {
         let get = |f: &Option<Field>| f.as_ref().and_then(|f| row.get(&f.field));
         let x = spec
@@ -591,13 +676,18 @@ fn chart_of(spec: &Spec, rows: &[Map<String, Value>]) -> (Chart, Value, bool) {
             _ => x.is_some() && y.is_some(),
         };
         if drawn {
-            points.push(Point {
+            let point = Point {
                 x,
                 y,
                 color,
                 size,
                 theta,
-            });
+            };
+            // One more than the view takes, so the view knows some were left out.
+            if view_points.len() <= MAX_VIEW_POINTS {
+                view_points.push(view_point(&point, row));
+            }
+            points.push(point);
         }
     }
     let channel = |f: &Option<Field>, cats: &Categories| {
@@ -629,7 +719,12 @@ fn chart_of(spec: &Spec, rows: &[Map<String, Value>]) -> (Chart, Value, bool) {
         colors: cc.0.len(),
         points,
     };
-    (chart, Value::Object(categories), rows.len() > MAX_POINTS)
+    Charted {
+        chart,
+        categories: Value::Object(categories),
+        truncated: rows.len() > MAX_POINTS,
+        view_points,
+    }
 }
 
 fn limited() -> OpError {
@@ -639,28 +734,44 @@ fn limited() -> OpError {
     )))
 }
 
+/// A drawn chart: the PNG, the categories it numbered, whether rows were left out and what
+/// the chart view draws ([`view_of`]).
+#[derive(Debug)]
+struct Drawn {
+    png: Vec<u8>,
+    categories: Value,
+    truncated: bool,
+    view: Value,
+}
+
 /// Draws `spec` over `rows` within `deadline` in a blocking thread, the rows' charting
 /// included; the PNG or `limited`.
 async fn draw(
     spec: &Spec,
     rows: Vec<Map<String, Value>>,
     deadline: Instant,
-) -> Result<(Vec<u8>, Value, bool), OpError> {
+) -> Result<Drawn, OpError> {
     let spec = spec.clone();
-    let (png, categories, truncated) = tokio::task::spawn_blocking(move || {
-        let (chart, categories, truncated) = chart_of(&spec, &rows);
-        chart::render(&chart, deadline).map(|png| (png, categories, truncated))
+    let drawn = tokio::task::spawn_blocking(move || {
+        let charted = chart_of(&spec, &rows);
+        let view = view_of(&spec, &charted);
+        chart::render(&charted.chart, deadline).map(|png| Drawn {
+            png,
+            categories: charted.categories,
+            truncated: charted.truncated,
+            view,
+        })
     })
     .await
     .map_err(|err| ApiError::Internal(format!("the render stopped: {err}")))?
     .map_err(|chart::Limited| limited())?;
-    if png.len() > MAX_PNG {
+    if drawn.png.len() > MAX_PNG {
         return Err(invalid(
             "/width",
             "the picture is larger than 2 MiB; ask for a smaller width and height",
         ));
     }
-    Ok((png, categories, truncated))
+    Ok(drawn)
 }
 
 async fn run(
@@ -720,22 +831,24 @@ async fn run(
             .acquire()
             .await
             .map_err(|_| ApiError::Unavailable("the renderer is shutting down".into()))?;
-        let (png, categories, truncated) = draw(&spec, rows, deadline).await?;
+        let drawn = draw(&spec, rows, deadline).await?;
         // A widget's source past its row cap is a cut picture too.
-        let truncated = truncated || source["cut"] == true;
+        let truncated = drawn.truncated || source["cut"] == true;
         let mut answer = json!({
             "image": {
                 "mimeType": "image/png",
-                "data": base64::engine::general_purpose::STANDARD.encode(&png),
+                "data": base64::engine::general_purpose::STANDARD.encode(&drawn.png),
             },
             "width": spec.width,
             "height": spec.height,
             "mark": mark_name(spec.mark),
             "rows": count,
             "truncated": truncated,
-            "categories": categories,
+            "categories": drawn.categories,
             "sources": [source],
             "untrusted": true,
+            // The chart view's spec and points (T-6866): `call_result` moves them into `_meta`.
+            "view": drawn.view,
         });
         if !withheld.is_empty() {
             answer["withheld"] = Value::Object(withheld);
@@ -1475,7 +1588,9 @@ mod tests {
             let Ok(Request::Query(parsed, _)) = spec_of(&input) else {
                 panic!("a spec")
             };
-            let (png, categories, _) = draw(&parsed, rows.clone(), Instant::now() + TIME_CAP)
+            let Drawn {
+                png, categories, ..
+            } = draw(&parsed, rows.clone(), Instant::now() + TIME_CAP)
                 .await
                 .expect("drawn");
             assert_eq!(
@@ -1503,6 +1618,109 @@ mod tests {
                 got.len()
             );
         }
+    }
+
+    /// The chart view's points (T-6866) hold only the channels' numbers and the time: a row's
+    /// other members, a personal one among them, never reach the view.
+    #[test]
+    fn chart_points_hold_only_channel_fields() {
+        let Ok(Request::Query(parsed, _)) = spec_of(&spec("point")) else {
+            panic!("a spec")
+        };
+        let values: Vec<Value> = (0..2_100)
+            .map(|i| {
+                json!([
+                    i,
+                    format!("2026-11-13T{:02}:{:02}:00+01:00", i / 60 % 24, i % 60)
+                ])
+            })
+            .collect();
+        let rows = rows_of(&[json!({
+            "id": "urn:ngsi-ld:AirQualityObserved:kallio", "type": "AirQualityObserved",
+            "contactEmail": { "type": "Property", "value": "jana@example.org" },
+            "pm10": { "type": "Property", "values": values }
+        })]);
+        let charted = chart_of(&parsed, &rows);
+        let view = view_of(&parsed, &charted);
+        let points = view["joinedcontext.com/chartPoints"]
+            .as_array()
+            .expect("points");
+        assert_eq!(points.len(), MAX_VIEW_POINTS);
+        assert_eq!(view["joinedcontext.com/pointsTruncated"], json!(true));
+        let allowed = ["x", "y", "color", "size", "theta", "observedAt"];
+        for point in points {
+            let object = point.as_object().expect("an object");
+            assert!(
+                object.keys().all(|k| allowed.contains(&k.as_str())),
+                "{point}"
+            );
+            for (key, value) in object {
+                assert!(value.is_number() || key == "observedAt", "{point}");
+            }
+        }
+        // Times are re-written in UTC by the server, never the row's own string.
+        assert_eq!(points[0]["observedAt"], "2026-11-12T23:00:00.000Z");
+        assert_eq!(points[0]["color"], 0);
+        let text = view.to_string();
+        assert!(
+            !text.contains("jana@example.org") && !text.contains("kallio"),
+            "{text}"
+        );
+        assert_eq!(view["joinedcontext.com/chartSpec"]["mark"], "point");
+        assert_eq!(view["joinedcontext.com/chartSpec"]["title"], "PM10");
+        assert_eq!(
+            view["joinedcontext.com/chartSpec"]["x"],
+            json!({ "scale": "temporal", "title": "observedAt" })
+        );
+        let few = chart_of(&parsed, &rows[..3]);
+        assert_eq!(
+            view_of(&parsed, &few)["joinedcontext.com/pointsTruncated"],
+            json!(false)
+        );
+    }
+
+    /// The answer hands the view its points in `_meta`; the model reads neither them nor the
+    /// spec again in `structuredContent` or the text (T-6866).
+    #[tokio::test]
+    async fn chart_points_are_in_meta_not_in_text_or_structured_content() {
+        let Ok(Request::Query(parsed, _)) = spec_of(&spec("line")) else {
+            panic!("a spec")
+        };
+        let rows = rows_of(&[json!({
+            "id": "urn:x", "type": "T",
+            "pm10": { "values": [[7, "2026-11-13T00:00:00Z"], [9, "2026-11-13T01:00:00Z"]] }
+        })]);
+        let drawn = draw(&parsed, rows, Instant::now() + TIME_CAP)
+            .await
+            .expect("drawn");
+        let output = json!({
+            "image": { "mimeType": "image/png", "data": "iVBORw0KGgo=" },
+            "rows": 2, "categories": drawn.categories, "untrusted": true,
+            "sources": [{ "endpoint": "air" }],
+            "view": drawn.view,
+        });
+        let answer = crate::mcp::call_result(&output);
+        let meta = &answer["_meta"];
+        assert_eq!(
+            meta["joinedcontext.com/chartPoints"],
+            json!([
+                { "x": 1_794_528_000_000.0, "y": 7.0, "color": 0, "theta": 7.0, "observedAt": "2026-11-13T00:00:00.000Z" },
+                { "x": 1_794_531_600_000.0, "y": 9.0, "color": 0, "theta": 9.0, "observedAt": "2026-11-13T01:00:00.000Z" }
+            ])
+        );
+        assert_eq!(meta["joinedcontext.com/pointsTruncated"], json!(false));
+        assert_eq!(meta["joinedcontext.com/chartSpec"]["mark"], "line");
+        assert_eq!(meta[crate::mcp::UNTRUSTED_META], json!(true), "{meta}");
+        assert!(answer["structuredContent"].get("view").is_none());
+        assert!(answer["structuredContent"].get("image").is_none());
+        let text = answer["content"][1]["text"].as_str().expect("text");
+        assert!(
+            !text.contains("chartPoints")
+                && !text.contains("chartSpec")
+                && !text.contains("1794528000000"),
+            "{text}"
+        );
+        assert_eq!(answer["content"][0]["type"], "image");
     }
 
     #[tokio::test]
