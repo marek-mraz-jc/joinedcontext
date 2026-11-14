@@ -2384,6 +2384,21 @@ pub(crate) fn publishes_publicly(envelope: &ResourceEnvelope) -> bool {
             .is_some_and(|ckan| !ckan.is_null())
 }
 
+/// Whether a head commit naming `email` is one the Portal wrote for `identity`: their e-mail, or
+/// the `{username}@{project}.local` it writes without one, whichever project it was proposed
+/// from, so an organization Change approved from another project's route is still its author's
+/// (T-6706). A head naming no e-mail cannot be told apart from theirs and counts as theirs.
+fn written_by(identity: &crate::auth::session::Identity, project: &str, email: Option<&str>) -> bool {
+    let Some(email) = email.map(str::trim).filter(|email| !email.is_empty()) else {
+        return true;
+    };
+    let (_, own) = crate::api::mutate::author_credentials(identity, project);
+    email.eq_ignore_ascii_case(own.trim())
+        || email.rsplit_once('@').is_some_and(|(user, domain)| {
+            user.eq_ignore_ascii_case(&identity.username) && domain.ends_with(".local")
+        })
+}
+
 /// Who may do what: a change to one of these kinds is approved by a second person, never by
 /// the one who proposed it, administrator or not (PF-58, T-4833).
 pub(crate) fn is_access_kind(kind: &str) -> bool {
@@ -2597,13 +2612,7 @@ pub async fn approve_change_for(
     // `{username}@{project}.local` without one) against the head commit's: never a display name,
     // which a namesake shares and a rename changes. A head that names no e-mail cannot be told
     // apart from the approver's own, so it counts as theirs (T-6706).
-    let (_, approver_email) = crate::api::mutate::author_credentials(identity, project);
-    let is_author = match author.email.as_deref().map(str::trim) {
-        Some(pr_email) if !pr_email.is_empty() => {
-            pr_email.eq_ignore_ascii_case(approver_email.trim())
-        }
-        _ => true,
-    };
+    let is_author = written_by(identity, project, author.email.as_deref());
 
     // Nobody grants themselves access alone: a Policy naming its author, a Group they are in or
     // a role they hold, or a Group change adding them, waits for someone else, an administrator
@@ -4688,6 +4697,22 @@ mod tests {
             username: email.into(),
             ..test_user(email, vec![]).0.identity
         }
+    }
+
+    /// PF-58: a person without an e-mail proposes as `{username}@{project}.local`; approving the
+    /// organization Change from another project's route still finds them its author.
+    #[test]
+    fn an_email_less_author_is_found_from_any_project_route() {
+        let mut ana = person("ana");
+        ana.email = None;
+        assert!(written_by(&ana, "doprava", Some("ana@ovzdusie.local")));
+        assert!(written_by(&ana, "doprava", Some("ANA@org.local")));
+        assert!(written_by(&ana, "doprava", None));
+        assert!(!written_by(&ana, "doprava", Some("bo@doprava.local")));
+        assert!(!written_by(&ana, "doprava", Some("ana@hel.fi")));
+        let bo = person("bo@hel.fi");
+        assert!(written_by(&bo, "doprava", Some("bo@hel.fi")));
+        assert!(!written_by(&bo, "doprava", Some("ana@hel.fi")));
     }
 
     /// JC2-01 (T-6359): the secret form's change was Unlisted, so no list showed it and every
