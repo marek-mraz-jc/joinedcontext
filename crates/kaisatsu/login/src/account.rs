@@ -632,7 +632,7 @@ async fn credential_groups(state: &OidcState, c: &Caller) -> Result<Value> {
             }})
         })
         .collect();
-    let otp_required = second_factor_required(&state, &c.realm, &c.user).await?;
+    let otp_required = second_factor_required(state, &c.realm, &c.user).await?;
     Ok(json!([
         {
             "type": "password",
@@ -687,7 +687,7 @@ async fn remove_credential(
                     .iter()
                     .filter(|cr| cr.credential_type == "otp" && cr.id != id)
                     .count();
-                if others == 0 && second_factor_required(&state, &c.realm, &c.user).await? {
+                if others == 0 && second_factor_required(state, &c.realm, &c.user).await? {
                     return Ok(field_error(
                         StatusCode::CONFLICT,
                         "otp",
