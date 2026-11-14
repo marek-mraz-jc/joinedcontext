@@ -185,7 +185,8 @@ function patternLiteral(raw: string, prefix = ""): string {
  * (`temperature.observedAt>=…`).
  */
 export function term(attr: string, meta?: MetaKey | null): string {
-  return meta ? `${attr}.${meta}` : attr;
+  // The grid's `unit` column is the attribute's `unitCode` member.
+  return meta ? `${attr}.${meta === "unit" ? "unitCode" : meta}` : attr;
 }
 
 /** One filter as a `q` term; `undefined` when it asks for nothing. */

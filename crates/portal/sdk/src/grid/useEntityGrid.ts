@@ -1056,7 +1056,11 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
             column.key === "entity:type"
               ? config.type.split(",").map((each) => ({ value: each.trim() }))
               : column.attr !== null && column.meta === null ? enums?.[column.attr] : undefined,
-          ...(column.attr !== null && column.meta === null && holdsTime(shapeRows, column.attr) ? { datetime: true } : {}),
+          // A timestamp member always holds a date and a time, so its filter asks for both.
+          ...((column.meta !== null && META_KIND[column.meta] === "date") ||
+          (column.attr !== null && column.meta === null && holdsTime(shapeRows, column.attr))
+            ? { datetime: true }
+            : {}),
           unit: column.attr !== null && column.meta === null ? unitSymbol(unitOfColumn(shapeRows, column.attr)) : undefined,
           ...(column.attr !== null && column.meta === null && holdsLanguage(shapeRows, column.attr) ? { language: true } : {}),
         }))
