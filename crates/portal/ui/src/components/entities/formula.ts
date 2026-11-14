@@ -470,7 +470,7 @@ export function formulaManifests(target: PipelineTarget, checked: Checked): Reso
     metadata: meta(suffix, title),
     spec: {
       contextSpaceRef: { kind: "ContextSpace", name: target.space },
-      assigner: "did:web:{orgDomain}",
+      assigner: `did:web:${target.orgDomain}`,
       assignee: { kind: "serviceAccount", id: "pipelines" },
       operations,
       information: [{ entities: [{ type: target.type }], propertyNames }],
