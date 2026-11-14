@@ -296,7 +296,9 @@ impl Verifier {
                 continue;
             };
             let algorithm = match &jwk.algorithm {
-                AlgorithmParameters::RSA(_) | AlgorithmParameters::EllipticCurve(_) => {
+                AlgorithmParameters::RSA(_)
+                | AlgorithmParameters::EllipticCurve(_)
+                | AlgorithmParameters::OctetKeyPair(_) => {
                     match jwk
                         .common
                         .key_algorithm
@@ -490,6 +492,18 @@ mod tests {
 
     fn slug() -> Vec<String> {
         vec!["slug".to_owned()]
+    }
+
+    /// An Ed25519 key the realm publishes is a key the verifier holds, beside RSA and EC ones.
+    #[test]
+    fn an_ed25519_key_of_the_realm_is_held() {
+        let jwks: jsonwebtoken::jwk::JwkSet = serde_json::from_value(serde_json::json!({"keys": [{
+            "kty": "OKP", "crv": "Ed25519", "kid": "ed", "alg": "EdDSA", "use": "sig",
+            "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+        }]}))
+        .expect("a JWKS");
+        let verifier = super::Verifier::new("realm");
+        assert_eq!(verifier.replace_keys(&jwks), 1);
     }
 
     /// ADR-N-067 2.2 (T-6408): Keycloak writes full paths; one leading `/` goes, no more, so a

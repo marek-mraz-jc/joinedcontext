@@ -376,8 +376,10 @@ impl JcRouter {
             .headers()
             .get_all("x-forwarded-for")
             .iter()
-            .filter_map(|v| v.to_str().ok())
-            .flat_map(|v| v.split(','))
+            // By bytes: a client's entry that is no text must not take the edge's appended
+            // entry of the same line with it.
+            .flat_map(|v| v.as_bytes().split(|b| *b == b','))
+            .filter_map(|h| std::str::from_utf8(h).ok())
             .filter_map(|h| h.trim().parse::<IpAddr>().ok())
             .collect();
         let at = hops
@@ -429,6 +431,7 @@ impl JcRouter {
                 req.headers()
                     .get(axum::http::header::HOST)
                     .and_then(|v| v.to_str().ok())
+                    .filter(|s| !s.is_empty())
             })
             .or_else(|| req.uri().host())
             .unwrap_or(&self.default_host)
@@ -478,9 +481,10 @@ impl JcRouter {
                 req.headers_mut().remove(name);
             }
         }
-        let host_only = host_with_port
-            .split_once(':')
-            .map_or(host_with_port.as_str(), |(h, _)| h);
+        if !hosts::well_formed(&host_with_port) {
+            return (StatusCode::BAD_REQUEST, "malformed Host header").into_response();
+        }
+        let host_only = hosts::without_port(&host_with_port);
         let (path, organization, via) = match &self.hosts {
             None => (req.uri().path().to_owned(), None, hosts::Via::Plain),
             Some(table) => {
@@ -754,6 +758,47 @@ mod tests {
     /// In a mesh every caller reaches jc from its own proxy's address, so the edge is named by its
     /// mTLS identity: a meshed tenant workload (a wasm shard) on the same address names no client,
     /// host or scheme, and no module sees the forwarding headers it sent.
+    /// T-6788: a client's entry that is no text, on the line the edge appended the client's
+    /// address to, still leaves the client's address as the chain's last entry.
+    #[tokio::test]
+    async fn an_opaque_client_entry_keeps_the_edges_appended_address() {
+        let router = JcRouterBuilder::new("https", "city.example")
+            .trust_proxy("10.42.0.0/16".parse().unwrap())
+            .mount(
+                MountSpec {
+                    module: "gateway".into(),
+                    host: None,
+                    path_prefix: None,
+                },
+                Router::new().route(
+                    "/mcp",
+                    get(|headers: axum::http::HeaderMap| async move {
+                        headers
+                            .get("x-forwarded-for")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("none")
+                            .to_owned()
+                    }),
+                ),
+            )
+            .build()
+            .unwrap();
+        let req = Request::builder()
+            .uri("/mcp")
+            .header("host", "city.example")
+            .header(
+                "x-forwarded-for",
+                axum::http::HeaderValue::from_bytes(b"\xff, 203.0.113.9").unwrap(),
+            )
+            .body(Body::empty())
+            .unwrap();
+        let resp = router
+            .dispatch(req, Some("10.42.0.2".parse().unwrap()))
+            .await;
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], b"203.0.113.9");
+    }
+
     #[tokio::test]
     async fn forwarding_headers_count_only_from_the_edges_mesh_identity() {
         const EDGE: &str = "apisix.jc-prod.serviceaccount.identity.linkerd.cluster.local";
@@ -944,6 +989,65 @@ mod tests {
             issuer("city.example", Some("jc.city.example"), "10.0.0.5")
                 .await
                 .contains("issuer=https://jc.city.example/id/realms/dev")
+        );
+    }
+
+    /// RTE-02: a Host (or the edge's X-Forwarded-Host) that is no plain authority is refused
+    /// before it is matched, so its text never becomes the base of an issuer or a link.
+    #[tokio::test]
+    async fn a_host_with_userinfo_or_a_bad_port_is_refused_and_never_mounted() {
+        let jc = JcRouterBuilder::new("https", "city.example")
+            .trust_proxy("10.0.0.0/8".parse().unwrap())
+            .mount(
+                MountSpec {
+                    module: "kaisatsu".into(),
+                    host: Some("city.example".into()),
+                    path_prefix: Some("/id".into()),
+                },
+                Router::new().route("/realms/dev", get(echo_mount)),
+            )
+            .build()
+            .unwrap();
+        let on = |host: &str, forwarded: Option<&str>| {
+            let mut req = Request::builder()
+                .uri("/id/realms/dev")
+                .header("host", host);
+            if let Some(f) = forwarded {
+                req = req.header("x-forwarded-host", f);
+            }
+            let req = req.body(Body::empty()).unwrap();
+            let jc = jc.clone();
+            async move {
+                let resp = jc.dispatch(req, Some("10.0.0.5".parse().unwrap())).await;
+                let status = resp.status();
+                let body = resp.into_body().collect().await.unwrap().to_bytes();
+                (status, String::from_utf8(body.to_vec()).unwrap())
+            }
+        };
+        for host in [
+            "city.example:@evil.example",
+            "city.example:9999@evil.example",
+            "city.example:80:81",
+            "city.example:",
+            "city.example/evil",
+            "[::1",
+        ] {
+            let (status, body) = on(host, None).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{host}");
+            assert!(!body.contains("evil"), "{host}: {body}");
+            let (status, _) = on("city.example", Some(host)).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "forwarded {host}");
+        }
+        let (status, body) = on("City.Example:8443", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            body.contains("issuer=https://city.example:8443/id/realms/dev"),
+            "{body}"
+        );
+        assert!(super::hosts::well_formed("[2001:db8::1]:443"));
+        assert_eq!(
+            super::hosts::without_port("[2001:db8::1]:443"),
+            "[2001:db8::1]"
         );
     }
 

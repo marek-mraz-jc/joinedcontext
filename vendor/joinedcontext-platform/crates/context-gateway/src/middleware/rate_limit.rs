@@ -396,8 +396,11 @@ pub(crate) fn subject_key(claims: &jc_core::auth::token::Claims) -> String {
 
 /// The client address alone, whatever credential the request presents (see [`caller_key`]).
 pub(crate) fn address_key(headers: &axum::http::HeaderMap) -> String {
+    // The edge appends its own line when the client sent one: the last line is the edge's.
     let address = headers
-        .get("x-forwarded-for")
+        .get_all("x-forwarded-for")
+        .iter()
+        .next_back()
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.rsplit(',').next())
         .map(str::trim)
@@ -637,6 +640,14 @@ mod tests {
             address_key(&asking(&[("x-forwarded-for", "")])),
             "address:unknown",
             "an empty header names no peer"
+        );
+        assert_eq!(
+            address_key(&asking(&[
+                ("x-forwarded-for", "198.51.100.1"),
+                ("x-forwarded-for", "203.0.113.7"),
+            ])),
+            "address:203.0.113.7",
+            "the edge's own line is the last one"
         );
     }
 }

@@ -584,6 +584,18 @@ async fn restrict_refuses_with_the_count_and_the_readable_ids_and_changes_nothin
     assert!(answer.held(&urn("Building", "b1")).is_some());
 }
 
+/// ISO-03: a caller who may not delete the Building learns no slot, count or id of what points
+/// at it; the refusal is the root's own.
+#[tokio::test]
+async fn restrict_says_nothing_to_a_caller_who_may_not_delete_the_root() {
+    let answer = delete(&["School"], &urn("Building", "b1")).await;
+
+    assert_eq!(answer.status, StatusCode::FORBIDDEN, "{}", answer.body);
+    assert!(answer.body.get("count").is_none(), "{}", answer.body);
+    assert!(!answer.body.to_string().contains("s1"), "{}", answer.body);
+    assert!(answer.writes().is_empty(), "{:?}", answer.writes());
+}
+
 #[tokio::test]
 async fn a_cascade_two_levels_deep_deletes_from_the_farthest_in() {
     let answer = delete(CLASSES, &urn("School", "s1")).await;

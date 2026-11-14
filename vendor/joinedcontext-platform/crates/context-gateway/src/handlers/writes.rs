@@ -489,6 +489,11 @@ impl HeldDelete<'_> {
         while let Some(id) = queue.pop_front() {
             for at in self.rules.referencing_id(&id) {
                 let pointing = self.pointing(at.class, at.slot, &id).await?;
+                // What points at the root is said only to a caller who may delete the root: a
+                // refusal below names a slot and a count (ISO-03).
+                if !pointing.is_empty() {
+                    self.may_delete(root)?;
+                }
                 for entity in &pointing {
                     let Some(other) = entity.get("id").and_then(Value::as_str) else {
                         continue;
