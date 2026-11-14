@@ -119,7 +119,9 @@ pub fn visible(subject: &Subject, endpoint: &Endpoint, now: DateTime<Utc>) -> Vi
         .partition(|policy| policy.effect.is_prohibition());
 
     let mut visible = Visible {
-        ungranted: grants.is_empty(),
+        // An Endpoint with no Policy at all describes what it publishes (below); one whose
+        // Policies reach other callers only describes nothing to this one.
+        ungranted: grants.is_empty() && !endpoint.policies.is_empty(),
         ..Visible::default()
     };
     for policy in &grants {
@@ -408,11 +410,16 @@ mod visible_tests {
             .with_timezone(&Utc)
     }
 
-    /// EP-47: a caller no permission reaches is described no class and no attribute, where an
-    /// empty grant list once read as every type of the model.
+    /// EP-47: a caller none of the Endpoint's permissions reaches is described no class and no
+    /// attribute, where an empty grant list once read as every type of the model.
     #[test]
     fn a_caller_without_a_permission_is_described_nothing() {
-        let ungranted = endpoint(vec![]);
+        let stewards = policy(
+            "contextSpaceRef: ovzdusie\nassigner: did:web:hel.fi\n\
+             assignee: { kind: role, id: steward }\noperations: [queryEntity]\n\
+             information:\n  - entities:\n      - type: AirQualityObserved\n",
+        );
+        let ungranted = endpoint(vec![stewards]);
         let seen = visible(&Subject::anonymous(), &ungranted, now());
         assert!(!seen.covers_type("AirQualityObserved"));
         assert!(!seen.covers_attr("pm10"));
@@ -420,7 +427,10 @@ mod visible_tests {
         let granted = endpoint(vec![granting(&["AirQualityObserved"], &[])]);
         let seen = visible(&Subject::anonymous(), &granted, now());
         assert_eq!(visible_types(&granted, &seen), vec!["AirQualityObserved"]);
-        assert!(seen.covers_attr("pm10"), "a grant naming no attribute reads them all");
+        assert!(
+            seen.covers_attr("pm10"),
+            "a grant naming no attribute reads them all"
+        );
     }
 
     /// T-1158, GW8, EP-47: a prohibition that names no attribute takes the whole type back, and
