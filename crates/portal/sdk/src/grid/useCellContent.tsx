@@ -138,7 +138,7 @@ function valueEditor({ gridOptions, labels, edits, setEdit, rules, refusedCell, 
         options={options}
         changed={pending !== undefined}
         notInList={labels.notInList}
-        onChange={(next) => setEdit(row.id, column.attr, next === shown ? undefined : coerce(next, shown, rule))}
+        onChange={(next) => setEdit(row.id, column.attr, next === shown ? undefined : coerce(next, own, rule))}
       />
     );
   }
@@ -152,7 +152,7 @@ function valueEditor({ gridOptions, labels, edits, setEdit, rules, refusedCell, 
       kind={inputKindOf(rule, own)}
       onChange={(next) => {
         // Back to the endpoint's own value is not a change: it leaves the pending list.
-        setEdit(row.id, column.attr, next === shown ? undefined : coerce(next, shown, rule));
+        setEdit(row.id, column.attr, next === shown ? undefined : coerce(next, own, rule));
       }}
     />
   );

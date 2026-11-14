@@ -1,5 +1,5 @@
 import React, { useCallback, useRef } from "react";
-import { coerce, storedText } from "./GridCellEditors";
+import { coerce, storedText, storedValue } from "./GridCellEditors";
 import { parseClipboard, planPaste } from "./paste";
 import { structured } from "./model";
 import type { ValueRule } from "./rules";
@@ -141,7 +141,7 @@ export function useGridKeys(
         e.preventDefault();
         control.focus();
         const stored = storedText(rows[at!.row]?.cells[cell.attr]);
-        setEdit(cell.id, cell.attr, e.key === stored ? undefined : coerce(e.key, stored, rules?.[cell.attr]));
+        setEdit(cell.id, cell.attr, e.key === stored ? undefined : coerce(e.key, storedValue(rows[at!.row]?.cells[cell.attr]), rules?.[cell.attr]));
         return;
       }
       // Typing on a locked cell says why nothing opens (T-5530), in the grid's status line.
@@ -204,7 +204,7 @@ export function useGridKeys(
           return {
             id: edit.id,
             attr: edit.attr,
-            value: edit.text === stored ? undefined : coerce(edit.text, stored, rules?.[edit.attr]),
+            value: edit.text === stored ? undefined : coerce(edit.text, one?.value, rules?.[edit.attr]),
           };
         }),
       );
