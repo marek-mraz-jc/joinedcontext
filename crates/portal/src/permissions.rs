@@ -781,13 +781,15 @@ fn organization_reaches(mirror: &Mirror, organization: &str, project: &str) -> b
     owner.as_deref() == Some(organization)
 }
 
-/// The kinds that administer the installation: who belongs where, the Organizations, the
-/// brokers and environments (PF-03, ADR-N-058 section 2.2). A binding scoped to one project or
-/// space reads them there and changes none of them, whatever its role lists, so a role bound in
-/// one project never proposes or approves the organization's people or settings from it.
-const ADMINISTRATION_KINDS: [&str; 7] = [
+/// The kinds that administer the installation: the groups people belong to, the Organizations,
+/// the brokers and environments (PF-03, ADR-N-058 section 2.2). A binding scoped to one project
+/// or space reads them there and changes none of them, whatever its role lists, so a role bound
+/// in one project never proposes or approves the organization's groups or settings from it. A
+/// `RoleBinding` stays: a project's own bindings are proposed there (PF-52,
+/// `groups::project_binding`) and each is held to its proposer's and approver's own rights
+/// (`within_own_rights`).
+const ADMINISTRATION_KINDS: [&str; 6] = [
     "Group",
-    "RoleBinding",
     "Organization",
     "Environment",
     "ContextBroker",
@@ -797,12 +799,15 @@ const ADMINISTRATION_KINDS: [&str; 7] = [
 
 /// Narrows a grant of a project or space binding to `read` on [`ADMINISTRATION_KINDS`]: the
 /// rule keeps its other kinds and verbs, and gains a sibling read rule for the administration
-/// kinds it named when it granted `read`.
+/// kinds it named when it let them be read (`propose` reads too, `Rule::grants`).
 fn administration_read_only(mut grant: Grant) -> Vec<Grant> {
+    let reads = ADMINISTRATION_KINDS
+        .iter()
+        .any(|kind| grant.rule.grants(kind, Verb::Read));
     let (held, kept): (Vec<String>, Vec<String>) = std::mem::take(&mut grant.rule.kinds)
         .into_iter()
         .partition(|kind| ADMINISTRATION_KINDS.contains(&kind.as_str()));
-    let read = (!held.is_empty() && grant.rule.verbs.contains(&Verb::Read)).then(|| {
+    let read = (reads && !held.is_empty()).then(|| {
         let mut read = grant.clone();
         read.rule.kinds = held;
         read.rule.verbs = vec![Verb::Read];
@@ -2519,16 +2524,18 @@ mod tests {
     }
 
     /// PF-03: a role bound in one project, here one that lists the organization's groups and
-    /// bindings, reads them there and proposes or approves none of them; the same role bound
-    /// organization-wide still does, and the project's own kinds keep every verb.
+    /// environments, reads them there and proposes or approves none of them; the same role bound
+    /// organization-wide still does, and the project's own kinds and bindings keep every verb.
     #[test]
-    fn a_project_binding_changes_no_organization_group_or_binding() {
+    fn a_project_binding_changes_no_organization_group_or_setting() {
         let mirror = Mirror::new();
         mirror.upsert(org(
             "Role",
             "wide",
-            serde_json::json!({ "rules": [{ "kinds": ["Group", "RoleBinding", "Endpoint"],
-                                            "verbs": ["read", "propose", "approve"] }] }),
+            serde_json::json!({ "rules": [{
+                "kinds": ["Group", "Environment", "RoleBinding", "Endpoint"],
+                "verbs": ["read", "propose", "approve"],
+            }] }),
         ));
         for (who, scope) in [
             ("here", serde_json::json!({ "project": "espoo" })),
@@ -2567,8 +2574,11 @@ mod tests {
                 "espoo",
                 Utc::now(),
             );
-            for kind in ["Group", "RoleBinding"] {
-                assert!(grants.may(kind, Verb::Read), "{who} reads {kind}");
+            for kind in ["Group", "Environment"] {
+                // A space binding reads only what names its space, which no group does.
+                if who != "space" {
+                    assert!(grants.may(kind, Verb::Read), "{who} reads {kind}");
+                }
                 for verb in [Verb::Propose, Verb::Approve] {
                     assert_eq!(grants.may(kind, verb), administers, "{who} {verb:?} {kind}");
                 }
@@ -2577,6 +2587,12 @@ mod tests {
                 grants.may("Endpoint", Verb::Approve),
                 "{who} approves Endpoint"
             );
+            if who != "space" {
+                assert!(
+                    grants.may("RoleBinding", Verb::Propose),
+                    "{who} proposes RoleBinding"
+                );
+            }
         }
     }
 
