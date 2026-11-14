@@ -3371,6 +3371,31 @@ async fn operations_allowed_and_mcp_over_http() {
 }
 
 #[tokio::test]
+async fn the_bearer_scheme_is_case_insensitive() {
+    let w = world().await;
+    for (auth, ok) in [
+        ("bearer tok-editor", true),
+        ("BEARER tok-editor", true),
+        ("Bearer tok-editor", true),
+        ("bearer tok-edito", false),
+        ("bearer tok-editor-x", false),
+        ("bearer ", false),
+    ] {
+        let status = send(
+            &w.app,
+            Method::GET,
+            "/api/3/action/package_show?id=secret",
+            None,
+            &[("authorization", auth)],
+            Body::empty(),
+        )
+        .await
+        .status;
+        assert_eq!(status == StatusCode::OK, ok, "{auth}: {status}");
+    }
+}
+
+#[tokio::test]
 async fn a_host_supplied_identity_comes_first_and_tokens_still_work() {
     let w = world_with(|s| {
         let org = s.default_org_id;

@@ -466,7 +466,11 @@ impl DataroomState {
             .or_else(|| headers.get("X-CKAN-API-Key"))
             .and_then(|v| v.to_str().ok())
             .map(str::trim)
-            .map(|t| t.strip_prefix("Bearer ").unwrap_or(t).trim());
+            // RFC 9110 11.1: the scheme name is case-insensitive.
+            .map(|t| match t.get(..7) {
+                Some(scheme) if scheme.eq_ignore_ascii_case("bearer ") => t[7..].trim(),
+                _ => t,
+            });
 
         let subject = if let Some(ref resolver) = self.subject_resolver {
             if let Some(s) = resolver(headers) {
