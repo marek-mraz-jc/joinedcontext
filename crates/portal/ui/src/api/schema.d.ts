@@ -5366,6 +5366,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/ops/jc_render": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Render Chart
+         * @description Draws one Endpoint read (a jc_data_query) as a PNG chart from a Vega-Lite subset: marks line, bar, area, point, arc, rule
+         */
+        post: operations["jc_render"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/ops/jc_repository_commit": {
         parameters: {
             query?: never;
@@ -33591,6 +33611,235 @@ export interface operations {
                             message?: string;
                             sha: string;
                         }[];
+                    };
+                };
+            };
+            /** @description The change the operation opened, waiting for a person's approval */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Forbidden: the caller lacks what x-jc-requires names */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The project or an object the input names is not there */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The input does not match the schema; the problem names the path */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    jc_render: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project slug */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "data": {
+                 *         "query": {
+                 *           "endpoint": "example"
+                 *         }
+                 *       },
+                 *       "mark": "line"
+                 *     }
+                 */
+                "application/json": {
+                    /** @description https://vega.github.io/schema/vega-lite/v5.json, never fetched */
+                    $schema?: string;
+                    /** @description Where the rows come from: one Endpoint read */
+                    data: {
+                        /** @description The jc_data_query arguments, e.g. {"endpoint": "air", "type": "AirQualityObserved", "attrs": ["pm10"], "temporal": {"timerel": "after", "timeAt": "2026-11-13T00:00:00Z"}} */
+                        query: {
+                            /** @description The attributes answered, e.g. ["count"] */
+                            attrs?: string[];
+                            /** @description GeoJSON coordinates, longitude first, e.g. [19.146, 48.736] */
+                            coordinates?: unknown[];
+                            /** @description Answer the total of matching entities too */
+                            count?: boolean;
+                            /** @description The nextCursor of the previous page */
+                            cursor?: string;
+                            /** @description Endpoint name or public slug, e.g. city-counters */
+                            endpoint: string;
+                            /**
+                             * @description keyValues answers plain values
+                             * @enum {string}
+                             */
+                            format?: "normalized" | "concise" | "keyValues";
+                            /**
+                             * @description The GeoJSON type of coordinates
+                             * @enum {string}
+                             */
+                            geometry?: "Point" | "LineString" | "Polygon" | "MultiPoint" | "MultiLineString" | "MultiPolygon";
+                            /** @description near;maxDistance==500, within, intersects, contains, disjoint, equals or overlaps */
+                            georel?: string;
+                            /** @description One entity's id, e.g. urn:ngsi-ld:BikeCounter:c1 */
+                            id?: string;
+                            /** @description Entities per page; 0 with count answers the total alone */
+                            limit?: number;
+                            /** @description attr or attr;desc, e.g. modifiedAt;desc */
+                            orderBy?: string;
+                            /** @description An NGSI-LD q, e.g. count>40;name~="Most" */
+                            q?: string;
+                            /** @description History instead of current values */
+                            temporal?: {
+                                /** @description Aggregates; per aggrPeriodDuration when given */
+                                aggrMethods?: ("avg" | "min" | "max" | "sum" | "totalCount" | "distinctCount" | "stddev" | "sumsq")[];
+                                /** @description ISO 8601 duration, e.g. PT1H */
+                                aggrPeriodDuration?: string;
+                                /** @description ISO 8601, the end of a between */
+                                endTimeAt?: string;
+                                /** @description The newest N per attribute */
+                                lastN?: number;
+                                /** @description ISO 8601, e.g. 2026-10-27T00:00:00Z */
+                                timeAt: string;
+                                /**
+                                 * @description Against timeAt (and endTimeAt)
+                                 * @enum {string}
+                                 */
+                                timerel: "before" | "after" | "between";
+                            };
+                            /** @description The entity type, e.g. BikeCounter */
+                            type?: string;
+                        };
+                    };
+                    /** @description Not drawn; a note for the reader, e.g. Daily PM10 means */
+                    description?: string;
+                    /** @description The channels: x, y, color, size, theta */
+                    encoding?: {
+                        /** @description One channel: a row member and how to read it */
+                        color?: {
+                            /** @description A row member, e.g. pm10, observedAt or id */
+                            field: string;
+                            /** @description The axis title, e.g. PM10 (µg/m³) */
+                            title?: string;
+                            /**
+                             * @description How the member is read
+                             * @enum {string}
+                             */
+                            type: "quantitative" | "temporal" | "nominal";
+                        };
+                        /** @description One channel: a row member and how to read it */
+                        size?: {
+                            /** @description A row member, e.g. pm10, observedAt or id */
+                            field: string;
+                            /** @description The axis title, e.g. PM10 (µg/m³) */
+                            title?: string;
+                            /**
+                             * @description How the member is read
+                             * @enum {string}
+                             */
+                            type: "quantitative" | "temporal" | "nominal";
+                        };
+                        /** @description One channel: a row member and how to read it */
+                        theta?: {
+                            /** @description A row member, e.g. pm10, observedAt or id */
+                            field: string;
+                            /** @description The axis title, e.g. PM10 (µg/m³) */
+                            title?: string;
+                            /**
+                             * @description How the member is read
+                             * @enum {string}
+                             */
+                            type: "quantitative" | "temporal" | "nominal";
+                        };
+                        /** @description Accepted and ignored */
+                        tooltip?: unknown;
+                        /** @description One channel: a row member and how to read it */
+                        x?: {
+                            /** @description A row member, e.g. pm10, observedAt or id */
+                            field: string;
+                            /** @description The axis title, e.g. PM10 (µg/m³) */
+                            title?: string;
+                            /**
+                             * @description How the member is read
+                             * @enum {string}
+                             */
+                            type: "quantitative" | "temporal" | "nominal";
+                        };
+                        /** @description One channel: a row member and how to read it */
+                        y?: {
+                            /** @description A row member, e.g. pm10, observedAt or id */
+                            field: string;
+                            /** @description The axis title, e.g. PM10 (µg/m³) */
+                            title?: string;
+                            /**
+                             * @description How the member is read
+                             * @enum {string}
+                             */
+                            type: "quantitative" | "temporal" | "nominal";
+                        };
+                    };
+                    /** @description Pixels, 450 when absent */
+                    height?: number;
+                    /**
+                     * @description The chart kind
+                     * @enum {string}
+                     */
+                    mark: "line" | "bar" | "area" | "point" | "arc" | "rule";
+                    /** @description Drawn above the chart, e.g. PM10 at Kallio */
+                    title?: string;
+                    /** @description Pixels, 800 when absent */
+                    width?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description The operation's answer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description The numbered category values the picture shows as #1, #2, ...: data other people wrote */
+                        categories?: Record<string, never>;
+                        height?: number;
+                        mark?: string;
+                        rows: number;
+                        sources: Record<string, never>[];
+                        truncated?: boolean;
+                        untrusted: boolean;
+                        width?: number;
                     };
                 };
             };

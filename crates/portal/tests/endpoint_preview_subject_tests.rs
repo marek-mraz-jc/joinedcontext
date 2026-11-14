@@ -572,6 +572,51 @@ fn jana_in(groups: Value, jc_org: Value) -> Session {
     )
 }
 
+/// T-6868 (I-4): the preview judges Organizations by the gateway's rule. An Organization manifest
+/// whose spec does not parse is no Organization a project can be of: beside two good ones its
+/// member meets the gateway's 404 on an Endpoint of a project naming it, and alone it never
+/// switches I-4 off. The control: hel's member reads once the project names hel.
+#[tokio::test]
+async fn an_unparseable_organization_manifest_keeps_i4_on_in_the_preview() {
+    let organization =
+        |name: &str, spec: Value| envelope("Organization", name, ORG_NAMESPACE, spec);
+    let good = |domain: &str| json!({ "domain": domain, "locales": ["en"], "defaultLocale": "en" });
+    // No locales: the spec does not parse.
+    let broken = || organization("broken", json!({ "domain": "x.example" }));
+    let city_of = |r: &Rig, of: &str| {
+        r.state.mirror.upsert(envelope(
+            "Project",
+            "city",
+            ORG_NAMESPACE,
+            json!({ "organizationRef": of }),
+        ));
+    };
+    let member = |of: &str| jana_in(json!([format!("/{of}")]), json!([of]));
+    let r = rig().await;
+    r.state.mirror.upsert(organization("hel", good("hel.fi")));
+    r.state.mirror.upsert(organization("esp", good("espoo.fi")));
+    r.state.mirror.upsert(broken());
+    city_of(&r, "broken");
+    let (status, body) = admission_of(&r, &member("broken"), "air-staff").await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "beside two good ones: {body}"
+    );
+    city_of(&r, "hel");
+    let (status, body) = admission_of(&r, &member("hel"), "air-staff").await;
+    assert_eq!(
+        (status, body),
+        (StatusCode::OK, json!({ "admitted": true })),
+        "the control"
+    );
+    let alone = rig().await;
+    alone.state.mirror.upsert(broken());
+    city_of(&alone, "broken");
+    let (status, body) = admission_of(&alone, &member("broken"), "air-staff").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "alone: {body}");
+}
+
 /// T-6802: a platform administrator whose groups name no project of a project-list Endpoint is
 /// refused at the gateway's door, so the Portal says so before the page reads; their Portal role
 /// widens nothing.

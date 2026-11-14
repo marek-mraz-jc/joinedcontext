@@ -687,34 +687,43 @@ async fn run(
 }
 
 fn input_schema() -> Value {
+    use super::bounds::*;
     let field = json!({
         "type": "object",
+        "description": "One channel: a row member and how to read it",
         "properties": {
-            "field": { "type": "string", "description": "A row member, e.g. pm10, observedAt or id" },
-            "type": { "type": "string", "enum": ["quantitative", "temporal", "nominal"] },
-            "title": { "type": "string", "maxLength": MAX_TITLE, "description": "The axis title, e.g. PM10 (µg/m³)" }
+            "field": text("A row member, e.g. pm10, observedAt or id", TERM),
+            "type": { "type": "string", "description": "How the member is read", "enum": ["quantitative", "temporal", "nominal"] },
+            "title": text("The axis title, e.g. PM10 (µg/m³)", MAX_TITLE as u64)
         },
         "required": ["field", "type"],
         "additionalProperties": false
     });
+    let mut query = super::data_query::input_schema();
+    query["description"] = json!("The jc_data_query arguments, e.g. {\"endpoint\": \"air\", \"type\": \"AirQualityObserved\", \"attrs\": [\"pm10\"], \"temporal\": {\"timerel\": \"after\", \"timeAt\": \"2026-11-13T00:00:00Z\"}}");
     json!({
         "type": "object",
         "description": "A Vega-Lite 5 subset. data.query is a jc_data_query read; no url, no transform, no expression",
         "properties": {
-            "$schema": { "type": "string", "description": "https://vega.github.io/schema/vega-lite/v5.json, never fetched" },
-            "title": { "type": "string", "maxLength": MAX_TITLE, "description": "Drawn above the chart, e.g. PM10 at Kallio" },
-            "description": { "type": "string", "maxLength": MAX_TITLE },
+            "$schema": { "type": "string", "description": "https://vega.github.io/schema/vega-lite/v5.json, never fetched", "pattern": "^https://vega\\.github\\.io/schema/vega-lite/v5", "maxLength": URL },
+            "title": text("Drawn above the chart, e.g. PM10 at Kallio", MAX_TITLE as u64),
+            "description": text("Not drawn; a note for the reader, e.g. Daily PM10 means", MAX_TITLE as u64),
             "width": { "type": "integer", "minimum": MIN_SIDE, "maximum": MAX_SIDE, "description": "Pixels, 800 when absent" },
             "height": { "type": "integer", "minimum": MIN_SIDE, "maximum": MAX_SIDE, "description": "Pixels, 450 when absent" },
-            "mark": { "type": "string", "enum": ["line", "bar", "area", "point", "arc", "rule"] },
+            "mark": { "type": "string", "description": "The chart kind", "enum": ["line", "bar", "area", "point", "arc", "rule"] },
             "encoding": {
                 "type": "object",
-                "properties": { "x": field, "y": field, "color": field, "size": field, "theta": field, "tooltip": { "description": "Accepted and ignored" } },
+                "description": "The channels: x, y, color, size, theta",
+                "properties": {
+                    "x": field, "y": field, "color": field, "size": field, "theta": field,
+                    "tooltip": { "description": "Accepted and ignored" }
+                },
                 "additionalProperties": false
             },
             "data": {
                 "type": "object",
-                "properties": { "query": { "type": "object", "description": "The jc_data_query arguments, e.g. {\"endpoint\": \"air\", \"type\": \"AirQualityObserved\", \"attrs\": [\"pm10\"], \"temporal\": {\"timerel\": \"after\", \"timeAt\": \"2026-11-13T00:00:00Z\"}}" } },
+                "description": "Where the rows come from: one Endpoint read",
+                "properties": { "query": query },
                 "required": ["query"],
                 "additionalProperties": false
             }

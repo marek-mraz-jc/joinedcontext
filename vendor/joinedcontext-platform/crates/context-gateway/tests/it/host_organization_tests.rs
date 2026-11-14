@@ -101,7 +101,7 @@ fn app(realm: &common::Realm) -> Router {
             .into_iter()
             .map(|(p, o)| (p.to_owned(), o.to_owned()))
             .collect(),
-        ..Default::default()
+        ..Provenance::without_organizations()
     });
     router(Arc::new(gateway))
 }

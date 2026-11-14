@@ -140,7 +140,7 @@ async fn send(
             .iter()
             .map(|(name, domain)| ((*name).to_owned(), (*domain).to_owned()))
             .collect(),
-        ..Default::default()
+        ..Provenance::without_organizations()
     });
     let response = router(Arc::new(gateway))
         .oneshot(

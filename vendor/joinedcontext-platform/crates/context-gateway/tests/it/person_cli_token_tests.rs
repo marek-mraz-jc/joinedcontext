@@ -92,7 +92,7 @@ async fn fixture() -> Fixture {
             .into_iter()
             .map(|(project, organization)| (project.to_owned(), organization.to_owned()))
             .collect(),
-        ..Default::default()
+        ..Provenance::without_organizations()
     });
     Fixture {
         realm,
