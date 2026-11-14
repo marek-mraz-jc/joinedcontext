@@ -18,8 +18,6 @@ const POPUP: usize = 4;
 const TITLE_CHARS: usize = 80;
 /// The fewest values a chart is drawn of (T-4682).
 const MIN_POINTS: usize = 3;
-/// The widget's type, sizes from its tokens (T-4682): an axis reads at 12 px, never a heading's size.
-const FONT: &str = "system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif";
 
 /// The domain a viz origin serves: `https://viz.dev.example.org` → `dev.example.org`.
 pub fn domain(viz: &url::Url) -> Option<&str> {
@@ -442,14 +440,10 @@ fn chart(
             "x": {"field": "value", "type": "quantitative", "title": value_title},
         })
     };
-    let config = json!({
-        "font": FONT,
-        "axis": {"labelFontSize": 12, "titleFontSize": 13, "labelLimit": 160},
-        "legend": {"labelFontSize": 12, "titleFontSize": 13},
-        "title": {"fontSize": 14, "anchor": "start"},
-    });
+    // No config: the renderer draws every chart in the one chart theme (jc-chart theme.json,
+    // T-6886), the widget's 12 px axis type of T-4682 included, light or dark by the chat.
     let mut spec = json!({"$schema": VEGA_LITE, "data": {"name": "source"}, "encoding": encoding,
-        "width": "container", "autosize": {"type": "fit", "contains": "padding"}, "config": config});
+        "width": "container", "autosize": {"type": "fit", "contains": "padding"}});
     if kind == Kind::Line {
         spec["mark"] = json!({"type": "line", "point": true, "tooltip": true});
     } else {
@@ -658,9 +652,10 @@ mod tests {
         assert_eq!(bar["rows"][1], json!({"label": "Zvolen", "value": 9.25}));
         assert_eq!(bar["spec"]["encoding"]["x"]["title"], "no2 (µg/m³)");
         assert_eq!(bar["spec"]["$schema"], VEGA_LITE);
-        // T-4682: the axis reads at the widget's 12 px, each bar says its value, and the chart
-        // fills the panel's width.
-        assert_eq!(bar["spec"]["config"]["axis"]["labelFontSize"], 12);
+        // T-4682, T-6886: the renderer's chart theme sets the type (12 px axes) and colours, so
+        // the spec carries no config of its own; each bar says its value, and the chart fills
+        // the panel's width.
+        assert!(bar["spec"].get("config").is_none());
         assert_eq!(bar["spec"]["layer"][1]["mark"]["type"], "text");
         assert_eq!(bar["spec"]["width"], "container");
         // A line needs three distinct times (T-4727): the row without a location gets one.

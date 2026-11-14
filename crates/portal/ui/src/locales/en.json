@@ -9685,6 +9685,9 @@
     "chat": {
       "ask": "Ask",
       "askOf": "Ask {name}",
+      "chart": "Chart of {value} by {by}; the table above holds the same values",
+      "chartUnavailable": "The chart is unavailable here. The table above holds the same values.",
+      "visual": "The assistant's chart; the table above holds the same values",
       "asYou": "The assistant answers you as yourself: it reads the internal sources and the Endpoints you may read.",
       "asVisitor": "The assistant answers you exactly as it answers a visitor of the site: public sources and public Endpoints only. Each question counts against its budget.",
       "connectors": "Live data the assistant may read",

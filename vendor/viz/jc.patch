@@ -1,3 +1,64 @@
+--- /dev/null
++++ site/csv.js
+@@ -0,0 +1,58 @@
++// A CSV text read without generated code (T-6865). d3-dsv, which `vega.read(text, {type: "csv"})`
++// parses with, builds its row objects with `new Function`, which the renderer's CSP (no
++// 'unsafe-eval') refuses: every chart over a `csv` source failed to draw. This reads RFC 4180
++// (quoted fields, doubled quotes, CRLF) into header-keyed objects of strings; the renderer types
++// them with `vega.read(records, {type: "json", parse: "auto"})`, which evaluates nothing. One
++// function, no dependency, so node runs the same file (crates/portal/ui/tests/viz_render_js.test.ts).
++(function (root) {
++  "use strict";
++
++  function csvRecords(text) {
++    var rows = [];
++    var row = [];
++    var field = "";
++    var quoted = false;
++    for (var i = 0; i < text.length; i++) {
++      var c = text[i];
++      if (quoted) {
++        if (c === '"' && text[i + 1] === '"') {
++          field += '"';
++          i++;
++        } else if (c === '"') {
++          quoted = false;
++        } else {
++          field += c;
++        }
++      } else if (c === '"') {
++        quoted = true;
++      } else if (c === ",") {
++        row.push(field);
++        field = "";
++      } else if (c === "\n" || c === "\r") {
++        if (c === "\r" && text[i + 1] === "\n") i++;
++        row.push(field);
++        rows.push(row);
++        row = [];
++        field = "";
++      } else {
++        field += c;
++      }
++    }
++    if (field !== "" || row.length > 0) {
++      row.push(field);
++      rows.push(row);
++    }
++    var header = rows[0];
++    if (!header) return [];
++    return rows.slice(1)
++      .filter(function (cells) { return cells.length > 1 || cells[0] !== ""; })
++      .map(function (cells) {
++        var record = {};
++        header.forEach(function (name, k) { record[name] = k < cells.length ? cells[k] : ""; });
++        return record;
++      });
++  }
++
++  root.jcCsv = csvRecords;
++  if (typeof module === "object" && module.exports) module.exports = csvRecords;
++})(typeof self !== "undefined" ? self : this);
 --- a/site/embed.js
 +++ site/embed.js
 @@ -13,6 +13,11 @@
@@ -244,10 +305,12 @@
        colorLabel: "Farba podľa", colorNone: "Jedna farba", colorType: "Typ", colorHint: "Body dostanú farbu podľa hodnoty, napr. Stav; legenda je pod mapou.",
        popLabel: "V bubline", popHint: "Čo ukáže kurzor nad bodom okrem názvu, napr. Začiatok a Web.",
        clusterLabel: "Zoskupovať body", clusterHint: "Nad 200 bodov vo výreze sa blízke body spoja do bubliny s ich počtom.",
-@@ -123,6 +188,29 @@
+@@ -121,6 +186,29 @@
+   // viz.{domain} → the Endpoint's base on api.{domain}: named by this page's host, never by a parameter.
+   function base(hostname, slug) {
      return "https://api." + String(hostname).replace(/^viz\./, "") + "/api/endpoint/" + slug + "/";
-   }
- 
++  }
++
 +  // The hosts this page reads: the server that serves it may name them in `<meta name="jc-viz"
 +  // content='{"api": ..., "tiles": ..., "catalogue": ...}'>` (jc does, its viz mount answering beside
 +  // other modules); else they follow this page's host, viz.{domain}. Never a parameter. A meta that is
@@ -269,11 +332,9 @@
 +  function styleOf(tiles, lang) {
 +    if (!tiles) return { version: 8, sources: {}, layers: [{ id: "background", type: "background", paint: { "background-color": "#eef0f3" } }] };
 +    return tiles + "/styles/light-" + (lang === "sk" ? "sk" : "en") + ".json";
-+  }
-+
+   }
+ 
    function params(map) {
-     return Object.keys(map)
-       .filter(function (k) { return map[k] !== undefined && map[k] !== null && map[k] !== ""; })
 @@ -399,6 +487,50 @@
      return { points: points, shapes: shapes };
    }
@@ -426,7 +487,7 @@
          // Only with the model in hand is a slot the address names known to be wrong: drop it, say so.
          if (card && picked.unknown.length) {
            picked.unknown.forEach(function (k) { delete state.mapRaw[k]; });
-@@ -615,34 +773,93 @@
+@@ -615,11 +773,46 @@
            address();
          }
          panel();
@@ -444,6 +505,7 @@
 +        if (state.map) return;
 +        loading(true);
          startMap();
+-      });
 +      };
 +      typeInfo(type).then(function (info) {
 +        if (info && info.attributeDetails) ready(info);
@@ -453,9 +515,9 @@
 +      // attributes): one row tells already whether the query's rows have the core location.
 +      if (!state.mapping || state.mapping.type !== type) locationProbe(type).then(function (has) {
 +        if (has && (!state.mapping || state.mapping.type !== type)) ready({ attributeNames: ["location"] });
-       });
-     }
- 
++      });
++    }
++
 +    // Whether a row of the type has a `location`: one keyValues row as GeoJSON.
 +    function locationProbe(type) {
 +      state.probes = state.probes || {};
@@ -473,10 +535,10 @@
 +      if (on) $("map").setAttribute("data-loading", t.mapLoading);
 +      else $("map").removeAttribute("data-loading");
 +      if (on) $("map-note").textContent = "";
-+    }
-+
+     }
+ 
      function startMap() {
-       // One map: a second call while MapLibre still loads waits for the first (T-5192 drew two).
+@@ -627,22 +820,46 @@
        if (state.mapLoading) return;
        state.mapLoading = true;
        // MapLibre and its tiles cost seconds of a phone's main thread (T-5794: 6.5 s of a dataset
@@ -494,8 +556,9 @@
          var inView = entries[entries.length - 1].isIntersecting;
          clearTimeout(timer);
 -        if (inView) timer = setTimeout(function () { seen.disconnect(); loadMap(); }, MAP_DWELL);
+-      });
 +        if (inView) timer = setTimeout(go, MAP_DWELL);
-       });
++      });
 +      var go = function () { seen.disconnect(); clearTimeout(timer); state.mapWait = null; loadMap(); };
 +      state.mapWait = go;
        seen.observe($("map"));
@@ -579,9 +642,8 @@
 +          });
          });
 -      }, function () { $("map-note").textContent = failure(null); });
-+      }, function () { mapTrouble("start"); });
-     }
- 
+-    }
+-
 -    // The first view: the bounds of the query's first page, so the map opens where the data is.
 -    function fitFirst() {
 -      var url = entitiesUrl(api, Object.assign({ type: state.type, q: state.q, limit: 25, lang: lang, format: "keyValues" }, ownGeo()));
@@ -597,6 +659,9 @@
 -        if (box[0][0] === box[1][0] && box[0][1] === box[1][1]) state.map.jumpTo({ center: box[0], zoom: 14 });
 -        else state.map.fitBounds(box, { padding: 30, maxZoom: 15, animate: false });
 -      }, function () {});
++      }, function () { mapTrouble("start"); });
++    }
++
 +    // The query's rows for the map, up to MAP_LIMIT, wherever they are: the first view fits them all.
 +    function firstRead() {
 +      var query = Object.assign({ type: state.type, q: state.q, limit: MAP_LIMIT, count: "true", lang: lang, format: "keyValues" }, ownGeo());
@@ -832,6 +897,19 @@
    if (typeof module === "object" && module.exports) module.exports = root.jcExplore;
    else if (typeof document !== "undefined") main();
  })(typeof self !== "undefined" ? self : this);
+--- a/site/host.css
++++ site/host.css
+@@ -6,6 +6,10 @@
+ #description { margin: 0 0 8px; color: #334155; }
+ #status { margin: 8px 0; padding: 10px 12px; border-radius: 8px; background: #fef2f2; color: #991b1b; }
+ #status.note { background: #fffbeb; color: #78350f; }
++/* The host page's dark scheme (T-6886): the page around the chart in the chart theme's dark background. */
++html[data-theme="dark"] { color-scheme: dark; }
++html[data-theme="dark"] body { color: #e5e7eb; background: #16191d; }
++html[data-theme="dark"] #description { color: #a0a8b3; }
+ iframe { display: block; width: 100%; height: 360px; border: 0; }
+ a { color: #1d4ed8; }
+ /* In the catalogue the dataset page shows the title, the description and the link itself; they
 --- a/site/host.js
 +++ site/host.js
 @@ -40,7 +40,8 @@
@@ -844,6 +922,27 @@
      var lang = parts.map(function (p) { return /^lang=([a-z]{2})$/.exec(p); }).filter(Boolean)[0];
      return { id: parts[0], inline: parts.indexOf("inline") > 0, lang: lang ? lang[1] : null };
    }
+@@ -572,6 +573,9 @@
+         if (!ourOrigin(event.origin, h.domain) || data.type !== "jc-viz-show") return;
+         parent = event.origin;
+         var lang = /^[a-z]{2}$/.test(data.lang) ? data.lang : "en";
++        // The host page's scheme for the chart theme (T-6886): light unless it says dark.
++        var theme = data.theme === "dark" ? "dark" : "light";
++        document.documentElement.dataset.theme = theme;
+         document.documentElement.lang = lang;
+         map = !!data.spec && data.spec.$schema === "urn:joinedcontext:map:v1";
+         var errors = map ? root.jcRefuseMap(data.spec, h.domain) : root.jcRefuse(data.spec, h.domain);
+@@ -579,8 +583,8 @@
+         var title = map ? data.spec.title : null;
+         document.getElementById("title").textContent = typeof title === "string" ? title : "";
+         pending = map
+-          ? { type: "jc-viz-render", spec: data.spec, lang: lang }
+-          : { type: "jc-viz-render", spec: data.spec, data: { format: "json", rows: Array.isArray(data.rows) ? data.rows.slice(0, LIMIT_ROWS) : [] }, lang: lang };
++          ? { type: "jc-viz-render", spec: data.spec, lang: lang, theme: theme }
++          : { type: "jc-viz-render", spec: data.spec, data: { format: "json", rows: Array.isArray(data.rows) ? data.rows.slice(0, LIMIT_ROWS) : [] }, lang: lang, theme: theme };
+         if (map) {
+           // The renderer frame stays empty; the map page takes its place.
+           mapFrame = document.createElement("iframe");
 --- a/site/map.html
 +++ site/map.html
 @@ -8,8 +8,8 @@
@@ -857,11 +956,21 @@
  <script src="refuse.js" defer></script>
  <script src="vendor/pmtiles-4.5.0.js" defer></script>
  <script src="map.js" defer></script>
+--- a/site/render.css
++++ site/render.css
+@@ -1,4 +1,5 @@
+ html { color-scheme: light; }
++html[data-theme="dark"] { color-scheme: dark; }
+ body { margin: 0; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; background: #fff; }
+ #chart { width: 100%; }
+ #chart .vega-embed { width: 100%; }
 --- a/site/render.html
 +++ site/render.html
-@@ -10,6 +10,7 @@
+@@ -9,7 +9,9 @@
+ <script src="vendor/vega-lite-6.5.0.min.js" defer></script>
  <script src="vendor/vega-embed-7.3.0.min.js" defer></script>
  <script src="vendor/vega-interpreter-2.3.2.js" defer></script>
++<script src="theme.js" defer></script>
  <script src="refuse.js" defer></script>
 +<script src="csv.js" defer></script>
  <script src="render.js" defer></script>
@@ -869,22 +978,53 @@
  <body>
 --- a/site/render.js
 +++ site/render.js
-@@ -27,7 +27,9 @@
+@@ -24,11 +24,17 @@
+   var loader = { load: refused, sanitize: refused, http: refused, file: refused };
+ 
+   function draw(message) {
++    // The chart theme (theme.js, T-6886) of the host page's scheme: light unless it says dark.
++    var mode = message.theme === "dark" ? "dark" : "light";
++    document.documentElement.dataset.theme = mode;
++    document.body.style.backgroundColor = self.jcTheme[mode].background;
      var errors = self.jcRefuse(message.spec, domain);
      if (errors.length) throw new Error("The chart was refused: " + errors[0].pointer + " — " + errors[0].rule + ".");
      var data = message.data || {};
 -    var rows = data.format === "csv" ? vega.read(String(data.text || ""), { type: "csv", parse: "auto" }) : data.rows || [];
+-    return vegaEmbed(chart, withRows(message.spec, rows), {
 +    // A CSV is read by csv.js and typed from its records: vega's own CSV reader runs `new
 +    // Function`, which this page's CSP refuses (T-6865).
 +    var rows = data.format === "csv" ? vega.read(self.jcCsv(String(data.text || "")), { type: "json", parse: "auto" }) : data.rows || [];
-     return vegaEmbed(chart, withRows(message.spec, rows), {
++    return vegaEmbed(chart, withRows(message.spec, rows, self.jcTheme[mode]), {
        ast: true,
        expr: vega.expressionInterpreter,
-@@ -50,7 +52,15 @@
+       loader: loader,
+@@ -42,15 +48,35 @@
+ 
+   // The rows go in as the named data set `source` before the first draw, so the chart never
+   // draws empty first: Vega-Lite's top-level `datasets`, Vega's data entry of that name.
+-  function withRows(spec, rows) {
++  // A Vega-Lite spec draws in the chart theme, under what its own config says, member by member.
++  function themed(theme, own) {
++    var config = Object.assign({}, theme);
++    Object.keys(own || {}).forEach(function (key) {
++      var mine = own[key];
++      config[key] = mine && typeof mine === "object" && !Array.isArray(mine) && theme[key] && typeof theme[key] === "object"
++        ? Object.assign({}, theme[key], mine) : mine;
++    });
++    return config;
++  }
++
++  function withRows(spec, rows, theme) {
+     var copy = Object.assign({}, spec);
+     if (/vega-lite/.test(spec.$schema)) {
+       copy.datasets = Object.assign({}, spec.datasets, { source: rows });
++      copy.config = themed(theme, spec.config);
+       // T-5415: on a phone the legend goes under the chart in two columns with whole labels; at
        // the right it took half the width and cut "Praha 2-Legerova" to "Praha 2-Legero".
        if (window.innerWidth < 480) {
-         var config = spec.config || {};
+-        var config = spec.config || {};
 -        copy.config = Object.assign({}, config, { legend: Object.assign({}, config.legend, { orient: "bottom", columns: 2, labelLimit: 0 }) });
++        var config = copy.config;
 +        // T-6865: a title wider than the plot, centred on it, ran out of the frame ("PM10 podľa
 +        // stanice (µg/m"), and long y labels took 60 % of the width: the title starts at the
 +        // chart's left edge and ends in an ellipsis, a y label gets at most a third of the width.
@@ -898,63 +1038,83 @@
      } else if (Array.isArray(spec.data)) {
        copy.data = spec.data.map(function (entry) {
 --- /dev/null
-+++ b/site/csv.js
-@@ -0,0 +1,58 @@
-+// A CSV text read without generated code (T-6865). d3-dsv, which `vega.read(text, {type: "csv"})`
-+// parses with, builds its row objects with `new Function`, which the renderer's CSP (no
-+// 'unsafe-eval') refuses: every chart over a `csv` source failed to draw. This reads RFC 4180
-+// (quoted fields, doubled quotes, CRLF) into header-keyed objects of strings; the renderer types
-+// them with `vega.read(records, {type: "json", parse: "auto"})`, which evaluates nothing. One
-+// function, no dependency, so node runs the same file (crates/portal/ui/tests/viz_render_js.test.ts).
-+(function (root) {
-+  "use strict";
-+
-+  function csvRecords(text) {
-+    var rows = [];
-+    var row = [];
-+    var field = "";
-+    var quoted = false;
-+    for (var i = 0; i < text.length; i++) {
-+      var c = text[i];
-+      if (quoted) {
-+        if (c === '"' && text[i + 1] === '"') {
-+          field += '"';
-+          i++;
-+        } else if (c === '"') {
-+          quoted = false;
-+        } else {
-+          field += c;
-+        }
-+      } else if (c === '"') {
-+        quoted = true;
-+      } else if (c === ",") {
-+        row.push(field);
-+        field = "";
-+      } else if (c === "\n" || c === "\r") {
-+        if (c === "\r" && text[i + 1] === "\n") i++;
-+        row.push(field);
-+        rows.push(row);
-+        row = [];
-+        field = "";
-+      } else {
-+        field += c;
-+      }
-+    }
-+    if (field !== "" || row.length > 0) {
-+      row.push(field);
-+      rows.push(row);
-+    }
-+    var header = rows[0];
-+    if (!header) return [];
-+    return rows.slice(1)
-+      .filter(function (cells) { return cells.length > 1 || cells[0] !== ""; })
-+      .map(function (cells) {
-+        var record = {};
-+        header.forEach(function (name, k) { record[name] = k < cells.length ? cells[k] : ""; });
-+        return record;
-+      });
++++ site/theme.js
+@@ -0,0 +1,78 @@
++// The chart theme (T-6886): crates/shared/jc-chart/src/theme.json as a classic script, held
++// equal to that file by bins/jc/src/modules/viz.rs `the_theme_script_is_the_theme_file`.
++self.jcTheme = {
++  "light": {
++    "background": "#ffffff",
++    "font": "Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
++    "padding": 8,
++    "view": { "stroke": null },
++    "title": { "color": "#1f2937", "fontSize": 15, "fontWeight": 600, "anchor": "start", "offset": 10 },
++    "axis": {
++      "labelColor": "#4b5563",
++      "titleColor": "#1f2937",
++      "labelFontSize": 12,
++      "titleFontSize": 12,
++      "titleFontWeight": 600,
++      "titlePadding": 8,
++      "gridColor": "#e5e7eb",
++      "domainColor": "#6b7280",
++      "tickColor": "#6b7280",
++      "labelLimit": 160
++    },
++    "legend": {
++      "labelColor": "#4b5563",
++      "titleColor": "#1f2937",
++      "labelFontSize": 12,
++      "titleFontSize": 12,
++      "titleFontWeight": 600,
++      "symbolType": "square"
++    },
++    "range": {
++      "category": ["#1d4ed8", "#d97706", "#7e22ce", "#0d9488", "#be123c", "#65a30d", "#475569", "#db2777"]
++    },
++    "mark": { "color": "#1d4ed8" },
++    "line": { "strokeWidth": 2.5 },
++    "point": { "filled": true, "size": 48 },
++    "area": { "fillOpacity": 0.3, "line": true },
++    "rule": { "strokeWidth": 2 },
++    "text": { "color": "#1f2937" },
++    "arc": { "stroke": "#ffffff", "strokeWidth": 1 }
++  },
++  "dark": {
++    "background": "#16191d",
++    "font": "Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
++    "padding": 8,
++    "view": { "stroke": null },
++    "title": { "color": "#e5e7eb", "fontSize": 15, "fontWeight": 600, "anchor": "start", "offset": 10 },
++    "axis": {
++      "labelColor": "#a0a8b3",
++      "titleColor": "#e5e7eb",
++      "labelFontSize": 12,
++      "titleFontSize": 12,
++      "titleFontWeight": 600,
++      "titlePadding": 8,
++      "gridColor": "#2b3038",
++      "domainColor": "#8b939e",
++      "tickColor": "#8b939e",
++      "labelLimit": 160
++    },
++    "legend": {
++      "labelColor": "#a0a8b3",
++      "titleColor": "#e5e7eb",
++      "labelFontSize": 12,
++      "titleFontSize": 12,
++      "titleFontWeight": 600,
++      "symbolType": "square"
++    },
++    "range": {
++      "category": ["#60a5fa", "#fcd34d", "#c084fc", "#5eead4", "#f87171", "#a3e635", "#f472b6", "#7dd3fc"]
++    },
++    "mark": { "color": "#60a5fa" },
++    "line": { "strokeWidth": 2.5 },
++    "point": { "filled": true, "size": 48 },
++    "area": { "fillOpacity": 0.3, "line": true },
++    "rule": { "strokeWidth": 2 },
++    "text": { "color": "#e5e7eb" },
++    "arc": { "stroke": "#16191d", "strokeWidth": 1 }
 +  }
-+
-+  root.jcCsv = csvRecords;
-+  if (typeof module === "object" && module.exports) module.exports = csvRecords;
-+})(typeof self !== "undefined" ? self : this);
++};

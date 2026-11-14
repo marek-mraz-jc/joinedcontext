@@ -21,7 +21,7 @@ struct View {
     name: &'static str,
     title: &'static str,
     description: &'static str,
-    page: &'static str,
+    page: fn() -> &'static str,
     /// The tools whose answer the view renders.
     tools: &'static [&'static str],
 }
@@ -32,7 +32,7 @@ const VIEWS: &[View] = &[
         name: "plan-view",
         title: "Plan and sample view",
         description: "Renders a plan's diff or a mapping's sample records; links to the Portal",
-        page: include_str!("plan_view.html"),
+        page: || include_str!("plan_view.html"),
         tools: &["jc_change_plan", "jc_pipeline_try_mapping"],
     },
     View {
@@ -40,7 +40,7 @@ const VIEWS: &[View] = &[
         name: "chart-view",
         title: "Chart view",
         description: "Draws a jc_render chart live from the answer's points; connects nowhere",
-        page: jc_chart::VIEW_PAGE,
+        page: jc_chart::view_page,
         tools: &["jc_render"],
     },
 ];
@@ -97,7 +97,7 @@ pub fn contents(uri: &str, public_base_url: &url::Url) -> Option<Value> {
     Some(json!([{
         "uri": view.uri,
         "mimeType": MIME,
-        "text": view.page.replace("__PORTAL_ORIGIN__", &literal),
+        "text": (view.page)().replace("__PORTAL_ORIGIN__", &literal),
         "_meta": meta()
     }]))
 }
@@ -110,7 +110,7 @@ mod tests {
     /// sink, no request and no URL but the one Portal link.
     #[test]
     fn chart_view_page_has_no_eval_innerhtml_or_url_sinks() {
-        let page = jc_chart::VIEW_PAGE;
+        let page = jc_chart::view_page();
         for sink in [
             "eval(",
             "new Function",

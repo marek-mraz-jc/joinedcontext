@@ -36,11 +36,10 @@ export function withRows(spec: Spec, rows: Record<string, unknown>[], theme: Cha
     height: PLOT_HEIGHT,
     autosize: { type: "fit", contains: "padding" },
     ...rest,
-    // The Portal's type and colours, under whatever the author configured.
+    // The chart theme (T-6886) on the card's own surface, under whatever the author configured.
     config: {
-      font: theme.font,
-      axis: { labelColor: theme.muted, titleColor: theme.text, titleFontWeight: "normal", gridColor: theme.grid },
-      legend: { labelColor: theme.muted, titleColor: theme.text },
+      ...theme.config,
+      background: null,
       // A wide card would otherwise number every unit of a short range.
       axisQuantitative: { tickCount: 6 },
       ...((spec.config as Record<string, unknown>) ?? {}),

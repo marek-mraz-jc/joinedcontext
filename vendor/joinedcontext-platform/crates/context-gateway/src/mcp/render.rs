@@ -79,7 +79,7 @@ pub(crate) fn view_contents() -> Value {
     json!({ "contents": [{
         "uri": jc_chart::VIEW_URI,
         "mimeType": VIEW_MIME,
-        "text": jc_chart::VIEW_PAGE.replace("__PORTAL_ORIGIN__", "null"),
+        "text": jc_chart::view_page().replace("__PORTAL_ORIGIN__", "null"),
         "_meta": view_meta(),
     }] })
 }

@@ -392,6 +392,7 @@ export type ChatEvent =
   | { name: "answer"; text: string }
   | { name: "citations"; citations: Citation[] }
   | { name: "data"; data: DataTable }
+  | { name: "visualization"; visual: Visual | null }
   | { name: "error"; detail: string; title?: string }
   | { name: "done"; tokens: number };
 
@@ -464,6 +465,68 @@ export function dataChart(table: DataTable): DataChart | null {
   return { kind: time !== undefined ? "line" : "bar", value: table.columns[v], by: table.columns[by], points };
 }
 
+/** A Vega-Lite spec as plain JSON. */
+export type Spec = Record<string, unknown>;
+
+/** The page's spec of a {@link DataChart} (T-6889): the rows as inline values, labels drawn as text by Vega. */
+export function chartSpec(chart: DataChart): Spec {
+  const line = chart.kind === "line";
+  return {
+    data: { values: chart.points },
+    mark: line ? { type: "line", point: true, tooltip: true } : { type: "bar", tooltip: true },
+    encoding: {
+      x: line ? { field: "label", type: "temporal", title: chart.by } : { field: "label", type: "nominal", sort: null, title: chart.by },
+      y: { field: "value", type: "quantitative", title: chart.value },
+    },
+  };
+}
+
+/** A `visualization` event that passed {@link visualOf}: its spec and its rows. */
+export interface Visual {
+  spec: Spec;
+  rows: Record<string, unknown>[];
+}
+
+/** The members the assistant's chart specs use (crates/assistant/src/chat/viz.rs `chart`); any other is refused. */
+const VISUAL_KEYS = new Set([
+  "$schema", "title", "description", "data", "name", "encoding", "x", "y", "color", "text", "field", "type", "scale", "zero",
+  "sort", "format", "width", "height", "autosize", "contains", "mark", "point", "tooltip", "layer", "align", "baseline", "dx",
+  "dy", "fontSize", "config",
+]);
+const VISUAL_SCHEMA = /^https:\/\/vega\.github\.io\/schema\/vega-lite\/v[56](\.\d+){0,2}\.json$/;
+const MAX_VISUAL_ROWS = 500;
+
+function closed(value: unknown, depth: number): boolean {
+  if (depth > 8) return false;
+  if (Array.isArray(value)) return value.length <= 8 && value.every((v) => closed(v, depth + 1));
+  if (value === null || typeof value !== "object") return typeof value !== "string" || value.length <= 200;
+  return Object.entries(value).every(([key, inner]) => VISUAL_KEYS.has(key) && (key === "config" || closed(inner, depth + 1)));
+}
+
+/**
+ * A `visualization` event's chart, the assistant's spec checked here before Vega sees it (T-6889):
+ * a Vega-Lite 5 or 6 spec over the one named data set `source`, of the members the assistant's
+ * own chart builder writes and nothing else (no url, expression, signal, param, transform or
+ * image), its `config` dropped for the chart theme. A map, or anything else, is `null`: the
+ * table's own chart rule draws instead.
+ */
+export function visualOf(d: Record<string, unknown>): Visual | null {
+  const spec = d.spec;
+  if (!spec || typeof spec !== "object" || Array.isArray(spec)) return null;
+  const s = spec as Spec;
+  if (typeof s.$schema !== "string" || !VISUAL_SCHEMA.test(s.$schema) || !closed(s, 0)) return null;
+  const data = s.data as Record<string, unknown> | undefined;
+  if (!data || Object.keys(data).length !== 1 || data.name !== "source") return null;
+  if (!Array.isArray(d.rows)) return null;
+  const rows = d.rows
+    .filter((row): row is Record<string, unknown> => !!row && typeof row === "object" && !Array.isArray(row))
+    .slice(0, MAX_VISUAL_ROWS)
+    .map((row) => Object.fromEntries(Object.entries(row).filter(([, v]) => v === null || ["string", "number", "boolean"].includes(typeof v))));
+  if (rows.length === 0) return null;
+  const { config: _config, data: _data, ...rest } = s;
+  return { spec: { ...rest, data: { values: rows } }, rows };
+}
+
 /** One event block's name and data as a `ChatEvent`; `null` for one this panel does not show. */
 function chatEvent(name: string, data: unknown): ChatEvent | null {
   const d = (data ?? {}) as Record<string, unknown>;
@@ -501,6 +564,8 @@ function chatEvent(name: string, data: unknown): ChatEvent | null {
       const table = dataTable(d);
       return table ? { name, data: table } : null;
     }
+    case "visualization":
+      return { name, visual: visualOf(d) };
     case "error":
       return { name, detail: text(d.detail), title: text(d.title) || undefined };
     case "done":

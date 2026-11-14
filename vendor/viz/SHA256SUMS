@@ -1,22 +1,23 @@
 # The files bins/jc/src/modules/viz.rs serves, by the path it serves them at (site/<name> at <name>).
 # vendor/ is joinedcontext-deployment fe826623 images/viz/vendor byte for byte; explorer/ is built
 # from this repository's crates/portal/ui (explorer/SHA256SUMS names the commit); site/ is components/viz/charts/renderer/files/site of that commit with
-# jc.patch applied to explore.js, explore.html, explore.css, embed.js, map.html, host.js, render.html and render.js, plus csv.js, which jc.patch adds (vendor/SOURCES.md).
+# jc.patch applied to explore.js, explore.html, explore.css, embed.js, map.html, host.css, host.js, render.css, render.html and render.js, plus csv.js and theme.js, which jc.patch adds (vendor/SOURCES.md).
 d777da540a64b580e57dd0418ddf487d114ef7e1267201d9a5ed569902d6e17a  csv.js
 1fa68fbfc99c7a5c7715440de8ad6ad8e37d7f4e79192f627e07cd758d27fd87  embed.js
 3be8accffc2a543d62b9b2c8fd5b86e8fa0555274285f2645f63847e4f2727c8  explore.css
 edeedacd18be65b800c35f6bad65b7ebfec2326a83e635828e21f60815de830f  explore.html
 3a12f38fc553d4cbe24fe01cfdf4f943eac13cccbb6823da73b152089b89cbb8  explore.js
-59b948e2ecad2d9b29bdacea71b402a0e9ee2827ed0bd8e55290ab90b945119e  host.css
-46b5405cb28c62cefdde3c730f7625b7cedd2fff0f7d4af14bf937f939bdc3e4  host.js
+35ae07594e56f30a75c30969e5c40ca6d103c468f4a7e9749b39a744a48f5a6b  host.css
+c1c0170225e4adb7cc00a8a56df16029670a15f04c3f45f57c2239eb34def95c  host.js
 57dd801453cd7a724b95f98e4e4c44fe73a0691bd20aa7d3c873c88c16b3e2f2  index.html
 42799803cf3e76176673e0edd162386eef280bba06003297a7f60ab38b7164ab  map.css
 c0b180dab08830cf65d7bd6baaa944bcf3b9ffd2f2eb6eead64ddb0e1bfa1df9  map.html
 655fbf541b7c245809a4da1e4d08dc9a0511d04cd7c17b876c3856d1c1bea452  map.js
 9a7e12e8a064f4e12c6ae291a1a82524876fc8082c58d4b7161410586236fe76  refuse.js
-ad57f5f528008c6adab6839cecee9cd804362d17f978c155e4613bb4eb49ad9d  render.css
-85bff84750e0794cf1314319d6a8d38558425b8fec42131a7ab732ca6028a677  render.html
-a5729bc13f6d21f0d9bc6389888953cc14c065b809d6e4534dcd9cbbed11ea42  render.js
+42efecc641991046ff9b1b0d91019f40fcb43d6b0a1c50ed3f244d9b7d697f1f  render.css
+641a3ad68262c977eb8f7a820bc8ee49f54212beeeb83909bb26043267de19ef  render.html
+e524f5c8d0e186c0694251dc17b76eea9c9fac1271ad04a96cf1f192d49ed259  render.js
+6828b24fc33870ea12d2ed5feb7c585c24a59635dbba4a951dc2e3c68f88469e  theme.js
 e2ab33a77daec4b81ca7801cab661082f30c5501226b3967a027cbef46b37cef  explorer/explorer.css
 5813e8b93913836b335b5865fd957abb97cc34e7a2879d994e21f12225e1907b  explorer/explorer.js
 caf981bc46f6327ee7e65d5dc964d89d38a69f60edca2bd4c5c890c21b554c6c  vendor/pmtiles-4.5.0.js

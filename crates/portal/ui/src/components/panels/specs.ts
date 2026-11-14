@@ -11,33 +11,20 @@ import { seriesColor } from "./palette";
 
 export type Spec = Record<string, unknown>;
 
-/** The colours of the page around a chart, read from the theme when it is drawn. */
+/** The chart theme of the page's scheme (T-6886): its Vega-Lite config and the colours specs draw with by hand. */
 export interface ChartTheme {
   text: string;
   muted: string;
   grid: string;
   surface: string;
   font: string;
+  /** The theme file's config for this scheme. */
+  config: Spec;
 }
 
-/** Shared look: no Vega legend (the page draws its own), the theme's text and grid lines. */
+/** Shared look: the theme's config on the card's own surface, no Vega legend (the page draws its own). */
 export function configOf(theme: ChartTheme): Spec {
-  return {
-    background: null,
-    view: { stroke: null },
-    font: theme.font,
-    axis: {
-      labelColor: theme.muted,
-      titleColor: theme.muted,
-      gridColor: theme.grid,
-      domainColor: theme.grid,
-      tickColor: theme.grid,
-      labelFontSize: 11,
-      titleFontSize: 11,
-      titleFontWeight: "normal",
-    },
-    legend: { disable: true },
-  };
+  return { ...theme.config, background: null, legend: { disable: true } };
 }
 
 /**
