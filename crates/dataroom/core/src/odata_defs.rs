@@ -468,9 +468,9 @@ pub fn scope_for_context(
                 .and(&["state"], vec![Value::String("active".into())]);
         }
     }
-    // A distribution is visible exactly when its dataset is: an internal dataset's access URLs
-    // stay as hidden as the dataset itself.
-    else if set_name == "Distributions" {
+    // A distribution or a SHACL report is visible exactly when its dataset is: an internal
+    // dataset's access URLs and findings stay as hidden as the dataset itself.
+    else if matches!(set_name, "Distributions" | "ShaclResults") {
         if let Some(ids) = visible_dataset_ids {
             scope = scope.and(
                 &["dataset_id"],
@@ -487,6 +487,12 @@ pub fn scope_for_context(
         set_name,
         "HarvestSources" | "HarvestRuns" | "ActivityRows" | "ShaclResults"
     ) && !ctx.subject.is_member_of(ctx.org_id)
+    {
+        scope = scope.and(&["id"], Vec::new());
+    }
+    // Harvest sources and runs need the Read `harvest_source.list` needs.
+    if matches!(set_name, "HarvestSources" | "HarvestRuns")
+        && !authorizer.check(ctx, Action::Read, &hs_target).allowed
     {
         scope = scope.and(&["id"], Vec::new());
     }

@@ -1108,7 +1108,15 @@ pub async fn execute_operation(
             Ok(json!({ "id": withdrawn.id, "name": withdrawn.name, "state": "deleted" }))
         }
         "publisher.list" => {
-            let publishers = op_ctx.store.list_publishers(req_ctx).await?;
+            let mut publishers = op_ctx.store.list_publishers(req_ctx).await?;
+            // Outside the organization: the active publishers (as organization_list), without
+            // the principals that may edit them.
+            if !req_ctx.subject.is_member_of(req_ctx.org_id) {
+                publishers.retain(|p| p.state != RecordState::Withdrawn);
+                for p in &mut publishers {
+                    p.editor_grants.clear();
+                }
+            }
             Ok(json!({ "publishers": publishers }))
         }
         "publisher.propose" => {
@@ -1365,7 +1373,24 @@ pub async fn execute_operation(
             Ok(json!({ "outcome": outcome }))
         }
         "plugin.list" => {
-            let plugins = op_ctx.store.list_plugins(req_ctx).await?;
+            let mut plugins = op_ctx.store.list_plugins(req_ctx).await?;
+            // Which plugins run is public (as status_show's extensions); their settings are for
+            // those who may change them.
+            let target = ObjectTarget::Plugin {
+                org_id: req_ctx.org_id,
+                catalogue_id: req_ctx.catalogue_id,
+                plugin_name: String::new(),
+            };
+            if !op_ctx
+                .authorizer
+                .check(req_ctx, Action::Propose, &target)
+                .allowed
+            {
+                for p in &mut plugins {
+                    p.config = Value::Null;
+                    p.allowed_hosts.clear();
+                }
+            }
             Ok(json!({ "plugins": plugins }))
         }
         "plugin.propose" => {

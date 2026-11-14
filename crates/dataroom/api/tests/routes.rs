@@ -2000,6 +2000,52 @@ async fn a_failing_store_never_answers_an_empty_feed() {
 // ---------------------------------------------------------------------------------------------
 
 #[tokio::test]
+async fn odata_harvest_and_shacl_rows_follow_their_operations() {
+    let w = world().await;
+    let app = &w.app;
+    let ctx = RequestCtx::new(
+        w.org,
+        w.cat,
+        Subject::authenticated("seed", vec![w.org], Vec::new()),
+    );
+    for ds in ["pkg-open", "pkg-secret"] {
+        let report: ShaclValidationReport = serde_json::from_value(json!({
+            "orgId": w.org, "catalogueId": w.cat, "id": format!("rep-{ds}"), "datasetId": ds,
+            "profileId": "dcat-ap-3.0.1", "profileVersion": "3.0.1", "conforms": true,
+            "violationCount": 0, "warningCount": 0, "findings": [],
+            "checkedAt": "2026-11-01T10:00:00Z"
+        }))
+        .unwrap();
+        w.store.upsert_shacl_report(&ctx, report).await.unwrap();
+    }
+    let source: HarvestSource = serde_json::from_value(json!({
+        "orgId": w.org, "catalogueId": w.cat, "id": "hs-1", "name": "nkod",
+        "kind": "dcat-ap", "url": "https://data.example.org/catalog.ttl", "publisherId": "city",
+        "allowedHosts": ["data.example.org"], "modified": "2026-11-01T10:00:00Z"
+    }))
+    .unwrap();
+    w.store.upsert_harvest_source(&ctx, source).await.unwrap();
+    let ids = |a: &Answer| -> Vec<String> {
+        a.json()["value"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{}", a.body))
+            .iter()
+            .map(|r| r["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    // A member without grants: no harvest sources (harvest_source.list refuses it too), and
+    // only the reports of datasets it may read.
+    let a = get(app, "/odata/v4/HarvestSources", Some("tok-member")).await;
+    assert!(ids(&a).is_empty(), "{}", a.body);
+    let a = get(app, "/odata/v4/ShaclResults", Some("tok-member")).await;
+    assert_eq!(ids(&a), ["rep-pkg-open"], "{}", a.body);
+    let a = get(app, "/odata/v4/HarvestSources", Some("tok-admin")).await;
+    assert_eq!(ids(&a), ["hs-1"], "{}", a.body);
+    let a = get(app, "/odata/v4/ShaclResults", Some("tok-editor")).await;
+    assert_eq!(ids(&a).len(), 2, "{}", a.body);
+}
+
+#[tokio::test]
 async fn odata_rows_follow_package_show() {
     let w = world().await;
     let app = &w.app;

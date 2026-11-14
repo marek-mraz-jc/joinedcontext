@@ -785,10 +785,25 @@ async fn dataset_withdraw() {
 async fn publisher_operations_and_no_self_granted_editing() {
     let w = world().await;
     let listed = w
-        .run(&w.anonymous(), "publisher.list", json!({}))
+        .run(&w.member(), "publisher.list", json!({}))
         .await
         .unwrap();
     assert_eq!(names(&listed, "publishers"), ["city", "dept", "gone"]);
+    // Anonymous: the active publishers, without who may edit them.
+    w.run(
+        &w.admin(),
+        "publisher.propose",
+        json!({"publisher": {"name": "dept", "title": {"sk": "Odbor"}, "description": {},
+            "uri": "https://example.org/dept", "state": "active", "editorGrants": ["dept-team"]}}),
+    )
+    .await
+    .unwrap();
+    let listed = w
+        .run(&w.anonymous(), "publisher.list", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(names(&listed, "publishers"), ["city", "dept"]);
+    assert!(!listed.to_string().contains("dept-team"), "{listed}");
 
     // A member without rights may not create a publisher by naming itself its editor...
     let selfgrant = json!({"publisher": {"name": "mine", "title": {"sk": "Môj"},
@@ -1266,7 +1281,7 @@ fn a_stored_run_error_reads_as_one_word() {
 async fn plugins_profiles_branding_activity_and_feed_check() {
     let w = world().await;
     let plugin = json!({"plugin": {"name": "maps", "version": "1.0.0", "digest": "sha256:00",
-        "enabled": true}});
+        "enabled": true, "allowedHosts": ["tiles.example.org"], "config": {"style": "dark"}}});
     let r = w.run(&w.member(), "plugin.propose", plugin.clone()).await;
     assert!(is_forbidden(&r), "{r:?}");
     let saved = w.run(&w.admin(), "plugin.propose", plugin).await.unwrap();
@@ -1284,6 +1299,14 @@ async fn plugins_profiles_branding_activity_and_feed_check() {
         .await
         .unwrap();
     assert_eq!(listed["plugins"].as_array().unwrap().len(), 1);
+    // Which plugin runs is public; its settings are not.
+    let p = &listed["plugins"][0];
+    assert!(
+        p["config"].is_null() && p["allowedHosts"] == json!([]),
+        "{p}"
+    );
+    let listed = w.run(&w.admin(), "plugin.list", json!({})).await.unwrap();
+    assert_ne!(listed["plugins"][0]["allowedHosts"], json!([]), "{listed}");
 
     let profile = json!({"profile": {"id": "city-ext", "version": "1",
         "uri": "https://example.org/p", "title": {"en": "City"}, "shapesTurtle": "",
