@@ -228,7 +228,7 @@ async fn a_foreign_or_missing_owner_is_refused_on_the_id() {
 #[tokio::test]
 async fn an_odata_create_naming_a_foreign_owner_is_refused() {
     let mut odata = endpoint(PROJECT, "public");
-    odata.representations.push(Representation::OData);
+    odata.representations.push(Representation::Odata);
     let (status, problem, asked) = send(
         &FOUR,
         odata,
