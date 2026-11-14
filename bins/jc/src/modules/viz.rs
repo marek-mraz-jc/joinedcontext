@@ -73,6 +73,10 @@ const FILES: &[(&str, &[u8])] = &[
         include_bytes!("../../../../vendor/viz/site/render.js"),
     ),
     (
+        "theme.js",
+        include_bytes!("../../../../vendor/viz/site/theme.js"),
+    ),
+    (
         "index.html",
         include_bytes!("../../../../vendor/viz/site/index.html"),
     ),
@@ -536,6 +540,19 @@ mod tests {
                 .collect();
             assert_eq!(got, want, "{path}");
         }
+    }
+
+    /// The renderer's chart theme is the one theme file every chart surface reads (T-6886):
+    /// `theme.js` is jc-chart's `theme.json` behind `self.jcTheme = `, byte for byte.
+    #[test]
+    fn the_theme_script_is_the_theme_file() {
+        let script = include_str!("../../../../vendor/viz/site/theme.js");
+        let body = script
+            .split_once("self.jcTheme = ")
+            .map(|(_, body)| body)
+            .expect("self.jcTheme = ");
+        let theme = include_str!("../../../../crates/shared/jc-chart/src/theme.json");
+        assert_eq!(body, format!("{};\n", theme.trim_end()));
     }
 
     /// The releases are the deployment's byte for byte and the explorer bundle is the one built

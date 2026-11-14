@@ -7,22 +7,22 @@
 import { useEffect, useRef, useState } from "react";
 import type { JSX, ReactNode } from "react";
 import { clsx } from "clsx";
-import { themeColour } from "../dashboards/mapColours";
 import type { TopLevelSpec } from "vega-lite";
 import type { ChartTheme, Spec } from "./specs";
 import { formatWith } from "./specs";
-import { FALLBACK } from "./palette";
+import type { ChartMode } from "./palette";
+import { THEME, chartMode } from "./palette";
 
-/** The page's colours as a canvas paints them, read when a chart is drawn. */
-export function chartTheme(): ChartTheme {
-  const font =
-    typeof document === "undefined" ? "" : getComputedStyle(document.documentElement).getPropertyValue("--font-sans").trim();
+/** The chart theme (T-6886) for the page's scheme, read when a chart is drawn. */
+export function chartTheme(mode: ChartMode = chartMode()): ChartTheme {
+  const config = THEME[mode];
   return {
-    text: themeColour("--portal-fg", FALLBACK.text),
-    muted: themeColour("--portal-fg-muted", FALLBACK.muted),
-    grid: themeColour("--portal-border", FALLBACK.grid),
-    surface: themeColour("--portal-surface", FALLBACK.surface),
-    font: font || "Inter, system-ui, sans-serif",
+    text: config.axis.titleColor,
+    muted: config.axis.labelColor,
+    grid: config.axis.gridColor,
+    surface: config.background,
+    font: config.font,
+    config,
   };
 }
 
@@ -55,9 +55,11 @@ export interface VegaChartProps {
   /** The tooltip's content for the datum under the pointer; nothing draws none. */
   tooltip?: (datum: Record<string, unknown>) => ReactNode;
   className?: string;
+  /** The line shown when Vega cannot draw, in place of its own error text. */
+  failure?: string;
 }
 
-export function VegaChart({ spec, label, height, tooltip, className }: VegaChartProps): JSX.Element {
+export function VegaChart({ spec, label, height, tooltip, className, failure }: VegaChartProps): JSX.Element {
   const host = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<HoverAt | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
@@ -108,9 +110,11 @@ export function VegaChart({ spec, label, height, tooltip, className }: VegaChart
     <div className={clsx("relative w-full", className)}>
       {/* Vega writes its own role and label onto its container, so the chart's label sits a level up. */}
       <div role="img" aria-label={label}>
-        <div ref={host} className="w-full" style={{ height }} onPointerLeave={() => setHover(null)} />
+        {/* A chart that could not be drawn leaves no empty box: the line below says so. */}
+        <div ref={host} className="w-full" style={{ height: failed ? 0 : height }} onPointerLeave={() => setHover(null)} />
       </div>
-      {failed ? <p className="text-caption text-danger">{failed}</p> : null}
+      {/* With `failure` the page holds the values elsewhere: a note, not an error. */}
+      {failed ? <p className={clsx("text-caption", failure ? "text-fg-muted" : "text-danger")}>{failure ?? failed}</p> : null}
       {hover && tooltip ? (
         <div
           role="tooltip"

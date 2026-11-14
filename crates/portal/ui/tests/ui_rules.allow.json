@@ -39,9 +39,9 @@
       "reason": "The map's palette, and the only colour values left in the dashboards folder. Four of the eight are the YlOrRd ramp the Layer manifests name - a data scale that must read the same in both themes and must not move when an installation changes its primary. The other four are what a renderer with no stylesheet falls back to; a browser resolves the token every time. Two more turn a token written in CSS a map style cannot parse (color-mix, oklab) into the plain rgb the style can (T-3256): computed from the token, not a colour chosen here."
     },
     "src/components/panels/palette.ts": {
-      "lines": 37,
+      "lines": 33,
       "group": "ui-parts",
-      "reason": "Grafana's named colours (green, red, semi-dark-blue ...) as the hex values Grafana gives them: a dashboard's thresholds, mappings and fixedColor name these words, so they are data the dashboard JSON carries, not colours chosen here. The four FALLBACK values are what a canvas paints before the page's tokens resolve; VegaChart reads the tokens every time."
+      "reason": "Grafana's named colours (green, red, semi-dark-blue ...) as the hex values Grafana gives them: a dashboard's thresholds, mappings and fixedColor name these words, so they are data the dashboard JSON carries, not colours chosen here. The chart colours come from jc-chart's theme.json (T-6886)."
     }
   },
   "focus_is_not_stolen": {

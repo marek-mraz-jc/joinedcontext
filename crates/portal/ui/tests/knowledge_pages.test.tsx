@@ -12,12 +12,21 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
+
+// jsdom has no canvas: the stub shows the spec the chat's chart was given (T-6889).
+vi.mock("../src/components/panels/VegaChart", async (actual) => ({
+  ...(await actual<typeof import("../src/components/panels/VegaChart")>()),
+  VegaChart: ({ spec, label }: { spec: Record<string, unknown>; label: string }) => (
+    <div role="img" aria-label={label} data-testid="vega-chart" data-spec={JSON.stringify(spec)} />
+  ),
+}));
 import { App } from "../src/App";
-import { bytesText, dataChart, embedSnippet, readEvents, timeText, topLanguages } from "../src/pages/knowledge/knowledge";
+import { bytesText, chartSpec, dataChart, embedSnippet, readEvents, timeText, topLanguages, visualOf } from "../src/pages/knowledge/knowledge";
 import { InclusionBadge } from "../src/pages/knowledge/SourcePage";
 import { UploadedFiles } from "../src/pages/knowledge/UploadedFiles";
 import { sum } from "../src/pages/knowledge/IndexStatus";
 import { EmbedSnippet } from "../src/pages/knowledge/AssistantChat";
+import { chartTheme } from "../src/components/panels/VegaChart";
 import { ApiError, reasonOf } from "../src/api/client";
 import { standing } from "../src/pages/knowledge/KnowledgePage";
 import { assistantDeploymentSchema, fromKindManifest, knowledgeSourceSchema, toKindManifest } from "../src/schemas/knowledge";
@@ -678,6 +687,16 @@ describe("the files of an upload source (T-4185)", () => {
 });
 
 describe("asking an assistant in the Portal (T-3058, AG-115)", () => {
+  /** The chat dialog of `obcania` after one question, its stream answered with `body`. */
+  async function ask(body: string): Promise<HTMLElement> {
+    renderAt("/projects/banskabystrica/knowledge", { chat: { code: 200, body } });
+    const table = await screen.findByRole("table", { name: "Assistants" });
+    await userEvent.click(within(table).getByRole("button", { name: "Ask obcania" }));
+    const dialog = await screen.findByRole("dialog", { name: "Ask obcania" });
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "Your question" }), "PM10?{Enter}");
+    return dialog;
+  }
+
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -685,7 +704,7 @@ describe("asking an assistant in the Portal (T-3058, AG-115)", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows a data round as a table with its chart and links, the chart hidden from a screen reader (T-4198)", async () => {
+  it("shows a data round as a table with its chart and links: the_assistant_chart_is_drawn_by_vega (T-4198, T-6889)", async () => {
     const data = {
       endpoint: "ovzdusie-verejne",
       type: "AirQualityObserved",
@@ -695,19 +714,54 @@ describe("asking an assistant in the Portal (T-3058, AG-115)", () => {
       download: "javascript:alert(1)",
     };
     const body = `event: data\ndata: ${JSON.stringify(data)}\n\nevent: answer\ndata: {"text":"PM10 je 21."}\n\nevent: done\ndata: {"tokens":9}\n\n`;
-    renderAt("/projects/banskabystrica/knowledge", { chat: { code: 200, body } });
-    const table = await screen.findByRole("table", { name: "Assistants" });
-    await userEvent.click(within(table).getByRole("button", { name: "Ask obcania" }));
-    const dialog = await screen.findByRole("dialog", { name: "Ask obcania" });
-    await userEvent.type(within(dialog).getByRole("textbox", { name: "Your question" }), "PM10?{Enter}");
+    const dialog = await ask(body);
     const rows = await within(dialog).findByRole("table", { name: "AirQualityObserved" });
     // The shared grid draws the first column as the row's header (T-6752).
     expect(within(rows).getByRole("rowheader", { name: "2026-10-15T10:00:00Z" })).toBeInTheDocument();
-    const chart = within(dialog).getByTestId("assistant-chart");
-    expect(chart).toHaveAttribute("aria-hidden", "true");
-    expect(chart.querySelector("polyline")?.getAttribute("points")?.split(" ")).toHaveLength(2);
+    const chart = within(within(dialog).getByTestId("assistant-chart")).getByTestId("vega-chart");
+    expect(chart).toHaveAccessibleName("Chart of pm10 by dateObserved; the table above holds the same values");
+    expect(dialog.querySelector("polyline, svg rect")).toBeNull();
+    const spec = JSON.parse(chart.getAttribute("data-spec") ?? "{}") as { mark: { type: string }; data: { values: unknown[] }; config: { range: { category: string[] } } };
+    expect(spec.mark.type).toBe("line");
+    expect(spec.data.values).toEqual([{ label: "2026-10-15T09:00:00Z", value: 18 }, { label: "2026-10-15T10:00:00Z", value: 21 }]);
+    // The chart theme's palette (T-6886), not a second one.
+    expect(spec.config.range.category).toEqual((chartTheme("light").config.range as { category: string[] }).category);
     expect(within(dialog).getByRole("link", { name: /Open the dataset/ })).toHaveAttribute("href", data.dataset);
     expect(within(dialog).queryByRole("link", { name: /Download the data/ })).toBeNull();
+  });
+
+  it("a_label_holding_markup_is_text: a hostile label goes to Vega as a data value, no element is made of it", async () => {
+    const hostile = "</script><img src=x onerror=alert(1)>";
+    const data = { type: "AirQualityObserved", columns: ["station", "pm10"], rows: [[hostile, 21], ["Zvolen", 18]] };
+    const dialog = await ask(`event: data\ndata: ${JSON.stringify(data)}\n\nevent: answer\ndata: {"text":"Hotovo."}\n\n`);
+    const chart = await within(dialog).findByTestId("vega-chart");
+    expect(document.querySelector("img")).toBeNull();
+    const spec = JSON.parse(chart.getAttribute("data-spec") ?? "{}") as { data: { values: { label: string }[] }; encoding: Record<string, unknown> };
+    expect(spec.data.values.map((v) => v.label)).toEqual([hostile, "Zvolen"]);
+    expect(JSON.stringify(spec.encoding)).not.toContain("<");
+  });
+
+  it("draws the assistant's checked visualization once, in place of the table's chart (T-6889)", async () => {
+    const data = { type: "AirQualityObserved", columns: ["station", "pm10"], rows: [["SK0214A", 14.2], ["Zvolen", 9.25]] };
+    const visualization = {
+      spec: {
+        $schema: "https://vega.github.io/schema/vega-lite/v5.json",
+        data: { name: "source" },
+        mark: { type: "bar", tooltip: true },
+        encoding: { y: { field: "label", type: "nominal", sort: "-x", title: null }, x: { field: "value", type: "quantitative", title: "pm10" } },
+        config: { font: "Comic Sans MS", range: { category: ["#ff00ff"] } },
+      },
+      rows: [{ label: "SK0214A", value: 14.2 }, { label: "Zvolen", value: 9.25 }],
+    };
+    const dialog = await ask(`event: data\ndata: ${JSON.stringify(data)}\n\nevent: visualization\ndata: ${JSON.stringify(visualization)}\n\nevent: answer\ndata: {"text":"Hotovo."}\n\n`);
+    await within(dialog).findByText("Hotovo.");
+    const charts = within(dialog).getAllByTestId("vega-chart");
+    expect(charts).toHaveLength(1);
+    expect(charts[0]).toHaveAccessibleName("The assistant's chart; the table above holds the same values");
+    const spec = JSON.parse(charts[0].getAttribute("data-spec") ?? "{}") as { data: { values: unknown[] }; config: Record<string, unknown> };
+    expect(spec.data.values).toEqual(visualization.rows);
+    // The spec's own config is dropped for the theme.
+    expect(spec.config.font).toBe(chartTheme("light").font);
   });
 
   it("charts one number over time or per name, and nothing else (T-4198, the widget's rule)", () => {
@@ -719,6 +773,41 @@ describe("asking an assistant in the Portal (T-3058, AG-115)", () => {
     expect(dataChart(table(["name", "v"], [["a", 1]]))).toBeNull();
     expect(dataChart(table(["name", "v"], Array.from({ length: 51 }, (_, i) => [`s${i}`, i])))?.points).toHaveLength(50);
     expect(dataChart(table(["name", "v"], [["a", 1], ["b", Number.NaN], ["c", "7"], ["d", 2]]))?.points.map((p) => p.label)).toEqual(["a", "d"]);
+  });
+
+  it("no_chart_under_two_points and fifty_points_at_most, in the spec Vega gets (T-6889)", () => {
+    const table = (columns: string[], rows: unknown[][]) => ({ caption: "", columns, rows });
+    expect(dataChart(table(["name", "v"], [["a", 1]]))).toBeNull();
+    const many = dataChart(table(["name", "v"], Array.from({ length: 80 }, (_, i) => [`s${i}`, i])));
+    const spec = chartSpec(many!) as { data: { values: unknown[] }; mark: { type: string } };
+    expect(spec.data.values).toHaveLength(50);
+    expect(spec.mark.type).toBe("bar");
+  });
+
+  it("a_refused_visualization_spec_falls_back_to_the_table_rule: url, expression, transform and other members (T-6889)", () => {
+    const good = {
+      $schema: "https://vega.github.io/schema/vega-lite/v6.json",
+      data: { name: "source" },
+      mark: { type: "line", point: true, tooltip: true },
+      encoding: { x: { field: "time", type: "temporal", title: null }, y: { field: "value", type: "quantitative", scale: { zero: false } } },
+    };
+    const rows = [{ time: "2026-10-18T15:00:00Z", value: 14.2 }];
+    expect(visualOf({ spec: good, rows })?.spec.data).toEqual({ values: rows });
+    for (const spec of [
+      { ...good, data: { url: "https://evil.example/rows.json" } },
+      { ...good, data: { name: "source", url: "x" } },
+      { ...good, transform: [{ calculate: "1", as: "x" }] },
+      { ...good, encoding: { ...good.encoding, x: { field: "time", type: "temporal", axis: { labelExpr: "alert(1)" } } } },
+      { ...good, params: [{ name: "p", expr: "1" }] },
+      { ...good, mark: { type: "image" }, encoding: { url: { field: "u" } } },
+      { ...good, $schema: "urn:joinedcontext:map:v1" },
+      { ...good, $schema: "https://evil.example/vega-lite/v5.json" },
+      { ...good, encoding: { ...good.encoding, y: { field: "value", type: "quantitative", config: { url: "x" } } } },
+    ]) {
+      expect(visualOf({ spec, rows }), JSON.stringify(spec)).toBeNull();
+    }
+    expect(visualOf({ spec: good, rows: [] })).toBeNull();
+    expect(visualOf({ spec: good, rows: [{ value: { toString: "x" } }] })?.rows).toEqual([{}]);
   });
 
   it("streams the answer with its sources and script, and sends the conversation back with the connectors switched", async () => {
