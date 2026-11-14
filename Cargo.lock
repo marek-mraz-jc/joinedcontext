@@ -11506,7 +11506,6 @@ dependencies = [
  "jsonwebtoken 9.3.1",
  "p256 0.13.2",
  "parking_lot",
- "rand 0.9.5",
  "rand_core 0.6.4",
  "reqwest 0.12.28",
  "serde",

@@ -678,6 +678,47 @@ async fn mirrors_packages_and_tags() {
     assert!(tags["value"].as_array().unwrap().is_empty());
 }
 
+/// `$expand` on a set without navigation properties is a 400, never a silently smaller answer.
+#[tokio::test]
+async fn an_expand_on_a_set_that_expands_nothing_is_400() {
+    let w = world();
+    create_repo(&w, "helsinki").await;
+    let (st, body, _) = call(
+        &w.app,
+        "GET",
+        "/odata/Repositories?$expand=Branches",
+        Some("portal-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    let (st, body, _) = call(
+        &w.app,
+        "GET",
+        &format!("{R}/PullRequests?$expand=Files,Reviews"),
+        Some("portal-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+}
+
+/// Every answer carries one fixed content security policy: no page holds an inline style, so
+/// there is no nonce to draw per request.
+#[tokio::test]
+async fn every_answer_carries_the_fixed_content_security_policy() {
+    let w = world();
+    let resp = w
+        .app
+        .clone()
+        .oneshot(Request::builder().uri("/odata/Repositories").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let csp = resp.headers()["content-security-policy"].to_str().unwrap();
+    assert!(csp.starts_with("default-src 'none'; style-src 'self'; "), "{csp}");
+    assert!(!csp.contains("nonce"), "{csp}");
+}
+
 /// Every write and read the Portal makes, without a token: 401.
 #[tokio::test]
 async fn no_token_is_401_on_every_portal_call() {
