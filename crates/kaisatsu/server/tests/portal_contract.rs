@@ -1368,6 +1368,120 @@ async fn bearer_and_connector_tokens_verify_and_exchange_for_one_endpoint() {
     );
 }
 
+/// The person's connector token `portal-api` exchanges (mcp/connector.rs:121).
+async fn connector_subject(app: &Router) -> String {
+    let connector = public_client_token(app, &format!("openid connector:{CONNECTOR}")).await;
+    connector["access_token"].as_str().unwrap().to_owned()
+}
+
+/// The Endpoint scope `portal-api` creates for `slug` (hub_scopes.rs:172), and its id.
+async fn create_hub_scope(app: &Router, api: &str, slug: &str) -> String {
+    let made = admin(app, api, Method::POST, "/client-scopes", Some(hub_scope(slug))).await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
+    admin(app, api, Method::GET, "/client-scopes", None)
+        .await
+        .json()
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == format!("endpoint:{slug}"))
+        .map(id_of)
+        .expect("the new scope is listed")
+}
+
+/// The names `client`'s optional scopes list (hub_scopes.rs:271 reads the hub's).
+async fn optional_names(app: &Router, token: &str, client: &str) -> Vec<String> {
+    let uuid = id_of(&find_client(app, token, client).await.unwrap());
+    let listed = admin(
+        app,
+        token,
+        Method::GET,
+        &format!("/clients/{uuid}/optional-client-scopes"),
+        None,
+    )
+    .await
+    .json();
+    scope_names(&listed)
+}
+
+/// T-6857: in the one binary no admin-permissions Job links the Portal's `endpoint:{slug}`
+/// scopes; the realm file's `kaisatsu.linked-scope-prefix` does, from the moment the scope exists.
+#[tokio::test]
+async fn an_endpoint_scope_is_exchangeable_for_portal_api_after_create() {
+    let realm = realm().await;
+    let app = &realm.app;
+    let bearer = Bearer::of(app).await;
+    let subject = connector_subject(app).await;
+    let api = portal_api(app).await;
+    let operator = realm_admin(&realm).await;
+
+    // Before the Endpoint's scope exists, the exchange is `invalid_scope` (auth/oidc.rs:125).
+    let before = exchange(app, &subject, SLUG).await;
+    assert_eq!(before.status, StatusCode::BAD_REQUEST, "{}", before.text);
+    assert_eq!(before.json()["error"], json!("invalid_scope"), "{}", before.text);
+
+    create_hub_scope(app, &api, SLUG).await;
+    let answer = exchange(app, &subject, SLUG).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let claims = bearer
+        .verify(&tokens(&answer).access_token, "mcp-hub", "Bearer")
+        .unwrap_or_else(|e| panic!("the exchanged token names no hub: {e}"));
+    assert_eq!(claims["aud"], json!("mcp-hub"), "{claims}");
+    let scope = claims["scope"].as_str().unwrap_or_default();
+    assert!(
+        scope.split_whitespace().any(|s| s == format!("endpoint:{SLUG}")),
+        "{claims}"
+    );
+    assert!(
+        !scope.split_whitespace().any(|s| s == "endpoint:*"),
+        "{claims}"
+    );
+
+    // The hub and portal-api list it as linked, so the Endpoint's HubLinked turns True
+    // (hub_scopes.rs:271); a client the realm file does not mark does not take it.
+    let name = format!("endpoint:{SLUG}");
+    assert!(optional_names(app, &operator, "mcp-hub").await.contains(&name));
+    assert!(optional_names(app, &operator, "portal-api").await.contains(&name));
+    assert!(!optional_names(app, &operator, "portal-ui").await.contains(&name));
+
+    // A scope of the prefix the Portal did not mark (a realm admin's) is never taken: the link
+    // widens nothing beyond the Portal's own Endpoint scopes.
+    let foreign = "foreignslugforeignslug2345";
+    let mut unmarked = hub_scope(foreign);
+    unmarked["attributes"]
+        .as_object_mut()
+        .unwrap()
+        .remove(MANAGED.0);
+    let made = admin(app, &operator, Method::POST, "/client-scopes", Some(unmarked)).await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
+    let refused = exchange(app, &subject, foreign).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
+    assert_eq!(refused.json()["error"], json!("invalid_scope"), "{}", refused.text);
+}
+
+/// T-6857: deleting the Endpoint's scope (its Endpoint gone, hub_scopes.rs:233) ends the link.
+#[tokio::test]
+async fn a_deleted_endpoints_scope_is_not() {
+    let realm = realm().await;
+    let app = &realm.app;
+    let subject = connector_subject(app).await;
+    let api = portal_api(app).await;
+    let operator = realm_admin(&realm).await;
+
+    let id = create_hub_scope(app, &api, SLUG).await;
+    let answer = exchange(app, &subject, SLUG).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+
+    let gone = admin(app, &api, Method::DELETE, &format!("/client-scopes/{id}"), None).await;
+    assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
+    let refused = exchange(app, &subject, SLUG).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
+    assert_eq!(refused.json()["error"], json!("invalid_scope"), "{}", refused.text);
+    let name = format!("endpoint:{SLUG}");
+    assert!(!optional_names(app, &operator, "mcp-hub").await.contains(&name));
+    assert!(!optional_names(app, &operator, "portal-api").await.contains(&name));
+}
+
 /// reconciler/hub_scopes.rs:61 `desired`.
 fn hub_scope(slug: &str) -> Value {
     json!({

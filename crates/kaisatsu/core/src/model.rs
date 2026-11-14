@@ -629,7 +629,40 @@ impl ClientRepresentation {
         }
         Ok(())
     }
+
+    /// Whether `scope` is an optional scope of this client: linked by name, or a Portal Endpoint
+    /// scope taken by [`LINKED_SCOPE_PREFIX`] (T-6857). Resolved at each read, so a scope is
+    /// exchangeable once the Portal creates it, gone once it deletes it, and a realm re-apply of
+    /// the client's own list cannot drop it.
+    pub fn has_optional_scope(&self, scope: &ClientScopeRepresentation) -> bool {
+        self.optional_client_scopes.contains(&scope.name) || self.links_by_prefix(scope)
+    }
+
+    /// A realm-file client (no `managed-by` attribute: the Portal cannot write one) with
+    /// [`LINKED_SCOPE_PREFIX`] `p` takes each scope `p{slug}` that the Portal marks
+    /// (`managed-by: joinedcontext`, an Endpoint, no protocol mapper) as optional, as dev's
+    /// admin-permissions Job links them. The slug is the opaque Endpoint alphabet, so no
+    /// `endpoint:*` and no claim beyond the scope string.
+    fn links_by_prefix(&self, scope: &ClientScopeRepresentation) -> bool {
+        let Some(prefix) = self.attributes.get(LINKED_SCOPE_PREFIX) else {
+            return false;
+        };
+        let Some(slug) = scope.name.strip_prefix(prefix.as_str()) else {
+            return false;
+        };
+        !prefix.is_empty()
+            && !self.attributes.contains_key("managed-by")
+            && (8..=64).contains(&slug.len())
+            && slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+            && scope.protocol_mappers.is_empty()
+            && scope.attributes.get("managed-by").map(String::as_str) == Some("joinedcontext")
+            && scope.attributes.contains_key("joinedcontext.endpoint")
+    }
 }
+
+/// The client attribute naming the prefix of the Portal's Endpoint scopes a realm-file client
+/// takes as optional (`endpoint:` on `portal-api`, `mcp-hub`, `jcctl`; T-6857).
+pub const LINKED_SCOPE_PREFIX: &str = "kaisatsu.linked-scope-prefix";
 
 impl Default for ClientRepresentation {
     fn default() -> Self {

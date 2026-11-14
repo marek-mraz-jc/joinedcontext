@@ -2888,8 +2888,14 @@ async fn compat_list_client_optional_scopes(
         .await?
         .ok_or_else(|| KaisatsuError::NotFound("client not found".into()))?;
     check_application(&state, &ctx, &client, Action::Read)?;
-    let scopes =
+    let mut scopes =
         resolve_scope_objects(&state.oidc.store, &realm, &client.optional_client_scopes).await?;
+    // The scopes the client takes by its prefix (T-6857), as Keycloak would list a link.
+    for scope in state.oidc.store.list_client_scopes(&realm).await? {
+        if client.has_optional_scope(&scope) && !scopes.iter().any(|s| s.name == scope.name) {
+            scopes.push(scope);
+        }
+    }
     Ok(Json(scopes))
 }
 
