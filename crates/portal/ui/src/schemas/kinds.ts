@@ -3125,7 +3125,14 @@ export function organizationSchema(
                   secondFactorFloor === "required"
                     ? `${t("organization.policy.secondFactorHint")} ${t("organization.policy.secondFactorInheritedHint")}`
                     : t("organization.policy.secondFactorHint"),
-                oneOf: SECOND_FACTOR.map((value) => ({ const: value, title: t(`organization.policy.secondFactor_${value}`) })),
+                oneOf: SECOND_FACTOR.map((value) => ({
+                  const: value,
+                  // The form shows the arrangement's help, not this description: the choice itself names the floor.
+                  title:
+                    value === "optional" && secondFactorFloor === "required"
+                      ? t("organization.policy.secondFactor_optionalUnderFloor")
+                      : t(`organization.policy.secondFactor_${value}`),
+                })),
               },
             },
           },

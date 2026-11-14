@@ -262,7 +262,7 @@ describe("the Organization form", () => {
     expect(errorsOf({ ...base, policies: { signIn: { secondFactor: "sometimes" } } }).join("\n")).toMatch(/secondFactor/);
     expect(errorsOf({ ...base, policies: { signIn: { secondFactor: "required" } } })).toEqual([]);
     expect(errorsOf({ ...base, policies: { signIn: { secondFactor: "optional" } } })).toEqual([]);
-    type Field = { description: string; oneOf: { const: string }[] };
+    type Field = { description: string; oneOf: { const: string; title: string }[] };
     const field = (floor: string) =>
       (organizationSchema(t, LIMITS.entries, [], floor) as {
         properties: { policies: { properties: { signIn: { properties: { secondFactor: Field } } } } };
@@ -270,6 +270,10 @@ describe("the Organization form", () => {
     expect(field("optional").oneOf.map((option) => option.const)).toEqual(["required", "optional"]);
     expect(field("optional").description).toBe(en.organization.policy.secondFactorHint);
     expect(field("required").description).toContain(en.organization.policy.secondFactorInheritedHint);
+    // The form shows the arrangement's help, so under a required floor the Optional choice names the floor itself.
+    const titles = (floor: string) => field(floor).oneOf.map((option) => option.title);
+    expect(titles("required")).toEqual([en.organization.policy.secondFactor_required, en.organization.policy.secondFactor_optionalUnderFloor]);
+    expect(titles("optional")).toEqual([en.organization.policy.secondFactor_required, en.organization.policy.secondFactor_optional]);
     // The password policy of the catalog still sits beside it.
     const withPassword = organizationSchema(t, [entry("spec.policies.signIn.password.minLength", "signIn", { min: 12 })]) as {
       properties: { policies: { properties: { signIn: { properties: Record<string, unknown> } } } };

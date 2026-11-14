@@ -194,6 +194,12 @@ spec:
         sk: Či môže projekt zverejniť aplikáciu, ktorú otvorí ktokoľvek bez prihlásenia.
         cs: Zda smí projekt zveřejnit aplikaci, kterou otevře kdokoli bez přihlášení.
         de: Ob ein Projekt eine App veröffentlichen darf, die jeder ohne Anmeldung öffnet.
+    policies.signIn.secondFactor:
+      help:
+        en: Required asks people with an organization-wide role to set up an authenticator app at their next sign-in, for example when they handle personal data.
+        sk: Povinný požiada ľudí s rolou v celej organizácii, aby si pri najbližšom prihlásení nastavili overovaciu aplikáciu, napríklad ak pracujú s osobnými údajmi.
+        cs: Povinný požádá lidi s rolí v celé organizaci, aby si při příštím přihlášení nastavili ověřovací aplikaci, například pokud pracují s osobními údaji.
+        de: Erforderlich bittet Personen mit einer Rolle in der ganzen Organisation, bei der nächsten Anmeldung eine Authenticator-App einzurichten, zum Beispiel wenn sie personenbezogene Daten bearbeiten.
     policies.agents.models:
       help:
         en: The models the assistant may use, by the name the installation gives them; leave it out to allow every one.
