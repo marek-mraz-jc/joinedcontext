@@ -1697,10 +1697,8 @@ async fn a_moved_projects_datasets_follow_its_organization() {
         .expect("yaml")
     };
     for (owner, other) in [("bbsk", "hel"), ("hel", "bbsk")] {
-        let repository = std::env::temp_dir().join(format!(
-            "jc-ckan-moved-{owner}-{}",
-            std::process::id()
-        ));
+        let repository =
+            std::env::temp_dir().join(format!("jc-ckan-moved-{owner}-{}", std::process::id()));
         std::fs::create_dir_all(&repository).expect("a scratch directory");
         std::fs::write(
             repository.join("helsinki.yaml"),
@@ -1714,8 +1712,8 @@ async fn a_moved_projects_datasets_follow_its_organization() {
             .join("---\n"),
         )
         .expect("the project");
-        let catalogue = |organization: &str| {
-            joinedcontext_portal::organization_host::OrganizationCatalogue {
+        let catalogue =
+            |organization: &str| joinedcontext_portal::organization_host::OrganizationCatalogue {
                 organization: organization.to_owned(),
                 url: format!("http://opendata.{organization}.localhost:9")
                     .parse()
@@ -1724,8 +1722,7 @@ async fn a_moved_projects_datasets_follow_its_organization() {
                 reach: Some("127.0.0.1:9".parse().expect("an address")),
                 data_host: None,
                 token_file: repository.join(format!("{organization}.token")),
-            }
-        };
+            };
         let repo = jcctl::loader::Repository::load(&repository).expect("the repository loads");
         let reports = CkanSync::new(HOST)
             .for_organizations(vec![catalogue("hel"), catalogue("bbsk")])
@@ -1738,7 +1735,10 @@ async fn a_moved_projects_datasets_follow_its_organization() {
             let Publication::Failed(reason) = &report.publication else {
                 panic!("{owner}: published without a token: {report:?}");
             };
-            assert!(reason.contains(&format!("{owner}'s catalogue")), "{owner}: {reason}");
+            assert!(
+                reason.contains(&format!("{owner}'s catalogue")),
+                "{owner}: {reason}"
+            );
             assert!(!reason.contains(&format!("{other}'s")), "{owner}: {reason}");
         }
     }

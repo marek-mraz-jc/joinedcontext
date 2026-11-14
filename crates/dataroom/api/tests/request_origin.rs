@@ -194,9 +194,17 @@ async fn seed(
         "distributions": [], "issued": "2026-11-01T10:00:00Z", "modified": "2026-11-02T10:00:00Z"
     }))
     .expect("dataset");
-    state.store.upsert_dataset(&ctx, dataset).await.expect("upsert");
+    state
+        .store
+        .upsert_dataset(&ctx, dataset)
+        .await
+        .expect("upsert");
     if withdrawn {
-        state.store.withdraw_dataset(&ctx, name).await.expect("withdraw");
+        state
+            .store
+            .withdraw_dataset(&ctx, name)
+            .await
+            .expect("withdraw");
     }
 }
 

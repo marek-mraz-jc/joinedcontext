@@ -1438,7 +1438,13 @@ async fn moved_home(state: &DataroomState, here: &RequestCtx, gone: &Dataset) ->
             continue;
         };
         let ctx = RequestCtx::new(state.default_org_id, *id, Subject::anonymous());
-        let Some(ds) = state.store.get_dataset(&ctx, &gone.name).await.ok().flatten() else {
+        let Some(ds) = state
+            .store
+            .get_dataset(&ctx, &gone.name)
+            .await
+            .ok()
+            .flatten()
+        else {
             continue;
         };
         if ds.state != RecordState::Active
@@ -1453,8 +1459,16 @@ async fn moved_home(state: &DataroomState, here: &RequestCtx, gone: &Dataset) ->
         if cat.hidden_datasets.contains_key(&ds.name) {
             continue;
         }
-        let publisher = state.store.get_publisher(&ctx, &ds.publisher_id).await.ok().flatten();
-        if publisher.as_ref().is_some_and(|p| p.state == RecordState::Withdrawn) {
+        let publisher = state
+            .store
+            .get_publisher(&ctx, &ds.publisher_id)
+            .await
+            .ok()
+            .flatten();
+        if publisher
+            .as_ref()
+            .is_some_and(|p| p.state == RecordState::Withdrawn)
+        {
             continue;
         }
         let target = ObjectTarget::from_dataset(&ds, publisher.as_ref());
@@ -1750,7 +1764,10 @@ async fn dispatch_ui_route(
             if ds.state == RecordState::Withdrawn {
                 // A project moved to another Organization took its datasets along (T-6853).
                 if let Some(home) = moved_home(&state, &ctx, &ds).await {
-                    let query = raw_query.as_deref().map(|q| format!("?{q}")).unwrap_or_default();
+                    let query = raw_query
+                        .as_deref()
+                        .map(|q| format!("?{q}"))
+                        .unwrap_or_default();
                     let target = format!("{home}/dataset/{name_or_ext}{query}");
                     return safe_redirect(StatusCode::MOVED_PERMANENTLY, &target);
                 }

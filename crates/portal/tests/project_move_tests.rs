@@ -128,9 +128,15 @@ fn world() -> AppState {
 
 /// `GET /api/v1/projects/bbsk` as `who`: the status.
 async fn project_as(state: &AppState, who: Identity) -> StatusCode {
-    http(state, who, "GET", &format!("/api/v1/projects/{MOVED}"), None)
-        .await
-        .status
+    http(
+        state,
+        who,
+        "GET",
+        &format!("/api/v1/projects/{MOVED}"),
+        None,
+    )
+    .await
+    .status
 }
 
 fn refused(status: StatusCode) -> bool {
@@ -173,7 +179,10 @@ async fn rendered(mirror: &Mirror) -> Vec<String> {
 async fn minted_owner(mirror: &Mirror) -> Value {
     let bodies = rendered(mirror).await;
     let body = bodies.first().expect("the stream was PUT");
-    assert!(!body.contains("JC_ORG_ID"), "the runner's owner is read: {body}");
+    assert!(
+        !body.contains("JC_ORG_ID"),
+        "the runner's owner is read: {body}"
+    );
     match (body.contains("sk_bbsk"), body.contains("fi_hel")) {
         (true, false) => json!("sk_bbsk"),
         (false, true) => json!("fi_hel"),

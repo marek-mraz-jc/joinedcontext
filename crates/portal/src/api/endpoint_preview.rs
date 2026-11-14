@@ -533,7 +533,10 @@ fn organizations(state: &AppState) -> std::collections::BTreeMap<String, String>
         .into_iter()
         .map(|envelope| {
             let domain = envelope.spec.get("domain").and_then(Value::as_str);
-            (envelope.metadata.name, domain.unwrap_or_default().to_owned())
+            (
+                envelope.metadata.name,
+                domain.unwrap_or_default().to_owned(),
+            )
         })
         .collect()
 }
