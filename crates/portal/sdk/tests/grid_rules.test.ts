@@ -31,5 +31,9 @@ describe("problemOf", () => {
     expect(problemOf({ pattern: "^[A-Z]{2}$" }, "abc", L)).toBe(L.patternMismatch);
     expect(problemOf({ pattern: "^[A-Z]{2}$" }, "SK", L)).toBeNull();
     expect(problemOf({ pattern: "(" }, "anything", L)).toBeNull();
+    // A model pattern that backtracks without end is left to the gateway, at once.
+    const started = performance.now();
+    expect(problemOf({ pattern: "(a+)+$" }, `${"a".repeat(28)}!`, L)).toBeNull();
+    expect(performance.now() - started).toBeLessThan(50);
   });
 });

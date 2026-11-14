@@ -137,7 +137,7 @@ pub(super) fn range_start(tq: Option<&TemporalQ>) -> Option<&str> {
 /// is kept only where a rule showing the Attribute held at the instance's
 /// time (`observedAt`, else `modifiedAt`). A rule without a condition holds
 /// at every time; a conditional one is read on the Entity's state at that
-/// time ([`state_at`]) and does not hold where a member its condition reads
+/// time ([`Timeline`]) and does not hold where a member its condition reads
 /// has no instance yet, or where it reads `scope`, which keeps no history:
 /// a state that cannot be rebuilt hides the instance (fail closed). `None`
 /// when no rule names one of the Entity's types.
@@ -180,6 +180,7 @@ pub(crate) fn rules_per_instance(doc: &Value, rules: &crate::policy::Filter) -> 
     let Some(obj) = doc.as_object() else {
         return Some(doc.clone());
     };
+    let timeline = std::cell::OnceCell::new();
     let mut out = Map::new();
     for (k, v) in obj {
         if is_meta(k) {
@@ -200,17 +201,19 @@ pub(crate) fn rules_per_instance(doc: &Value, rules: &crate::policy::Filter) -> 
         let Some(instances) = v.as_array().filter(|_| !deciding.is_empty()) else {
             continue;
         };
-        // ponytail: a condition rebuilds the state per instance, O(instances x
-        // history); sort each Attribute's history once if long histories show
-        // up under one. A rule without a condition reads no state: `typed`
-        // already selected the Entity by its types and ids, which is all
-        // `holds` reads of it, so only its windows decide (T-4246).
+        // A rule without a condition reads no state: `typed` already selected
+        // the Entity by its types and ids, which is all `holds` reads of it,
+        // so only its windows decide (T-4246).
         let reads_state = deciding.iter().any(|(r, _, _)| r.is_conditional());
+        let timeline = match reads_state {
+            true => Some(timeline.get_or_init(|| Timeline::of(doc))),
+            false => None,
+        };
         let kept: Vec<Value> = instances
             .iter()
             .filter(|inst| {
                 instant(inst).is_some_and(|t| {
-                    let state = reads_state.then(|| state_at(doc, t));
+                    let state = timeline.map(|line| line.at(t));
                     let observed = inst.get("observedAt").and_then(Value::as_str);
                     deciding.iter().any(|(r, reads, windows)| {
                         (!r.is_conditional()
@@ -239,34 +242,50 @@ pub(super) fn instant(inst: &Value) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
-/// The Entity as it stood at `t`, rebuilt from its history: the frame, and
-/// for each Attribute the latest instance at or before `t`, if any.
-pub(super) fn state_at(doc: &Value, t: &str) -> Value {
-    let at = dt_key(t);
-    let Some(obj) = doc.as_object() else {
-        return Value::Null;
-    };
-    let mut out = Map::new();
-    for (k, v) in obj {
-        if is_meta(k) {
-            if k == "id" || k == "type" {
-                out.insert(k.clone(), v.clone());
+/// Each Attribute's history sorted once by the instant its instances hold,
+/// so the Entity as it stood at any `t` is one binary search per Attribute.
+struct Timeline<'a> {
+    frame: Map<String, Value>,
+    attrs: Vec<(&'a String, Vec<(String, &'a Value)>)>,
+}
+
+impl<'a> Timeline<'a> {
+    fn of(doc: &'a Value) -> Self {
+        let mut frame = Map::new();
+        let mut attrs = Vec::new();
+        for (k, v) in doc.as_object().into_iter().flatten() {
+            if is_meta(k) {
+                if k == "id" || k == "type" {
+                    frame.insert(k.clone(), v.clone());
+                }
+                continue;
             }
-            continue;
+            let mut line: Vec<(String, &Value)> = v
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|inst| instant(inst).map(|i| (dt_key(i), inst)))
+                .collect();
+            // stable: of instances at one instant, the later one stands
+            line.sort_by(|a, b| a.0.cmp(&b.0));
+            attrs.push((k, line));
         }
-        let latest = v
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|inst| instant(inst).map(|i| (dt_key(i), inst)))
-            .filter(|(i, _)| *i <= at)
-            .max_by(|a, b| a.0.cmp(&b.0))
-            .map(|(_, inst)| inst.clone());
-        if let Some(inst) = latest {
-            out.insert(k.clone(), Value::Array(vec![inst]));
-        }
+        Self { frame, attrs }
     }
-    Value::Object(out)
+
+    /// The frame, and for each Attribute the latest instance at or before
+    /// `t`, if any.
+    fn at(&self, t: &str) -> Value {
+        let at = dt_key(t);
+        let mut out = self.frame.clone();
+        for (k, line) in &self.attrs {
+            let n = line.partition_point(|(i, _)| *i <= at);
+            if let Some((_, inst)) = n.checked_sub(1).and_then(|last| line.get(last)) {
+                out.insert((*k).clone(), Value::Array(vec![(*inst).clone()]));
+            }
+        }
+        Value::Object(out)
+    }
 }
 
 pub(super) fn window_conditions_match(

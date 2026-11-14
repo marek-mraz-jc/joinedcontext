@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchesQ, parseQ } from "../src/grid/qmatch";
+import { boundedPattern, matchesQ, parseQ } from "../src/grid/qmatch";
 import { toRichRow } from "../src/grid/model";
 
 const row = toRichRow({
@@ -52,5 +52,23 @@ describe("matchesQ", () => {
     expect(parseQ("a==1")).toEqual([[{ path: ["a"], op: "==", value: "1" }]]);
     // A pattern the browser cannot compile marks nothing.
     expect(matchesQ(row, 'name~="("')).toBe(false);
+    // A pattern that backtracks without end marks nothing, at once, instead of holding the page.
+    const slow = toRichRow({ id: "urn:ngsi-ld:T:1", type: "T", name: { type: "Property", value: `${"a".repeat(25)}!` } }, "en");
+    const started = performance.now();
+    expect(matchesQ(slow, 'name~="(a+)+$"')).toBe(false);
+    expect(performance.now() - started).toBeLessThan(50);
+    expect(() => boundedPattern("x".repeat(257))).toThrow();
+    // An optional group or a bounded count is no such pattern.
+    expect(boundedPattern("^(\\d{2})?[a-z]+$").test("12ab")).toBe(true);
+  });
+
+  it("refuses a quantified group whose quantifier sits in a group nested inside it", () => {
+    for (const pattern of ["((a+))+$", "(?:(a+))+$", "(a|(b+))*$", "((?<x>a*)){2,}", "((a+)?)+", "([)]|(a+))+"]) {
+      expect(() => boundedPattern(pattern), pattern).toThrow();
+    }
+    // Quantifiers outside the quantified group, escaped or inside a class are no nesting.
+    for (const pattern of ["(?:ab)+c*", "(a)+(b+)", "(\\+)+", "([+*]x)+", "(?<name>ab)?"]) {
+      expect(() => boundedPattern(pattern), pattern).not.toThrow();
+    }
   });
 });

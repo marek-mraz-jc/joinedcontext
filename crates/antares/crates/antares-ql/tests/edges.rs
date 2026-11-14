@@ -24,6 +24,32 @@ fn invalid_utf8_in_an_attribute_name_is_bad_request() {
     assert_eq!(parse_q(&q).unwrap_err().status(), 400);
 }
 
+/// The grid writes a typed quote inside a pattern as `\x22`: one term, whose regular expression
+/// matches the quote. An unquoted pattern holds no quote, as no other unquoted value does.
+#[test]
+fn a_quote_inside_a_pattern_stays_in_the_one_term() {
+    let node = parse_q(r#"name~="x\x22;secret>50;a~=\x22y""#).unwrap();
+    let ngsild_ql::QNode::Cmp { value, .. } = &node else {
+        panic!("one term, got {node:?}");
+    };
+    assert_eq!(
+        value,
+        &ngsild_ql::QValue::Str(r"x\x22;secret>50;a~=\x22y".into())
+    );
+    let re = ngsild_ql::regex::compile(r"x\x22;secret>50;a~=\x22y").unwrap();
+    assert!(re.is_match(r#"x";secret>50;a~="y"#));
+    assert_eq!(parse_q(&node.to_string()).unwrap(), node);
+    assert_eq!(parse_q(r#"name~=a"b"#).unwrap_err().status(), 400);
+}
+
+/// `/#` beside a conjunction is the conjunction, brackets kept: the product is a Scope Query.
+#[test]
+fn any_scope_beside_a_conjunction_keeps_it_one_scope_query() {
+    let both = ngsild_ql::scope::intersect_scope_q("/#", "(/a;/b)").unwrap();
+    assert!(check_scope_q(&both).is_ok(), "{both}");
+    assert_eq!(both, "(/a;/b)");
+}
+
 #[test]
 fn a_self_intersecting_polygon_is_evaluated_not_refused() {
     let params: HashMap<String, String> = [

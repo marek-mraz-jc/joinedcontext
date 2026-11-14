@@ -313,8 +313,11 @@ export function historyOf(body: unknown, attr: string): HistoryPoint[] {
   const attribute = typeof body === "object" && body !== null ? (body as Record<string, unknown>)[attr] : undefined;
   if (Array.isArray(attribute)) {
     return attribute.flatMap((instance) => {
-      const { observedAt: at, value, supersededAt, datasetId, provenance } = (instance ?? {}) as Record<string, unknown>;
-      if (typeof at !== "string") return [];
+      const { observedAt: at, value, supersededAt, datasetId, provenance, values } = (instance ?? {}) as Record<string, unknown>;
+      // A multi-instance attribute in temporalValues: one `{datasetId, values}` per instance.
+      if (typeof at !== "string") {
+        return pairsOf(values).map((point) => (typeof datasetId === "string" ? { ...point, datasetId } : point));
+      }
       const point: HistoryPoint = { at, value };
       if (typeof supersededAt === "string") point.supersededAt = supersededAt;
       if (typeof datasetId === "string") point.datasetId = datasetId;
@@ -323,13 +326,15 @@ export function historyOf(body: unknown, attr: string): HistoryPoint[] {
       return [point];
     });
   }
-  const values = (attribute as { values?: unknown } | undefined)?.values;
-  if (Array.isArray(values)) {
-    return values.flatMap((pair) =>
-      Array.isArray(pair) && typeof pair[1] === "string" ? [{ at: pair[1], value: pair[0] }] : [],
-    );
-  }
-  return [];
+  return pairsOf((attribute as { values?: unknown } | undefined)?.values);
+}
+
+/** `[[value, time]]` pairs of a temporalValues answer as points; a pair without a time is skipped. */
+function pairsOf(values: unknown): HistoryPoint[] {
+  if (!Array.isArray(values)) return [];
+  return values.flatMap((pair) =>
+    Array.isArray(pair) && typeof pair[1] === "string" ? [{ at: pair[1], value: pair[0] }] : [],
+  );
 }
 
 /**

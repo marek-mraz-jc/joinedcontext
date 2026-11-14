@@ -3,7 +3,7 @@ import { CellView, cellDisplayText, formatDate, kindOfCell, IdLabel, targetName,
 import type { CellLabels, ColumnKind, ResolvedTargets } from "./cells";
 import { EditableCell, EnumCell, coerce, inputKindOf } from "./GridCellEditors";
 import { KIND_LABEL } from "./gridKinds";
-import { cellText } from "./model";
+import { cellText, structured } from "./model";
 import type { RichCell, RichRow } from "./model";
 import { optionLabel } from "../enums";
 import { objectsOf } from "../relations";
@@ -138,7 +138,7 @@ function valueEditor({ gridOptions, labels, edits, setEdit, rules, refusedCell, 
         options={options}
         changed={pending !== undefined}
         notInList={labels.notInList}
-        onChange={(next) => setEdit(row.id, column.attr, next === shown ? undefined : coerce(next, shown, rule))}
+        onChange={(next) => setEdit(row.id, column.attr, next === shown ? undefined : coerce(next, own, rule))}
       />
     );
   }
@@ -152,7 +152,7 @@ function valueEditor({ gridOptions, labels, edits, setEdit, rules, refusedCell, 
       kind={inputKindOf(rule, own)}
       onChange={(next) => {
         // Back to the endpoint's own value is not a change: it leaves the pending list.
-        setEdit(row.id, column.attr, next === shown ? undefined : coerce(next, shown, rule));
+        setEdit(row.id, column.attr, next === shown ? undefined : coerce(next, own, rule));
       }}
     />
   );
@@ -287,7 +287,9 @@ export function useCellContent(
       return <CellView cell={cell} locale={where} labels={cellLabels} onOpen={openTarget} targets={targets} />;
     }
 
-    if (column.attr && editable(column)) return valueEditor(context, row, { ...column, attr: column.attr }, cell);
+    if (column.attr && editable(column) && !structured(Array.isArray(cell) ? cell[0] : cell)) {
+      return valueEditor(context, row, { ...column, attr: column.attr }, cell);
+    }
 
     return readValue(row, column);
   }, [readValue, where, cellLabels, cellOf, renderers, canOpen, openTarget, targets, editable, state.edits, labels.edit, labels.empty, labels.notInList, labels.loading, labels.error, labels.relationMore, labels.openRow, isPrimary, rowName, openDetail, gridOptions.enums, setEdit, relations, inverse, searchOf, pickerLabels, refusedCell, ruleProblems, rules, labels.yes, labels.no]);

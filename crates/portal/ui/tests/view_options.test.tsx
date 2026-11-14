@@ -73,9 +73,11 @@ describe("GroupCounts", () => {
   it("counts each group with the space's own count, narrowed by the view's query", async () => {
     await i18n.changeLanguage("en");
     const asked: GridQuery[] = [];
+    const limits: number[] = [];
     const source: EntitySource = {
-      query: async (q) => {
+      query: async (q, page) => {
         asked.push(q);
+        limits.push(page.limit);
         if (q.q?.includes("outOfService")) throw new Error("refused");
         return { rows: [], total: 12 };
       },
@@ -89,6 +91,8 @@ describe("GroupCounts", () => {
     // A count the space would not give is said, never a zero.
     expect(await within(groups).findByRole("button", { name: `Out of service (${L.countUnknown})` })).toBeInTheDocument();
     expect(asked.map((q) => q.q)).toContain(`availableBikeNumber<3;${groupTerm("status", "working")}`);
+    // A count asks for no entity at all, only the number.
+    expect(new Set(limits)).toEqual(new Set([0]));
 
     await userEvent.click(within(groups).getByRole("button", { name: "Working (12)" }));
     await waitFor(() => expect(onChoose).toHaveBeenCalledWith("working"));

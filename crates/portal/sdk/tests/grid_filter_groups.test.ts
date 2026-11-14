@@ -47,7 +47,7 @@ describe("one condition per operator", () => {
 
   it("keeps a quote in a value data", () => {
     expect(one("name", { op: "equals", value: 'a";b' })).toBe('name=="a\\";b"');
-    expect(one("name", { op: "contains", value: 'a"|b' })).toBe('name~="a\\"\\|b"');
+    expect(one("name", { op: "contains", value: 'a"|b' })).toBe('name~="a\\x22\\|b"');
   });
 });
 
@@ -89,7 +89,7 @@ describe("search", () => {
     expect(searchQuery("x", [])).toBeUndefined();
     expect(searchQuery("café", [text("name")])).toBe('name~="(?i)café"');
     expect(searchQuery('a.(b"', [text("name"), text("description")])).toBe(
-      '(name~="(?i)a\\.\\(b\\""|description~="(?i)a\\.\\(b\\"")',
+      '(name~="(?i)a\\.\\(b\\x22"|description~="(?i)a\\.\\(b\\x22")',
     );
   });
 

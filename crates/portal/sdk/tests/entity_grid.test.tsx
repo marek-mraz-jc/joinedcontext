@@ -440,6 +440,40 @@ describe("EntityGrid", () => {
     expect(drawn().length).toBeLessThan(100);
   });
 
+  // A further page that brings only rows already loaded (rows inserted ahead of the offset moved
+  // them) ends the scroll there instead of asking for the same page again and again.
+  it("stops loading more when a page brings no row it did not have", async () => {
+    const first = Array.from({ length: 200 }, (_, i) => ({
+      id: `urn:ngsi-ld:BikeHireDockingStation:hel:helsinki:${String(i).padStart(4, "0")}`,
+      type: "BikeHireDockingStation",
+      name: { type: "Property", value: `Station ${i}` },
+    }));
+    const scrolling = parseGridConfig({
+      source: { kind: "fixture", name: "seen" },
+      type: "BikeHireDockingStation",
+      columns: [{ attr: "name", label: "Name" }],
+      pageSize: 200,
+    }).config!;
+    const fixture = fixtureSource(first);
+    const asked: number[] = [];
+    const repeating = {
+      ...fixture,
+      query: async (q: Parameters<typeof fixture.query>[0], page: Parameters<typeof fixture.query>[1]) => {
+        asked.push(page.offset);
+        const answer = await fixture.query(q, { offset: 0, limit: 200 });
+        // No count from this broker, and every page is the first one again, full.
+        return { rows: page.limit === 0 ? [] : answer.rows, total: undefined };
+      },
+    };
+    const { container } = render(<EntityGrid config={scrolling} source={repeating} virtual />);
+    await screen.findByText("Station 0");
+    const box = container.querySelector<HTMLDivElement>(".jc-grid-scroll")!;
+    box.scrollTop = 140 * 36;
+    fireEvent.scroll(box);
+    await new Promise((done) => setTimeout(done, 300));
+    expect(asked.filter((offset) => offset === 200)).toHaveLength(1);
+  });
+
   // T-5623: the critic walk clicked a cell, then scrolled; every scroll was pulled back to the
   // active cell, so 60 scrolls reached 400 rows. A scroll away from the cell stays where it went.
   it("leaves the scroll where the person put it after a cell was made active", async () => {

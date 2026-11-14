@@ -137,6 +137,12 @@ pub fn intersect_scope_q(a: &str, b: &str) -> Option<String> {
             // inside a parenthesized group.
             match (x.as_str(), y.as_str()) {
                 (ANY_SCOPE, ANY_SCOPE) => out.push_str(ANY_SCOPE),
+                // a conjunction keeps its brackets, which `groups` took off
+                (ANY_SCOPE, term) | (term, ANY_SCOPE) if term.contains(';') => {
+                    out.push('(');
+                    out.push_str(term);
+                    out.push(')');
+                }
                 (ANY_SCOPE, term) | (term, ANY_SCOPE) => out.push_str(term),
                 (l, r) => {
                     out.push('(');

@@ -29,7 +29,12 @@ export interface AttributeChange {
    * at the broker, turning a GeoProperty into a Property holding an object nothing can query with
    * `georel` (UI-72, CIM 009 §4.5.4).
    */
-  kind?: "property" | "relationship" | "geo";
+  kind?: "property" | "relationship" | "geo" | "language" | "vocab";
+  /** The instance the cell shows (CIM 009 4.5.5): without it, the write lands on the default one. */
+  datasetId?: string;
+  /** A LanguageProperty's texts as stored and the language edited: the other texts are kept. */
+  languageMap?: Record<string, string>;
+  language?: string;
 }
 
 export interface EntityChange {
@@ -63,10 +68,17 @@ export function attrsBody(
     const value: Record<string, unknown> =
       change.kind === "relationship"
         ? { type: "Relationship", object: change.after }
-        : { type: change.kind === "geo" ? "GeoProperty" : "Property", value: change.after };
+        : change.kind === "language"
+          ? { type: "LanguageProperty", languageMap: { ...change.languageMap, [change.language ?? "en"]: change.after } }
+          : change.kind === "vocab"
+            ? { type: "VocabProperty", vocab: change.after }
+            : { type: change.kind === "geo" ? "GeoProperty" : "Property", value: change.after };
     // A geometry has no unit, and a Relationship has no value to measure.
-    if (change.unitCode !== undefined && change.kind !== "relationship" && change.kind !== "geo") {
+    if (change.unitCode !== undefined && (change.kind === undefined || change.kind === "property")) {
       value.unitCode = change.unitCode;
+    }
+    if (change.datasetId !== undefined) {
+      value.datasetId = change.datasetId;
     }
     if (observed === "now") {
       // The value is being corrected now, so it was observed now: a kept `observedAt` would date

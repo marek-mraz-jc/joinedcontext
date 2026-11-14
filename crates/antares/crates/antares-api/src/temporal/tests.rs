@@ -1469,4 +1469,53 @@ mod t6612 {
         assert_eq!(kept, 500, "the instances inside the window stay");
         assert!(renders <= 1, "{renders} bound renders for 1000 instances");
     }
+
+    /// A conditional rule reads the Entity's state at each instance's time:
+    /// every Attribute's instance at or before it, ties to the later one.
+    /// Ten Attributes of 1000 instances each are judged in one pass per
+    /// Attribute, not one rescan of the whole history per instance.
+    #[test]
+    fn a_condition_reads_the_state_at_each_instance_time() {
+        // the names a Policy's rules read, expanded as `policy_context` does
+        const D: &str = "https://uri.etsi.org/ngsi-ld/";
+        let rules = Filter {
+            rules: vec![Rule {
+                types: vec!["Car".to_owned()],
+                q: Some(Box::new(antares_ql::parse_q("mode==1").expect("q"))),
+                every_attribute: true,
+                ..Rule::default()
+            }],
+            ..Filter::default()
+        };
+        let at = |i: u32| {
+            format!(
+                "2026-01-01T{:02}:{:02}:{:02}Z",
+                i / 3600,
+                (i / 60) % 60,
+                i % 60
+            )
+        };
+        let mut doc = serde_json::Map::new();
+        doc.insert("id".into(), json!("urn:ngsi-ld:Car:a"));
+        doc.insert("type".into(), json!("Car"));
+        for a in ["mode", "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9"] {
+            let instances: Vec<Value> = (0_u32..1_000)
+                .map(|i| json!({"type": "Property", "value": i % 2, "observedAt": at(i)}))
+                .collect();
+            doc.insert(format!("{D}{a}"), json!(instances));
+        }
+        let doc = Value::Object(doc);
+        let started = std::time::Instant::now();
+        let out = crate::temporal::filter::rules_per_instance(&doc, &rules).expect("selected");
+        let took = started.elapsed();
+        // a rescan of the whole history per instance took 28 s here, one sort 0.2 s
+        assert!(took < std::time::Duration::from_secs(5), "{took:?}");
+        let kept = |a: &str| {
+            out.get(format!("{D}{a}"))
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len)
+        };
+        assert_eq!(kept("mode"), 500);
+        assert_eq!(kept("a9"), 500);
+    }
 }
