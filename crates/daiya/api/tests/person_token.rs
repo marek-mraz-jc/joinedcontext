@@ -347,14 +347,26 @@ async fn a_panel_request_without_a_person_token_is_refused() {
             let (status, answer) = w
                 .send_with(method, uri, &admin_basic(), headers, body.clone())
                 .await;
-            assert_eq!(status, StatusCode::UNAUTHORIZED, "{uri} {headers:?}: {answer}");
+            assert_eq!(
+                status,
+                StatusCode::UNAUTHORIZED,
+                "{uri} {headers:?}: {answer}"
+            );
             assert!(answer.to_string().contains(PERSON_TOKEN_HEADER), "{answer}");
         }
     }
-    assert!(seen.lock().is_empty(), "the Endpoint was asked: {:?}", seen.lock());
+    assert!(
+        seen.lock().is_empty(),
+        "the Endpoint was asked: {:?}",
+        seen.lock()
+    );
 
     // The server-administration routes read no data and stay open to the credential.
-    for uri in ["/api/datasources", "/api/search", "/api/dashboards/uid/closed"] {
+    for uri in [
+        "/api/datasources",
+        "/api/search",
+        "/api/dashboards/uid/closed",
+    ] {
         let (status, answer) = w.send_with("GET", uri, &admin_basic(), &[], None).await;
         assert_eq!(status, StatusCode::OK, "{uri}: {answer}");
     }
