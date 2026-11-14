@@ -257,12 +257,14 @@ class Suite:
                             n = re.search(r"^metadata:\s*\n(?:\s+.*\n)*?\s+name:\s*([\w.-]+)", text, re.M)
                             if n:
                                 kinds[kind].append(n.group(1))
-                # space -> the types a Policy there grants retrieveTemporal of and the bundle holds
-                # history of (the tenant is the space), and space -> its Endpoints (name, slug)
+                # space -> the types a Policy there grants the role `public` retrieveTemporal of and
+                # the bundle holds history of (the tenant is the space), and space -> its public
+                # Endpoints (name, slug): a public Endpoint maps its caller to that role
                 history, endpoints = {}, {}
                 for q in (files / CONFIG[0] / p).glob("spaces/*/policies/*.yaml"):
                     text = q.read_text(errors="replace")
-                    if re.search(r"^\s*-\s*retrieveTemporal\s*$", text, re.M):
+                    public = re.search(r"assignee:\s*\{[^}]*\bid:\s*public\b|^\s*id:\s*public\s*$", text, re.M)
+                    if public and re.search(r"retrieveTemporal", text):
                         kinds_q = re.findall(r"^\s*-\s*type:\s*([\w.-]+)", text, re.M)
                         held = history_of.get(q.parent.parent.name, set())
                         history.setdefault(q.parent.parent.name, set()).update(k for k in kinds_q if k in held)
@@ -273,7 +275,7 @@ class Suite:
                     aud = re.search(r"^\s*audience:\s*([\w-]+)", text, re.M)
                     slug = re.search(r"^\s*slug:\s*([a-z2-7]+)", text, re.M)
                     name = re.search(r"^metadata:\s*\n(?:\s+.*\n)*?\s+name:\s*([\w.-]+)", text, re.M)
-                    if slug and name:
+                    if slug and name and aud and aud.group(1) == "public":
                         endpoints.setdefault(f.parent.parent.name, []).append((name.group(1), slug.group(1)))
                     if aud and slug and name and aud.group(1) != "public":
                         closed[slug.group(1)] = (name.group(1), aud.group(1))
@@ -879,12 +881,13 @@ class Suite:
                     code = self.client(self.home(key), "api").call("GET", f"/api/endpoint/{slug}/ngsi-ld/v1/types",
                                               headers={"Authorization": f"Bearer {tok}"})[0] if tok else st
                     self.exchange_ok = self.exchange_ok or tok is not None
+                    if tok and code == 200:
+                        self.check_temporal(key, org, tok, foreign)
                     self.row(f"data.{key}.read.own", org, f"exchange endpoint:{slug}, GET /api/endpoint/{slug}/ngsi-ld/v1/types",
                              "200 (an own Endpoint the readable list names)", f"exchange {st}, read {code}", code == 200 if tok else None,
                              "" if tok else "the realm refused the exchange: no endpoint:{slug} scope linked to "
                              "portal-api (dev links them by its admin-permissions CronJob; jc has none)")
 
-                self.check_temporal(key, org, foreign)
                 for slug, (p, name, aud) in sorted(foreign.items())[:6]:
                     st, tok = self.exchange(key, slug)
                     code = self.client(self.home(key), "api").call("GET", f"/api/endpoint/{slug}/ngsi-ld/v1/types",
@@ -897,43 +900,40 @@ class Suite:
                              "" if tok or self.exchange_ok else "the realm refuses every exchange here, the own "
                              "control too: a refusal proves nothing")
 
-    def check_temporal(self, key, org, foreign):
-        """History through the gateway (DAT-19): an own Endpoint of a space whose Policy grants
-        retrieveTemporal of a type the bundle holds history of answers that type's temporal and
-        aggregated reads (present, the control); the same token on another Organization's
-        Endpoint answers nothing of it (absent)."""
+    def check_temporal(self, key, org, tok, foreign):
+        """History through the gateway (DAT-19): the own Organization's public Endpoint of a space
+        whose Policy grants the role `public` retrieveTemporal of a type the bundle holds history
+        of answers that type's temporal and aggregated reads (present, the control); the person's
+        own Endpoint token on another Organization's closed Endpoints answers nothing (absent)."""
         held = next(((p, sp, v) for p, pe in sorted(self.exp[org]["projects"].items())
                      for sp, v in pe.get("history", {}).items()), None)
         if not held:
             return
-        project, space, (kinds, candidates) = held
-        kind, tok = kinds[0], None
-        for endpoint, slug in candidates[:4]:  # the first own Endpoint of the space the realm exchanges
-            st_x, tok = self.exchange(key, slug)
-            if tok:
-                break
-        if not tok:
-            self.row(f"data.{key}.temporal.own", org, f"exchange an Endpoint of {project}/{space}",
-                     "a token for an own Endpoint of the history space", f"exchange {st_x}",
-                     None if not self.exchange_ok else False, "the realm refuses every exchange here" if not self.exchange_ok else "")
-            return
+        project, space, (kinds, public) = held
         api = self.client(self.home(key), "api")
-        auth = {"Authorization": f"Bearer {tok}"}
-        base = f"/api/endpoint/{slug}/ngsi-ld/v1"
-        kind = urllib.parse.quote(kind)
-        at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        reads = {"temporal": f"/temporal/entities?type={kind}&lastN=1",
-                 "aggregated": f"/temporal/entities?type={kind}&timerel=before&timeAt={at}&aggrMethods=totalCount"
+        kind = urllib.parse.quote(kinds[0])
+        since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 7 * 86400))
+        # max: a numeric attribute's history aggregates; totalCount and sum are not meaningful
+        # over a property recorded only on change (Antares answers 400 aggregation-not-meaningful)
+        reads = {"temporal": f"/temporal/entities?type={kind}&timerel=after&timeAt={since}&lastN=1",
+                 "aggregated": f"/temporal/entities?type={kind}&timerel=after&timeAt={since}&aggrMethods=max"
                                f"&aggrPeriodDuration=P1D&format=aggregatedValues"}
+        # the space's public Endpoint that holds the type (an App's Endpoint may hold other types)
+        endpoint, slug = public[0]
+        for endpoint, slug in public[:8]:
+            st, body = api.json("GET", f"/api/endpoint/{slug}/ngsi-ld/v1{reads['temporal']}")
+            if st == 200 and isinstance(body, list) and body:
+                break
         for name, q in reads.items():
-            st, body = api.json("GET", base + q, headers=auth)
+            base = f"/api/endpoint/{slug}/ngsi-ld/v1"
+            st, body = api.json("GET", base + q)
             n = len(body) if isinstance(body, list) else 0
-            self.row(f"data.{key}.{name}.own", org, f"GET {base}{q} ({project}/{endpoint})",
-                     f"200 with >= 1 {kind} (a Policy of {space} grants retrieveTemporal)",
-                     f"{st}, {n} entities" + ("" if st == 200 else f" {str(body)[:80]}"), st == 200 and n > 0)
+            self.row(f"data.{key}.{name}.own", org, f"GET {base}{q} ({project}/{endpoint}, public)",
+                     f"200 with >= 1 {kinds[0]} (a Policy of {space} grants the role public retrieveTemporal)",
+                     f"{st}, {n} entities" + ("" if st == 200 else f" {str(body)[:300]}"), st == 200 and n > 0)
             for fslug, (p, ename, _) in sorted(foreign.items())[:6]:
                 other = next(o for o, oe in self.exp.items() if p in oe["projects"])
-                st, raw = api.json("GET", f"/api/endpoint/{fslug}/ngsi-ld/v1{q}", headers=auth)
+                st, raw = api.json("GET", f"/api/endpoint/{fslug}/ngsi-ld/v1{q}", headers={"Authorization": f"Bearer {tok}"})
                 self.row(f"data.{key}.{name}.{p}/{ename}", f"{org}->{other}",
                          f"GET /api/endpoint/{fslug}/ngsi-ld/v1{q} with the own Endpoint's token",
                          "401/403/404 (the own read: 200)", f"{st} {str(raw)[:80]}" if st not in (401, *DENIED) else str(st),

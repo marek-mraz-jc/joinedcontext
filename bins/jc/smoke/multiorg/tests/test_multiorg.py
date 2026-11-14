@@ -212,7 +212,7 @@ def test_global_reads_give_each_pair_a_row_also_for_an_empty_organization(tmp_pa
                     "global.ctl-a-admin.none-of.hel": "fail", "global.ctl-a-member.none-of.hel": "pass"}
 
 
-def test_the_history_control_is_a_space_granting_retrieve_temporal_of_a_type_with_history(tmp_path):
+def test_the_history_control_is_a_public_endpoint_of_a_space_granting_public_history_of_a_held_type(tmp_path):
     # T-6854: the own temporal read needs a Policy granting the Endpoint's role retrieveTemporal.
     exp = tmp_path / "history"
     space = exp / "gitea/files/joinedcontext/helsinki/spaces/air"
@@ -220,14 +220,14 @@ def test_the_history_control_is_a_space_granting_retrieve_temporal_of_a_type_wit
     (space / "policies").mkdir()
     (exp / "gitea/files/joinedcontext/configuration/organizations").mkdir(parents=True)
     (space / "space.yaml").write_text("kind: ContextSpace\n")
-    for name, slug in (("air-history", "aaaa2222"), ("air-now", "bbbb3333")):
+    for name, slug, aud in (("air-open", "aaaa2222", "public"), ("air-closed", "bbbb3333", "organization")):
         (space / f"endpoints/{name}.yaml").write_text(
-            f"kind: Endpoint\nmetadata:\n  name: {name}\nspec:\n  slug: {slug}\n  audience: public\n")
+            f"kind: Endpoint\nmetadata:\n  name: {name}\nspec:\n  slug: {slug}\n  audience: {aud}\n")
     (space / "policies/air-history.yaml").write_text(
-        "kind: Policy\nspec:\n  assignee:\n    id: endpoint:helsinki/air-history\n    kind: role\n"
+        "kind: Policy\nspec:\n  assignee: { kind: role, id: public }\n"
         "  information:\n  - entities:\n    - type: AirQualityObserved\n  operations:\n  - retrieveTemporal\n")
     (space / "policies/air-now.yaml").write_text(
-        "kind: Policy\nspec:\n  assignee:\n    id: endpoint:helsinki/air-now\n    kind: role\n"
+        "kind: Policy\nspec:\n  assignee:\n    id: endpoint:helsinki/air-closed\n    kind: role\n"
         "  information:\n  - entities:\n    - type: AirQualityObserved\n  operations:\n  - retrieveOps\n")
     (exp / "manifest.json").write_text(json.dumps({"multiorg": {"organizations": {"hel": {"projects": ["helsinki"]}}}}))
     s = suite.Suite(args(tmp_path))
@@ -239,7 +239,7 @@ def test_the_history_control_is_a_space_granting_retrieve_temporal_of_a_type_wit
                                                             "type": "AirQualityObserved"}) + "\n")
     s.exp = {}
     e = s.expectations()["hel"]["projects"]["helsinki"]
-    assert e["history"] == {"air": (["AirQualityObserved"], [("air-history", "aaaa2222"), ("air-now", "bbbb3333")])}
+    assert e["history"] == {"air": (["AirQualityObserved"], [("air-open", "aaaa2222")])}
 
 
 def test_a_forged_host_that_switches_the_organization_or_the_issuer_fails_its_row(tmp_path):
