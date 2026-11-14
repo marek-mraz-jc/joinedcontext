@@ -52,6 +52,8 @@ mod kaisatsu;
 pub mod model_tools;
 #[cfg(feature = "portal")]
 pub mod portal;
+#[cfg(all(feature = "portal", feature = "dataroom"))]
+pub(crate) mod portals;
 #[cfg(feature = "shako")]
 pub mod shako;
 #[cfg(feature = "viz")]

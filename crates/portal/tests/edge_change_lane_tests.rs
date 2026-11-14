@@ -271,6 +271,9 @@ fn every_kind_the_catalogue_holds_has_a_lane_somebody_decided() {
         "McpServer", // organization or a project list; a public one is Red by its audience, below
         "ModelProjection",
         "Pipeline",
+        // An open data portal publishes outward like CkanInstance and harvests public catalogues
+        // only; its host is one the operator listed (ODP-08, T-6873).
+        "Portal",
         "Subscription", // T-2292
         "SyncSource",
         "UiSchema",

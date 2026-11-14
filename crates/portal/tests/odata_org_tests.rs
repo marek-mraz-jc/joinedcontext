@@ -605,6 +605,60 @@ async fn each_refused_option_answers_its_status() {
     assert_eq!(anonymous.json()["error"]["status"], json!(401));
 }
 
+/// The `portals` set (ODP-08): 401 to nobody, refused to a reader without a Portal rule, and
+/// an Organization's portal reader sees only that Organization's portals.
+#[tokio::test]
+async fn the_portals_set_answers_401_403_and_only_the_callers_own() {
+    let state = state();
+    let m = &state.mirror;
+    m.upsert(envelope(
+        "Role",
+        "portal-reader",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Portal"], "verbs": ["read"] }] }),
+    ));
+    for org in ["hel", "ba"] {
+        m.upsert(envelope(
+            "Portal",
+            &format!("{org}-mobility"),
+            ORG_NAMESPACE,
+            json!({ "organizationRef": org, "path": "mobility" }),
+        ));
+        m.upsert(envelope(
+            "RoleBinding",
+            &format!("portals-{org}"),
+            ORG_NAMESPACE,
+            json!({ "subjects": [{ "user": format!("{org}-portals@hel.fi") }],
+                    "role": "portal-reader", "scope": { "organization": org } }),
+        ));
+    }
+    for mode in MODES {
+        let anonymous = send(&state, mode, "", "/api/v1/portals?$top=50", &[]).await;
+        assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED, "{mode:?}");
+        let reader = get(&state, mode, "both", "/api/v1/portals?$top=50").await;
+        assert!(
+            reader.status == StatusCode::FORBIDDEN || names(&reader.json(), "name").is_empty(),
+            "{mode:?}: a reader without a Portal rule: {} {}",
+            reader.status,
+            reader.text
+        );
+        let org = mode.org();
+        let own = get(
+            &state,
+            mode,
+            &format!("{org}-portals"),
+            "/api/v1/portals?$top=50",
+        )
+        .await;
+        assert_eq!(own.status, StatusCode::OK, "{mode:?}: {}", own.text);
+        assert_eq!(
+            names(&own.json(), "name"),
+            vec![format!("{org}-mobility")],
+            "{mode:?}"
+        );
+    }
+}
+
 /// `$metadata` in XML and JSON, the service document, and REST compat beside them on one root.
 #[tokio::test]
 async fn metadata_service_document_and_rest_compat_share_the_root() {
