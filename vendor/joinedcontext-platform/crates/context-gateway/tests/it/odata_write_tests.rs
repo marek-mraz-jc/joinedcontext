@@ -429,6 +429,19 @@ async fn a_batch_and_an_unreadable_body_stay_at_the_gateway() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
+    let (status, _, body) = send(
+        &app,
+        Method::POST,
+        OPEN,
+        "/%24batch",
+        Some(json!({"requests": []})),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_IMPLEMENTED,
+        "a percent-encoded $batch: {body}"
+    );
     let request = Request::builder()
         .method(Method::PATCH)
         .uri(format!("/api/endpoint/{OPEN}/odata/v4/Feedback('x')"))

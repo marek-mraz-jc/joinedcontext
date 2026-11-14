@@ -658,6 +658,18 @@ async fn odata_write(
     {
         return *answer;
     }
+    // The write budget held from before the body is read, as on the NGSI-LD view (T-4077).
+    let _share = match crate::handlers::writes::write_share(
+        gateway,
+        &endpoint,
+        write.operation,
+        crate::handlers::writes::body_length(&request),
+    )
+    .await
+    {
+        Ok(share) => share,
+        Err(answer) => return *answer,
+    };
     let method = request.method().clone();
     let target = target(&request, &prefix, &view, &ODATA);
     let (parts, body) = request.into_parts();
@@ -677,6 +689,21 @@ async fn odata_write(
         chosen_id_refused(gateway, &endpoint, &view, &write, &parts.headers, &members).await
     {
         return *answer;
+    }
+    // A created entity's URN names the Organization owning the space (ADR-N-068).
+    if let Some(owner) = gateway.urn_owner(&endpoint.project) {
+        let foreign =
+            crate::handlers::writes::foreign_owners(&sent, write.operation, &owner.domain);
+        match foreign.first() {
+            None => {}
+            Some(_) if owner.warn => {
+                gateway.urn_owner_mismatched(&endpoint.slug, &endpoint.space, &foreign);
+            }
+            Some((raw, _)) => {
+                tracing::info!(slug = %endpoint.slug, "odata write refused: the URN names another owner");
+                return crate::handlers::writes::owner_refusal(raw, &owner.domain).into_response();
+            }
+        }
     }
     let caller = crate::handlers::ngsi_ld::create_key(&subject, &parts.headers);
     let reserved = match reserve_create(gateway, &endpoint, &caller, write.operation) {
@@ -789,7 +816,8 @@ impl Write {
     /// which answers it (405, 501); `$batch` does not, since its members are no request the
     /// gateway reads.
     fn of(method: &Method, rest: &str) -> Result<Self, Box<ProblemDetails>> {
-        let mut segments = rest.trim_start_matches('/').split('/');
+        // Read decoded, as the broker routes it: `%24batch` is `$batch`, `%28` opens a key.
+        let mut segments = rest.trim_start_matches('/').split('/').map(query::decode);
         let first = segments.next().unwrap_or_default();
         if first == "$batch" {
             // ponytail: a $batch would need its multipart and JSON members parsed to guard each;
@@ -802,12 +830,11 @@ impl Write {
         }
         let (set, keyed) = match first.split_once('(') {
             Some((set, _)) => (set, true),
-            None => (first, false),
+            None => (first.as_str(), false),
         };
         let property = segments
             .next()
-            .filter(|segment| !segment.is_empty() && !segment.starts_with('$'))
-            .map(query::decode);
+            .filter(|segment| !segment.is_empty() && !segment.starts_with('$'));
         let operation = match (method, keyed, property.is_some()) {
             (&Method::POST, false, _) => Operation::CreateEntity,
             (&Method::DELETE, true, true) => Operation::DeleteAttrs,
@@ -818,7 +845,7 @@ impl Write {
         };
         Ok(Self {
             operation,
-            set: query::decode(set),
+            set: set.to_owned(),
             property,
         })
     }
@@ -1199,6 +1226,15 @@ mod tests {
             Some(None)
         );
         assert!(Write::of(&Method::POST, "/$batch").is_err());
+        assert!(Write::of(&Method::POST, "/%24batch").is_err());
+        assert_eq!(
+            of(Method::DELETE, "/Vehicle%28'x'%29").map(|w| (w.0, w.1)),
+            Some((Operation::DeleteEntity, "Vehicle".into()))
+        );
+        assert_eq!(
+            of(Method::DELETE, "/Vehicle('x')/owner/%24ref").map(|w| (w.0, w.2)),
+            Some((Operation::DeleteAttrs, Some("owner".into())))
+        );
     }
 
     #[test]

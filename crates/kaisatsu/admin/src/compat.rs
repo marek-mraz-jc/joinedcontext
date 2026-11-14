@@ -1107,6 +1107,7 @@ async fn compat_delete_user(
         },
     ))?;
     crate::operations::ensure_person_ceiling(&state, &ctx, &existing).await?;
+    crate::scim::end_sessions_for_deactivated_user(&state, &mount, &realm, &id).await?;
     state
         .oidc
         .store
@@ -2081,6 +2082,15 @@ async fn compat_list_clients(
             q.search.unwrap_or(false),
         )
         .await?;
+    let clients = clients
+        .into_iter()
+        .map(|mut client| {
+            if !client_secret_readable(&state, &ctx, &client) {
+                client.secret = None;
+            }
+            client
+        })
+        .collect();
     Ok(Json(clients))
 }
 
@@ -2182,7 +2192,33 @@ async fn compat_get_client(
             managed_by: client.managed_by.clone(),
         },
     ))?;
+    let mut client = client;
+    if !client_secret_readable(&state, &ctx, &client) {
+        client.secret = None;
+    }
     Ok(Json(client))
+}
+
+/// A client's secret is for those who may write the client: a read-only caller (`view-clients`
+/// on a client the Portal does not manage) sees the client without it.
+fn client_secret_readable(
+    state: &AdminState,
+    ctx: &RequestCtx,
+    client: &ClientRepresentation,
+) -> bool {
+    state
+        .authorizer
+        .check(
+            ctx,
+            Action::Update,
+            &ObjectTarget::Application {
+                realm_id: client.realm_id.clone(),
+                org_id: client.org_id.clone(),
+                client_id: client.client_id.clone(),
+                managed_by: client.managed_by.clone(),
+            },
+        )
+        .allowed
 }
 
 async fn compat_update_client(
@@ -2239,6 +2275,18 @@ async fn compat_update_client(
     if client.protocol_mappers.is_empty() {
         client.protocol_mappers = existing.protocol_mappers;
     }
+    // The client as written is checked too: an edit may not drop or change the mark that
+    // decides who writes it.
+    check_decision(state.authorizer.check(
+        &ctx,
+        Action::Update,
+        &ObjectTarget::Application {
+            realm_id: client.realm_id.clone(),
+            org_id: client.org_id.clone(),
+            client_id: client.client_id.clone(),
+            managed_by: client.attributes.get("managed-by").cloned(),
+        },
+    ))?;
     let updated = state.oidc.store.upsert_client(client).await?;
     record_admin_write(
         &state,
@@ -2311,7 +2359,7 @@ async fn compat_get_client_secret(
         .ok_or_else(|| KaisatsuError::NotFound("client not found".into()))?;
     check_decision(state.authorizer.check(
         &ctx,
-        Action::Read,
+        Action::Update,
         &ObjectTarget::Application {
             realm_id: realm,
             org_id: client.org_id,
@@ -2394,6 +2442,8 @@ async fn compat_get_service_account_user(
         .store
         .get_user_by_username_or_email(&realm, None, &sa_name)
         .await?
+        // The client's own service account, never a person who took the name.
+        .filter(|u| u.service_account_client_id.as_deref() == Some(client.client_id.as_str()))
         .ok_or_else(|| KaisatsuError::NotFound("service account user not found".into()))?;
     Ok(Json(user))
 }

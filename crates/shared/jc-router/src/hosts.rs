@@ -83,8 +83,39 @@ pub struct HostTable {
     organizations: BTreeSet<String>,
 }
 
+/// Whether `host` is an authority a URL can be built from: a lowercase name or IPv4 address, or
+/// a bracketed IPv6 literal, then at most a numeric `:port` (RFC 9110 7.2). No userinfo, path or
+/// second colon: a Host header becomes the base of issuers and links (RTE-02).
+pub(crate) fn well_formed(host: &str) -> bool {
+    let (name, port) = match host.strip_prefix('[') {
+        Some(rest) => match rest.split_once(']') {
+            Some((literal, port))
+                if !literal.is_empty()
+                    && literal
+                        .bytes()
+                        .all(|b| b.is_ascii_hexdigit() || b == b':' || b == b'.') =>
+            {
+                ("v6", port)
+            }
+            _ => return false,
+        },
+        None => host.split_at(host.find(':').unwrap_or(host.len())),
+    };
+    let port_ok = match port.strip_prefix(':') {
+        Some(digits) => {
+            (1..=5).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit())
+        }
+        None => port.is_empty(),
+    };
+    port_ok
+        && !name.is_empty()
+        && name.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'-' | b'_')
+        })
+}
+
 /// `host` without a `:port` suffix; an IPv6 literal keeps its brackets.
-fn without_port(host: &str) -> &str {
+pub(crate) fn without_port(host: &str) -> &str {
     host.rsplit_once(':')
         .filter(|(name, port)| {
             !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) && !name.ends_with(':')

@@ -2638,6 +2638,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower",
+ "tracing",
  "url",
  "uuid",
 ]
@@ -6383,6 +6384,7 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus 0.18.3",
  "ort",
+ "percent-encoding",
  "reqwest 0.12.28",
  "rustls",
  "serde",

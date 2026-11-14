@@ -133,12 +133,13 @@ const PROTECTED_CLAIMS: [&str; 22] = [
     "participant",
     "events",
 ];
-/// Claims that carry authority (roles, organization membership, the identity a relying party
-/// names the person by): only the mapper that reads that authority from the store writes them,
-/// at its own path.
-const AUTHORITY_CLAIMS: [&str; 6] = [
+/// Claims that carry authority (roles, group and organization membership, the identity a
+/// relying party names the person by): only the mapper that reads that authority from the store
+/// writes them, at its own path. The gateway matches a Policy's group assignees on `groups`.
+const AUTHORITY_CLAIMS: [&str; 7] = [
     "realm_access",
     "resource_access",
+    "groups",
     "jc_org",
     "jc_groups",
     "email",
@@ -804,6 +805,8 @@ mod tests {
             ("preferred_username", "preferred_username", true),
             ("email_verified", "", false),
             ("agreementId", "", false),
+            ("groups", "", false),
+            ("groups", "groups", true),
             ("custom.nested", "", true),
         ] {
             assert_eq!(
@@ -849,6 +852,7 @@ mod tests {
                 hard("participant", "participant", r#""did:web:other.example""#),
                 hard("organization", "organization", r#"{"other-city":{}}"#),
                 hard("events", "events", r#"{"x":{}}"#),
+                hard("groups", "groups", r#"["/other-city/admins"]"#),
                 ProtocolMapperRepresentation {
                     name: "attr".into(),
                     protocol_mapper: "oidc-usermodel-attribute-mapper".into(),
@@ -904,6 +908,7 @@ mod tests {
             "participant",
             "organization",
             "events",
+            "groups",
         ] {
             assert_eq!(claims.get(claim), None, "{claim}: {claims:?}");
         }

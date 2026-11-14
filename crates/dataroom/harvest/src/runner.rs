@@ -70,6 +70,8 @@ impl OutboundFetcher for HttpFetcher {
                 .connect_timeout(Duration::from_secs(10).min(timeout))
                 .timeout(timeout)
                 .redirect(reqwest::redirect::Policy::none())
+                // A proxy from the environment would resolve the name itself, past the pin.
+                .no_proxy()
                 .user_agent("dataroom-harvest/1.0");
 
             // Only a target whose DNS answer passed the guard is fetched, on exactly that answer
@@ -529,25 +531,39 @@ impl HarvestEngine {
         let mut current_url = url.to_owned();
         let mut hops = 0;
         loop {
-            let resolver_ref = self
-                .custom_dns
-                .as_ref()
-                .map(|r| r.as_ref() as &crate::guard::DnsResolver);
             let own = if hops == 0 {
                 self.own_target(&current_url).map_err(guard)?
             } else {
                 None
             };
-            let target = match own {
-                Some(t) => t,
-                None => validate_and_pin_url(
+            let target = match (own, &self.custom_dns) {
+                (Some(t), _) => t,
+                (None, Some(resolver)) => validate_and_pin_url(
                     &current_url,
                     &source.allowed_hosts,
                     cat_allowed_hosts,
                     self.resolve_dns,
-                    resolver_ref,
+                    Some(resolver.as_ref() as &crate::guard::DnsResolver),
                 )
                 .map_err(guard)?,
+                // The system resolver blocks: off the async workers.
+                (None, None) => {
+                    let (url, hosts, cat_hosts, dns) = (
+                        current_url.clone(),
+                        source.allowed_hosts.clone(),
+                        cat_allowed_hosts.to_vec(),
+                        self.resolve_dns,
+                    );
+                    tokio::task::spawn_blocking(move || {
+                        validate_and_pin_url(&url, &hosts, &cat_hosts, dns, None)
+                    })
+                    .await
+                    .map_err(|e| {
+                        DataroomError::OutboundRefused(format!("address check stopped: {e}"))
+                    })
+                    .and_then(|r| r)
+                    .map_err(guard)?
+                }
             };
 
             match self

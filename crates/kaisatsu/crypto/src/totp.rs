@@ -139,6 +139,22 @@ pub fn generate_totp_code_for_credential(
     )
 }
 
+/// [`verify_totp_code`] against each of a person's authenticators (`otp` credentials; a person
+/// may enrol several): the one that matched and its step.
+pub fn verify_any_totp_code<'a>(
+    creds: &'a [CredentialRecord],
+    submitted_code: &str,
+    look_ahead_window: u32,
+    unix_secs: u64,
+) -> Result<Option<(&'a CredentialRecord, u64)>> {
+    for cred in creds.iter().filter(|c| c.credential_type == "otp") {
+        if let Some(step) = verify_totp_code(cred, submitted_code, look_ahead_window, unix_secs)? {
+            return Ok(Some((cred, step)));
+        }
+    }
+    Ok(None)
+}
+
 /// Verifies `submitted_code` against `cred` within `look_ahead_window` steps around `unix_secs`.
 /// Returns `Ok(Some(matched_step))` so the caller can record `matched_step` in `revoked_token`
 /// (`single_use`) and refuse replay of a used code (W7).

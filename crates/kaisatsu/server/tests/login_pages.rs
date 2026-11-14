@@ -1065,6 +1065,19 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
     assert_eq!(st_at_replay, StatusCode::BAD_REQUEST);
     assert_eq!(page_id(&html_at_replay), "expired");
 
+    // The reset form offers "sign out other devices", checked as on Keycloak's form: whoever
+    // held the old password loses their sessions with it.
+    assert!(html_at.contains("name=\"logout-sessions\""), "{html_at}");
+    let member_id = user(&store, MEMBER).await.id;
+    assert!(
+        !store
+            .list_user_sso_sessions("dev", &member_id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the member signed in earlier in this test"
+    );
+
     // Submit the new password on the action-token form
     let (st_at_post, _, html_at_post) = post_form(
         &app,
@@ -1073,12 +1086,20 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
             ("csrf_token", &at_csrf),
             ("session_code", &at_session),
             ("new_password", "ResetByLinkPass789!"),
+            ("logout-sessions", "on"),
         ],
         Some(&at_cookie),
     )
     .await;
     assert_eq!(st_at_post, StatusCode::OK);
     assert_eq!(page_id(&html_at_post), "account-updated");
+    assert!(
+        store
+            .list_user_sso_sessions("dev", &member_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 
     // --- K11: Passkey registration (`webauthn-register`) then passwordless login (`LoginState::Passkey`) ---
     let mut member_u = user(&store, MEMBER).await;

@@ -271,6 +271,68 @@ async fn a_workload_of_another_organization_is_not_admitted_to_an_organization_e
     assert_eq!(status, StatusCode::OK, "{body}");
 }
 
+/// ADR-N-058: a role a ServiceAccount's manifest scopes to its Organization reaches the
+/// Endpoints of that Organization only. On Helsinki's public Endpoint a Žilina account bound to
+/// `member` across its own Organization holds no `member`, while a Helsinki account does.
+#[tokio::test]
+async fn an_organization_scoped_role_reaches_no_endpoint_of_another_organization() {
+    let dir = std::env::temp_dir().join("gateway-attack-organization-scoped-role");
+    let _ = std::fs::remove_dir_all(&dir);
+    for (project, organization) in [(PROJECT, "hel"), (OUTSIDER, "zilina")] {
+        let accounts = dir.join(format!("projects/{project}/access/serviceaccounts"));
+        std::fs::create_dir_all(&accounts).expect("an account directory");
+        std::fs::write(
+            accounts.join("senzory.yaml"),
+            format!("apiVersion: joinedcontext.com/v1alpha1\nkind: ServiceAccount\nmetadata:\n  name: senzory\n  namespace: {project}\nspec:\n  owner:\n    user: demo.steward\n  purpose: \"the attack\"\n  roles:\n    - role: member\n      scope: {{ organization: {organization} }}\n  credentials:\n    - kind: oauth-client\n      name: default\n"),
+        )
+        .expect("the account");
+    }
+    let repo = Repo(dir);
+    let realm = common::Realm::new();
+    let broker = common::BrokerStub::start(vec![json!([])]).await;
+    let accounts =
+        accounts_of(&jc_manifest::loader::Repository::load(&repo.0).expect("the repository loads"));
+    let gateway = Gateway::new(
+        Broker::new(broker.url.clone()),
+        Box::new(PolicyPdp),
+        "hel.fi",
+    )
+    .serve([Endpoint {
+        audience: Audience::Public,
+        ..endpoint()
+    }])
+    .authenticate(Arc::new(realm.verifier()), accounts, None);
+    gateway.replace_provenance(organizations());
+    let fixture = Fixture {
+        realm,
+        app: router(Arc::new(gateway)),
+        broker,
+        _repo: repo,
+    };
+    let outsider = fixture
+        .realm
+        .workload_token(&client_id(OUTSIDER, "senzory"), json!(SLUG));
+    // The broker's view decides a public Endpoint's read from the roles the hop carries.
+    let roles = |fixture: &Fixture| {
+        let hops = fixture.broker.hops();
+        let hop = hops.last().expect("the read reached the broker");
+        hop.headers
+            .get("x-jc-roles")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let (status, body) = read(&fixture, SLUG, &outsider).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(!roles(&fixture).contains("member"), "{}", roles(&fixture));
+    let member = fixture
+        .realm
+        .workload_token(&client_id(PROJECT, "senzory"), json!(SLUG));
+    let (status, body) = read(&fixture, SLUG, &member).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(roles(&fixture).contains("member"), "{}", roles(&fixture));
+}
+
 /// F-SEC1-009: while the gateway holds no Organization for the Endpoint's project (one
 /// Organization per installation), a person whose token names no group at all is still no member
 /// of it: the empty project is refused, a person of any project is admitted.
