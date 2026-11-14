@@ -60,7 +60,7 @@ function DescriptionHint({ children }: { children: ReactNode }): React.JSX.Eleme
         title={t("pageHeader.about")}
         aria-describedby={id}
         aria-expanded={open}
-        className="focus-ring inline-flex size-control-xs items-center justify-center rounded-full text-fg-muted hover:text-fg"
+        className="focus-ring inline-flex size-control-xs items-center justify-center rounded-full text-fg-muted hover:text-fg aria-expanded:bg-primary aria-expanded:text-primary-fg"
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         // A touch screen has no hover: a tap shows and hides the text.
