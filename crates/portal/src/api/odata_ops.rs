@@ -84,7 +84,7 @@ pub const SERVED_AS_SETS: [&str; 13] = [
 ];
 
 /// API/13 §2b, function: read-only, with arguments.
-pub const FUNCTIONS: [&str; 31] = [
+pub const FUNCTIONS: [&str; 32] = [
     "jc_change_history",
     "jc_catalog_search",
     "jc_knowledge_search",
@@ -116,6 +116,7 @@ pub const FUNCTIONS: [&str; 31] = [
     "jc_mqtt_captured",
     "jc_project_export",
     "jc_data_query",
+    "jc_render",
 ];
 
 /// API/13 §2b, Change-proposing action: opens, plans or decides a Change.

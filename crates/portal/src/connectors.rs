@@ -56,6 +56,7 @@ pub const SEGMENTS: &[(&str, &[&str], &[&str])] = &[
             "jc_resource_get",
             "jc_kpi_compute",
             "jc_data_query",
+            "jc_render",
             "jc_catalog_search",
             "jc_attribute_explain",
         ],
@@ -1399,6 +1400,8 @@ fn names_its_object(op: &Operation) -> bool {
             && input.pointer("/properties/name").is_some())
         || (op.kind == "Endpoint" && input.pointer("/properties/endpoint").is_some())
         || op.name == "jc_schema_get"
+        // Its Endpoint sits in `data.query`, which the door hands in as the arguments (T-6860).
+        || op.name == crate::ops::render::NAME
 }
 
 /// The object a call names: `name`, or `endpoint` (jc_data_write, T-6389). `jc_kpi_compute`'s
@@ -3099,6 +3102,7 @@ pub(crate) mod tests {
                 "jc_catalog_search",
                 "jc_data_query",
                 "jc_kpi_compute",
+                "jc_render",
                 "jc_resource_get",
                 "jc_resource_list",
                 "jc_schema_get"
