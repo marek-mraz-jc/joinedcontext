@@ -244,6 +244,10 @@
     "src/components/grid/ManifestGrid.tsx :: (no label)": {
       "class": "FREE",
       "reason": "a cell panel string field the kind's JSON Schema leaves free (version, schedule, description); an enum, a reference or a boolean gets its Select, picker or switch, and the Field's label names it"
+    },
+    "src/pages/portals/PortalsArea.tsx :: Title in {language}": {
+      "class": "FREE",
+      "reason": "the portal's title the person writes per language; nothing to pick"
     }
   }
 }

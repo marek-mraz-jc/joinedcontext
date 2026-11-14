@@ -4821,6 +4821,48 @@
         }
       }
     },
+    "/api/v1/organization/portal-hosts": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List Portal Hosts",
+        "description": "Each Organization the caller may propose a Portal in (its administrators, the installation's for every one), with the hosts the operator listed for its portals and its open data base address (ODP-08, ODP-15). A Portal naming another host is refused at propose with 422 on spec.host.",
+        "operationId": "list_portal_hosts",
+        "responses": {
+          "200": {
+            "description": "The caller's Organizations, by name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalHosts"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller makes portals in no Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/organization/setup": {
       "get": {
         "tags": [
@@ -56190,6 +56232,49 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          }
+        }
+      },
+      "PortalHosts": {
+        "type": "object",
+        "description": "The Organizations the caller makes portals in, by name.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PortalOrganization"
+            }
+          }
+        }
+      },
+      "PortalOrganization": {
+        "type": "object",
+        "description": "One Organization the caller manages portals of.",
+        "required": [
+          "organization",
+          "hosts"
+        ],
+        "properties": {
+          "hosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The hosts the operator listed for its portals, e.g. `mobility.bratislava.sk`."
+          },
+          "opendata": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its open data portal's public base, e.g. `https://opendata.bratislava.sk`; absent when\nthis Portal knows none."
+          },
+          "organization": {
+            "type": "string",
+            "description": "The Organization's name, the `spec.organizationRef` of its portals, e.g. `bratislava`."
           }
         }
       },
