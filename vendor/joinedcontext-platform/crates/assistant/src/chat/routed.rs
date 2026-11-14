@@ -2370,7 +2370,7 @@ async fn dataset_or(
 /// row-level security: 5-15 s on prod over the 2026-10-25 crawl, while the rows took 0.4 s.
 // ponytail: the page is lost to a slow scan; keep each Endpoint type's page in a table filled at
 // index time when a link matters more than these seconds.
-pub(super) const PAGE_DEADLINE: Duration = Duration::from_millis(1_500);
+pub(crate) const PAGE_DEADLINE: Duration = Duration::from_millis(1_500);
 
 /// `work`'s output, or `None` once `deadline` passed first.
 async fn bounded<T>(deadline: Duration, work: impl std::future::Future<Output = T>) -> Option<T> {
