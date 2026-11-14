@@ -105,13 +105,12 @@ describe("AttributeMetadata (T-5529)", () => {
     }
   });
 
-  it("asks a public Endpoint for nothing and hides who wrote it", () => {
+  it("asks a public Endpoint for nothing and names no access (T-6869)", () => {
     const history = vi.fn();
     render(<AttributeMetadata source={{ history }} id={ID} attr="kpiValue" cell={{ kind: "property", value: 1 }} publicView locale="en" />);
-    for (const term of ["Created", "Changed by"]) {
-      expect(value(term).textContent).toBe("hidden: no access (public view)");
-    }
-    expect(screen.queryByText("Organization")).toBeNull();
+    expect(value("Created").textContent).toBe("—");
+    expect(document.body.textContent).not.toMatch(/access/i);
+    for (const term of ["Changed by", "Organization"]) expect(screen.queryByText(term)).toBeNull();
     expect(history).not.toHaveBeenCalled();
   });
 

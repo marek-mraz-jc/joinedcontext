@@ -103,6 +103,7 @@ export function useGridView(props: EntityGridProps & { onDrill?: (urn: string, t
     access: hostAccess,
     explainAccess,
     accessRequestHref,
+    publicView,
     ...options
   } = props;
 
@@ -218,6 +219,7 @@ export function useGridView(props: EntityGridProps & { onDrill?: (urn: string, t
   // A host that translated only the grid's labels still gets its own word for closing.
   const inspectorLabels = { ...DEFAULT_INSPECTOR_LABELS, close: labels.close, ...options.labels?.inspectorLabels };
   const inspects = (column: VisibleColumn): column is VisibleColumn & { attr: string } =>
+    !publicView &&
     asked && column.attr !== null && column.meta === null && column.key !== "id";
   // In edit mode a column the person cannot change once their decisions are read wears a lock with
   // the reason (T-5530), so a value without an editor is never a puzzle; a read-only grid wears none.
