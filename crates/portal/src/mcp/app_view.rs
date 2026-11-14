@@ -142,7 +142,9 @@ mod tests {
         // The library draws through Vega's interpreter, with a loader that loads nothing.
         assert!(page.contains("expr: vega.expressionInterpreter"));
         assert!(page.contains("{ ast: true }"));
-        assert!(page.contains("var LOADER = { load: refused, sanitize: refused, http: refused, file: refused };"));
+        assert!(page.contains(
+            "var LOADER = { load: refused, sanitize: refused, http: refused, file: refused };"
+        ));
         assert!(page.contains("a.href = url;"));
         assert!(page.contains("var url = PORTAL + \"/projects/\""));
         // Messages only from the parent frame, and only JSON-RPC 2.0.

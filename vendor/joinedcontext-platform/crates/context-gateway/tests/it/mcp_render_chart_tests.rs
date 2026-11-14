@@ -594,7 +594,10 @@ async fn chart_view_csp_connects_nowhere() {
     // The page served is the shared one with no link origin; the grep reads its own code, the
     // chart library it inlines is held to its checksums in jc-chart (T-6887).
     let page = content["text"].as_str().expect("the page");
-    assert_eq!(page, jc_chart::view_page().replace("__PORTAL_ORIGIN__", "null"));
+    assert_eq!(
+        page,
+        jc_chart::view_page().replace("__PORTAL_ORIGIN__", "null")
+    );
     assert!(page.contains("var PORTAL = null;"));
     for sink in [
         "fetch(",
