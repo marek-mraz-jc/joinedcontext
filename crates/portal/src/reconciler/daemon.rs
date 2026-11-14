@@ -156,6 +156,19 @@ fn cleared(what: &str, change: &super::warned::Change) {
     }
 }
 
+/// Runs `work`, which on a large repository is seconds of CPU (the judge of every manifest at
+/// the first run after a start, the mirror's compile), without holding a runtime worker: on
+/// the multi-thread runtime the worker hands its queued tasks to another thread for the
+/// length of `work`, so the probes and every request keep answering (T-6933). A current-thread
+/// runtime (the unit tests) runs it in place.
+fn off_runtime<R>(work: impl FnOnce() -> R) -> R {
+    use tokio::runtime::{Handle, RuntimeFlavor};
+    match Handle::try_current().map(|runtime| runtime.runtime_flavor()) {
+        Ok(RuntimeFlavor::MultiThread) => tokio::task::block_in_place(work),
+        _ => work(),
+    }
+}
+
 /// Background reconciler synchronizing repository manifests into the in-memory mirror.
 pub struct Syncer {
     shako: Arc<ShakoClient>,
@@ -913,10 +926,12 @@ impl Syncer {
         let Some((scratch, repository)) = self.staged_apart(&revision).await? else {
             return Ok(());
         };
-        let (repository, refusals) =
-            self.refuse_invalid(&scratch, Arc::new(repository), &revision, &default_branch);
-        let (fresh_mirror, _) =
-            self.load_mirror(&scratch, &repository, &refusals, &revision, &default_branch)?;
+        let (repository, refusals) = off_runtime(|| {
+            self.refuse_invalid(&scratch, Arc::new(repository), &revision, &default_branch)
+        });
+        let (fresh_mirror, _) = off_runtime(|| {
+            self.load_mirror(&scratch, &repository, &refusals, &revision, &default_branch)
+        })?;
         if fresh_mirror.repositories() != self.mirror.repositories() {
             return Ok(());
         }
@@ -1447,7 +1462,7 @@ impl Syncer {
         // 4a. A manifest its kind refuses is never served (CHG-05): its last good revision
         //     serves in its place, or nothing does (CHG-04).
         let (repository, refusals) =
-            self.refuse_invalid(&scratch, repository, &revision, &default_branch);
+            off_runtime(|| self.refuse_invalid(&scratch, repository, &revision, &default_branch));
         *self.accepted.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::clone(&repository));
         steps.mark("stage");
 
@@ -1459,8 +1474,9 @@ impl Syncer {
         //    reader never sees a half-built repository (MF-04).
         // The conditions this run starts from, so one that says the same again keeps its time.
         let transitions = super::transitions::Transitions::of(&self.mirror);
-        let (fresh_mirror, loaded) =
-            self.load_mirror(&scratch, &repository, &refusals, &revision, &default_branch)?;
+        let (fresh_mirror, loaded) = off_runtime(|| {
+            self.load_mirror(&scratch, &repository, &refusals, &revision, &default_branch)
+        })?;
         let past_seed = source_loaded(&fresh_mirror, &scratch.unstaged);
         let loaded_once = self
             .source_loaded
@@ -6757,6 +6773,112 @@ output_error{stream="kpi"} 6
             ),
             Err(SyncError::Empty(_))
         ));
+    }
+
+    /// jc-dev's size: 100 spaces, 700 Endpoints, 800 ServiceAccounts.
+    fn a_large_repository(at: &Path) -> Repository {
+        let mut files = Vec::new();
+        for space in 0..100 {
+            files.push((
+                format!("projects/city/spaces/s{space}/space.yaml"),
+                manifest("ContextSpace", &format!("s{space}"), json!({})),
+            ));
+            for endpoint in 0..7 {
+                // Base32 letters only: the digits 0-9 written as a-j.
+                let slug: String = format!("{:0>26}", space * 10 + endpoint)
+                    .bytes()
+                    .map(|digit| char::from(digit - b'0' + b'a'))
+                    .collect();
+                files.push((
+                    format!("projects/city/spaces/s{space}/endpoints/e{endpoint}.yaml"),
+                    manifest(
+                        "Endpoint",
+                        &format!("s{space}-e{endpoint}"),
+                        json!({
+                            "contextSpaceRef": format!("s{space}"),
+                            "slug": slug,
+                            "audience": "organization",
+                            "enabledRepresentations": ["ngsi-ld"],
+                        }),
+                    ),
+                ));
+            }
+            for account in 0..8 {
+                let name = format!("sa{space}-{account}");
+                files.push((
+                    format!("projects/city/access/serviceaccounts/{name}.yaml"),
+                    manifest(
+                        "ServiceAccount",
+                        &name,
+                        json!({
+                            "owner": {"user": "admin@city.example"},
+                            "purpose": "the city's import script",
+                            "roles": [{"role": "viewer", "scope": {"project": "city"}}],
+                            "credentials": [{"kind": "oauth-client", "name": "main"}],
+                        }),
+                    ),
+                ));
+            }
+        }
+        let files: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(p, c)| (p.as_str(), c.as_str()))
+            .collect();
+        write_tree(at, &files);
+        Repository::load(at).expect("the repository loads")
+    }
+
+    /// T-6933: the first run after a start judges every manifest of jc-dev's size (101 spaces,
+    /// 706 Endpoints, 856 accounts) for tens of seconds; on a runtime worker that held every
+    /// task queued behind it, `/streams/ping` included, until the liveness probe killed jc.
+    /// Here the runtime has one worker: a task spawned while the judge runs answers before the
+    /// judge ends.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn the_judge_of_a_large_repository_leaves_the_runtime_answering() {
+        let dir = Scratch::new("t6933").expect("a scratch directory");
+        let repository = Arc::new(a_large_repository(dir.path()));
+        let render = Render {
+            layout: 1,
+            root: dir.path().to_path_buf(),
+            _staged: Vec::new(),
+            projects: BTreeMap::new(),
+            unstaged: Vec::new(),
+            unloaded: Vec::new(),
+            refused: Vec::new(),
+            listings: BTreeMap::new(),
+        };
+        let syncer = Arc::new(bare_syncer());
+        let judged = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (started, judging) = tokio::sync::oneshot::channel();
+        let judge = tokio::spawn({
+            let judged = Arc::clone(&judged);
+            async move {
+                let _ = started.send(());
+                let (repository, refusals) =
+                    off_runtime(|| syncer.refuse_invalid(&render, repository, "abc123", "main"));
+                let loaded = off_runtime(|| {
+                    syncer.load_mirror(&render, &repository, &refusals, "abc123", "main")
+                });
+                judged.store(true, std::sync::atomic::Ordering::SeqCst);
+                assert!(refusals.is_empty(), "every manifest is judged and accepted");
+                assert_eq!(repository.iter().count(), 1600);
+                assert!(loaded.is_ok(), "the mirror loads");
+            }
+        });
+        judging.await.expect("the judge starts");
+        let ping = tokio::spawn({
+            let judged = Arc::clone(&judged);
+            async move { judged.load(std::sync::atomic::Ordering::SeqCst) }
+        });
+        let answered_after_the_judge = tokio::time::timeout(Duration::from_secs(120), ping)
+            .await
+            .expect("the ping answers")
+            .expect("the ping task");
+        judge.await.expect("the judge task");
+        assert!(
+            !answered_after_the_judge,
+            "a task spawned during the judge waited for it to end"
+        );
     }
 
     /// P-2, CHG-03: a manifest committed straight to `main` meets the Portal's judge at load,
