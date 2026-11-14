@@ -483,6 +483,14 @@ mod tests {
         assert!(busy_ok.is_some());
     }
 
+    /// P-1-09: the counted size is the bytes the answer carries, escapes and UTF-8 included.
+    #[test]
+    fn a_rows_counted_size_is_its_compact_json_length() {
+        let row = serde_json::json!({"name": "Námestie \"SNP\"\n", "v": [1.5, null, true]});
+        let size = serde_json::to_vec(&row).map_or(0, |b| b.len());
+        assert_eq!(admit(&row, 0, usize::MAX), Admit::Keep(size));
+    }
+
     #[test]
     fn the_byte_budget_stops_at_its_limit_and_skips_a_huge_row() {
         let row = serde_json::json!({"id": "urn:ngsi-ld:Bridge:1", "type": "Bridge"});
