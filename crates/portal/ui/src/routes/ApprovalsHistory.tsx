@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { api, ApiError, queryKeys, unwrap } from "../api/client";
 import { ownRights, usePermissions } from "../api/permissions";
 import { ChangeNotice } from "../components/ChangeNotice";
-import { changeSentence } from "./changeWords";
+import { changeSentence, landed } from "./changeWords";
 import { ChangedFields } from "../components/ResourceHistory";
 import { download } from "../pages/models/diagramExport";
 import { AdminGrid } from "../components/grid/AdminGrid";
@@ -31,9 +31,6 @@ interface Filter {
 }
 
 const NO_FILTER: Filter = { kind: "", name: "", author: "", since: "", until: "" };
-
-/** Merged, or merged and live since: the server restores and undoes either (api/restore.rs checks the merge). */
-const landed = (change: { status: { phase: string } }) => change.status.phase === "Merged" || change.status.phase === "Applied";
 
 /**
  * The closed changes of a project (T-3292): what was merged or rejected, by whom and when,
