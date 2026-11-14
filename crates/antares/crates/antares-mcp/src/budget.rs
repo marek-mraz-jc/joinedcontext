@@ -248,7 +248,7 @@ pub(crate) enum Admit {
 
 /// The byte budget: `used` bytes are kept, `max` may be.
 pub(crate) fn admit(row: &serde_json::Value, used: usize, max: usize) -> Admit {
-    let size = serde_json::to_vec(row).map_or(usize::MAX, |b| b.len());
+    let size = antares_ops::json_len(row);
     if size > MAX_ROW_BYTES {
         Admit::Skip
     } else if used.saturating_add(size) > max {
@@ -481,6 +481,14 @@ mod tests {
         // All 4 permits free -> Busy succeeds
         let busy_ok = acquire_permit(&sem, 4, State::Busy, wait).await;
         assert!(busy_ok.is_some());
+    }
+
+    /// P-1-09: the counted size is the bytes the answer carries, escapes and UTF-8 included.
+    #[test]
+    fn a_rows_counted_size_is_its_compact_json_length() {
+        let row = serde_json::json!({"name": "Námestie \"SNP\"\n", "v": [1.5, null, true]});
+        let size = serde_json::to_vec(&row).map_or(0, |b| b.len());
+        assert_eq!(admit(&row, 0, usize::MAX), Admit::Keep(size));
     }
 
     #[test]

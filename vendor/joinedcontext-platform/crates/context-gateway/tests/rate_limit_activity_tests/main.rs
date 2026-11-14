@@ -15,7 +15,7 @@ use context_gateway::auth::accounts::{accounts_of, client_id};
 use context_gateway::pdp::PolicyPdp;
 use context_gateway::proxy::Broker;
 use context_gateway::resolver::Endpoint;
-use jc_core::kinds::{Audience, RateLimits, Representation};
+use jc_core::kinds::{Audience, PolicySpec, RateLimits, Representation};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -23,6 +23,8 @@ use tower::ServiceExt;
 
 const SLUG: &str = "cccccccccccccccccccccccccc";
 const ADDRESS: &str = "203.0.113.77";
+/// A public Endpoint with an MCP door, read through the hub.
+const HUBBED: &str = "dddddddddddddddddddddddddd";
 
 fn endpoint() -> Endpoint {
     Endpoint {
@@ -57,6 +59,41 @@ fn endpoint() -> Endpoint {
         manifest_name: String::new(),
         policies: Vec::new(),
     }
+}
+
+/// [`endpoint`] as `HUBBED`: MCP served, anybody granted its queries.
+fn hubbed() -> Endpoint {
+    let policy: PolicySpec = serde_norway::from_str(
+        "contextSpaceRef: walk-ops-walk\n\
+         assigner: did:web:banskabystrica.sk\n\
+         assignee: { kind: role, id: public }\n\
+         operations: [queryEntity]\n\
+         information:\n  \
+         - entities:\n      \
+         - type: T\n",
+    )
+    .expect("the policy spec parses");
+    Endpoint {
+        slug: HUBBED.to_owned(),
+        base_path: format!("/api/endpoint/{HUBBED}"),
+        representations: vec![Representation::NgsiLd, Representation::Mcp],
+        policies: vec![policy],
+        ..endpoint()
+    }
+}
+
+fn hub_call() -> Request<Body> {
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": { "name": "query_entities", "arguments": { "endpoint": HUBBED, "type": "T" } },
+    });
+    Request::post("/api/mcp")
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", ADDRESS)
+        .body(Body::from(body.to_string()))
+        .expect("a request")
 }
 
 /// A repository holding the ServiceAccount walk-caller of project walk-ops.
@@ -119,7 +156,7 @@ async fn a_flood_is_one_row_per_caller_naming_the_account_and_never_an_address()
             Box::new(PolicyPdp),
             "banskabystrica.sk",
         )
-        .serve([endpoint()])
+        .serve([endpoint(), hubbed()])
         .authenticate(Arc::new(realm.verifier()), accounts(), None),
     );
     activity::name_spaces(&BTreeMap::from([(
@@ -192,5 +229,30 @@ async fn a_flood_is_one_row_per_caller_naming_the_account_and_never_an_address()
         format!(
             "serviceAccount:walk-caller was refused 5 times on {SLUG}: its rate limit was spent"
         )
+    );
+
+    // The hub spends the same bucket and its refusals reach the same Activity: in this one test,
+    // since the tally is the process's own.
+    for _ in 0..3 {
+        let status = app
+            .clone()
+            .oneshot(hub_call())
+            .await
+            .expect("the gateway answers")
+            .status();
+        assert_ne!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    let text = format!(
+        "{:?}",
+        activity::take(true)
+            .iter()
+            .map(|(call, held)| named(&activity::log_record(call, held)))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        text.contains(&format!(
+            "anonymous was refused 2 times on {HUBBED}: its rate limit was spent"
+        )),
+        "{text}"
     );
 }
