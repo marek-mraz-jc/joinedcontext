@@ -431,6 +431,25 @@ fn seed_project(mirror: &Mirror, project: &str, catalogue: &str) {
             "enabledRepresentations": ["ngsi-ld"]
         }),
     ));
+    // A Dashboard of two vega-lite widgets (S-93, T-6864): the counters' hourly average, and the
+    // reports drawn by contactEmail, which the models mark personal.
+    mirror.upsert(envelope(
+        "Dashboard",
+        "counters-board",
+        project,
+        json!({ "title": "Bike counters", "pages": [{ "title": "Overview", "widgets": [
+            { "widgetType": "vega-lite", "endpointRef": format!("{project}-counters"),
+              "data": { "source": "temporal", "type": "BikeCounter", "attrs": ["count"], "last": "P7D", "aggrMethod": "avg", "aggrPeriod": "PT1H" },
+              "spec": { "mark": "line", "data": { "name": "source" }, "encoding": {
+                  "x": { "field": "observedAt", "type": "temporal" },
+                  "y": { "field": "value", "type": "quantitative" } } } },
+            { "widgetType": "vega-lite", "endpointRef": format!("{project}-reports"),
+              "data": { "source": "csv", "type": "PotholeReport" },
+              "spec": { "mark": "bar", "data": { "name": "source" }, "encoding": {
+                  "x": { "field": "contactEmail", "type": "nominal" },
+                  "y": { "field": "count", "type": "quantitative" } } } }
+        ] }] }),
+    ));
     // The Pipelines' write target: a valid Endpoint manifest the write checks can read (PL-111).
     mirror.upsert(envelope(
         "Endpoint",
@@ -938,6 +957,15 @@ async fn data_plane(server: &MockServer) {
             "description": { "type": "Property", "value": "Hlboká jama pri zastávke" },
             "contactEmail": { "type": "Property", "value": "jana@example.org" }
         }])))
+        .mount(server)
+        .await;
+    // The reports as the Endpoint's CSV file (T-6864): what a widget on contactEmail would draw.
+    Mock::given(method("GET"))
+        .and(path_regex("^/api/endpoint/[a-z2-7]+reportszz+/file.csv$"))
+        .and(header("authorization", bearer.as_str()))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "id,type,contactEmail,count\nurn:ngsi-ld:PotholeReport:1,PotholeReport,jana@example.org,1\n",
+        ))
         .mount(server)
         .await;
     // The broker's admin read of a type's stored names (T-6001): t-scn-23's BikeCounters hold
