@@ -97,6 +97,8 @@ A harvested record keeps its publisher, identifier, landing page and download li
 
 In this version no source carries credentials: a portal harvests only catalogues that answer without a login.
 
+In the Portals area, a portal's **Sources** tab adds a source by type, each field with an example, and proposes it as a Change. **Test connection** reads the source's first page once, through the same guard as a run, and answers in one sentence: it answered as expected, it did not answer, the address is refused (not https, a host outside `allowedHosts` or the operator's allow-list, a private address, or a redirect to one), it answered in another format, or the answer is larger than the byte budget. Nothing of the remote answer is shown, and one person may test six times a minute, three at once. **Run now** starts a run; a second one while it is running is refused. **Last runs** is the run log: when each run started, how many records it created, changed, kept, withdrew and left out, and what stopped a failed run. The **Datasets** tab lists the portal's datasets with the source of each; **Hide** and **List again** propose a Change of `spec.hidden`, and a hidden dataset stays in the catalogue (ODP-15).
+
 ## 4. When a Change Is Refused
 
 The Change names the field and the rule:

@@ -2032,6 +2032,28 @@
         "evidence/T-6875/portals-editor-refusal-400.png"
       ]
     },
+    "src/pages/portals/PortalSources.tsx": {
+      "walkedBy": "worker-t6880",
+      "date": "2026-11-14",
+      "screenshots": [
+        "evidence/T-6876/sources-empty-1440.png",
+        "evidence/T-6876/sources-empty-400.png",
+        "evidence/T-6876/sources-add-1440.png",
+        "evidence/T-6876/sources-add-400.png",
+        "evidence/T-6876/sources-filled-1440.png",
+        "evidence/T-6876/sources-filled-400.png",
+        "evidence/T-6876/sources-error-1440.png",
+        "evidence/T-6876/sources-error-400.png",
+        "evidence/T-6876/sources-refusal-1440.png",
+        "evidence/T-6876/sources-refusal-400.png",
+        "evidence/T-6876/datasets-empty-1440.png",
+        "evidence/T-6876/datasets-empty-400.png",
+        "evidence/T-6876/datasets-filled-1440.png",
+        "evidence/T-6876/datasets-filled-400.png",
+        "evidence/T-6876/datasets-refusal-1440.png",
+        "evidence/T-6876/datasets-refusal-400.png"
+      ]
+    },
     "src/pages/repositories/PullsView.tsx": {
       "walkedBy": "jc-shako-ui",
       "date": "2026-11-08",

@@ -31,7 +31,10 @@ import {
   PageLoading,
   RadioGroup,
   Select,
+  Tabs,
+  tabPanelProps,
 } from "../../components/ui";
+import { PortalDatasetsTab, PortalSourcesTab } from "./PortalSources";
 
 type PortalOrganization = components["schemas"]["PortalOrganization"];
 
@@ -339,7 +342,7 @@ export function PortalEditor({ name }: { name: string }): JSX.Element {
   });
   const portals = useReadableList(ORG_NAMESPACE, "portals", "Portal", creating && hosts.isSuccess);
   const title = creating ? t("portals.editor.newTitle") : t("portals.editor.editTitle", { name });
-  const header = <PageHeader title={title} description={t("portals.editor.description")} breadcrumb={<Link to="/portals" className="focus-ring underline hover:no-underline">{t("portals.nav.list")}</Link>} />;
+  const header = <PageHeader title={title} description={creating ? t("portals.editor.description") : t("portals.editor.descriptionTabs")} breadcrumb={<Link to="/portals" className="focus-ring underline hover:no-underline">{t("portals.nav.list")}</Link>} />;
   if (hosts.isPending || (!creating && stored.isPending)) return <>{header}<PageLoading label={t("app.loading")} /></>;
   if (hosts.isError) return <>{header}{refused(hosts.error) ? <NotAdmin /> : <PageFailed error={hosts.error} onRetry={() => void hosts.refetch()} />}</>;
   const manifest = stored.data as unknown as PortalManifest | undefined;
@@ -367,11 +370,39 @@ export function PortalEditor({ name }: { name: string }): JSX.Element {
   const taken = creating
     ? ((portals.data?.items ?? []) as unknown as PortalManifest[]).map((portal) => portal.spec.path)
     : [];
+  const form = <PortalForm key={name} name={creating ? undefined : name} stored={manifest} organizations={hosts.data.items} taken={taken} />;
+  if (creating || !manifest) return <>{header}{form}</>;
   return (
     <>
       {header}
-      <PortalForm key={name} name={creating ? undefined : name} stored={manifest} organizations={hosts.data.items} taken={taken} />
+      <PortalTabs name={name} manifest={manifest} form={form} />
     </>
+  );
+}
+
+type PortalTab = "settings" | "sources" | "datasets";
+
+/** The views of an existing portal (ODP-15): its settings, its sources and run log, its datasets. */
+function PortalTabs({ name, manifest, form }: { name: string; manifest: PortalManifest; form: JSX.Element }): JSX.Element {
+  const { t } = useTranslation();
+  const [tab, setTab] = useState<PortalTab>("settings");
+  return (
+    <div className="space-y-4">
+      <Tabs<PortalTab>
+        id="portal"
+        label={t("portals.tabs.label")}
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { value: "settings", label: t("portals.tabs.settings") },
+          { value: "sources", label: t("portals.tabs.sources") },
+          { value: "datasets", label: t("portals.tabs.datasets") },
+        ]}
+      />
+      <div {...tabPanelProps("portal", tab)}>
+        {tab === "settings" ? form : tab === "sources" ? <PortalSourcesTab name={name} spec={manifest.spec} /> : <PortalDatasetsTab name={name} spec={manifest.spec} onSources={() => setTab("sources")} />}
+      </div>
+    </div>
   );
 }
 

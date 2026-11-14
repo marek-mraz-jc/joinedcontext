@@ -64,6 +64,72 @@ pub trait HarvestRunner: Send + Sync {
         store: &'a dyn Store,
         source: &'a HarvestSource,
     ) -> crate::store::BoxFuture<'a, Result<crate::model::HarvestRun>>;
+
+    /// One guarded read of `source`'s first page that writes nothing (ODP-15): the answer is
+    /// one word, never what the remote said.
+    fn test_source<'a>(
+        &'a self,
+        _ctx: &'a RequestCtx,
+        _store: &'a dyn Store,
+        _source: &'a HarvestSource,
+    ) -> crate::store::BoxFuture<'a, Result<SourceTest>> {
+        Box::pin(std::future::ready(Err(DataroomError::NotSupported(
+            "this harvest runner tests no source".into(),
+        ))))
+    }
+}
+
+/// What a source test found, one word each (ODP-15): no address, status line, header or body of
+/// the remote answer is ever part of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum SourceTest {
+    #[serde(rename = "ok")]
+    Ok,
+    #[serde(rename = "unreachable")]
+    Unreachable,
+    #[serde(rename = "refused host")]
+    RefusedHost,
+    #[serde(rename = "not the expected format")]
+    NotTheExpectedFormat,
+    #[serde(rename = "too large")]
+    TooLarge,
+}
+
+/// Most runs `harvest_run.list` answers (ODP-15).
+pub const RUN_LIST_MAX: usize = 50;
+
+/// The one word a stored run error reads as (ODP-15): the run log keeps the detail, a list
+/// shows none of it.
+pub fn run_error_word(error: &str) -> &'static str {
+    let e = error.to_ascii_lowercase();
+    if e.contains("past its budget") {
+        "over budget"
+    } else if e.contains("deadline") {
+        "past the time cap"
+    } else if e.contains("cap of") {
+        "too large"
+    } else if e.contains("answered http")
+        || e.starts_with("fetch ")
+        || e.starts_with("read ")
+        || e.contains("dns resolution")
+    {
+        "unreachable"
+    } else if e.contains("is refused")
+        || e.contains("allowedhosts")
+        || e.contains("allowed_outbound_hosts")
+        || e.contains("allow-list")
+        || e.contains("credentials")
+        || e.contains("internal address")
+        || e.contains("not a valid url")
+        || e.contains("redirect")
+        || e.contains("cross-organization")
+    {
+        "refused host"
+    } else if e.contains("invalid") || e.contains("parse") || e.contains("json") {
+        "not the expected format"
+    } else {
+        "failed"
+    }
 }
 
 /// Metadata of one registered operation (C11).
@@ -256,6 +322,28 @@ pub fn all_operations() -> Vec<OperationDef> {
             description: "Read structured log lines with fingerprints for a harvest run.",
             input_schema: json!({"type": "object", "required": ["run"], "properties": {"run": {"type": "string"}, "level": {"type": "string"}}}),
             output_schema: json!({"type": "object", "properties": {"logs": {"type": "array"}}}),
+        },
+        OperationDef {
+            name: "harvest_run.list",
+            mcp_tool: "jc_harvest_run_list",
+            cli_command: "harvest-run-list",
+            segment: "operate",
+            permission: Action::Read,
+            target_kind: "HarvestSource",
+            description: "List the catalogue's last harvest runs, newest first, at most 50, with counts and one error word.",
+            input_schema: json!({"type": "object", "properties": {"source": {"type": "string"}}}),
+            output_schema: json!({"type": "object", "properties": {"runs": {"type": "array"}}}),
+        },
+        OperationDef {
+            name: "harvest_source.test",
+            mcp_tool: "jc_harvest_source_test",
+            cli_command: "harvest-source-test",
+            segment: "operate",
+            permission: Action::Harvest,
+            target_kind: "HarvestSource",
+            description: "Read a harvest source's first page once through the harvest guard, writing nothing; answers one word.",
+            input_schema: json!({"type": "object", "required": ["source"], "properties": {"source": {"type": "string"}}}),
+            output_schema: json!({"type": "object", "properties": {"outcome": {"type": "string"}}}),
         },
         OperationDef {
             name: "plugin.list",
@@ -1141,6 +1229,81 @@ pub async fn execute_operation(
                 .filter(|l| level.is_none_or(|lvl| l.level.eq_ignore_ascii_case(lvl)))
                 .collect();
             Ok(json!({ "run": run.id, "logs": logs }))
+        }
+        "harvest_run.list" => {
+            let target = ObjectTarget::HarvestSource {
+                org_id: req_ctx.org_id,
+                catalogue_id: req_ctx.catalogue_id,
+                source_id: "*".into(),
+            };
+            enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Read, &target))?;
+            let source = match input.get("source").and_then(Value::as_str) {
+                Some(name) => Some(
+                    op_ctx
+                        .store
+                        .get_harvest_source(req_ctx, name)
+                        .await?
+                        .ok_or_else(|| {
+                            DataroomError::NotFound(format!("harvest source '{name}' not found"))
+                        })?
+                        .id,
+                ),
+                None => None,
+            };
+            let mut runs = op_ctx
+                .store
+                .list_harvest_runs(req_ctx, source.as_deref())
+                .await?;
+            runs.retain(|r| r.org_id == req_ctx.org_id && r.catalogue_id == req_ctx.catalogue_id);
+            runs.sort_by_key(|r| std::cmp::Reverse(r.started_at));
+            runs.truncate(RUN_LIST_MAX);
+            let runs: Vec<Value> = runs
+                .into_iter()
+                .map(|r| {
+                    json!({
+                        "id": r.id,
+                        "source": r.source_id,
+                        "state": r.state.as_str(),
+                        "startedAt": r.started_at,
+                        "finishedAt": r.finished_at,
+                        "created": r.created_count,
+                        "updated": r.updated_count,
+                        "unchanged": r.unchanged_count,
+                        "withdrawn": r.withdrawn_count,
+                        "skipped": r.skipped.len(),
+                        "error": r.error.as_deref().map(run_error_word),
+                    })
+                })
+                .collect();
+            Ok(json!({ "runs": runs }))
+        }
+        "harvest_source.test" => {
+            let source_name = input
+                .get("source")
+                .and_then(Value::as_str)
+                .ok_or_else(|| DataroomError::field_error("source", "source is required"))?;
+            let source = op_ctx
+                .store
+                .get_harvest_source(req_ctx, source_name)
+                .await?
+                .ok_or_else(|| {
+                    DataroomError::NotFound(format!("harvest source '{source_name}' not found"))
+                })?;
+            let target = ObjectTarget::HarvestSource {
+                org_id: req_ctx.org_id,
+                catalogue_id: req_ctx.catalogue_id,
+                source_id: source.id.clone(),
+            };
+            enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Harvest, &target))?;
+            let Some(harvester) = &op_ctx.harvester else {
+                return Err(DataroomError::NotSupported(
+                    "harvest runner not configured".into(),
+                ));
+            };
+            let outcome = harvester
+                .test_source(req_ctx, op_ctx.store.as_ref(), &source)
+                .await?;
+            Ok(json!({ "outcome": outcome }))
         }
         "plugin.list" => {
             let plugins = op_ctx.store.list_plugins(req_ctx).await?;

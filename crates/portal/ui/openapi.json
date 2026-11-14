@@ -5285,6 +5285,386 @@
         }
       }
     },
+    "/api/v1/projects/org/portals/{name}/datasets": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List Portal Datasets",
+        "description": "The datasets of the portal's catalogue by name, each with the source that wrote it and whether the portal hides it (ODP-15).",
+        "operationId": "list_portal_datasets",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The Portal manifest's name, e.g. `bbsk-skoly`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Datasets to skip, e.g. `50`.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Datasets in the page, 1 to 200, e.g. `50` (the default).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of datasets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalDatasets"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A limit outside 1 to 200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A member of the portal's Organization who may not read it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such portal in the caller's Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "This installation serves no open data catalogue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/org/portals/{name}/sources/{source}/runs": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List Portal Source Runs",
+        "description": "The source's last harvest runs, newest first, at most 50, each with its counts and one error word (ODP-15).",
+        "operationId": "list_portal_source_runs",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The Portal manifest's name, e.g. `bbsk-skoly`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source",
+            "in": "path",
+            "description": "A `spec.sources[].name` of it, e.g. `kosice`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The runs, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceRuns"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A member of the portal's Organization who may not read it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such portal or source in the caller's Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "This installation serves no open data catalogue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Run Portal Source Now",
+        "description": "Starts a harvest run of the source now (ODP-15); its counts and error word appear in the source's runs when it ends.",
+        "operationId": "run_portal_source",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The Portal manifest's name, e.g. `bbsk-skoly`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source",
+            "in": "path",
+            "description": "A `spec.sources[].name` of it, e.g. `kosice`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The run started"
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A member of the portal's Organization without propose on it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such portal or source in the caller's Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A run of this source is active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "An `endpoints` source, which reads no remote address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "This installation serves no open data catalogue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/org/portals/{name}/sources/{source}/test": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Test Portal Source",
+        "description": "Reads the source's first page once through the harvest guard (https, allowed hosts, public addresses only, every redirect hop checked), at most its byte budget and 10 s, and writes nothing (ODP-15). The answer is one word; no remote address, status, header or body is echoed. Limited to 6 tests a minute per person, 3 at once.",
+        "operationId": "test_portal_source",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The Portal manifest's name, e.g. `bbsk-skoly`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source",
+            "in": "path",
+            "description": "A `spec.sources[].name` of it, e.g. `kosice`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The outcome, one word",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceTestAnswer"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A member of the portal's Organization without propose on it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such portal or source in the caller's Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "An `endpoints` source, which reads no remote address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "More than 6 tests a minute, or 3 at once, by this person",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "This installation serves no open data catalogue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project}": {
       "get": {
         "tags": [
@@ -56235,6 +56615,54 @@
           }
         }
       },
+      "PortalDataset": {
+        "type": "object",
+        "description": "One dataset of a portal.",
+        "required": [
+          "name",
+          "title",
+          "source",
+          "hidden"
+        ],
+        "properties": {
+          "hidden": {
+            "type": "boolean",
+            "description": "Whether `spec.hidden` of the portal names it."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name, e.g. `ovzdusie-kosice`."
+          },
+          "source": {
+            "type": "string",
+            "description": "The source that wrote it: a harvest source's name, or `endpoints`."
+          },
+          "title": {
+            "type": "string",
+            "description": "Its title in the catalogue's first language."
+          }
+        }
+      },
+      "PortalDatasets": {
+        "type": "object",
+        "description": "A page of a portal's datasets, by name.",
+        "required": [
+          "total",
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PortalDataset"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "PortalHosts": {
         "type": "object",
         "description": "The Organizations the caller makes portals in, by name.",
@@ -58856,6 +59284,35 @@
           },
           "version": {
             "type": "string"
+          }
+        }
+      },
+      "SourceRuns": {
+        "type": "object",
+        "description": "A source's last runs, newest first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "At most 50: `id`, `state`, `startedAt`, `finishedAt`, the `created`, `updated`,\n`unchanged`, `withdrawn` and `skipped` counts, and `error`, one word."
+          }
+        }
+      },
+      "SourceTestAnswer": {
+        "type": "object",
+        "description": "What a source test found.",
+        "required": [
+          "outcome"
+        ],
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "description": "One word: `ok`, `unreachable`, `refused host`, `not the expected format` or `too large`."
           }
         }
       },

@@ -12679,7 +12679,127 @@
       "open": "Otvoriť portál",
       "delete": "Odstrániť portál",
       "defaultKept": "Predvolený portál zostáva: je to vlastný katalóg organizácie.",
-      "fixed": "Po založení portálu sa nemení: portál sa nikdy nepresunie k inej organizácii, menu ani ceste."
+      "fixed": "Po založení portálu sa nemení: portál sa nikdy nepresunie k inej organizácii, menu ani ceste.",
+      "descriptionTabs": "Nastavenia portálu, jeho zdroje s behmi a jeho datasety. Každá zmena sa navrhne schvaľovateľovi."
+    },
+    "tabs": {
+      "label": "Pohľady portálu",
+      "settings": "Nastavenia",
+      "sources": "Zdroje",
+      "datasets": "Datasety"
+    },
+    "sources": {
+      "empty": "Zatiaľ žiadny zdroj",
+      "emptyHint": "Zdroj plní portál: zverejnené Endpointy vašej Organizácie alebo iný katalóg zberaný podľa plánu, napríklad DCAT-AP feed mesta. Pridajte prvý.",
+      "add": "Pridať zdroj",
+      "addTitle": "Nový zdroj",
+      "propose": "Navrhnúť zdroj",
+      "cancel": "Zrušiť",
+      "remove": "Odstrániť",
+      "refused": "Zmena nebola navrhnutá",
+      "test": "Otestovať pripojenie",
+      "runNow": "Spustiť teraz",
+      "showRuns": "Posledné behy",
+      "hideRuns": "Skryť behy",
+      "started": "Beh sa začal. Jeho počty sa zobrazia v Posledných behoch, keď skončí.",
+      "limited": "Príliš veľa testov v krátkom čase. {detail}",
+      "busy": "Beh tohto zdroja ešte prebieha; počkajte, kým skončí.",
+      "noCatalogue": "Táto inštalácia zatiaľ neposkytuje katalóg otvorených dát, preto tu zdroje nemožno testovať, spúšťať ani vypísať. Požiadajte operátora o zapnutie.",
+      "gone": "Tento zdroj už v portáli nie je; obnovte stránku.",
+      "projectsLine": "Zverejnené Endpointy projektov: {projects}",
+      "scheduleLine": "Beží podľa plánu {schedule} (UTC)",
+      "noSchedule": "Bez plánu: beží len po spustení",
+      "noProjects": "{organization} zatiaľ nemá projekt, ktorý čítate; najprv ho vytvorte.",
+      "type": {
+        "endpoints": "Zverejnené Endpointy",
+        "dcat-ap": "Katalóg DCAT-AP",
+        "ckan-action": "Katalóg CKAN",
+        "nkod-sparql": "Národný katalóg (SPARQL)",
+        "arcgis-hub": "ArcGIS Hub"
+      },
+      "field": {
+        "type": "Typ",
+        "typePick": "Vyberte typ",
+        "name": "Názov",
+        "url": "Adresa",
+        "allowedHosts": "Ďalšie povolené hostiteľské mená",
+        "records": "Najviac záznamov na beh",
+        "bytes": "Najviac bajtov na beh",
+        "schedule": "Plán",
+        "projects": "Projekty"
+      },
+      "hint": {
+        "type": "Odkiaľ datasety pochádzajú: vaše zverejnené Endpointy alebo katalóg zberaný cez https, napríklad Katalóg DCAT-AP.",
+        "name": "Malé písmená, číslice a pomlčky, jedinečné v portáli, napríklad kosice.",
+        "url": {
+          "dcat-ap": "Adresa https katalógu DCAT-AP v Turtle, RDF/XML alebo JSON-LD, napríklad https://data.kosice.sk/catalog.ttl.",
+          "ckan-action": "Adresa https CKAN Action API, napríklad https://data.gov.sk/api/3/action.",
+          "nkod-sparql": "Adresa https SPARQL endpointu, napríklad https://data.slovensko.sk/sparql.",
+          "arcgis-hub": "Adresa https stránky ArcGIS Hub, napríklad https://opendata.bratislava.sk."
+        },
+        "allowedHosts": "Hostiteľské mená, z ktorých beh smie tiež čítať, oddelené čiarkou, napríklad files.kosice.sk; hostiteľ adresy je povolený vždy. Každé musí byť v zozname povolených operátora.",
+        "records": "Beh skončí po tomto počte záznamov, napríklad 5000.",
+        "bytes": "Beh skončí po prečítaní tohto počtu bajtov, napríklad 50000000 (50 MB). Test prečíta najviac toľko.",
+        "schedule": "Päť polí cron v UTC, napríklad 23 3 * * * pre 03:23 každý deň. Prázdne: len Spustiť teraz.",
+        "projects": "Vypíšu sa len zverejnené Endpointy týchto projektov Organizácie portálu, napríklad mobility."
+      },
+      "fault": {
+        "name": "Použite malé písmená, číslice a pomlčky.",
+        "nameTaken": "Portál už má zdroj s týmto názvom.",
+        "type": "Vyberte typ.",
+        "url": "Napíšte adresu https, napríklad https://data.kosice.sk/catalog.ttl.",
+        "allowedHosts": "Napíšte len hostiteľské mená.",
+        "number": "Napíšte celé číslo väčšie ako 0.",
+        "schedule": "Napíšte päť polí cron.",
+        "projects": "Označte aspoň jeden projekt."
+      },
+      "testNamed": "Otestovať pripojenie zdroja {name}",
+      "runNamed": "Spustiť {name} teraz",
+      "removeNamed": "Odstrániť zdroj {name}",
+      "endpointsNote": "Endpointy sa zobrazia do minúty od zverejnenia; nie je čo spúšťať."
+    },
+    "outcome": {
+      "ok": "Zdroj odpovedal v očakávanom formáte.",
+      "unreachable": "Zdroj neodpovedal. Skontrolujte adresu alebo to skúste neskôr.",
+      "refused_host": "Adresa je odmietnutá: musí byť https, na povolenom hostiteľovi, na verejnej adrese, a rovnako každé presmerovanie.",
+      "not_the_expected_format": "Zdroj odpovedal, ale nie vo formáte svojho typu {type}.",
+      "too_large": "Odpoveď je väčšia ako bajtový rozpočet zdroja.",
+      "over_budget": "Beh sa zastavil na rozpočte zdroja. Zvýšte Najviac záznamov na beh alebo Najviac bajtov na beh, alebo zúžte zdroj.",
+      "past_the_time_cap": "Beh sa zastavil na časovom limite.",
+      "failed": "Beh zlyhal; skúste to neskôr alebo sa obráťte na operátora."
+    },
+    "runs": {
+      "empty": "Zatiaľ žiadny beh. Spustiť teraz ho začne.",
+      "caption": "Posledné behy zdroja {source}",
+      "started": "Začiatok",
+      "state": "Stav",
+      "counts": "Záznamy",
+      "countLine": "{created} nových, {updated} zmenených, {unchanged} rovnakých, {withdrawn} stiahnutých, {skipped} vynechaných",
+      "stateName": {
+        "running": "Beží",
+        "done": "Hotovo",
+        "stopped": "Zastavený skôr"
+      },
+      "reason": "Čo ho zastavilo"
+    },
+    "datasets": {
+      "empty": "Zatiaľ žiadny dataset",
+      "emptyHint": "Datasety sa tu zobrazia, keď zdroj prebehne. Pridajte zdroj v Zdrojoch a spustite ho cez Spustiť teraz.",
+      "hint": "Skrytý dataset zostáva v katalógu a z tohto portálu zmizne; každá zmena sa navrhne schvaľovateľovi.",
+      "caption": "Datasety portálu",
+      "title": "Dataset",
+      "source": "Zdroj",
+      "listed": "Na portáli",
+      "actions": "Akcie",
+      "hidden": "Skrytý",
+      "shown": "Zobrazený",
+      "hide": "Skryť",
+      "unhide": "Znova zobraziť",
+      "hideNamed": "Skryť {name}",
+      "unhideNamed": "Znova zobraziť {name}",
+      "noCatalogue": "Táto inštalácia zatiaľ neposkytuje katalóg otvorených dát, preto tento portál tu nevypíše žiadne datasety. Požiadajte operátora o zapnutie katalógu.",
+      "toSources": "Prejsť na Zdroje",
+      "noCatalogueTitle": "Zatiaľ tu nie je katalóg otvorených dát"
     }
   }
 }

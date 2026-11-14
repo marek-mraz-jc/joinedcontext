@@ -12679,7 +12679,127 @@
       "open": "Open the portal",
       "delete": "Remove portal",
       "defaultKept": "The default portal stays: it is the Organization's own catalogue.",
-      "fixed": "Fixed once the portal exists: a portal never moves to another Organization, name or path."
+      "fixed": "Fixed once the portal exists: a portal never moves to another Organization, name or path.",
+      "descriptionTabs": "The portal's settings, its sources and run log, and its datasets. Each change is proposed for an approver."
+    },
+    "tabs": {
+      "label": "Portal views",
+      "settings": "Settings",
+      "sources": "Sources",
+      "datasets": "Datasets"
+    },
+    "sources": {
+      "empty": "No source yet",
+      "emptyHint": "A source fills the portal: your Organization's published Endpoints, or another catalogue harvested on a schedule, for example a city's DCAT-AP feed. Add the first one.",
+      "add": "Add a source",
+      "addTitle": "New source",
+      "propose": "Propose the source",
+      "cancel": "Cancel",
+      "remove": "Remove",
+      "refused": "The change was not proposed",
+      "test": "Test connection",
+      "runNow": "Run now",
+      "showRuns": "Last runs",
+      "hideRuns": "Hide runs",
+      "started": "The run started. Its counts appear in Last runs when it ends.",
+      "limited": "Too many tests in a short time. {detail}",
+      "busy": "A run of this source is still going; wait for it to end.",
+      "noCatalogue": "This installation serves no open data catalogue yet, so sources cannot be tested, run or listed here. Ask your operator to enable it.",
+      "gone": "This source is not in the portal any more; reload the page.",
+      "projectsLine": "Published Endpoints of: {projects}",
+      "scheduleLine": "Runs on schedule {schedule} (UTC)",
+      "noSchedule": "No schedule: runs only when started",
+      "noProjects": "{organization} has no project you read yet; create one first.",
+      "type": {
+        "endpoints": "Published Endpoints",
+        "dcat-ap": "DCAT-AP catalogue",
+        "ckan-action": "CKAN catalogue",
+        "nkod-sparql": "National catalogue (SPARQL)",
+        "arcgis-hub": "ArcGIS Hub"
+      },
+      "field": {
+        "type": "Type",
+        "typePick": "Choose a type",
+        "name": "Name",
+        "url": "Address",
+        "allowedHosts": "Further allowed hosts",
+        "records": "Most records per run",
+        "bytes": "Most bytes per run",
+        "schedule": "Schedule",
+        "projects": "Projects"
+      },
+      "hint": {
+        "type": "Where the datasets come from: your own published Endpoints, or a catalogue harvested over https, for example DCAT-AP catalogue.",
+        "name": "Lower-case letters, digits and dashes, unique in the portal, for example kosice.",
+        "url": {
+          "dcat-ap": "The https address of a DCAT-AP catalogue in Turtle, RDF/XML or JSON-LD, for example https://data.kosice.sk/catalog.ttl.",
+          "ckan-action": "The https address of a CKAN Action API, for example https://data.gov.sk/api/3/action.",
+          "nkod-sparql": "The https address of the SPARQL endpoint, for example https://data.slovensko.sk/sparql.",
+          "arcgis-hub": "The https address of an ArcGIS Hub site, for example https://opendata.bratislava.sk."
+        },
+        "allowedHosts": "Hosts the run may also fetch from, separated by commas, for example files.kosice.sk; the address's own host is always allowed. Each must be in the operator's allow-list.",
+        "records": "A run stops past this many records, for example 5000.",
+        "bytes": "A run stops past this many bytes read, for example 50000000 (50 MB). A test reads at most this much.",
+        "schedule": "Five cron fields in UTC, for example 23 3 * * * for 03:23 every day. Empty: only Run now.",
+        "projects": "Only the published Endpoints of these projects of the portal's Organization are listed, for example mobility."
+      },
+      "fault": {
+        "name": "Use lower-case letters, digits and dashes.",
+        "nameTaken": "The portal already has a source of this name.",
+        "type": "Choose a type.",
+        "url": "Write an https address, for example https://data.kosice.sk/catalog.ttl.",
+        "allowedHosts": "Write host names only.",
+        "number": "Write a whole number above 0.",
+        "schedule": "Write five cron fields.",
+        "projects": "Tick at least one project."
+      },
+      "testNamed": "Test connection of {name}",
+      "runNamed": "Run {name} now",
+      "removeNamed": "Remove source {name}",
+      "endpointsNote": "Endpoints appear within a minute of being published; there is nothing to run."
+    },
+    "outcome": {
+      "ok": "The source answered in the expected format.",
+      "unreachable": "The source did not answer. Check the address, or try again later.",
+      "refused_host": "The address is refused: it must be https, on an allowed host, at a public address, and every redirect too.",
+      "not_the_expected_format": "The source answered, but not in the format of its type {type}.",
+      "too_large": "The answer is larger than the source's byte budget.",
+      "over_budget": "The run stopped at the source's budget. Raise Most records per run or Most bytes per run, or narrow the source.",
+      "past_the_time_cap": "The run stopped at the time limit.",
+      "failed": "The run failed; try again later or ask your operator."
+    },
+    "runs": {
+      "empty": "No run yet. Run now starts one.",
+      "caption": "Last runs of {source}",
+      "started": "Started",
+      "state": "State",
+      "counts": "Records",
+      "countLine": "{created} new, {updated} changed, {unchanged} same, {withdrawn} withdrawn, {skipped} left out",
+      "stateName": {
+        "running": "Running",
+        "done": "Done",
+        "stopped": "Stopped early"
+      },
+      "reason": "What stopped it"
+    },
+    "datasets": {
+      "empty": "No dataset yet",
+      "emptyHint": "Datasets appear here once a source has run. Add a source in Sources and start it with Run now.",
+      "hint": "Hiding a dataset leaves it in the catalogue and takes it off this portal; each change is proposed for an approver.",
+      "caption": "Datasets of the portal",
+      "title": "Dataset",
+      "source": "Source",
+      "listed": "On the portal",
+      "actions": "Actions",
+      "hidden": "Hidden",
+      "shown": "Listed",
+      "hide": "Hide",
+      "unhide": "List again",
+      "hideNamed": "Hide {name}",
+      "unhideNamed": "List {name} again",
+      "noCatalogue": "This installation serves no open data catalogue yet, so this portal lists no datasets here. Ask your operator to enable the catalogue.",
+      "toSources": "Go to Sources",
+      "noCatalogueTitle": "No open data catalogue here yet"
     }
   }
 }

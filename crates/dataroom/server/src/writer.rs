@@ -237,6 +237,29 @@ impl CatalogueWriter {
         store.upsert_harvest_source(&ctx, source).await
     }
 
+    /// Runs operation `op` in catalogue `id` as that catalogue's own harvest principal (ODP-15):
+    /// the Portal's sources routes test, start and list a source's runs with no token of
+    /// their own, and no other catalogue's rows are in reach.
+    pub async fn run_op(
+        &self,
+        org: OrgId,
+        id: CatalogueId,
+        op: &str,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.live(org, id)?;
+        let ctx = RequestCtx::new(org, id, harvest_principal(org, id).0);
+        dataroom_core::ops::execute_operation(&self.state.op_context(), &ctx, op, input).await
+    }
+
+    /// The datasets of catalogue `id`, any state, by name: what a portal lists (ODP-15).
+    pub async fn datasets(&self, org: OrgId, id: CatalogueId) -> Result<Vec<Dataset>> {
+        let ctx = self.live(org, id)?;
+        let mut all = self.state.store.list_datasets(&ctx).await?;
+        all.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(all)
+    }
+
     /// Deletes a harvest source and its runs; `false` when the catalogue has none of that name.
     pub async fn delete_harvest_source(
         &self,
