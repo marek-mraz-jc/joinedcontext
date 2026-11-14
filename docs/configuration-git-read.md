@@ -20,7 +20,7 @@ history. The token is an access token the realm issued for the Portal, the one t
 | Repository | Who clones it |
 |---|---|
 | The installation repository (`joinedcontext/configuration`), which holds every Organization | platform administrators: the bootstrap group (`platform-admins`) or a binding at organization scope with `approve` and `delete` on RoleBinding and no Organization narrowing it. An Organization's administrator does not. |
-| A project repository (`joinedcontext/<project>-config`) | the members of that project: any binding in force that reaches it |
+| A project repository (`joinedcontext/<project>-config`) | whoever reads all of it: for every kind it holds, a read grant on the whole project, bound to no context space and under no constraint; a space-scoped or kind-limited binding gets 404 |
 | Any other repository, an App's included | nobody |
 
 ## 3. What the door refuses
@@ -38,7 +38,7 @@ The door is the Portal's (`crates/portal/src/forge/git_door.rs`). It takes two r
 ## 4. Where it is open
 
 - The APISIX edge (joinedcontext-deployment `components/jc/apisix-plugins.yaml`) blocks `/git` except the
-  two paths above, spelt exactly.
-- jc in host mode (jc-dev, jc-prod) answers its public `/git` mount with the door alone and keeps the forge for
+  two paths above, spelt exactly, and only in host mode; in slug mode it blocks all of `/git`.
+- jc in host mode (jc-prod; jc-dev runs slug mode) answers its public `/git` mount with the door alone and keeps the forge for
   the Portal on the in-pod listener. In slug mode the Portal dials the forge on jc's one listener, so `/git`
   there stays the forge's own, which takes the forge's tokens alone.
