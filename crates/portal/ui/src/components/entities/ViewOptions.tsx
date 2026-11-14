@@ -192,7 +192,7 @@ export function GroupCounts({ scope, source, type, attr, options, q, chosen, onC
       queryKey: ["group-count", scope, type, attr, option.value, q ?? ""],
       retry: false,
       staleTime: 30_000,
-      queryFn: async () => (await source.query({ type, q: andQ(q, groupTerm(attr, option.value)) }, { offset: 0, limit: 1 })).total ?? null,
+      queryFn: async () => (await source.query({ type, q: andQ(q, groupTerm(attr, option.value)) }, { offset: 0, limit: 0 })).total ?? null,
     })),
   });
   const countText = (index: number) => {

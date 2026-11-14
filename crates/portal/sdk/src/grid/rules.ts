@@ -5,6 +5,8 @@
  * only saves the round trip for what the model already says.
  */
 
+import { boundedPattern } from "./qmatch";
+
 export interface ValueRule {
   kind?: "string" | "integer" | "number" | "boolean" | "datetime" | "date" | "uri";
   minimum?: number;
@@ -46,9 +48,9 @@ export function problemOf(rule: ValueRule | undefined, value: unknown, labels: R
   if (rule.pattern !== undefined) {
     let pattern: RegExp | null = null;
     try {
-      pattern = new RegExp(rule.pattern, "u");
+      pattern = boundedPattern(rule.pattern);
     } catch {
-      // A pattern this browser cannot compile is the gateway's to check, not a reason to refuse.
+      // A pattern this browser cannot compile, or one too costly to test, is the gateway's to check.
       pattern = null;
     }
     if (pattern && !pattern.test(text)) return labels.patternMismatch;

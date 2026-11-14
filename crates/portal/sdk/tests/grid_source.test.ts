@@ -254,6 +254,19 @@ describe("history", () => {
     expect(historyOf(null, "speed")).toEqual([]);
   });
 
+  it("reads each instance of a multi-instance attribute's temporalValues, with its datasetId", () => {
+    const body = {
+      speed: [
+        { type: "Property", datasetId: "urn:ngsi-ld:Dataset:gps", values: [[4, "2026-01-01T01:00:00Z"]] },
+        { type: "Property", values: [[5, "2026-01-01T02:00:00Z"], ["x"]] },
+      ],
+    };
+    expect(historyOf(body, "speed")).toEqual([
+      { at: "2026-01-01T01:00:00Z", value: 4, datasetId: "urn:ngsi-ld:Dataset:gps" },
+      { at: "2026-01-01T02:00:00Z", value: 5 },
+    ]);
+  });
+
   it("an endpoint's 404 is a history with nothing in it, and a refusal stays a refusal (T-2972)", async () => {
     const answering = (status: number) => async (): Promise<JcResponse> => ({
       status,

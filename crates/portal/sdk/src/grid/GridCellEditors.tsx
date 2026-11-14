@@ -5,12 +5,21 @@ import { optionLabel } from "../enums";
 import type { EnumOption } from "../enums";
 
 export function storedText(cell: RichCell | RichCell[] | undefined): string {
-  const one = Array.isArray(cell) ? cell[0] : cell;
-  const own = one?.kind === "relationship" ? one.object : one?.value;
+  const own = storedValue(cell);
   return own === undefined || own === null ? "" : String(own);
 }
 
-export function coerce(next: string, before: string, rule?: ValueRule): unknown {
+/** The value a cell holds as the endpoint answered it: a number stays a number, a text a text. */
+export function storedValue(cell: RichCell | RichCell[] | undefined): unknown {
+  const one = Array.isArray(cell) ? cell[0] : cell;
+  return one?.kind === "relationship" ? one.object : one?.value;
+}
+
+/**
+ * What a typed text is written as. Without a rule it keeps the stored value's own type: a number
+ * stays a number, a text stays a text however it reads (`"04001"`), and a cleared cell is never 0.
+ */
+export function coerce(next: string, before: unknown, rule?: ValueRule): unknown {
   switch (rule?.kind) {
     case "integer":
     case "number":
@@ -23,10 +32,10 @@ export function coerce(next: string, before: string, rule?: ValueRule): unknown 
     case "uri":
       return next;
   }
-  if (before !== "" && Number.isFinite(Number(before)) && Number.isFinite(Number(next))) {
+  if (typeof before === "number" && next.trim() !== "" && Number.isFinite(Number(next))) {
     return Number(next);
   }
-  if (next === "true" || next === "false") {
+  if (typeof before !== "string" && (next === "true" || next === "false")) {
     return next === "true";
   }
   return next;

@@ -192,6 +192,78 @@ async fn a_policy_q_narrows_the_entity_query() {
     );
 }
 
+/// The next Link of a narrowed answer holds the client's own query, never
+/// the Policy's `q`, and following it serves the next page.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_next_link_hides_the_policy_q_and_serves_page_two() {
+    let st = state(slow()).await;
+    for n in 1..=3 {
+        let (code, _) = send(
+            &st,
+            "POST",
+            "/ngsi-ld/v1/entities",
+            Some(
+                json!({"id": format!("urn:ngsi-ld:Vehicle:s{n}"), "type": "Vehicle",
+                        "speed": {"type": "Property", "value": n}}),
+            ),
+        )
+        .await;
+        assert_eq!(code, StatusCode::CREATED);
+        let (code, _) = send(
+            &st,
+            "POST",
+            "/ngsi-ld/v1/temporal/entities",
+            Some(
+                json!({"id": format!("urn:ngsi-ld:Vehicle:s{n}"), "type": "Vehicle",
+                        "speed": [{"type": "Property", "value": n,
+                                   "observedAt": "2026-01-01T00:00:00Z"}]}),
+            ),
+        )
+        .await;
+        assert!(code.is_success(), "{code}");
+    }
+    let next = |uri: String| {
+        let st = st.clone();
+        async move {
+            let req = Request::builder()
+                .uri(&uri)
+                .body(Body::empty())
+                .expect("request");
+            let resp = antares_api::router(st)
+                .oneshot(req)
+                .await
+                .expect("response");
+            assert_eq!(resp.status(), StatusCode::OK, "{uri}");
+            let links: Vec<String> = resp
+                .headers()
+                .get_all("link")
+                .iter()
+                .filter_map(|v| v.to_str().ok().map(str::to_owned))
+                .collect();
+            let bytes = resp.into_body().collect().await.expect("body").to_bytes();
+            let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+            (links.join(", "), body)
+        }
+    };
+    for first in [
+        "/ngsi-ld/v1/entities?type=Vehicle&limit=1&orderBy=id",
+        "/ngsi-ld/v1/temporal/entities?type=Vehicle&limit=1&timerel=after&timeAt=1970-01-01T00:00:00Z",
+    ] {
+        let (links, page1) = next(first.to_owned()).await;
+        assert!(!links.contains("speed"), "{first}: {links}");
+        let target = links
+            .split(", ")
+            .find(|l| l.contains("rel=\"next\""))
+            .and_then(|l| l.split_once('<'))
+            .and_then(|(_, rest)| rest.split_once('>'))
+            .map(|(uri, _)| uri.to_owned())
+            .unwrap_or_else(|| panic!("{first}: no next Link in {links}"));
+        let (_, page2) = next(target).await;
+        assert_ne!(ids(&page1), ids(&page2), "{first}");
+        assert_eq!(ids(&page2).len(), 1, "{first}: {page2}");
+    }
+}
+
 /// The request's own `q` still applies: the two are conjoined, never
 /// replaced, so a query for the fast Vehicle under a slow-only policy is
 /// empty rather than answered with the slow one.

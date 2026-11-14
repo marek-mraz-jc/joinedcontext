@@ -379,6 +379,8 @@ pub(crate) async fn query_temporal_collected(
         None
     };
     let narrowed = filter.narrow_window(&filter.narrow_params(params, &ctx)?, true)?;
+    // what the Links hand back: never the narrowing's own predicates
+    let shown = crate::paging::link_params(&narrowed, params);
     let req = QueryReq {
         st,
         tenant: &tenant,
@@ -394,7 +396,7 @@ pub(crate) async fn query_temporal_collected(
     if outcome.aggregated {
         return respond_aggregated(
             st,
-            req.params,
+            &shown,
             &tenant,
             &ctx,
             accept,
@@ -429,15 +431,9 @@ pub(crate) async fn query_temporal_collected(
     }
     let (page, count_hdr, links) = if pre_paged {
         let total = pre_total.map(|t| t as usize).unwrap_or(matches.len());
-        crate::paging::paginate_pre(
-            st,
-            req.params,
-            matches,
-            "/ngsi-ld/v1/temporal/entities",
-            total,
-        )?
+        crate::paging::paginate_pre(st, &shown, matches, "/ngsi-ld/v1/temporal/entities", total)?
     } else {
-        crate::paging::paginate(st, req.params, matches, "/ngsi-ld/v1/temporal/entities")?
+        crate::paging::paginate(st, &shown, matches, "/ngsi-ld/v1/temporal/entities")?
     };
     if let Some(sink) = merged {
         sink.extend(page.iter().cloned());
@@ -445,7 +441,18 @@ pub(crate) async fn query_temporal_collected(
     let (payload, g) = assemble_page(&req, &qry, &page)?;
     let mut resp = respond_temporal_page(&req, accept, &qry, payload, &g, &warnings);
     attach_paging(&mut resp, count_hdr, &links);
-    attach_paging(&mut resp, None, &g.links(&req, accept, &qry));
+    attach_paging(
+        &mut resp,
+        None,
+        &g.links(
+            &QueryReq {
+                params: &shown,
+                ..req
+            },
+            accept,
+            &qry,
+        ),
+    );
     // 6.18.3.2: entityMap=true — the temporal EntityMap for this query is
     // (re)created; the response carries NGSILD-EntityMap and 201 Created.
     if req.params.get("entityMap").map(String::as_str) == Some("true") {

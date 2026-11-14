@@ -14,6 +14,8 @@ export interface RichCell {
   object?: string | string[];
   geometryType?: string;
   languageMap?: Record<string, string>;
+  /** The language of `languageMap` the cell shows, so an edit writes that text and keeps the others. */
+  language?: string;
   sub?: Record<string, RichCell | RichCell[]>;
 }
 
@@ -25,6 +27,15 @@ export interface RichRow {
   scope?: string | string[];
   cells: Record<string, RichCell | RichCell[]>;
   raw: Record<string, unknown>;
+}
+
+/**
+ * Whether a cell holds a structure no text box can stand for (a JsonProperty, a list, an object
+ * value): typed over, it would be written back as `[object Object]`. A geometry has its own editor.
+ */
+export function structured(one: RichCell | undefined): boolean {
+  if (!one || one.kind === "geo") return false;
+  return one.kind === "json" || one.kind === "list" || (typeof one.value === "object" && one.value !== null);
 }
 
 /**
@@ -165,7 +176,8 @@ export function toRichCell(attr: unknown, language: string): RichCell | null {
     case "language": {
       const lm = a.languageMap as Record<string, string> | undefined;
       cell.languageMap = lm;
-      cell.value = lm?.[language] ?? lm?.en ?? (lm ? Object.values(lm)[0] : undefined) ?? null;
+      cell.language = lm ? [language, "en"].find((l) => l in lm) ?? Object.keys(lm)[0] : undefined;
+      cell.value = (cell.language !== undefined ? lm?.[cell.language] : undefined) ?? null;
       break;
     }
     case "json": {
