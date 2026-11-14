@@ -210,10 +210,14 @@ impl HarvestScheduler {
         let me = Arc::new(self);
         tokio::spawn(async move {
             let mut first = true;
+            let mut last = None;
             loop {
                 let into_minute = u64::from(Utc::now().second());
                 tokio::time::sleep(Duration::from_secs(60 - into_minute)).await;
                 let (me, minute) = (me.clone(), Utc::now());
+                if !new_minute(&mut last, minute) {
+                    continue;
+                }
                 let start = std::mem::take(&mut first);
                 tokio::spawn(async move {
                     if start {
@@ -225,6 +229,17 @@ impl HarvestScheduler {
             }
         })
     }
+}
+
+/// Whether `now` falls in a later minute than the last check that fired; a wake-up a moment
+/// early (the wall clock stepped back) would otherwise run that minute's sources twice.
+fn new_minute(last: &mut Option<i64>, now: DateTime<Utc>) -> bool {
+    let minute = now.timestamp().div_euclid(60);
+    if last.is_some_and(|l| minute <= l) {
+        return false;
+    }
+    *last = Some(minute);
+    true
 }
 
 /// One run of `source` and up to [`RETRIES`] more after a failure; a run refused because
@@ -262,6 +277,16 @@ async fn run_with_retries(
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    #[test]
+    fn each_minute_fires_once_even_when_the_clock_steps_back() {
+        let at = |m, s| Utc.with_ymd_and_hms(2026, 11, 9, 3, m, s).unwrap();
+        let mut last = None;
+        assert!(new_minute(&mut last, at(23, 0)));
+        assert!(!new_minute(&mut last, at(23, 59)), "woke a moment early");
+        assert!(new_minute(&mut last, at(24, 0)));
+        assert!(!new_minute(&mut last, at(22, 30)), "clock stepped back");
+    }
 
     #[test]
     fn prod_schedule_fires_once_a_day_at_03_23() {

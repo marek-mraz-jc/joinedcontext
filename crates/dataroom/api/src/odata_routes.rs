@@ -42,6 +42,30 @@ pub async fn handle_metadata(State(_state): State<DataroomState>) -> Response {
         .into_response()
 }
 
+/// Serves the OData v4.01 JSON service document at the service root: one entry per entity set.
+pub async fn handle_service_document(
+    State(state): State<DataroomState>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(e) = state.resolve_context(&headers).await {
+        return problem_response(e);
+    }
+    let sets: Vec<Value> = dataroom_service()
+        .sets
+        .iter()
+        .map(|d| json!({"name": d.set, "kind": "EntitySet", "url": d.set}))
+        .collect();
+    (
+        StatusCode::OK,
+        [(header::HeaderName::from_static("odata-version"), "4.01")],
+        Json(json!({
+            "@odata.context": format!("{}/odata/v4/$metadata", state.mount_prefix()),
+            "value": sets,
+        })),
+    )
+        .into_response()
+}
+
 /// Dispatches OData v4 queries, `$count`, `$export`, and `$allowed` through `odata_table` (`C14`).
 pub async fn handle_odata(
     State(state): State<DataroomState>,
@@ -218,7 +242,10 @@ pub async fn handle_odata(
             let mut body = Map::new();
             body.insert(
                 "@odata.context".into(),
-                json!(format!("/odata/v4/$metadata#{set_name}")),
+                json!(format!(
+                    "{}/odata/v4/$metadata#{set_name}",
+                    state.mount_prefix()
+                )),
             );
             if let Some(c) = ans.count {
                 body.insert("@odata.count".into(), json!(c));
@@ -226,7 +253,10 @@ pub async fn handle_odata(
             if let Some(next_tok) = ans.next {
                 body.insert(
                     "@odata.nextLink".into(),
-                    json!(format!("/odata/v4/{set_name}?$skiptoken={next_tok}")),
+                    json!(format!(
+                        "{}/odata/v4/{set_name}?$skiptoken={next_tok}",
+                        state.mount_prefix()
+                    )),
                 );
             }
             body.insert("value".into(), Value::Array(ans.rows));

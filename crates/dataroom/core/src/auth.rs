@@ -4,11 +4,13 @@
 use crate::model::{CatalogueId, Dataset, OrgId, Publisher, Visibility};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
-/// Constant-time token comparison (00-contract.md Security).
+/// Constant-time token comparison (00-contract.md Security). Both sides are hashed first, so
+/// the time taken does not depend on where or whether their lengths differ.
 pub fn constant_time_eq(a: &str, b: &str) -> bool {
-    a.as_bytes().ct_eq(b.as_bytes()).into()
+    Sha256::digest(a).ct_eq(&Sha256::digest(b)).into()
 }
 
 /// Global identity subject (C4, C5): one person or workload, with memberships in one or more

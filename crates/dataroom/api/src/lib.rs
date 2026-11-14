@@ -466,7 +466,11 @@ impl DataroomState {
             .or_else(|| headers.get("X-CKAN-API-Key"))
             .and_then(|v| v.to_str().ok())
             .map(str::trim)
-            .map(|t| t.strip_prefix("Bearer ").unwrap_or(t).trim());
+            // RFC 9110 11.1: the scheme name is case-insensitive.
+            .map(|t| match t.get(..7) {
+                Some(scheme) if scheme.eq_ignore_ascii_case("bearer ") => t[7..].trim(),
+                _ => t,
+            });
 
         let subject = if let Some(ref resolver) = self.subject_resolver {
             if let Some(s) = resolver(headers) {
@@ -652,6 +656,8 @@ pub fn router(state: DataroomState) -> Router {
         .route("/feeds/tag/{file}", get(feeds::handle_tag_atom))
         // OData v4 & OpenAPI 3.1
         .route("/api/v1/openapi.json", get(odata_routes::handle_openapi))
+        .route("/odata/v4", get(odata_routes::handle_service_document))
+        .route("/odata/v4/", get(odata_routes::handle_service_document))
         .route("/odata/v4/$metadata", get(odata_routes::handle_metadata))
         .route("/odata/v4/{*rest}", get(odata_routes::handle_odata))
         // Branding endpoint (G4) & Logo upload (B3)
