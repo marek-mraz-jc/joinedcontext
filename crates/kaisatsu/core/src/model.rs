@@ -643,7 +643,7 @@ impl ClientRepresentation {
     /// (`managed-by: joinedcontext`, an Endpoint, no protocol mapper) as optional, as dev's
     /// admin-permissions Job links them. The slug is the opaque Endpoint alphabet, so no
     /// `endpoint:*` and no claim beyond the scope string.
-    fn links_by_prefix(&self, scope: &ClientScopeRepresentation) -> bool {
+    pub fn links_by_prefix(&self, scope: &ClientScopeRepresentation) -> bool {
         let Some(prefix) = self.attributes.get(LINKED_SCOPE_PREFIX) else {
             return false;
         };
@@ -653,7 +653,9 @@ impl ClientRepresentation {
         !prefix.is_empty()
             && !self.attributes.contains_key("managed-by")
             && (8..=64).contains(&slug.len())
-            && slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+            && slug
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
             && scope.protocol_mappers.is_empty()
             && scope.attributes.get("managed-by").map(String::as_str) == Some("joinedcontext")
             && scope.attributes.contains_key("joinedcontext.endpoint")

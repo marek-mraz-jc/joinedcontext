@@ -1009,17 +1009,9 @@ async fn an_optional_scope_outside_the_scope_claim_keeps_its_mappers_in_the_code
     let refresh = again.json()["refresh_token"].as_str().unwrap().to_owned();
 
     // An optional scope not linked to portal-api is refused at /authorize, `endpoint:*` and an
-    // Endpoint's scope the realm holds but has not linked included.
+    // Endpoint scope the realm does not hold included. One the Portal created is linked by the
+    // realm file's prefix (T-6857), and the code flow carries it.
     let api = portal_api(app).await;
-    let made = admin(
-        app,
-        &api,
-        Method::POST,
-        "/client-scopes",
-        Some(hub_scope(SLUG)),
-    )
-    .await;
-    assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
     for scope in [
         "openid mcp:portal".to_owned(),
         "openid gateway-hub endpoint:*".to_owned(),
@@ -1031,6 +1023,46 @@ async fn an_optional_scope_outside_the_scope_claim_keeps_its_mappers_in_the_code
             "{scope}"
         );
     }
+    let scope_id = create_hub_scope(app, &api, SLUG).await;
+    let (code, verifier) = portal_code(app, &format!("openid gateway-hub endpoint:{SLUG}")).await;
+    let named = access_claims(&redeem(app, &code, &verifier).await);
+    assert!(
+        named["scope"]
+            .as_str()
+            .unwrap_or_default()
+            .split_whitespace()
+            .any(|s| s == format!("endpoint:{SLUG}")),
+        "{named}"
+    );
+    // A prefix link is the realm file's: unlinking it alone is refused with the way out.
+    let operator = realm_admin(&realm).await;
+    let portal = find_client(app, &operator, "portal-api").await.unwrap();
+    let unlink = admin(
+        app,
+        &operator,
+        Method::DELETE,
+        &format!(
+            "/clients/{}/optional-client-scopes/{scope_id}",
+            id_of(&portal)
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(unlink.status, StatusCode::CONFLICT, "{}", unlink.text);
+    assert!(
+        unlink.text.contains("kaisatsu.linked-scope-prefix"),
+        "{}",
+        unlink.text
+    );
+    let gone = admin(
+        app,
+        &api,
+        Method::DELETE,
+        &format!("/client-scopes/{scope_id}"),
+        None,
+    )
+    .await;
+    assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
     for claims in [&person, &renewed] {
         let text = claims.to_string();
         assert!(
@@ -1043,8 +1075,6 @@ async fn an_optional_scope_outside_the_scope_claim_keeps_its_mappers_in_the_code
     // Keycloak's TokenManager.getRequestedClientScopes drops it: the token comes, without the
     // mapper. A refresh after the loss drops it too.
     let (code, verifier) = portal_code(app, "openid gateway-hub").await;
-    let operator = realm_admin(&realm).await;
-    let portal = find_client(app, &operator, "portal-api").await.unwrap();
     let dropped = drop_optional_scopes(app, &operator, &id_of(&portal)).await;
     assert_eq!(dropped, ["gateway-hub"]);
     let late = access_claims(&redeem(app, &code, &verifier).await);
@@ -1376,7 +1406,14 @@ async fn connector_subject(app: &Router) -> String {
 
 /// The Endpoint scope `portal-api` creates for `slug` (hub_scopes.rs:172), and its id.
 async fn create_hub_scope(app: &Router, api: &str, slug: &str) -> String {
-    let made = admin(app, api, Method::POST, "/client-scopes", Some(hub_scope(slug))).await;
+    let made = admin(
+        app,
+        api,
+        Method::POST,
+        "/client-scopes",
+        Some(hub_scope(slug)),
+    )
+    .await;
     assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
     admin(app, api, Method::GET, "/client-scopes", None)
         .await
@@ -1418,7 +1455,12 @@ async fn an_endpoint_scope_is_exchangeable_for_portal_api_after_create() {
     // Before the Endpoint's scope exists, the exchange is `invalid_scope` (auth/oidc.rs:125).
     let before = exchange(app, &subject, SLUG).await;
     assert_eq!(before.status, StatusCode::BAD_REQUEST, "{}", before.text);
-    assert_eq!(before.json()["error"], json!("invalid_scope"), "{}", before.text);
+    assert_eq!(
+        before.json()["error"],
+        json!("invalid_scope"),
+        "{}",
+        before.text
+    );
 
     create_hub_scope(app, &api, SLUG).await;
     let answer = exchange(app, &subject, SLUG).await;
@@ -1429,7 +1471,9 @@ async fn an_endpoint_scope_is_exchangeable_for_portal_api_after_create() {
     assert_eq!(claims["aud"], json!("mcp-hub"), "{claims}");
     let scope = claims["scope"].as_str().unwrap_or_default();
     assert!(
-        scope.split_whitespace().any(|s| s == format!("endpoint:{SLUG}")),
+        scope
+            .split_whitespace()
+            .any(|s| s == format!("endpoint:{SLUG}")),
         "{claims}"
     );
     assert!(
@@ -1440,9 +1484,21 @@ async fn an_endpoint_scope_is_exchangeable_for_portal_api_after_create() {
     // The hub and portal-api list it as linked, so the Endpoint's HubLinked turns True
     // (hub_scopes.rs:271); a client the realm file does not mark does not take it.
     let name = format!("endpoint:{SLUG}");
-    assert!(optional_names(app, &operator, "mcp-hub").await.contains(&name));
-    assert!(optional_names(app, &operator, "portal-api").await.contains(&name));
-    assert!(!optional_names(app, &operator, "portal-ui").await.contains(&name));
+    assert!(
+        optional_names(app, &operator, "mcp-hub")
+            .await
+            .contains(&name)
+    );
+    assert!(
+        optional_names(app, &operator, "portal-api")
+            .await
+            .contains(&name)
+    );
+    assert!(
+        !optional_names(app, &operator, "portal-ui")
+            .await
+            .contains(&name)
+    );
 
     // A scope of the prefix the Portal did not mark (a realm admin's) is never taken: the link
     // widens nothing beyond the Portal's own Endpoint scopes.
@@ -1452,11 +1508,23 @@ async fn an_endpoint_scope_is_exchangeable_for_portal_api_after_create() {
         .as_object_mut()
         .unwrap()
         .remove(MANAGED.0);
-    let made = admin(app, &operator, Method::POST, "/client-scopes", Some(unmarked)).await;
+    let made = admin(
+        app,
+        &operator,
+        Method::POST,
+        "/client-scopes",
+        Some(unmarked),
+    )
+    .await;
     assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
     let refused = exchange(app, &subject, foreign).await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
-    assert_eq!(refused.json()["error"], json!("invalid_scope"), "{}", refused.text);
+    assert_eq!(
+        refused.json()["error"],
+        json!("invalid_scope"),
+        "{}",
+        refused.text
+    );
 }
 
 /// T-6857: deleting the Endpoint's scope (its Endpoint gone, hub_scopes.rs:233) ends the link.
@@ -1472,14 +1540,34 @@ async fn a_deleted_endpoints_scope_is_not() {
     let answer = exchange(app, &subject, SLUG).await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
 
-    let gone = admin(app, &api, Method::DELETE, &format!("/client-scopes/{id}"), None).await;
+    let gone = admin(
+        app,
+        &api,
+        Method::DELETE,
+        &format!("/client-scopes/{id}"),
+        None,
+    )
+    .await;
     assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
     let refused = exchange(app, &subject, SLUG).await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
-    assert_eq!(refused.json()["error"], json!("invalid_scope"), "{}", refused.text);
+    assert_eq!(
+        refused.json()["error"],
+        json!("invalid_scope"),
+        "{}",
+        refused.text
+    );
     let name = format!("endpoint:{SLUG}");
-    assert!(!optional_names(app, &operator, "mcp-hub").await.contains(&name));
-    assert!(!optional_names(app, &operator, "portal-api").await.contains(&name));
+    assert!(
+        !optional_names(app, &operator, "mcp-hub")
+            .await
+            .contains(&name)
+    );
+    assert!(
+        !optional_names(app, &operator, "portal-api")
+            .await
+            .contains(&name)
+    );
 }
 
 /// reconciler/hub_scopes.rs:61 `desired`.
