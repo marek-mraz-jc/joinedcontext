@@ -187,6 +187,23 @@ pub(crate) fn cursor_after(
     Ok(Some(last))
 }
 
+/// The query a Link hands back to the client: the narrowed `narrowed` with
+/// the client's own `q` and `scopeQ`, so no Link shows a Policy's or a
+/// view's predicates (ADR-0023). The next request is narrowed again.
+pub(crate) fn link_params(
+    narrowed: &HashMap<String, String>,
+    client: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut out = narrowed.clone();
+    for key in ["q", "scopeQ"] {
+        match client.get(key) {
+            Some(v) => out.insert(key.to_owned(), v.clone()),
+            None => out.remove(key),
+        };
+    }
+    out
+}
+
 /// The next Link of `links` with the cursor of the page after `last`
 /// added; every other Link unchanged.
 pub(crate) fn with_next_cursor(

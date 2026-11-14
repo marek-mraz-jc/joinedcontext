@@ -1019,7 +1019,7 @@ async fn query_entities_inner(
     };
     let (page, count_hdr, links) = match filtered.written.is_empty() {
         true => {
-            let (page, count, links) = cut.page(st, params, matches)?;
+            let (page, count, links) = cut.page(st, client_params, matches)?;
             let page = match (trimmed, as_frames) {
                 (true, true) => Page::Written(
                     whole_page_written(st, &tenant, params, &ctx, &repr, page, &write).await?,
@@ -1032,7 +1032,7 @@ async fn query_entities_inner(
             (page, count, links)
         }
         false => {
-            let (page, count, links) = cut.page(st, params, filtered.written)?;
+            let (page, count, links) = cut.page(st, client_params, filtered.written)?;
             (Page::Written(page), count, links)
         }
     };
