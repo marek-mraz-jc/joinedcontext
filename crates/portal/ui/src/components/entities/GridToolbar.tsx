@@ -208,7 +208,7 @@ function useFooterValue(scope: string, source: EntitySource, type: string, attr:
   const ordered = ORDERED_ANY.has(value);
   const needsTotal = value !== "none" && value !== "filled" && !ordered;
   const needsFilled = value !== "none" && value !== "count";
-  const count = async (asked: string | undefined) => (await source.query({ type, q: asked }, { offset: 0, limit: 1 })).total ?? null;
+  const count = async (asked: string | undefined) => (await source.query({ type, q: asked }, { offset: 0, limit: 0 })).total ?? null;
   const total = useQuery({
     queryKey: ["grid-aggregate", scope, type, "total", q ?? ""],
     enabled: needsTotal,
@@ -473,7 +473,7 @@ export function GroupCount({ scope, source, type, q, path }: { scope: string; so
     enabled: asked !== null,
     retry: false,
     staleTime: 30_000,
-    queryFn: async () => (await source.query({ type, q: asked ?? undefined }, { offset: 0, limit: 1 })).total ?? null,
+    queryFn: async () => (await source.query({ type, q: asked ?? undefined }, { offset: 0, limit: 0 })).total ?? null,
   });
   if (asked === null || count.isError || count.data === null) return null;
   if (count.isPending) return <span className="text-caption text-fg-muted">…</span>;
