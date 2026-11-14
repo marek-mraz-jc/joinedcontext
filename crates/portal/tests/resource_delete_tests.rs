@@ -1205,6 +1205,28 @@ mod under_identity {
         }
     }
 
+    /// MF-07, REL-01: a reference written as a bare name blocks the removal as a typed one does;
+    /// another project's bare `mobility` is its own space and blocks nothing here.
+    #[tokio::test]
+    async fn a_bare_name_reference_blocks_the_removal() {
+        let state = state_with(
+            None,
+            vec![
+                manifest("Endpoint", "feed", HERE, json!({ "contextSpaceRef": "mobility" })),
+                manifest("Mapping", "theirs", THERE, json!({ "contextSpaceRef": "mobility" })),
+            ],
+        );
+        for dry_run in [true, false] {
+            let (here, elsewhere) = referenced(
+                remove(&state, &steward(), "spaces", "mobility", dry_run, None)
+                    .await
+                    .expect("an outcome"),
+            );
+            assert_eq!(here, refs(&[("Endpoint", "feed")]), "dry run: {dry_run}");
+            assert_eq!(elsewhere, 0, "dry run: {dry_run}");
+        }
+    }
+
     /// T-2517, PF-50: reading a kind is not deleting it, and deleting one kind is not another.
     #[tokio::test]
     async fn a_caller_without_delete_on_the_kind_is_refused_even_with_read() {

@@ -468,7 +468,16 @@ pub async fn delete_with_identity(
         let is_victim = candidate.kind == kind_info.kind
             && candidate.metadata.name == name
             && candidate_ns == project;
-        !is_victim && has_typed_ref(&candidate.spec, candidate_ns, project, kind_info.kind, name)
+        !is_victim
+            && (has_typed_ref(&candidate.spec, candidate_ns, project, kind_info.kind, name)
+                || crate::references::names(
+                    &candidate.kind,
+                    candidate_ns,
+                    &candidate.spec,
+                    project,
+                    kind_info.kind,
+                    name,
+                ))
     });
     if !dependents.is_empty() {
         let (local, foreign): (Vec<_>, Vec<_>) = dependents
