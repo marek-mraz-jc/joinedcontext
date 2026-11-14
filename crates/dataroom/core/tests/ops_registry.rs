@@ -288,6 +288,74 @@ async fn catalogue_operations() {
 }
 
 #[tokio::test]
+async fn catalogue_propose_without_admin_cannot_edit_branding_hosts_or_outbound_allowlist() {
+    let w = world().await;
+    // A catalogue-wide Propose grant (the Portal's CKAN publisher holds one).
+    let authz = Arc::new((*w.authz).clone().with_rule(GrantRule {
+        org_id: w.org,
+        catalogue_id: Some(w.cat),
+        principal: "proposer".into(),
+        actions: vec![Action::Read, Action::Propose],
+        publisher_id: None,
+    }));
+    let ops = OpContext {
+        authorizer: authz,
+        ..w.ops()
+    };
+    let proposer = w.ctx(Subject::authenticated("proposer", vec![w.org], Vec::new()));
+    let before = w.store.get_catalogue(w.org, w.cat).await.unwrap().unwrap();
+    let mut cat = serde_json::to_value(&before).unwrap();
+    cat["title"] = json!({"sk": "Nový názov"});
+    cat["host"] = json!("other.example.org");
+    cat["name"] = json!("squat");
+    cat["branding"] = json!({"site": {"title": "x"}});
+    cat["activeProfiles"] = json!([]);
+    cat["mainProfile"] = json!("none");
+    cat["allowedOutboundHosts"] = json!(["*"]);
+    cat["allowCrossOrgHarvest"] = json!(!before.allow_cross_org_harvest);
+    cat["hiddenDatasets"] = json!({});
+    execute_operation(
+        &ops,
+        &proposer,
+        "catalogue.propose",
+        json!({"catalogue": cat}),
+    )
+    .await
+    .unwrap();
+    let after = w.store.get_catalogue(w.org, w.cat).await.unwrap().unwrap();
+    assert_eq!(
+        after.title["sk"], "Nový názov",
+        "the plain metadata changes"
+    );
+    assert_eq!(
+        Catalogue {
+            title: before.title.clone(),
+            modified: before.modified,
+            ..after.clone()
+        },
+        before,
+        "every Admin field keeps its stored value"
+    );
+
+    // Admin changes them, and a host or name that is not one is refused.
+    for (key, value) in [("host", "https://x/\nDisallow"), ("name", "Bad Name")] {
+        let mut bad = serde_json::to_value(&after).unwrap();
+        bad[key] = json!(value);
+        let r = w
+            .run(&w.admin(), "catalogue.propose", json!({"catalogue": bad}))
+            .await;
+        assert!(field(&r, &format!("catalogue.{key}")), "{r:?}");
+    }
+    let mut ok = serde_json::to_value(&after).unwrap();
+    ok["host"] = json!("data2.example.org");
+    let saved = w
+        .run(&w.admin(), "catalogue.propose", json!({"catalogue": ok}))
+        .await
+        .unwrap();
+    assert_eq!(saved["host"], "data2.example.org");
+}
+
+#[tokio::test]
 async fn dataset_search_shows_each_caller_what_it_may_read() {
     let w = world().await;
     let anon = w

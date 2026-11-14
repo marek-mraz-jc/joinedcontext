@@ -9,8 +9,8 @@ use crate::auth::{Action, Authorizer, Decision, ObjectTarget, RequestCtx};
 use crate::ckan_compat::{dataset_from_ckan, dataset_to_ckan};
 use crate::error::{DataroomError, Result};
 use crate::model::{
-    ActivityRow, Catalogue, CataloguePlugin, Dataset, HarvestSource, Publisher, RecordState,
-    Visibility,
+    validate_slug, ActivityRow, Catalogue, CataloguePlugin, Dataset, HarvestSource, Publisher,
+    RecordState, Visibility,
 };
 use crate::odata_defs::scope_for_context;
 use crate::store::Store;
@@ -599,6 +599,38 @@ async fn proposed_publisher_record(
     }))
 }
 
+/// What `catalogue.propose` may change: its host and name, profiles, branding, hidden datasets
+/// and outbound rules only with Admin on the catalogue (each has its own Admin route); a
+/// Propose-only caller's values for them are replaced by the stored ones. A new host or name is
+/// validated, so `base_url` and robots.txt only ever carry a host name.
+fn keep_admin_fields(cat: &mut Catalogue, stored: Catalogue, admin: bool) -> Result<()> {
+    if !admin {
+        cat.name = stored.name;
+        cat.host = stored.host;
+        cat.main_profile = stored.main_profile;
+        cat.active_profiles = stored.active_profiles;
+        cat.theme = stored.theme;
+        cat.branding = stored.branding;
+        cat.hidden_datasets = stored.hidden_datasets;
+        cat.allow_cross_org_harvest = stored.allow_cross_org_harvest;
+        cat.allowed_outbound_hosts = stored.allowed_outbound_hosts;
+    } else {
+        if cat.name != stored.name {
+            validate_slug("catalogue.name", &cat.name)?;
+        }
+        if cat.host != stored.host && !crate::branding::is_host_name(&cat.host) {
+            return Err(DataroomError::field_error(
+                "catalogue.host",
+                "must be a host name such as data.example.org",
+            ));
+        }
+    }
+    cat.deleted = stored.deleted;
+    cat.portal_base = stored.portal_base;
+    cat.left_hosts = stored.left_hosts;
+    Ok(())
+}
+
 /// One activity row for a change (C13).
 fn activity_row(
     req_ctx: &RequestCtx,
@@ -684,6 +716,16 @@ pub async fn execute_operation(
             cat.org_id = req_ctx.org_id;
             cat.id = req_ctx.catalogue_id;
             cat.modified = Utc::now();
+            let stored = op_ctx
+                .store
+                .get_catalogue(req_ctx.org_id, req_ctx.catalogue_id)
+                .await?
+                .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+            let admin = op_ctx
+                .authorizer
+                .check(req_ctx, Action::Admin, &target)
+                .allowed;
+            keep_admin_fields(&mut cat, stored, admin)?;
             let saved = op_ctx.store.upsert_catalogue(cat).await?;
             op_ctx
                 .store
