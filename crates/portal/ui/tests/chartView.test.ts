@@ -18,6 +18,7 @@ const CONSTANTS = new Set([
 ]);
 const NUMERIC = /^[-0-9.eE ,MLAZ]+$/;
 const ROTATE = /^rotate\(-?[0-9. ]+\)$/;
+const LABEL = /^chart-title-[0-9]+$/;
 
 type Result = Record<string, unknown>;
 
@@ -60,16 +61,35 @@ function result(mark: string, points: unknown[], extra: Result = {}): Result {
 }
 
 function checkSvg(doc: Document) {
-  const svg = doc.querySelector("svg");
-  expect(svg).not.toBeNull();
-  for (const node of Array.from(svg!.querySelectorAll("*")).concat(svg!)) {
-    expect(ELEMENTS.has(node.localName), node.localName).toBe(true);
-    for (const attr of Array.from(node.attributes)) {
-      const ok = NUMERIC.test(attr.value) || CONSTANTS.has(attr.value) || ROTATE.test(attr.value);
-      expect(ok, `${node.localName} ${attr.name}="${attr.value}"`).toBe(true);
+  const svgs = Array.from(doc.querySelectorAll("svg"));
+  expect(svgs.length).toBeGreaterThan(0);
+  for (const svg of svgs) {
+    for (const node of Array.from(svg.querySelectorAll("*")).concat(svg)) {
+      expect(ELEMENTS.has(node.localName), node.localName).toBe(true);
+      for (const attr of Array.from(node.attributes)) {
+        const ok = NUMERIC.test(attr.value) || CONSTANTS.has(attr.value) || ROTATE.test(attr.value) || LABEL.test(attr.value);
+        expect(ok, `${node.localName} ${attr.name}="${attr.value}"`).toBe(true);
+      }
     }
   }
-  return svg!;
+  return svgs[0];
+}
+
+function attrsHoldNoMarkup(doc: Document) {
+  for (const node of Array.from(doc.body.querySelectorAll("*"))) {
+    for (const attr of Array.from(node.attributes)) {
+      expect(attr.value.includes("<") || attr.name.startsWith("on"), `${attr.name}`).toBe(false);
+    }
+  }
+}
+
+// A whole Dashboard's answer (T-6867): one tile per view, in order.
+function dashboard(views: Result[], tiles: Result[]): Result {
+  return {
+    content: [{ type: "image", data: "", mimeType: "image/png" }],
+    structuredContent: { dashboard: "air-quality", widgets: tiles, rows: 5, sources: [], untrusted: true },
+    _meta: { "joinedcontext.com/dashboard": views },
+  };
 }
 
 const TIMED = [
@@ -108,12 +128,49 @@ describe("chart view", () => {
     expect(doc.querySelectorAll("img, a, use, foreignObject, image, iframe, object").length).toBe(0);
     expect(doc.querySelector("h1")?.textContent).toBe(HOSTILE);
     expect(doc.body.textContent).toContain(HOSTILE);
-    for (const node of Array.from(doc.body.querySelectorAll("*"))) {
-      for (const attr of Array.from(node.attributes)) {
-        expect(attr.value.includes("<") || attr.name.startsWith("on"), `${attr.name}`).toBe(false);
-      }
-    }
+    attrsHoldNoMarkup(doc);
     expect(alert).not.toHaveBeenCalled();
+  });
+
+  it("lays a whole Dashboard out in its order, a refused widget drawn as its error only", () => {
+    const { doc, alert, post } = open();
+    const meta = (mark: string, points: unknown[]) => result(mark, points)._meta as Result;
+    const drawn = (page: number, widget: number) => ({
+      page, widget, rows: 3, sources: [{ endpoint: "air" }],
+      categories: { x: [{ label: "#1", value: HOSTILE }, { label: "#2", value: "Kallio" }] },
+    });
+    post({
+      jsonrpc: "2.0",
+      method: "ui/notifications/tool-result",
+      params: dashboard(
+        [meta("line", TIMED), { error: { status: 422, detail: HOSTILE } }, meta("bar", NOMINAL)],
+        [drawn(0, 0), { page: 0, widget: 1, error: { status: 422, detail: HOSTILE } }, drawn(1, 0)],
+      ),
+    });
+    checkSvg(doc);
+    const tiles = Array.from(doc.querySelectorAll("section.tile"));
+    expect(tiles.length).toBe(3);
+    expect(tiles[0].querySelector("svg path")).not.toBeNull();
+    expect(tiles[1].querySelector("svg")).toBeNull();
+    expect(tiles[1].querySelector("h2")?.textContent).toBe("Page 1, widget 2: not drawn");
+    expect(tiles[1].textContent).toContain("422: " + HOSTILE);
+    expect(tiles[2].querySelector("svg rect")).not.toBeNull();
+    // One tooltip per chart, each labelled by its own title.
+    expect(doc.querySelectorAll(".tip").length).toBe(2);
+    expect(tiles[2].querySelector("svg")?.getAttribute("aria-labelledby")).toBe("chart-title-2");
+    expect(doc.getElementById("chart-title-2")?.textContent).toBe("PM10 at Kallio");
+    expect(doc.body.textContent).toContain("2 of 3 widgets drawn");
+    expect(doc.querySelectorAll("img, a, use, foreignObject, image, iframe, object").length).toBe(0);
+    attrsHoldNoMarkup(doc);
+    expect(alert).not.toHaveBeenCalled();
+  });
+
+  it("says what to do next for a Dashboard without widgets", () => {
+    const { doc, post } = open();
+    post({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: dashboard([], []) });
+    expect(doc.querySelector("svg")).toBeNull();
+    expect(doc.querySelector("h1")?.textContent).toBe("Dashboard air-quality");
+    expect(doc.body.textContent).toContain("no widgets yet");
   });
 
   it("draws nothing for a refusal and says why", () => {
