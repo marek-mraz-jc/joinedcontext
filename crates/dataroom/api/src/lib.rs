@@ -181,6 +181,8 @@ pub struct DataroomState {
     /// Whether a request on a loopback name (or with no host) reads the default catalogue. Off
     /// when the host serves several catalogues by host: then every host must name one.
     pub loopback_default: bool,
+    /// The Portal writes every harvest source (ODP-11): `harvest_source.propose` is refused.
+    pub sources_by_portal: bool,
     /// The installation branding of one catalogue, in place of [`Self::installation_branding`]
     /// (each Organization's own live addresses).
     /// Each catalogue's installation branding; `jc` swaps one in when its Organization's
@@ -279,6 +281,7 @@ impl DataroomState {
             dashboard_resolver: None,
             assets: Arc::new(RwLock::new(BTreeMap::new())),
             loopback_default: true,
+            sources_by_portal: false,
             catalogue_branding: Arc::default(),
             organization_catalogues: Arc::default(),
             catalogue_bases: Arc::default(),
@@ -304,6 +307,13 @@ impl DataroomState {
     /// Off: a request on a loopback name reads no catalogue (several catalogues by host).
     pub fn with_loopback_default(mut self, on: bool) -> Self {
         self.loopback_default = on;
+        self
+    }
+
+    /// On: harvest sources come from Portal manifests alone and `harvest_source.propose` is
+    /// refused naming ODP-11.
+    pub fn with_sources_by_portal(mut self, on: bool) -> Self {
+        self.sources_by_portal = on;
         self
     }
 
@@ -382,6 +392,7 @@ impl DataroomState {
             authorizer: self.authorizer.clone(),
             validator: Some(self.profiles.clone()),
             harvester: Some(self.harvester.clone()),
+            sources_by_portal: self.sources_by_portal,
         }
     }
 

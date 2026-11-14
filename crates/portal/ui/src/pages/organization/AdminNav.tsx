@@ -118,6 +118,13 @@ export function AdminNav({
               </ul>
             </div>
           ))}
+      {/* Open data portals have an area of their own (ODP-15, T-6875); the way in is here. */}
+      {administers || own ? (
+        <Link to="/portals" onClick={onNavigate} className={navLinkClass(false)}>
+          <Icon name="globe" className="size-4" />
+          <span className="truncate">{t("organization.nav.portals")}</span>
+        </Link>
+      ) : null}
     </>
   );
 }

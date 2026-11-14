@@ -50,7 +50,10 @@ pub(crate) fn is_candidate_manifest(path: &str) -> bool {
     // no policy reached the mirror and every connector was held to the data-read default (T-6025).
     // The Environment overlays (`environments/{name}.yaml`, CC-73) the loader merges as
     // JC_ENVIRONMENT names one; left out here, a set JC_ENVIRONMENT stopped every sync (T-6850).
+    // An Organization's open data portals are `portals/{name}.yaml` (ODP-08); left out here, no
+    // Portal reached the mirror and jc's reconciler served none (T-6877).
     clean.starts_with("projects/")
+        || clean.starts_with("portals/")
         || clean.starts_with("environments/")
         || clean.starts_with("organizations/")
         || clean.starts_with("users/roles/")

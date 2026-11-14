@@ -60,6 +60,7 @@ async fn world() -> World {
             authorizer: Arc::new(PolicyAuthorizer::default()),
             validator: None,
             harvester: None,
+            sources_by_portal: false,
         },
         org,
         cat,
