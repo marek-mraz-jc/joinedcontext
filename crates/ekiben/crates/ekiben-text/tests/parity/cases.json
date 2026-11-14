@@ -1,0 +1,467 @@
+[
+ {
+  "name": "jq docs mapping",
+  "processor": {
+   "jq": {
+    "query": "{Cities: .locations | map(select(.state == \"WA\").name) | sort | join(\", \") }"
+   }
+  },
+  "input": "{\"locations\":[{\"name\":\"Seattle\",\"state\":\"WA\"},{\"name\":\"New York\",\"state\":\"NY\"},{\"name\":\"Bellevue\",\"state\":\"WA\"},{\"name\":\"Olympia\",\"state\":\"WA\"}]}",
+  "expected": {
+   "text": "{\"Cities\":\"Bellevue, Olympia, Seattle\"}\n"
+  }
+ },
+ {
+  "name": "jq several outputs",
+  "processor": {
+   "jq": {
+    "query": ".locations[].name"
+   }
+  },
+  "input": "{\"locations\":[{\"name\":\"Seattle\",\"state\":\"WA\"},{\"name\":\"New York\",\"state\":\"NY\"},{\"name\":\"Bellevue\",\"state\":\"WA\"},{\"name\":\"Olympia\",\"state\":\"WA\"}]}",
+  "expected": {
+   "text": "[\"Seattle\",\"New York\",\"Bellevue\",\"Olympia\"]\n"
+  }
+ },
+ {
+  "name": "jq no output drops",
+  "processor": {
+   "jq": {
+    "query": "empty"
+   }
+  },
+  "input": "{\"locations\":[{\"name\":\"Seattle\",\"state\":\"WA\"},{\"name\":\"New York\",\"state\":\"NY\"},{\"name\":\"Bellevue\",\"state\":\"WA\"},{\"name\":\"Olympia\",\"state\":\"WA\"}]}",
+  "expected": {
+   "text": ""
+  }
+ },
+ {
+  "name": "jq raw input",
+  "processor": {
+   "jq": {
+    "query": "ascii_upcase",
+    "raw": true
+   }
+  },
+  "input": "hello world",
+  "expected": {
+   "text": "\"HELLO WORLD\"\n"
+  }
+ },
+ {
+  "name": "jq output_raw",
+  "processor": {
+   "jq": {
+    "query": ".locations[] | .name, .state",
+    "output_raw": true
+   }
+  },
+  "input": "{\"locations\":[{\"name\":\"Seattle\",\"state\":\"WA\"},{\"name\":\"New York\",\"state\":\"NY\"},{\"name\":\"Bellevue\",\"state\":\"WA\"},{\"name\":\"Olympia\",\"state\":\"WA\"}]}",
+  "expected": {
+   "text": "SeattleWANew YorkNYBellevueWAOlympiaWA\n"
+  }
+ },
+ {
+  "name": "jq csv",
+  "processor": {
+   "jq": {
+    "query": "[.ts,.id,.msg,true,null] | @csv",
+    "output_raw": true
+   }
+  },
+  "input": "{\"id\":\"1054fe28\",\"msg\":\"sample \\\"log\\\"\",\"ts\":1641393111}",
+  "expected": {
+   "text": "1641393111,\"1054fe28\",\"sample \"\"log\"\"\",true,\n"
+  }
+ },
+ {
+  "name": "jq tsv",
+  "processor": {
+   "jq": {
+    "query": "[.a,.b] | @tsv",
+    "output_raw": true
+   }
+  },
+  "input": "{\"a\":\"x\\ty\\\\z\",\"b\":1.5}",
+  "expected": {
+   "text": "x\\ty\\\\z\t1.5\n"
+  }
+ },
+ {
+  "name": "jq numbers",
+  "processor": {
+   "jq": {
+    "query": "[.a, .a + 1, .b * 2, .c / 4, 10 / 4, .big]"
+   }
+  },
+  "input": "{\"a\":1,\"b\":1.5,\"c\":8,\"big\":12345678901234567890}",
+  "expected": {
+   "text": "[1,2,3,2,2.5,12345678901234567890]\n"
+  }
+ },
+ {
+  "name": "jq metadata",
+  "processor": {
+   "jq": {
+    "query": "$metadata"
+   }
+  },
+  "input": "{}",
+  "expected": {
+   "text": "{\"source\":\"eea\"}\n"
+  }
+ },
+ {
+  "name": "jq env is empty",
+  "processor": {
+   "jq": {
+    "query": "[env, $ENV]"
+   }
+  },
+  "input": "{}",
+  "expected": {
+   "text": "[{},{}]\n"
+  }
+ },
+ {
+  "name": "jq bad json",
+  "processor": {
+   "jq": {
+    "query": ".foo"
+   }
+  },
+  "input": "not json",
+  "expected": {
+   "text": "ERROR: invalid character 'o' in literal null (expecting 'u')\n"
+  },
+  "compare": "failure",
+  "note": "this workspace's Part::as_structured reports serde_json's parse error, not Go encoding/json's (chyby.md)"
+ },
+ {
+  "name": "jq runtime error",
+  "processor": {
+   "jq": {
+    "query": ".foo | keys"
+   }
+  },
+  "input": "{\"foo\":1}",
+  "compare": "failure",
+  "expected": {
+   "text": "ERROR: keys cannot be applied to: number (1)\n"
+  }
+ },
+ {
+  "name": "jq sort keys",
+  "processor": {
+   "jq": {
+    "query": "{z:1, a:2, m:{y:1,b:2}}"
+   }
+  },
+  "input": "{}",
+  "expected": {
+   "text": "{\"a\":2,\"m\":{\"b\":2,\"y\":1},\"z\":1}\n"
+  }
+ },
+ {
+  "name": "jq html escape in output_raw",
+  "processor": {
+   "jq": {
+    "query": "{a: \"<b>&\"}",
+    "output_raw": true
+   }
+  },
+  "input": "{}",
+  "expected": {
+   "text": "{\"a\":\"\\u003cb\\u003e\\u0026\"}\n"
+  }
+ },
+ {
+  "name": "jq tostring and tojson",
+  "processor": {
+   "jq": {
+    "query": "[(.a|tostring), (.|tojson)]"
+   }
+  },
+  "input": "{\"a\":[1,\"x\"]}",
+  "expected": {
+   "text": "[\"[1,\\\"x\\\"]\",\"{\\\"a\\\":[1,\\\"x\\\"]}\"]\n"
+  }
+ },
+ {
+  "name": "jmespath docs mapping",
+  "processor": {
+   "jmespath": {
+    "query": "locations[?state == 'WA'].name | sort(@) | {Cities: join(', ', @)}"
+   }
+  },
+  "input": "{\"locations\":[{\"name\":\"Seattle\",\"state\":\"WA\"},{\"name\":\"New York\",\"state\":\"NY\"},{\"name\":\"Bellevue\",\"state\":\"WA\"},{\"name\":\"Olympia\",\"state\":\"WA\"}]}",
+  "expected": {
+   "text": "{\"Cities\":\"Bellevue, Olympia, Seattle\"}\n"
+  }
+ },
+ {
+  "name": "jmespath numbers",
+  "processor": {
+   "jmespath": {
+    "query": "{s: sum(a), l: length(a), m: max(a), f: a[0]}"
+   }
+  },
+  "input": "{\"a\":[1,2.5,3]}",
+  "expected": {
+   "text": "{\"f\":1,\"l\":3,\"m\":3,\"s\":6.5}\n"
+  }
+ },
+ {
+  "name": "jmespath not found",
+  "processor": {
+   "jmespath": {
+    "query": "nope"
+   }
+  },
+  "input": "{\"a\":1}",
+  "expected": {
+   "text": "null\n"
+  }
+ },
+ {
+  "name": "jmespath bad json",
+  "processor": {
+   "jmespath": {
+    "query": "a"
+   }
+  },
+  "input": "not json",
+  "expected": {
+   "text": "ERROR: invalid character 'o' in literal null (expecting 'u')\n"
+  },
+  "compare": "failure",
+  "note": "this workspace's Part::as_structured reports serde_json's parse error, not Go encoding/json's (chyby.md)"
+ },
+ {
+  "name": "jmespath runtime error",
+  "processor": {
+   "jmespath": {
+    "query": "abs(a)"
+   }
+  },
+  "input": "{\"a\":\"x\"}",
+  "compare": "failure",
+  "expected": {
+   "text": "ERROR: Invalid type for: x, expected: []jmespath.jpType{\"number\"}\n"
+  }
+ },
+ {
+  "name": "grok docs vpc flow logs",
+  "processor": {
+   "grok": {
+    "expressions": [
+     "%{VPCFLOWLOG}"
+    ],
+    "pattern_definitions": {
+     "VPCFLOWLOG": "%{NUMBER:version:int} %{NUMBER:accountid} %{NOTSPACE:interfaceid} %{NOTSPACE:srcaddr} %{NOTSPACE:dstaddr} %{NOTSPACE:srcport:int} %{NOTSPACE:dstport:int} %{NOTSPACE:protocol:int} %{NOTSPACE:packets:int} %{NOTSPACE:bytes:int} %{NUMBER:start:int} %{NUMBER:end:int} %{NOTSPACE:action} %{NOTSPACE:logstatus}"
+    }
+   }
+  },
+  "input": "2 123456789010 eni-1235b8ca123456789 172.31.16.139 172.31.16.21 20641 22 6 20 4249 1418530010 1418530070 ACCEPT OK",
+  "expected": {
+   "text": "{\"accountid\":\"123456789010\",\"action\":\"ACCEPT\",\"bytes\":4249,\"dstaddr\":\"172.31.16.21\",\"dstport\":22,\"end\":1418530070,\"interfaceid\":\"eni-1235b8ca123456789\",\"logstatus\":\"OK\",\"packets\":20,\"protocol\":6,\"srcaddr\":\"172.31.16.139\",\"srcport\":20641,\"start\":1418530010,\"version\":2}\n"
+  }
+ },
+ {
+  "name": "grok common apache",
+  "processor": {
+   "grok": {
+    "expressions": [
+     "%{COMMONAPACHELOG}"
+    ]
+   }
+  },
+  "input": "127.0.0.1 - - [23/Apr/2014:22:58:32 +0200] \"GET /index.php HTTP/1.1\" 404 207",
+  "expected": {
+   "text": "{\"auth\":\"-\",\"bytes\":\"207\",\"clientip\":\"127.0.0.1\",\"httpversion\":\"1.1\",\"ident\":\"-\",\"request\":\"/index.php\",\"response\":\"404\",\"timestamp\":\"23/Apr/2014:22:58:32 +0200\",\"verb\":\"GET\"}\n"
+  }
+ },
+ {
+  "name": "grok combined apache",
+  "processor": {
+   "grok": {
+    "expressions": [
+     "%{COMBINEDAPACHELOG}"
+    ]
+   }
+  },
+  "input": "127.0.0.1 - - [23/Apr/2014:22:58:32 +0200] \"GET /index.php HTTP/1.1\" 404 207 \"-\" \"curl/8.0\"",
+  "expected": {
+   "text": "{\"agent\":\"\\\"curl/8.0\\\"\",\"auth\":\"-\",\"bytes\":\"207\",\"clientip\":\"127.0.0.1\",\"httpversion\":\"1.1\",\"ident\":\"-\",\"referrer\":\"\\\"-\\\"\",\"request\":\"/index.php\",\"response\":\"404\",\"timestamp\":\"23/Apr/2014:22:58:32 +0200\",\"verb\":\"GET\"}\n"
+  }
+ },
+ {
+  "name": "grok all captures",
+  "processor": {
+   "grok": {
+    "expressions": [
+     "%{WORD:w} %{NUMBER:n:float}"
+    ],
+    "named_captures_only": false
+   }
+  },
+  "input": "abc 1.5",
+  "expected": {
+   "text": "{\"BASE10NUM\":\"1.5\",\"n\":1.5,\"w\":\"abc\"}\n"
+  }
+ },
+ {
+  "name": "grok keep empty",
+  "processor": {
+   "grok": {
+    "expressions": [
+     "%{WORD:a}(?: %{WORD:b})?"
+    ],
+    "remove_empty_values": false
+   }
+  },
+  "input": "abc",
+  "expected": {
+   "text": "{\"a\":\"abc\",\"b\":\"\"}\n"
+  }
+ },
+ {
+  "name": "grok no defaults",
+  "processor": {
+   "grok": {
+    "expressions": [
+     "%{X:x}"
+    ],
+    "use_default_patterns": false,
+    "pattern_definitions": {
+     "X": "[a-z]+"
+    }
+   }
+  },
+  "input": "abc",
+  "expected": {
+   "text": "{\"x\":\"abc\"}\n"
+  }
+ },
+ {
+  "name": "grok first matching expression",
+  "processor": {
+   "grok": {
+    "expressions": [
+     "%{INT:n:int}",
+     "%{WORD:w}"
+    ]
+   }
+  },
+  "input": "abc",
+  "expected": {
+   "text": "{\"w\":\"abc\"}\n"
+  }
+ },
+ {
+  "name": "grok no match",
+  "processor": {
+   "grok": {
+    "expressions": [
+     "%{INT:n}"
+    ]
+   }
+  },
+  "input": "abc",
+  "expected": {
+   "text": "ERROR: no pattern matches found\n"
+  }
+ },
+ {
+  "name": "grok syslog",
+  "processor": {
+   "grok": {
+    "expressions": [
+     "%{SYSLOGBASE} %{GREEDYDATA:message}"
+    ]
+   }
+  },
+  "input": "Mar  7 11:21:01 host sshd[123]: Accepted key",
+  "expected": {
+   "text": "{\"logsource\":\"host\",\"message\":\"Accepted key\",\"pid\":\"123\",\"program\":\"sshd\",\"timestamp\":\"Mar  7 11:21:01\"}\n"
+  }
+ },
+ {
+  "name": "grok httpd error log duplicate names",
+  "processor": {
+   "grok": {
+    "expressions": [
+     "%{HTTPD_ERRORLOG}"
+    ]
+   }
+  },
+  "input": "[Mon Dec 01 10:00:00 2014] [error] [client 1.2.3.4] File does not exist",
+  "expected": {
+   "text": "{\"clientip\":\"1.2.3.4\",\"errormsg\":\"File does not exist\",\"loglevel\":\"error\",\"timestamp\":\"Mon Dec 01 10:00:00 2014\"}\n"
+  }
+ },
+ {
+  "name": "grok dotted and hyphen alias",
+  "processor": {
+   "grok": {
+    "expressions": [
+     "%{WORD:a.b} %{WORD:c-d}"
+    ]
+   }
+  },
+  "input": "x y",
+  "expected": {
+   "text": "{\"a\":{\"b\":\"x\"},\"c-d\":\"y\"}\n"
+  }
+ },
+ {
+  "name": "msgpack from_json then to_json",
+  "processor": {
+   "msgpack": {
+    "operator": "from_json"
+   }
+  },
+  "input": "{\"a\":1,\"b\":[true,null,\"x\"],\"c\":1.5,\"d\":-300,\"e\":70000}",
+  "expected": {
+   "text": "{\"a\":1,\"b\":[true,null,\"x\"],\"c\":1.5,\"d\":-300,\"e\":70000}\n"
+  }
+ },
+ {
+  "name": "msgpack from_json one key",
+  "processor": {
+   "msgpack": {
+    "operator": "from_json"
+   }
+  },
+  "input": "{\"k\":[1,2,3]}",
+  "expected": {
+   "text": "81a16b93010203\n"
+  }
+ },
+ {
+  "name": "msgpack to_json reads one value",
+  "processor": {
+   "msgpack": {
+    "operator": "to_json"
+   }
+  },
+  "input": "Á",
+  "expected": {
+   "text": "true\n"
+  }
+ },
+ {
+  "name": "msgpack from_json bad json",
+  "processor": {
+   "msgpack": {
+    "operator": "from_json"
+   }
+  },
+  "input": "not json",
+  "expected": {
+   "text": "ERROR: failed to parse message as JSON: invalid character 'o' in literal null (expecting 'u')\n"
+  },
+  "compare": "failure",
+  "note": "this workspace's Part::as_structured reports serde_json's parse error, not Go encoding/json's (chyby.md)"
+ }
+]
