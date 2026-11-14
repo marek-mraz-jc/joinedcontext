@@ -128,6 +128,7 @@ mod mcp_hub_member_tests;
 mod mcp_hub_names_tests;
 mod mcp_hub_tests;
 mod mcp_member_log_tests;
+mod mcp_personal_read_tests;
 mod mcp_render_chart_tests;
 mod mcp_schema_tests;
 mod mcp_search_documents_tests;
