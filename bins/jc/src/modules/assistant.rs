@@ -291,6 +291,7 @@ async fn embedder(
 struct Proxy {
     listener: tokio::net::TcpListener,
     router: Router,
+    state: agent_proxy::ProxyState,
 }
 
 /// Builds the proxy over `key` on a free loopback port.
@@ -325,7 +326,8 @@ async fn proxy(
     ));
     Ok(Proxy {
         listener,
-        router: agent_proxy::router(state),
+        router: agent_proxy::router(Arc::clone(&state)),
+        state: (*state).clone(),
     })
 }
 
@@ -463,6 +465,14 @@ async fn try_start(
     minute.extra_origins = catalogue_origin(cfg, siblings);
     if let Some(p) = proxy {
         serve(tasks, shutdown, p.listener, p.router, "the model proxy");
+        // The proxy's own upkeep, as the agent-proxy binary runs it (ADR-N-038 §3.5, AG-96).
+        let stop = shutdown.clone();
+        tasks.spawn(async move {
+            tokio::select! {
+                () = stop.cancelled() => {}
+                () = agent_proxy::maintain(p.state) => {}
+            }
+        });
     }
     serve(tasks, shutdown, internal, router.clone(), "the assistant");
     let stop = shutdown.clone();
