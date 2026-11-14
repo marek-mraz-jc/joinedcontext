@@ -14,7 +14,7 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use http_body_util::BodyExt;
 use jc_router::Mount;
-use kaisatsu_admin::{AdminState, admin_router};
+use kaisatsu_admin::{AdminState, admin_router, scim_router};
 use kaisatsu_core::*;
 use kaisatsu_crypto::{Kek, sha256_hex, sign_jwt};
 use kaisatsu_oidc::{OidcState, OutboundGuard};
@@ -119,7 +119,8 @@ impl Fixture {
             default_mount: Mount::default(),
             second_factor: Default::default(),
         };
-        let app = admin_router(AdminState::new(oidc, Arc::new(LocalAuthorizer)));
+        let state = AdminState::new(oidc, Arc::new(LocalAuthorizer));
+        let app = admin_router(state.clone()).merge(scim_router(state));
         Self { app, store }
     }
 
@@ -514,29 +515,27 @@ async fn a_revoked_admin_token_is_refused() {
 async fn person_delete_and_service_account_user_follow_the_person() {
     let f = Fixture::new().await;
     let now = chrono::Utc::now();
-    f.store
-        .upsert_refresh_family(RefreshTokenFamily {
-            id: "fam-1".into(),
-            realm_id: "dev".into(),
-            org_id: Some("helsinki".into()),
-            sso_session_id: "sso-1".into(),
-            user_id: "hel-person".into(),
-            client_id: "hel-app".into(),
-            scope: "openid".into(),
-            mapper_scopes: Vec::new(),
-            acr: "pwd".into(),
-            amr: Vec::new(),
-            auth_time: now.timestamp(),
-            rotation_counter: 0,
-            current_jti_hash: "h".into(),
-            previous_hashes: Vec::new(),
-            dpop_jkt: None,
-            offline: false,
-            revoked: false,
-            expires_at: now + chrono::Duration::hours(1),
-        })
-        .await
-        .unwrap();
+    let fam = RefreshTokenFamily {
+        id: "fam-1".into(),
+        realm_id: "dev".into(),
+        org_id: Some("helsinki".into()),
+        sso_session_id: "sso-1".into(),
+        user_id: "hel-person".into(),
+        client_id: "hel-app".into(),
+        scope: "openid".into(),
+        mapper_scopes: Vec::new(),
+        acr: "pwd".into(),
+        amr: Vec::new(),
+        auth_time: now.timestamp(),
+        rotation_counter: 0,
+        current_jti_hash: "h".into(),
+        previous_hashes: Vec::new(),
+        dpop_jkt: None,
+        offline: false,
+        revoked: false,
+        expires_at: now + chrono::Duration::hours(1),
+    };
+    f.store.upsert_refresh_family(fam.clone()).await.unwrap();
     let admin = f
         .token(
             "dev",
@@ -555,6 +554,37 @@ async fn person_delete_and_service_account_user_follow_the_person() {
         StatusCode::NO_CONTENT
     );
     let family = f.store.get_refresh_family("dev", "fam-1").await.unwrap();
+    assert!(family.as_ref().is_none_or(|fam| fam.revoked), "{family:?}");
+
+    // The registry's person_delete (SCIM, OData, MCP) ends the sessions too.
+    f.store
+        .create_user(UserRepresentation {
+            id: "hel-two".into(),
+            realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
+            username: "hel-two".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    f.store
+        .upsert_refresh_family(RefreshTokenFamily {
+            id: "fam-2".into(),
+            user_id: "hel-two".into(),
+            ..fam
+        })
+        .await
+        .unwrap();
+    let status = f
+        .send(
+            Method::DELETE,
+            "/api/v1/realms/dev/scim/v2/Users/hel-two",
+            &admin,
+            None,
+        )
+        .await;
+    assert!(status.is_success(), "{status}");
+    let family = f.store.get_refresh_family("dev", "fam-2").await.unwrap();
     assert!(family.as_ref().is_none_or(|fam| fam.revoked), "{family:?}");
 
     f.store
