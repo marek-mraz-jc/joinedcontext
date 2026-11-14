@@ -2638,7 +2638,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower",
- "tracing",
  "url",
  "uuid",
 ]
@@ -2658,6 +2657,7 @@ dependencies = [
  "subtle",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
  "url",
  "uuid",
 ]

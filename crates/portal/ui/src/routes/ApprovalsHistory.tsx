@@ -32,6 +32,9 @@ interface Filter {
 
 const NO_FILTER: Filter = { kind: "", name: "", author: "", since: "", until: "" };
 
+/** Merged, or merged and live since: the server restores and undoes either (api/restore.rs checks the merge). */
+const landed = (change: { status: { phase: string } }) => change.status.phase === "Merged" || change.status.phase === "Applied";
+
 /**
  * The closed changes of a project (T-3292): what was merged or rejected, by whom and when,
  * newest first, a page at a time. The API applies the read rule of the open list, so a change to
@@ -236,8 +239,7 @@ export function ApprovalsHistory({
       align: "right",
       cell: (change) => (
         <>
-          {change.status.phase === "Merged" &&
-          change.summary.key === "change.summary.delete" ? (
+          {landed(change) && change.summary.key === "change.summary.delete" ? (
             <PermissionGuard
               project={project}
               kind={String((change.summary.params as Record<string, unknown>).kind ?? "")}
@@ -256,7 +258,7 @@ export function ApprovalsHistory({
               </Button>
             </PermissionGuard>
           ) : null}
-          {change.status.phase === "Merged" && change.summary.key === "change.summary.update" ? (
+          {landed(change) && change.summary.key === "change.summary.update" ? (
             <PermissionGuard
               project={project}
               kind={String((change.summary.params as Record<string, unknown>).kind ?? "")}

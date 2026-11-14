@@ -80,6 +80,11 @@ describe("where switching project goes (T-2425, UI-05)", () => {
     expect(sameSection("/projects/banskabystrica/spaces/complete").plural).toBe("spaces");
   });
 
+  it("lands on Spaces from a page outside any project, whose third segment is a name", () => {
+    expect(sameSection("/catalogue/endpoint/bikes-live").plural).toBe("spaces");
+    expect(sameSection("/organization/agents/city").plural).toBe("spaces");
+  });
+
   it("lands on Spaces when the path names no section, and never builds a path of its own", () => {
     expect(sameSection("/projects/banskabystrica").plural).toBe("spaces");
     expect(sameSection("/projects/banskabystrica/").plural).toBe("spaces");

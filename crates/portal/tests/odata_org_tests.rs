@@ -1882,6 +1882,15 @@ async fn members_carry_personal_data_only_for_people_admins() {
             json!({ "subjects": [subject], "role": role, "scope": { "organization": "hel" } }),
         ));
     }
+    // AUZ-02: a binding past its validity makes nobody a member.
+    m.upsert(envelope(
+        "RoleBinding",
+        "hel-lapsed",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "lapsed@hel.fi" }], "role": "reader",
+                "scope": { "organization": "hel" },
+                "validity": { "notAfter": "2020-01-01T00:00:00Z" } }),
+    ));
     m.upsert(envelope(
         "Group",
         "team",
@@ -1911,6 +1920,10 @@ async fn members_carry_personal_data_only_for_people_admins() {
         assert_eq!(ada["bindings"], "hel-team", "{mode:?}");
         let users = names(&body, "user");
         assert!(users.contains(&"hel-only@hel.fi".to_owned()), "{users:?}");
+        assert!(
+            !users.contains(&"lapsed@hel.fi".to_owned()),
+            "{mode:?}: {users:?}"
+        );
         assert!(
             !users.iter().any(|u| u.starts_with("ba-only")),
             "{mode:?}: ba's people in hel's members: {users:?}"

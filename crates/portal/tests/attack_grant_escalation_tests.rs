@@ -304,6 +304,75 @@ async fn a_grant_inside_the_proposers_own_rights_still_comes_back() {
     );
 }
 
+/// PF-52, PF-64: a member added to a group takes every binding naming the group, so a person
+/// who may write groups and holds nothing else adds nobody to the group `owns-everything` is
+/// bound to; dropping a member still passes, and a group no binding names takes anyone.
+#[tokio::test]
+async fn a_member_is_added_to_a_group_only_within_what_its_bindings_grant() {
+    let shako = forge_with_workspace().await;
+    let state = state_with(&shako);
+    state.mirror.upsert(common::envelope(
+        "Role",
+        "writes-groups",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Group"], "verbs": ["read", "propose", "approve"] }] }),
+    ));
+    for (name, subjects, role) in [
+        (
+            "helpdesk",
+            json!([{ "user": "steward@hel.fi" }]),
+            "writes-groups",
+        ),
+        (
+            "admins-own-everything",
+            json!([{ "group": "admins" }]),
+            "owns-everything",
+        ),
+    ] {
+        state.mirror.upsert(common::envelope(
+            "RoleBinding",
+            name,
+            ORG_NAMESPACE,
+            json!({ "subjects": subjects, "role": role, "scope": { "organization": "hel" } }),
+        ));
+    }
+    for name in ["admins", "readers"] {
+        state.mirror.upsert(common::envelope(
+            "Group",
+            name,
+            ORG_NAMESPACE,
+            json!({ "members": [{ "user": "admin@hel.fi" }, { "user": "left@hel.fi" }] }),
+        ));
+    }
+    let group = |name: &str, members: Value| {
+        json!({ "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Group",
+                "metadata": { "name": name, "namespace": ORG_NAMESPACE },
+                "spec": { "members": members } })
+    };
+    let steward = common::person("steward");
+    let joined = json!([{ "user": "admin@hel.fi" }, { "user": "steward@hel.fi" }]);
+    let within = |manifest: &Value| {
+        joinedcontext_portal::permissions::within_own_rights(
+            &state, &steward, manifest, None, "proposer",
+        )
+    };
+    assert!(
+        matches!(
+            within(&group("admins", joined.clone())),
+            Err(ApiError::Denied(_))
+        ),
+        "joining a group bound to owns-everything passed"
+    );
+    assert!(
+        within(&group("admins", json!([{ "user": "admin@hel.fi" }]))).is_ok(),
+        "dropping a member was refused"
+    );
+    assert!(
+        within(&group("readers", joined)).is_ok(),
+        "an unbound group was refused"
+    );
+}
+
 /// The refusal carries nothing of the manifest it refused: a binding is a `users/` file and a
 /// person reading the answer learns which verb is missing, not what else the file said.
 #[tokio::test]
@@ -346,6 +415,19 @@ async fn the_refusal_names_the_verb_and_carries_nothing_else_of_the_manifest() {
 // --- T-5563: nobody grants themselves access alone (PF-58) ---
 
 const AUTHOR: &str = "steward@hel.fi";
+/// The author's Keycloak user id: a Policy or Group names a person by it, never by e-mail
+/// (PF-126).
+const AUTHOR_ID: &str = "3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14";
+/// Someone else's Keycloak user id.
+const SOMEONE_ID: &str = "9b1d2c3e-4f5a-4b6c-8d7e-1f2a3b4c5d6e";
+
+/// The steward, signed in with the id the manifests name.
+fn author() -> Identity {
+    Identity {
+        subject: AUTHOR_ID.to_owned(),
+        ..common::person("steward")
+    }
+}
 
 /// A forge holding one merge request by `steward@hel.fi` that adds `file` with `yaml`, and a
 /// mirror where the steward and `peer@hel.fi` both administer Policy and Group across the
@@ -418,7 +500,7 @@ async fn self_grant(file: &str, yaml: &str) -> (MockServer, AppState) {
         "Group",
         "air-team",
         ORG_NAMESPACE,
-        json!({ "members": [{ "user": AUTHOR }] }),
+        json!({ "members": [{ "user": AUTHOR_ID }] }),
     ));
     (shako, state)
 }
@@ -482,25 +564,26 @@ async fn waits_for_another_person(file: &str, yaml: &str, author: Identity) {
 #[tokio::test]
 async fn a_policy_naming_its_author_waits_for_another_person() {
     let yaml = policy(&format!(
-        "  assignee:\n    kind: user\n    id: {AUTHOR}\n  operations: [read, write, delete]\n"
+        "  assignee:\n    kind: user\n    id: {AUTHOR_ID}\n  operations: [retrieveOps, updateOps]\n"
     ));
-    waits_for_another_person(POLICY_PATH, &yaml, common::person("steward")).await;
+    waits_for_another_person(POLICY_PATH, &yaml, author()).await;
 }
 
 #[tokio::test]
 async fn a_policy_naming_a_group_of_its_author_waits_for_another_person() {
-    let yaml =
-        policy("  assignee:\n    kind: group\n    id: air-team\n  operations: [read, write]\n");
-    waits_for_another_person(POLICY_PATH, &yaml, common::person("steward")).await;
+    let yaml = policy(
+        "  assignee:\n    kind: group\n    id: air-team\n  operations: [retrieveOps, updateOps]\n",
+    );
+    waits_for_another_person(POLICY_PATH, &yaml, author()).await;
 }
 
 #[tokio::test]
 async fn a_group_change_adding_its_author_waits_for_another_person() {
     let yaml = format!(
         "apiVersion: joinedcontext.com/v1alpha1\nkind: Group\nmetadata:\n  name: mine\n  \
-         namespace: {ORG_NAMESPACE}\nspec:\n  members:\n  - user: {AUTHOR}\n"
+         namespace: {ORG_NAMESPACE}\nspec:\n  members:\n  - user: {AUTHOR_ID}\n"
     );
-    waits_for_another_person("users/groups/mine.yaml", &yaml, common::person("steward")).await;
+    waits_for_another_person("users/groups/mine.yaml", &yaml, author()).await;
 }
 
 /// The administrator of Policy who holds the realm role a rule of the Policy names: their own
@@ -508,11 +591,11 @@ async fn a_group_change_adding_its_author_waits_for_another_person() {
 /// own change), and now waits like anyone's.
 #[tokio::test]
 async fn an_administrator_cannot_approve_their_own_self_grant() {
-    let yaml = policy(
-        "  rules:\n  - effect: prohibition\n    assignee:\n      kind: user\n      id: someone@hel.fi\n    \
-         operations: [delete]\n  - assignee:\n      kind: role\n      id: air-admins\n    operations: [read]\n",
-    );
-    let mut author = common::person("steward");
+    let yaml = policy(&format!(
+        "  rules:\n  - effect: prohibition\n    assignee:\n      kind: user\n      id: {SOMEONE_ID}\n    \
+         operations: [updateOps]\n  - assignee:\n      kind: role\n      id: air-admins\n    operations: [retrieveOps]\n"
+    ));
+    let mut author = author();
     author.roles.push("air-admins".to_owned());
     waits_for_another_person(POLICY_PATH, &yaml, author).await;
 }
@@ -521,10 +604,11 @@ async fn an_administrator_cannot_approve_their_own_self_grant() {
 /// person like any other access change, and a peer's approval merges (P-10, T-6714).
 #[tokio::test]
 async fn a_policy_for_someone_else_waits_for_a_second_person() {
-    let yaml =
-        policy("  assignee:\n    kind: user\n    id: someone@hel.fi\n  operations: [read]\n");
+    let yaml = policy(&format!(
+        "  assignee:\n    kind: user\n    id: {SOMEONE_ID}\n  operations: [retrieveOps]\n"
+    ));
     let (shako, state) = self_grant(POLICY_PATH, &yaml).await;
-    let err = approve(&state, common::person("steward"))
+    let err = approve(&state, author())
         .await
         .expect_err("approved by its author");
     assert!(matches!(err, ApiError::SelfApproval(_)), "{err:?}");

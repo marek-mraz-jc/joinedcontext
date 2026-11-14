@@ -204,6 +204,16 @@ describe("what an endpoint answers", () => {
     expect(entityReads()).toHaveLength(0);
   });
 
+  it("keeps a slug from a link inside its own endpoint's address, dot segments and all", async () => {
+    const asked: string[] = [];
+    show({ slug: "../v1/secrets#" }, (url) => {
+      asked.push(url.pathname);
+      return answer(url);
+    });
+    await waitFor(() => expect(asked.some((path) => path.endsWith("/widget.json"))).toBe(true));
+    expect(asked.filter((path) => !path.startsWith("/api/endpoint/..%2Fv1%2Fsecrets%23/"))).toEqual([]);
+  });
+
   it("has no axe violation", async () => {
     const { container } = show({ space: "ovzdusie" });
     await waitFor(() => expect(screen.getByRole("grid")).toBeInTheDocument());

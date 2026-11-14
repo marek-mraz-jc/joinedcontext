@@ -133,10 +133,10 @@ export function SchemaProjectionPanel({
   const [fault, setFault] = useState<string | null>(null);
   const typedRef = useRef<HTMLInputElement | null>(null);
   const refused = Boolean(disabledReason);
-  const base = `${window.location.origin}/api/endpoint/${slug}/schema`;
+  const base = `${window.location.origin}/api/endpoint/${encodeURIComponent(slug)}/schema`;
 
   const index = useQuery({
-    queryKey: ["endpoint-schema-index", slug],
+    queryKey: ["endpoint-schema-index", base],
     retry: false,
     queryFn: () => fetchJson(`${base}/index.json`) as Promise<SchemaIndex>,
   });
@@ -146,7 +146,7 @@ export function SchemaProjectionPanel({
   const artifactUrl = `${base}/v${version}/${formalism}`;
 
   const schema = useQuery({
-    queryKey: ["endpoint-schema-artifact", slug, version, formalism],
+    queryKey: ["endpoint-schema-artifact", base, version, formalism],
     enabled: index.isSuccess,
     retry: false,
     queryFn: () =>

@@ -1238,7 +1238,6 @@ fn confirm_url(state: &AppState, project: &str, id: &str) -> String {
     format!("{base}/projects/{project}/mcp-elicitations/{id}")
 }
 
-/// The Portal path of what a call would change, which the decision page links to.
 /// What a question is bound to: the arguments, and the content of a draft they name, so a draft
 /// rewritten after the person decided answers no open question (AG-63).
 async fn bound_to(
@@ -1259,6 +1258,7 @@ async fn bound_to(
     }
 }
 
+/// The Portal path of what a call would change, which the decision page links to.
 fn resource_path(project: &str, kind: &str, input: &Value) -> String {
     let named = input
         .get("kind")

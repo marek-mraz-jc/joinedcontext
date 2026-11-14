@@ -162,7 +162,7 @@ export function VisualizationPreview({
     queryKey: ["grafana-preview", slug, type, attribute],
     queryFn: async (): Promise<PreviewRow[]> => {
       const query = new URLSearchParams({ type, attrs: `name,${attribute}`, limit: "5", options: "keyValues" });
-      const response = await fetch(`/api/endpoint/${slug}/ngsi-ld/v1/entities?${query}`, {
+      const response = await fetch(`/api/endpoint/${encodeURIComponent(slug)}/ngsi-ld/v1/entities?${query}`, {
         credentials: "same-origin",
         headers: { Accept: "application/json" },
       });
@@ -280,7 +280,7 @@ export function VisualizationForm({ project }: { project: string }): JSX.Element
   }
   const safe = safeHref(save.data?.openUrl);
   return (
-    <div className="grid items-start gap-card lg:grid-cols-2 [&>*]:min-w-0">
+    <div className="grid items-start gap-section lg:grid-cols-2 [&>*]:min-w-0">
       <Card>
         <CardHeader as="h2" title={t("grafana.form.title")} className="mb-3" />
         <form

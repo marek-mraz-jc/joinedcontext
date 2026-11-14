@@ -106,22 +106,22 @@ fn accept_rendered(
     project: &str,
 ) -> Result<(ResourceEnvelope, &'static resource::KindInfo), ApiError> {
     let body: serde_json::Value = serde_norway::from_str(yaml).map_err(|e| {
-        ApiError::Internal(format!("template `{template}` rendered invalid yaml: {e}"))
+        ApiError::BadRequest(format!("template `{template}` rendered invalid yaml: {e}"))
     })?;
     let mut envelope: ResourceEnvelope = serde_json::from_value(body.clone()).map_err(|e| {
-        ApiError::Internal(format!(
+        ApiError::BadRequest(format!(
             "template `{template}` did not render a manifest: {e}"
         ))
     })?;
 
     if envelope.api_version != API_VERSION {
-        return Err(ApiError::Internal(format!(
+        return Err(ApiError::BadRequest(format!(
             "template `{template}` rendered apiVersion '{}' (expected '{API_VERSION}')",
             envelope.api_version
         )));
     }
     let kind_info = resource::by_kind(&envelope.kind).ok_or_else(|| {
-        ApiError::Internal(format!(
+        ApiError::BadRequest(format!(
             "template `{template}` rendered unknown kind '{}'",
             envelope.kind
         ))
@@ -139,7 +139,7 @@ fn accept_rendered(
     resource::validate_meta(&envelope.metadata).map_err(ApiError::BadRequest)?;
 
     if body.get("status").is_some() || envelope.status.is_some() {
-        return Err(ApiError::Internal(format!(
+        return Err(ApiError::BadRequest(format!(
             "template `{template}` rendered a status block, which the platform computes (MF-04)"
         )));
     }
