@@ -134,8 +134,8 @@ impl Exchanger {
         if !status.is_success() {
             return Err(ExchangeError::Refused(status.as_u16()));
         }
-        let issued: Issued = response
-            .json()
+        // A token answer is a few kilobytes: a realm answering without end fills no memory.
+        let issued: Issued = crate::previews::json_within(response, MAX_ANSWER_BYTES)
             .await
             .map_err(|_| ExchangeError::Unavailable("unreadable token answer".to_owned()))?;
         if issued.access_token.is_empty() {
@@ -144,6 +144,9 @@ impl Exchanger {
         Ok(issued.access_token)
     }
 }
+
+/// The most of a token endpoint's answer read.
+const MAX_ANSWER_BYTES: usize = 64 * 1024;
 
 #[cfg(test)]
 mod tests {
@@ -213,6 +216,23 @@ mod tests {
         );
         assert_eq!(form["client_id"], "context-gateway");
         assert!(!form.contains_key("audience"), "{form:?}");
+    }
+
+    /// A token answer past its cap is unreadable, not read on into memory.
+    #[tokio::test]
+    async fn an_oversized_token_answer_is_unavailable() {
+        let (url, _) = realm(
+            StatusCode::OK,
+            serde_json::json!({ "access_token": "x".repeat(MAX_ANSWER_BYTES) }),
+        )
+        .await;
+        let answer = exchanger(url)
+            .exchange("caller-token", &brokers(&["sensors"]))
+            .await;
+        assert!(
+            matches!(answer, Err(ExchangeError::Unavailable(_))),
+            "{answer:?}"
+        );
     }
 
     #[tokio::test]

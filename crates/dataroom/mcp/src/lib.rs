@@ -26,7 +26,10 @@ pub fn wrap_untrusted_fence(payload: &Value) -> String {
     let serialized = serde_json::to_string_pretty(payload).unwrap_or_else(|_| "{}".into());
     format!(
         "<untrusted-data>\n{}\n</untrusted-data>",
-        serialized.replace("</untrusted-data>", "&lt;/untrusted-data&gt;")
+        // No closing tag of any case or spacing survives: no `</` is left at all.
+        serialized
+            .replace("</untrusted-data>", "&lt;/untrusted-data&gt;")
+            .replace("</", "&lt;/")
     )
 }
 
@@ -129,7 +132,7 @@ pub async fn handle_mcp_jsonrpc(
                         "content": [
                             {
                                 "type": "text",
-                                "text": err.to_string()
+                                "text": err.client_safe().to_string()
                             }
                         ],
                         "isError": true

@@ -61,7 +61,10 @@ pub async fn handle_odata(
     // Distributions) before `$filter`.
     // A dataset is a row where `package_show` shows it: hidden (`jc_hide`) datasets only to
     // their editors, datasets of a withdrawn publisher not to anonymous callers.
-    let visible_ds_ids = if path.starts_with("Datasets") || path.starts_with("Distributions") {
+    let visible_ds_ids = if ["Datasets", "Distributions", "ShaclResults"]
+        .iter()
+        .any(|set| path.starts_with(set))
+    {
         let all_ds = match state.store.list_datasets(&ctx).await {
             Ok(d) => d,
             Err(e) => return problem_response(e),

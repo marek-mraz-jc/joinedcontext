@@ -564,6 +564,16 @@ async fn pull_requests_review_merge_and_native_webhooks() {
     assert_eq!(st, StatusCode::OK);
     assert_eq!(pr["Merged"], true);
     assert_eq!(pr["MergeCommitSha"], merge_sha);
+    // A merged pull request keeps the base it landed on.
+    let (st, body, _) = call(
+        &w.app,
+        "PATCH",
+        "/api/v1/repos/joinedcontext/helsinki/pulls/1",
+        Some("portal-token"),
+        Some(json!({"base": "release"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
 
     let got = w.delivered.lock();
     let (_, body) = got.last().expect("the merge delivery");
@@ -607,6 +617,10 @@ async fn mirrors_packages_and_tags() {
     assert_eq!(st, StatusCode::OK, "{list}");
     assert_eq!(list["value"][0]["Name"], name);
     assert!(!String::from_utf8_lossy(&raw).contains(credential));
+    // A reader of the repository sees no mirror in the organization-wide set either.
+    let (st, list, _) = call(&w.app, "GET", "/odata/PushMirrors", Some("bob-token"), None).await;
+    assert_eq!(st, StatusCode::OK, "{list}");
+    assert_eq!(list["value"], json!([]), "{list}");
     let (st, _, _) = call(
         &w.app,
         "POST",
@@ -756,6 +770,59 @@ async fn another_organizations_repository_is_404_like_a_missing_one() {
 
 /// A reader of a visible repository is 403 on a write, never 404.
 #[tokio::test]
+async fn a_rename_onto_a_taken_name_is_409_and_a_new_default_branch_moves_head() {
+    let w = world();
+    create_repo(&w, "helsinki").await;
+    create_repo(&w, "other").await;
+    let patch = |body: Value| {
+        call(
+            &w.app,
+            "PATCH",
+            "/api/v1/repos/joinedcontext/helsinki",
+            Some("portal-token"),
+            Some(body),
+        )
+    };
+    let (st, body, _) = patch(json!({"name": "other"})).await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    let (st, body, _) = patch(json!({"default_branch": "release"})).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let (_, repo, _) = call(&w.app, "GET", R, Some("portal-token"), None).await;
+    let id: shako_core::RepoId = repo["Id"].as_str().unwrap().parse().unwrap();
+    let disk =
+        shako_core::repo_disk_path(w.state.repo_root(), InstanceId::from_u128(1), id).unwrap();
+    let head = std::fs::read_to_string(disk.join("HEAD")).unwrap();
+    assert_eq!(head.trim(), "ref: refs/heads/release");
+}
+
+#[tokio::test]
+async fn a_navigated_collection_keeps_to_its_repository_whatever_the_filter() {
+    let w = world();
+    create_repo(&w, "helsinki").await;
+    create_repo(&w, "other").await;
+    let (st, body, _) = call(
+        &w.app,
+        "POST",
+        "/odata/Repositories(Owner='joinedcontext',Name='other')/Shako.Protect",
+        Some("portal-token"),
+        Some(json!({"Rule": {"rule_name": "main"}})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let filter = "Pattern%20eq%20'main')%20or%20(Pattern%20eq%20'main'";
+    let (st, body, _) = call(
+        &w.app,
+        "GET",
+        &format!("{R}/ProtectionRules?$filter={filter}"),
+        Some("portal-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["value"], json!([]), "{body}");
+}
+
+#[tokio::test]
 async fn a_reader_is_403_on_writes() {
     let w = world();
     create_repo(&w, "helsinki").await;
@@ -866,6 +933,31 @@ async fn a_hook_of_another_repository_is_not_redelivered() {
     .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(w.delivered.lock().len(), before + 1);
+}
+
+/// A commit through the API passes the secret scan a push passes: a literal secret in a manifest
+/// is refused with the rule and path, never the value, and nothing lands on the branch.
+#[tokio::test]
+async fn a_literal_secret_in_an_api_commit_is_refused() {
+    let w = world();
+    create_repo(&w, "helsinki").await;
+    let before = head_of(&w, "main").await;
+    let literal = "s3cr3t".repeat(2);
+    let manifest = format!("apiVersion: v1\nkind: Connector\nspec:\n  password: {literal}\n");
+    let (st, body) = commit(
+        &w,
+        R,
+        "main",
+        json!([{"operation": "create", "path": "connectors/a.yaml", "content": b64(&manifest)}]),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let said = body.to_string();
+    assert!(
+        said.contains("connectors/a.yaml") && !said.contains(&literal),
+        "{said}"
+    );
+    assert_eq!(head_of(&w, "main").await, before);
 }
 
 /// A secret reference is a key name of the secret store: a caller who pastes a credential there

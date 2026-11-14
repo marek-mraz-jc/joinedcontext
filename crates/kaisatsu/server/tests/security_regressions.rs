@@ -1068,6 +1068,13 @@ async fn k2_organization_scope_checks_membership_and_never_emits_foreign_org_cla
             .is_none_or(|a| !a.iter().any(|v| v.as_str() == Some("other"))),
         "non-member must not receive jc_org=other: {non_member_claims}"
     );
+    // Nor does the granted scope keep it, in the token or the token response (DESIGN-K).
+    for scope in [
+        non_member_claims["scope"].as_str().unwrap_or_default(),
+        json_body(&body)["scope"].as_str().unwrap_or_default(),
+    ] {
+        assert!(!scope.contains("organization:other"), "{scope}");
+    }
 
     // 2. Member (`demo.orgmember@hel.fi` asks `organization:helsinki`) gets `organization` and `jc_org`.
     let (st, _, body) = post_form(
@@ -1088,4 +1095,9 @@ async fn k2_organization_scope_checks_membership_and_never_emits_foreign_org_cla
     let member_claims = decode_jwt_payload(json_body(&body)["access_token"].as_str().unwrap());
     assert_eq!(member_claims["organization"], json!({ "helsinki": {} }));
     assert_eq!(member_claims["jc_org"], json!(["helsinki"]));
+    assert!(
+        member_claims["scope"]
+            .as_str()
+            .is_some_and(|s| s.contains("organization:helsinki"))
+    );
 }

@@ -176,6 +176,24 @@ fn references<'a>(kind: &str, spec: &'a Value) -> Vec<Reference<'a>> {
     references
 }
 
+/// Whether a manifest of `kind` in `namespace` names `target_kind` `target_name` of `project` in
+/// one of its reference fields, a bare name or a typed reference alike (MF-07, REL-01): what a
+/// removal asks of every manifest before it takes the target away.
+pub fn names(
+    kind: &str,
+    namespace: &str,
+    spec: &Value,
+    project: &str,
+    target_kind: &str,
+    target_name: &str,
+) -> bool {
+    references(kind, spec).into_iter().any(|reference| {
+        reference.kind == target_kind
+            && reference.name == target_name
+            && reference.namespace.unwrap_or(namespace) == project
+    })
+}
+
 /// A reference the project does not hold: the field it is written at and what it names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Missing {

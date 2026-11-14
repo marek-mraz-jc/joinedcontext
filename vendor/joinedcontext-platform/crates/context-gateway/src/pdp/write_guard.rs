@@ -223,10 +223,21 @@ fn check_location(entity: &Value, constraints: &Constraints) -> Result<(), Refus
     }
 }
 
-/// The id the payload carries must be an NGSI-LD URN of its type (PF-43).
+/// The id the payload carries must be an NGSI-LD URN of its type (PF-43). A type written as an
+/// array is that type only when each member names the URN's: a later fragment write has no type
+/// of its own and is judged by the URN's, so a second type would escape what governs it.
 fn check_id(entity: &Value, contexts: &[&Value]) -> Result<(), Refusal> {
     let raw = entity_id(entity).ok_or_else(|| Refusal::MalformedId(String::new()))?;
-    check_identifier_in(raw, entity.get("type").and_then(Value::as_str), contexts)
+    match entity.get("type") {
+        Some(Value::Array(types)) if !types.is_empty() => types.iter().try_for_each(|one| {
+            let one = one
+                .as_str()
+                .ok_or_else(|| Refusal::MalformedId(raw.to_owned()))?;
+            check_identifier_in(raw, Some(one), contexts)
+        }),
+        Some(Value::Array(_)) => Err(Refusal::MalformedId(raw.to_owned())),
+        other => check_identifier_in(raw, other.and_then(Value::as_str), contexts),
+    }
 }
 
 fn check_type(entity: &Value, constraints: &Constraints) -> Result<(), Refusal> {
@@ -401,6 +412,34 @@ mod tests {
                 "{kind}"
             );
         }
+    }
+
+    /// PF-43: a type array is the URN's type in every member or it is refused, so no member
+    /// names a class the URN does not carry.
+    #[test]
+    fn an_array_type_names_the_urns_type_in_every_member() {
+        let model = model();
+        let open = Constraints::default();
+        for kind in [
+            json!(["CitizenPii"]),
+            json!(["AirQualityObserved", "CitizenPii"]),
+            json!([]),
+            json!([7]),
+        ] {
+            assert!(
+                matches!(
+                    check_in(&json!({"id": ID, "type": kind}), &open, &[&model]),
+                    Err(Refusal::MalformedId(_))
+                ),
+                "{kind}"
+            );
+        }
+        check_in(
+            &json!({"id": ID, "type": ["AirQualityObserved", MODEL_IRI]}),
+            &open,
+            &[&model],
+        )
+        .expect("one type, written twice");
     }
 
     /// F3: only the server's and the Endpoint's own contexts expand a name. A request that maps

@@ -348,16 +348,19 @@ impl Store for MemoryStore {
         ctx: &'a RequestCtx,
         id_or_name: &'a str,
     ) -> BoxFuture<'a, Result<Option<Dataset>>> {
-        let found = self
-            .read_inner()
-            .datasets
-            .iter()
-            .find(|((oid, cid, _), d)| {
-                *oid == ctx.org_id
-                    && *cid == ctx.catalogue_id
-                    && (d.id == id_or_name || d.name == id_or_name)
-            })
-            .map(|(_, d)| d.clone());
+        // An id names its record before a name does: another dataset's name may equal an id.
+        let inner = self.read_inner();
+        let mine = || {
+            inner
+                .datasets
+                .iter()
+                .filter(|((oid, cid, _), _)| *oid == ctx.org_id && *cid == ctx.catalogue_id)
+                .map(|(_, d)| d)
+        };
+        let found = mine()
+            .find(|d| d.id == id_or_name)
+            .or_else(|| mine().find(|d| d.name == id_or_name))
+            .cloned();
         Box::pin(std::future::ready(Ok(found)))
     }
 
@@ -448,6 +451,9 @@ impl Store for MemoryStore {
                 !(*oid == ctx.org_id
                     && *cid == ctx.catalogue_id
                     && res_ids.contains(&v.resource_id))
+            });
+            guard.shacl_reports.retain(|(oid, cid, _), r| {
+                !(*oid == ctx.org_id && *cid == ctx.catalogue_id && r.dataset_id == removed.id)
             });
         }
         Box::pin(std::future::ready(Ok(())))

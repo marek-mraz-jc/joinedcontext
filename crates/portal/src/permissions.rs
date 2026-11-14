@@ -236,7 +236,8 @@ pub fn effective(
     let mut own_settings = Vec::new();
     let mut grants: Vec<Grant> = in_force(mirror, identity, now)
         .into_iter()
-        .filter_map(|(reach, mut grant)| {
+        .flat_map(|(reach, mut grant)| {
+            let local = matches!(reach, Reach::Project(_) | Reach::Space(_));
             grant.space = match reach {
                 Reach::Organization(org)
                     if !foreign_namespace && organization_reaches(mirror, &org, project) =>
@@ -248,22 +249,26 @@ pub fn effective(
                         && (!foreign_namespace || pin.as_deref() == Some(org.as_str())) =>
                 {
                     own_settings.extend(narrowed_to_own_settings(mirror, &org, grant));
-                    return None;
+                    return Vec::new();
                 }
-                Reach::Organization(_) => return None,
+                Reach::Organization(_) => return Vec::new(),
                 Reach::Project(p) if p == project && !foreign_namespace => None,
-                Reach::Project(_) => return None,
+                Reach::Project(_) => return Vec::new(),
                 Reach::Space(space) => {
                     let held_by = home
                         .entry(space.clone())
                         .or_insert_with(|| project_of_space(mirror, &space));
                     if held_by.as_deref() != Some(project) {
-                        return None;
+                        return Vec::new();
                     }
                     Some(space)
                 }
             };
-            Some(grant)
+            if local {
+                administration_read_only(grant)
+            } else {
+                vec![grant]
+            }
         })
         .collect();
     grants.extend(own_settings);
@@ -774,6 +779,46 @@ fn organization_reaches(mirror: &Mirror, organization: &str, project: &str) -> b
         organization_of(mirror, project)
     };
     owner.as_deref() == Some(organization)
+}
+
+/// The kinds that administer the installation: the groups people belong to, the Organizations,
+/// the brokers and environments (PF-03, ADR-N-058 section 2.2). A binding scoped to one project
+/// or space reads them there and changes none of them, whatever its role lists, so a role bound
+/// in one project never proposes or approves the organization's groups or settings from it. A
+/// `RoleBinding` stays: a project's own bindings are proposed there (PF-52,
+/// `groups::project_binding`) and each is held to its proposer's and approver's own rights
+/// (`within_own_rights`).
+const ADMINISTRATION_KINDS: [&str; 6] = [
+    "Group",
+    "Organization",
+    "Environment",
+    "ContextBroker",
+    "DelegationPolicy",
+    "Portal",
+];
+
+/// Narrows a grant of a project or space binding to `read` on [`ADMINISTRATION_KINDS`]: the
+/// rule keeps its other kinds and verbs, and gains a sibling read rule for the administration
+/// kinds it named when it let them be read (`propose` reads too, `Rule::grants`).
+fn administration_read_only(mut grant: Grant) -> Vec<Grant> {
+    let reads = ADMINISTRATION_KINDS
+        .iter()
+        .any(|kind| grant.rule.grants(kind, Verb::Read));
+    let (held, kept): (Vec<String>, Vec<String>) = std::mem::take(&mut grant.rule.kinds)
+        .into_iter()
+        .partition(|kind| ADMINISTRATION_KINDS.contains(&kind.as_str()));
+    let read = (reads && !held.is_empty()).then(|| {
+        let mut read = grant.clone();
+        read.rule.kinds = held;
+        read.rule.verbs = vec![Verb::Read];
+        read
+    });
+    grant.rule.kinds = kept;
+    (!grant.rule.kinds.is_empty())
+        .then_some(grant)
+        .into_iter()
+        .chain(read)
+        .collect()
 }
 
 /// In a project of an Organization other than the installation's, a grant reaches the project's
@@ -1646,9 +1691,15 @@ pub fn keeps_an_administrator_after(
         .into_iter()
         .map(|env| (env.metadata.name, env.spec))
         .collect();
+    let mut groups: BTreeMap<String, Value> = mirror
+        .list(ORG_NAMESPACE, "Group", &ListOptions::default())
+        .items
+        .into_iter()
+        .map(|env| (env.metadata.name, env.spec))
+        .collect();
     let now = Utc::now();
     let installation = installation_scope(mirror);
-    let before = administrators(&roles, &bindings, installation.as_ref(), now);
+    let before = administrators(&roles, &bindings, &groups, installation.as_ref(), now);
     if before.is_empty() {
         return Ok(());
     }
@@ -1676,21 +1727,24 @@ pub fn keeps_an_administrator_after(
                 name,
             } => (*kind, *namespace, *name, None),
         };
-        if !matches!(kind, "Role" | "RoleBinding") || !matches!(namespace, ORG_NAMESPACE | "") {
+        if !matches!(kind, "Role" | "RoleBinding" | "Group")
+            || !matches!(namespace, ORG_NAMESPACE | "")
+        {
             continue;
         }
         touched = true;
-        let table = if kind == "Role" {
-            &mut roles
-        } else {
-            &mut bindings
+        let table = match kind {
+            "Role" => &mut roles,
+            "Group" => &mut groups,
+            _ => &mut bindings,
         };
         match written {
             Some(spec) => table.insert(name.to_owned(), spec),
             None => table.remove(name),
         };
     }
-    if touched && administrators(&roles, &bindings, installation.as_ref(), now).is_empty() {
+    if touched && administrators(&roles, &bindings, &groups, installation.as_ref(), now).is_empty()
+    {
         return Err(ApiError::Conflict(format!(
             "this change would leave the organization without an administrator: after it, no \
              binding at organization scope grants approve and delete on RoleBinding (today: {}). \
@@ -1719,6 +1773,7 @@ pub fn administrator_people(mirror: &Mirror) -> BTreeSet<String> {
     for name in administrators(
         &roles,
         &bindings,
+        &groups,
         installation_scope(mirror).as_ref(),
         Utc::now(),
     ) {
@@ -1752,10 +1807,13 @@ fn installation_scope(mirror: &Mirror) -> Option<Option<String>> {
 
 /// The organization bindings that make somebody an administrator, by name (PF-03). With several
 /// Organizations only the installation's count: another Organization's administrator keeps none
-/// of the installation running (ADR-N-058 section 2.2).
+/// of the installation running (ADR-N-058 section 2.2). A binding counts when it names a person,
+/// directly or through a group whose manifest lists one; a `Group` manifest with no member makes
+/// nobody an administrator.
 fn administrators(
     roles: &BTreeMap<String, Value>,
     bindings: &BTreeMap<String, Value>,
+    groups: &BTreeMap<String, Value>,
     installation: Option<&Option<String>>,
     now: DateTime<Utc>,
 ) -> Vec<String> {
@@ -1783,7 +1841,17 @@ fn administrators(
                     installation.is_some() && binding.scope.organization == *installation
                 }
             };
-            (counts && !binding.subjects.is_empty() && in_force && administers(&binding.role))
+            let names_a_person = binding.subjects.iter().any(|subject| {
+                subject.user.is_some()
+                    || subject.group.as_ref().is_some_and(|group| {
+                        groups.get(group).is_none_or(|spec| {
+                            spec.get("members")
+                                .and_then(Value::as_array)
+                                .is_some_and(|members| !members.is_empty())
+                        })
+                    })
+            });
+            (counts && names_a_person && in_force && administers(&binding.role))
                 .then(|| name.clone())
         })
         .collect()
@@ -1865,6 +1933,56 @@ pub fn within_own_rights(
                     }
                 }
                 ("service account", grants)
+            }
+            // A member added to a group takes every binding naming the group, so whoever adds
+            // one holds what those bindings grant (PF-52, PF-64); a change that only drops
+            // members or edits the description grants nothing new.
+            Some("Group") => {
+                let name = manifest
+                    .pointer("/metadata/name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let members = |group: &Value| -> BTreeSet<String> {
+                    group
+                        .pointer("/spec/members")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|member| member.get("user").and_then(Value::as_str))
+                        .map(str::to_owned)
+                        .collect()
+                };
+                let held_before = match before {
+                    Some(before) => members(before),
+                    None => mirror
+                        .get(ORG_NAMESPACE, "Group", name)
+                        .and_then(|held| serde_json::to_value(held).ok())
+                        .map(|held| members(&held))
+                        .unwrap_or_default(),
+                };
+                let mut grants = Vec::new();
+                if !members(manifest).is_subset(&held_before) {
+                    for binding in mirror.kind_where(ORG_NAMESPACE, "RoleBinding", |_| true) {
+                        let Ok(binding) = serde_json::from_value::<RoleBindingSpec>(binding.spec)
+                        else {
+                            continue;
+                        };
+                        if !binding
+                            .subjects
+                            .iter()
+                            .any(|subject| subject.group.as_deref() == Some(name))
+                        {
+                            continue;
+                        }
+                        let Some(target) = Reach::of(&binding.scope) else {
+                            continue;
+                        };
+                        if let Some(rules) = rules_at(&binding.role, &target) {
+                            grants.push((rules, target));
+                        }
+                    }
+                }
+                ("group", grants)
             }
             _ => return Ok(()),
         };
@@ -2402,6 +2520,79 @@ mod tests {
             };
             let grants = effective(&mirror, "portal-approver", &who, "espoo", Utc::now());
             assert_eq!(grants.check_converses("espoo").is_ok(), converses, "{role}");
+        }
+    }
+
+    /// PF-03: a role bound in one project, here one that lists the organization's groups and
+    /// environments, reads them there and proposes or approves none of them; the same role bound
+    /// organization-wide still does, and the project's own kinds and bindings keep every verb.
+    #[test]
+    fn a_project_binding_changes_no_organization_group_or_setting() {
+        let mirror = Mirror::new();
+        mirror.upsert(org(
+            "Role",
+            "wide",
+            serde_json::json!({ "rules": [{
+                "kinds": ["Group", "Environment", "RoleBinding", "Endpoint"],
+                "verbs": ["read", "propose", "approve"],
+            }] }),
+        ));
+        for (who, scope) in [
+            ("here", serde_json::json!({ "project": "espoo" })),
+            ("space", serde_json::json!({ "contextSpace": "air" })),
+            ("everywhere", serde_json::json!({ "organization": "hel" })),
+        ] {
+            mirror.upsert(org(
+                "RoleBinding",
+                who,
+                serde_json::json!({ "subjects": [{ "user": format!("{who}@hel.fi") }],
+                                    "role": "wide", "scope": scope }),
+            ));
+        }
+        mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: "ContextSpace".to_owned(),
+            metadata: ObjectMeta::new("air", "espoo"),
+            spec: serde_json::json!({}),
+            status: None,
+        });
+        let person = |who: &str| Identity {
+            client: None,
+            subject: format!("f:1:{who}"),
+            username: format!("{who}@hel.fi"),
+            email: Some(format!("{who}@hel.fi")),
+            name: None,
+            roles: Vec::new(),
+            groups: Vec::new(),
+            second_factor: false,
+        };
+        for (who, administers) in [("here", false), ("space", false), ("everywhere", true)] {
+            let grants = effective(
+                &mirror,
+                "portal-approver",
+                &person(who),
+                "espoo",
+                Utc::now(),
+            );
+            for kind in ["Group", "Environment"] {
+                // A space binding reads only what names its space, which no group does.
+                if who != "space" {
+                    assert!(grants.may(kind, Verb::Read), "{who} reads {kind}");
+                }
+                for verb in [Verb::Propose, Verb::Approve] {
+                    assert_eq!(grants.may(kind, verb), administers, "{who} {verb:?} {kind}");
+                }
+            }
+            assert!(
+                grants.may("Endpoint", Verb::Approve),
+                "{who} approves Endpoint"
+            );
+            if who != "space" {
+                assert!(
+                    grants.may("RoleBinding", Verb::Propose),
+                    "{who} proposes RoleBinding"
+                );
+            }
         }
     }
 

@@ -741,6 +741,23 @@ async fn password_grant_refusals_and_totp() {
     );
     let (_, _, body) = send(gw(&with_code)).await;
     assert_eq!(err(&body), "invalid_grant", "a replayed code: {body}");
+    // A second authenticator the steward added later verifies too.
+    let second = CredentialRecord {
+        id: "otp-second-device".into(),
+        secret_data: serde_json::json!({ "value": generate_totp_secret() }).to_string(),
+        credential_data:
+            r#"{"digits":6,"period":30,"algorithm":"HmacSHA1","secretEncoding":"BASE32"}"#.into(),
+        ..otp.clone()
+    };
+    store.upsert_credential(second.clone()).await.unwrap();
+    let mut second_code = steward.to_vec();
+    second_code.push((
+        "totp",
+        generate_totp_code_for_credential(&second, chrono::Utc::now().timestamp() as u64 + 30)
+            .unwrap(),
+    ));
+    let (st, _, body) = send(gw(&second_code)).await;
+    assert_eq!(st, StatusCode::OK, "the second device's code: {body}");
     // A client without direct access grants.
     let (st, _, body) = send(vec![
         ("grant_type", "password".into()),

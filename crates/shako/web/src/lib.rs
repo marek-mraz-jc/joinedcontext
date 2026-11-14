@@ -790,7 +790,14 @@ async fn redirect_gitea_oauth_keycloak(
     let prefix = mount_ext.map_or_else(String::new, |Extension(m)| m.path_prefix);
     let target = q
         .redirect_to
-        .filter(|p| p.starts_with('/') && !p.starts_with("//") && !p.contains('\\'))
+        // A browser drops tabs and newlines from a Location (`/\t/evil` is `//evil`), so a
+        // target holding any control or space byte is no local path.
+        .filter(|p| {
+            p.starts_with('/')
+                && !p.starts_with("//")
+                && !p.contains('\\')
+                && !p.chars().any(|c| c.is_ascii_control() || c.is_whitespace())
+        })
         .unwrap_or_else(|| {
             if prefix.is_empty() {
                 "/".into()

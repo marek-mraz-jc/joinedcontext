@@ -281,6 +281,9 @@ async fn apply_portal_realm(
     if let Some(kaisatsu) = ctx.siblings.get(Module::Kaisatsu) {
         files.push(account_console_realm_file(&kaisatsu.public, realm));
     }
+    seed_first_admin_once(store, realm, &mut files)
+        .await
+        .map_err(|e| err(&e))?;
     let options = ApplyOptions {
         env_vars: setup::realm_env(ctx.setup),
         ..ApplyOptions::default()
@@ -293,6 +296,24 @@ async fn apply_portal_realm(
         changed = report.has_changes(),
         "kaisatsu: the Portal's realm is applied"
     );
+    Ok(())
+}
+
+/// Leaves the first administrator out of `files` once the realm holds it: applied again on every
+/// start, its file would enable the account and put it back into the bootstrap group after an
+/// administrator disabled it or took it out.
+async fn seed_first_admin_once(
+    store: &Arc<dyn Store>,
+    realm: &setup::Realm,
+    files: &mut Vec<(String, serde_json::Value)>,
+) -> Result<(), kaisatsu_core::KaisatsuError> {
+    if store
+        .get_user_by_username_or_email(realm.as_str(), None, setup::FIRST_ADMIN)
+        .await?
+        .is_some()
+    {
+        files.retain(|(name, _)| name != setup::FIRST_ADMIN_FILE);
+    }
     Ok(())
 }
 
@@ -461,6 +482,31 @@ fn follow_endpoint_scopes(
     });
 }
 
+/// How often expired sign-in rows (sessions, codes, revoked token ids) are deleted.
+const SWEEP_EVERY: Duration = Duration::from_secs(60);
+
+/// Deletes expired sign-in rows every `every` until `shutdown`, as `kaisatsu serve` does: the
+/// reads already skip them, the sweep keeps the tables from growing with every sign-in.
+fn sweep_expired_rows(
+    store: Arc<dyn Store>,
+    every: Duration,
+    shutdown: &CancellationToken,
+    tasks: &TaskTracker,
+) {
+    let shutdown = shutdown.clone();
+    tasks.spawn(async move {
+        loop {
+            if let Err(e) = store.sweep_expired().await {
+                tracing::warn!(error = %e, "kaisatsu: expired rows not swept");
+            }
+            tokio::select! {
+                () = shutdown.cancelled() => return,
+                () = tokio::time::sleep(every) => {}
+            }
+        }
+    });
+}
+
 /// Keeps each Organization's sign-in pages its `Organization.spec.appearance` over the realm's
 /// block (UIX-16, T-6777): one block per Organization, keyed by its Portal host, which the
 /// sign-in finds by the redirect URI the Portal there sends. A member the Organization leaves
@@ -599,6 +645,7 @@ pub async fn build(
     }
     check_edge_client(&store, realm).await?;
     follow_endpoint_scopes(store.clone(), realm.clone(), shutdown, tasks);
+    sweep_expired_rows(store.clone(), SWEEP_EVERY, shutdown, tasks);
     #[cfg(feature = "portal")]
     follow_appearances(&store, realm, organizations, shutdown, tasks);
     #[cfg(not(feature = "portal"))]
@@ -793,6 +840,46 @@ mod tests {
         assert!(audience(&portal).contains(&setup::ASSISTANT_CLIENT.to_owned()));
     }
 
+    /// The first administrator is seeded on the first start only: one an administrator disabled
+    /// stays disabled when `jc` starts again with changed realm files (an upgrade, an added
+    /// Organization), which an unchanged file's checksum would skip.
+    #[tokio::test]
+    async fn a_disabled_first_admin_stays_disabled_on_the_next_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let setup = setup::Setup::prepare(dir.path(), &Module::ALL, &Default::default()).unwrap();
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new(
+            Kek::from_raw_bytes("07".repeat(32).as_bytes()).unwrap(),
+        ));
+        let options = ApplyOptions {
+            env_vars: setup::realm_env(&setup),
+            ..ApplyOptions::default()
+        };
+        let (setup, store, options) = (&setup, &store, &options);
+        let start = |portals: Vec<String>| async move {
+            let mut files =
+                setup::portal_realm_files("https://portal.city.example/", &portals, &setup.realm)
+                    .unwrap();
+            seed_first_admin_once(store, &setup.realm, &mut files)
+                .await
+                .unwrap();
+            apply_realm_files(store, &files, options).await.unwrap();
+        };
+        let admin = || async {
+            store
+                .get_user_by_username_or_email(setup.realm.as_str(), None, setup::FIRST_ADMIN)
+                .await
+                .unwrap()
+                .expect("the first admin")
+        };
+        start(vec![]).await;
+        let mut first = admin().await;
+        assert!(first.enabled);
+        first.enabled = false;
+        store.update_user(first).await.unwrap();
+        start(vec!["https://portal.org.city.example".into()]).await;
+        assert!(!admin().await.enabled);
+    }
+
     fn edge(attrs: &[(&str, &str)]) -> ClientRepresentation {
         let mut c = ClientRepresentation {
             client_id: EDGE_CLIENT.into(),
@@ -835,6 +922,29 @@ mod tests {
     }
 
     /// An empty import dir (first start) applies nothing; a realm file in it is applied.
+    /// jc sweeps expired rows as `kaisatsu serve` does: an expired revoked-token row is gone
+    /// once the sweeper ran, so a sweep afterwards finds nothing left.
+    #[tokio::test]
+    async fn the_sweeper_deletes_expired_rows() {
+        let kek = Kek::from_raw_bytes(&[7u8; 32]).unwrap();
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek));
+        store
+            .mark_token_revoked(kaisatsu_core::RevokedTokenRecord {
+                jti_hash: "gone".into(),
+                realm_id: "dev".into(),
+                expires_at: chrono::Utc::now() - chrono::Duration::minutes(1),
+            })
+            .await
+            .unwrap();
+        let (shutdown, tasks) = (CancellationToken::new(), TaskTracker::new());
+        sweep_expired_rows(store.clone(), Duration::from_millis(10), &shutdown, &tasks);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        shutdown.cancel();
+        tasks.close();
+        tasks.wait().await;
+        assert_eq!(store.sweep_expired().await.unwrap(), 0);
+    }
+
     #[tokio::test]
     async fn an_empty_import_dir_applies_nothing_and_a_realm_file_is_applied() {
         let dir = tempfile::tempdir().unwrap();

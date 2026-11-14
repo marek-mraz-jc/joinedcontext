@@ -515,8 +515,9 @@ fn asked(arguments: &Map<String, Value>) -> Result<Asked, String> {
     let (mut limit, mut cursor, mut source) = (DEFAULT_LIMIT, None, None);
     for (name, value) in arguments {
         match (name.as_str(), value) {
+            // The words are embedded, never the blanks around them: what is checked is sent.
             ("query", Value::String(query)) if is_query(query) => {
-                queries.insert(0, query.clone());
+                queries.insert(0, query.trim().to_owned());
             }
             ("translations", translations) => {
                 add_translations(translations, &mut queries)?;
@@ -587,8 +588,9 @@ fn add_translations(translations: &Value, queries: &mut Vec<String>) -> Result<(
     for (lang, text) in translations {
         match text {
             Value::String(text) if is_lang(lang) && is_query(text) => {
-                if !queries.contains(text) {
-                    queries.push(text.clone());
+                let text = text.trim().to_owned();
+                if !queries.contains(&text) {
+                    queries.push(text);
                 }
             }
             _ => return Err(format!(
@@ -672,10 +674,8 @@ fn cite(hit: &Value) -> String {
 /// cursor, the gateway's own, after the fence and as `structuredContent.nextCursor`.
 fn fenced(list: &Value, key: &str, next: Option<String>) -> Value {
     let json = serde_json::to_string(list).unwrap_or_else(|_| "[]".to_owned());
-    let longest = json.split(|c| c != '`').map(str::len).max().unwrap_or(0);
-    let ticks = "`".repeat(longest.max(2) + 1);
     let mut answer = answered(list, key);
-    let mut text = format!("{UNTRUSTED_PREFACE}\n{ticks}json\n{json}\n{ticks}");
+    let mut text = fence(UNTRUSTED_PREFACE, &json);
     if let Some(next) = next {
         text.push_str(&format!(
             "\nMore hits: call again with \"cursor\": \"{next}\"."
@@ -685,6 +685,14 @@ fn fenced(list: &Value, key: &str, next: Option<String>) -> Value {
     answer["content"][0]["text"] = json!(text);
     answer["_meta"] = json!({ "jc/untrusted": true });
     answer
+}
+
+/// `json` under `preface`, in a fence longer than any backtick run in it, so no value can close
+/// it early (T-5559).
+pub(crate) fn fence(preface: &str, json: &str) -> String {
+    let longest = json.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let ticks = "`".repeat(longest.max(2) + 1);
+    format!("{preface}\n{ticks}json\n{json}\n{ticks}")
 }
 
 /// The tool's description: whose pages, in which languages, and that the text is data.
@@ -876,6 +884,17 @@ mod tests {
             asked(&arguments(json!({"query": "uimahallit"}))).expect("valid");
         assert_eq!(queries, ["uimahallit"]);
         assert_eq!(limit, 5, "the default page");
+    }
+
+    #[test]
+    fn a_question_padded_with_blanks_is_embedded_without_them() {
+        let blanks = " ".repeat(100_000);
+        let Asked { queries, .. } = asked(&arguments(json!({
+            "query": format!("{blanks}uimahallit{blanks}"),
+            "translations": {"en": format!("swimming halls{blanks}"), "fi": "uimahallit\n"}
+        })))
+        .expect("valid");
+        assert_eq!(queries, ["uimahallit", "swimming halls"]);
     }
 
     #[test]

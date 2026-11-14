@@ -291,6 +291,54 @@ async fn dangling_reference_unknown_mapper_and_file_escape_fail_and_plan_refuses
     assert_eq!(exported1, exported2);
 }
 
+/// An identity provider's upstream client secret resolves from its variable like a client's,
+/// leaves the realm as a placeholder on export, and an export re-applied without the variable
+/// keeps the stored secret.
+#[tokio::test]
+async fn an_identity_provider_secret_resolves_exports_as_a_placeholder_and_survives_reapply() {
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let doc = json!({
+        "realm": "upstream",
+        "enabled": true,
+        "identityProviders": [{
+            "alias": "entra-id",
+            "providerId": "oidc",
+            "enabled": true,
+            "config": { "clientId": "kaisatsu", "clientSecret": "$(env:IDP_SECRET_ENTRA_ID)" }
+        }]
+    });
+    let mut opts = default_opts();
+    opts.env_vars
+        .insert("IDP_SECRET_ENTRA_ID".into(), "upstream-secret-1".into());
+    apply_realm_files(&store, &[("upstream.json".into(), doc)], &opts)
+        .await
+        .unwrap();
+    let secret = |store: Arc<dyn Store>| async move {
+        store
+            .get_idp("upstream", "entra-id")
+            .await
+            .unwrap()
+            .unwrap()
+            .config["clientSecret"]
+            .clone()
+    };
+    assert_eq!(secret(store.clone()).await, "upstream-secret-1");
+    let exported = export_realm(&store, "upstream", false).await.unwrap();
+    let text = exported.to_string();
+    assert!(!text.contains("upstream-secret-1"), "{text}");
+    assert!(text.contains("$(IDP_SECRET_ENTRA_ID)"), "{text}");
+    // The export's identity providers alone, re-applied without the variable.
+    let again = json!({
+        "realm": "upstream",
+        "enabled": true,
+        "identityProviders": exported["identityProviders"],
+    });
+    apply_realm_files(&store, &[("exported.json".into(), again)], &default_opts())
+        .await
+        .unwrap();
+    assert_eq!(secret(store.clone()).await, "upstream-secret-1");
+}
+
 #[tokio::test]
 async fn unset_secret_variables_never_become_guessable_secrets() {
     let store: Arc<dyn Store> = Arc::new(MemoryStore::default());

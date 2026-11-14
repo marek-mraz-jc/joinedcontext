@@ -252,23 +252,41 @@ pub async fn patch_repository(
     name: &str,
     patch: RepositoryPatch,
 ) -> ShakoResult<RepoRecord> {
-    let (mut repo, _) = resolve_and_authorize_repo(state, ctx, owner, name, Action::Admin).await?;
+    let (mut repo, disk_path) =
+        resolve_and_authorize_repo(state, ctx, owner, name, Action::Admin).await?;
     if let Some(a) = patch.archived {
         repo.archived = a;
     }
     if let Some(d) = patch.description {
         repo.description = d;
     }
-    if let Some(b) = patch.default_branch {
-        validate_branch_name(&b)?;
-        repo.default_branch = b;
+    let new_head = patch.default_branch.filter(|b| *b != repo.default_branch);
+    if let Some(b) = &new_head {
+        validate_branch_name(b)?;
+        repo.default_branch.clone_from(b);
     }
     if let Some(p) = patch.private {
         repo.private = p;
     }
-    if let Some(n) = patch.name {
+    if let Some(n) = patch.name.filter(|n| *n != repo.name) {
         validate_repo_or_owner_name(&n, "repository")?;
+        if state
+            .store()
+            .get_repo_by_name(repo.instance_id, repo.org_id, &repo.owner, &n)
+            .await?
+            .is_some()
+        {
+            return Err(ShakoError::Conflict(format!(
+                "repository '{}/{n}' already exists",
+                repo.owner
+            )));
+        }
         repo.name = n;
+    }
+    // A clone checks out what HEAD names: it follows the default branch.
+    if let Some(b) = new_head {
+        std::fs::write(disk_path.join("HEAD"), format!("ref: refs/heads/{b}\n"))
+            .map_err(|e| ShakoError::Internal(format!("write HEAD: {e}")))?;
     }
     state.store().update_repo(repo).await
 }
@@ -566,6 +584,13 @@ pub async fn commit_files(
             }
             None => None,
         };
+        // The same scan a push passes (SEC-06): an API or MCP commit is no way around it.
+        if let Some(reason) = content
+            .as_deref()
+            .and_then(|bytes| shako_git::scan_blob_for_secrets(&clean, bytes))
+        {
+            return Err(ShakoError::Unprocessable(reason));
+        }
         changed_paths.push(clean.clone());
         ops.push(FileChangeOp {
             operation: item.operation,
@@ -865,8 +890,8 @@ pub async fn create_review(
             .await
             .unwrap_or_default();
         if policy
-            .matching_branch_rule(&pr.base_ref)
-            .is_some_and(|rule| rule.required_approvals > 0)
+            .matching_branch_rules(&pr.base_ref)
+            .any(|rule| rule.required_approvals > 0)
         {
             return Err(ShakoError::Unprocessable(
                 "pull request author cannot approve their own pull request".into(),
@@ -930,7 +955,14 @@ pub async fn patch_pull_request(
     if let Some(b) = patch.body {
         pr.body = b;
     }
-    if let Some(base) = patch.base {
+    if let Some(base) = patch.base.filter(|b| *b != pr.base_ref) {
+        // A merged pull request records where it landed: its target stays.
+        if pr.merged {
+            return Err(ShakoError::Unprocessable(
+                "a merged pull request keeps its base branch".into(),
+            ));
+        }
+        validate_branch_name(&base)?;
         pr.base_ref = base;
     }
     let saved = state.store().update_pull_request(pr).await?;

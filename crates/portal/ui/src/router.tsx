@@ -28,11 +28,11 @@ import { hasEditForm, ResourceListPage } from "./routes/ResourceListPage";
 const InboxPage = lazy(() => import("./pages/inbox/InboxPage").then((module) => ({ default: module.InboxPage })));
 import { FormRouteHost } from "./components/forms/FormRoute";
 import type { FormTarget } from "./components/forms/FormRoute";
-import { ActivityPage } from "./routes/ActivityPage";
-import { GrafanaPage } from "./pages/grafana/GrafanaPage";
-import { DashboardPage } from "./pages/grafana/DashboardPage";
-import { DashboardBuilderPage } from "./pages/grafana/DashboardBuilder";
-import { HealthPage } from "./pages/health/HealthLog";
+const ActivityPage = lazy(() => import("./routes/ActivityPage").then((module) => ({ default: module.ActivityPage })));
+const GrafanaPage = lazy(() => import("./pages/grafana/GrafanaPage").then((module) => ({ default: module.GrafanaPage })));
+const DashboardPage = lazy(() => import("./pages/grafana/DashboardPage").then((module) => ({ default: module.DashboardPage })));
+const DashboardBuilderPage = lazy(() => import("./pages/grafana/DashboardBuilder").then((module) => ({ default: module.DashboardBuilderPage })));
+const HealthPage = lazy(() => import("./pages/health/HealthLog").then((module) => ({ default: module.HealthPage })));
 const SecretFormPage = lazy(() => import("./pages/secrets/SecretFormPage").then((module) => ({ default: module.SecretFormPage })));
 const DashboardJsonEditor = lazy(() =>
   import("./pages/dashboards/DashboardJsonEditor").then((module) => ({ default: module.DashboardJsonEditor })),
@@ -1343,7 +1343,7 @@ const federationRoute = createRoute({
   },
 });
 
-import { SpaceComplete } from "./pages/spaces/SpaceComplete";
+const SpaceComplete = lazy(() => import("./pages/spaces/SpaceComplete").then((module) => ({ default: module.SpaceComplete })));
 
 /** Space Complete route (static, so `/spaces/complete` is never read as a space called "complete"). */
 const spaceCompleteRoute = createRoute({

@@ -853,6 +853,105 @@ async fn ckan_site_and_listing_actions() {
 }
 
 #[tokio::test]
+async fn resource_view_create_cannot_take_over_another_datasets_view() {
+    let w = world().await;
+    let app = &w.app;
+    let body = json!({"resource_id": "res-open-0", "view_type": "image_view", "id": "view-orphan", "title": "mine"});
+    let a = ckan(app, "resource_view_create", Some("tok-editor"), body).await;
+    assert_eq!(a.status, StatusCode::CONFLICT, "{}", a.body);
+    let a = ckan(
+        app,
+        "resource_view_show",
+        Some("tok-admin"),
+        json!({"id": "view-orphan"}),
+    )
+    .await;
+    assert_eq!(
+        a.json()["result"]["resource_id"],
+        "res-orphan-0",
+        "{}",
+        a.body
+    );
+    // An id that is no slug is refused: it lands in links and embed snippets.
+    let body =
+        json!({"resource_id": "res-open-0", "view_type": "image_view", "id": "v\" onload=\"x"});
+    let a = ckan(app, "resource_view_create", Some("tok-editor"), body).await;
+    assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", a.body);
+    // A create with a fresh id of its own still works.
+    let body = json!({"resource_id": "res-open-0", "view_type": "image_view", "id": "view-new"});
+    let a = ckan(app, "resource_view_create", Some("tok-editor"), body).await;
+    assert_eq!(a.json()["result"]["id"], "view-new", "{}", a.body);
+}
+
+#[tokio::test]
+async fn resource_create_cannot_reuse_another_datasets_resource_id() {
+    let w = world().await;
+    let app = &w.app;
+    // `res-orphan-0` belongs to a dataset the editor may not change.
+    let body = json!({"package_id": "open", "id": "res-orphan-0", "url": "https://x.test/a.csv"});
+    let a = ckan(app, "resource_create", Some("tok-editor"), body).await;
+    assert_eq!(a.status, StatusCode::CONFLICT, "{}", a.body);
+    let a = ckan(
+        app,
+        "resource_show",
+        Some("tok-admin"),
+        json!({"id": "res-orphan-0"}),
+    )
+    .await;
+    assert_eq!(a.json()["result"]["package_id"], "pkg-orphan", "{}", a.body);
+    // A fresh id of its own still works.
+    let body = json!({"package_id": "open", "id": "res-open-new", "url": "https://x.test/b.csv"});
+    let a = ckan(app, "resource_create", Some("tok-editor"), body).await;
+    assert_eq!(a.json()["result"]["id"], "res-open-new", "{}", a.body);
+}
+
+#[tokio::test]
+async fn mcp_tool_errors_keep_the_stores_text_in_the_server_log() {
+    let w = world().await;
+    let app = &w.app;
+    w.store.fail(&["get_dataset"]);
+    let a = post(
+        app,
+        "/mcp",
+        None,
+        json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+               "params": {"name": "jc_dataset_get", "arguments": {"name": "open"}}}),
+    )
+    .await;
+    assert_eq!(a.json()["result"]["isError"], true, "{}", a.body);
+    assert!(a.body.contains("storage failed"), "{}", a.body);
+    assert!(!a.body.contains("get_dataset failed"), "{}", a.body);
+}
+
+#[tokio::test]
+async fn ckan_get_refuses_every_write_and_purge_action() {
+    let w = world().await;
+    let app = &w.app;
+    for action in [
+        "dataset_purge?id=open",
+        "package_delete?id=open",
+        "package_patch?id=open&title=x",
+        "resource_view_delete?id=v",
+        "organization_delete?id=city",
+    ] {
+        let a = get(app, &format!("/api/3/action/{action}"), Some("tok-admin")).await;
+        assert_eq!(
+            a.status,
+            StatusCode::METHOD_NOT_ALLOWED,
+            "{action}: {}",
+            a.body
+        );
+        assert_eq!(a.headers[header::ALLOW], "POST");
+        assert!(ckan_error(&a)["method"][0]
+            .as_str()
+            .unwrap()
+            .contains("POST"));
+    }
+    let a = get(app, "/api/3/action/package_show?id=open", None).await;
+    assert_eq!(a.json()["result"]["state"], "active", "{}", a.body);
+}
+
+#[tokio::test]
 async fn ckan_request_parsing_and_identity() {
     let w = world().await;
     let app = &w.app;
@@ -1368,6 +1467,19 @@ async fn ckan_organization_writes() {
         a.json()["result"]["uri"],
         format!("https://{HOST}/organization/dept2")
     );
+    // A new organization's id never names a stored one: datasets name their publisher by it.
+    for id in ["city", "org-dept"] {
+        let a = ckan(
+            app,
+            "organization_create",
+            Some("tok-admin"),
+            json!({"name": "dept3", "id": id}),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::CONFLICT, "{id}: {}", a.body);
+    }
+    let a = ckan(app, "package_show", None, json!({"id": "open"})).await;
+    assert_eq!(a.json()["result"]["organization"]["name"], "city");
 
     // organization_update / patch: by id or name, an instance renames only its own organization.
     let a = ckan(
@@ -1680,6 +1792,14 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
             err["message"].as_str().unwrap().contains("failed"),
             "{action}: {err}"
         );
+        // The store's own text (tables, constraints, values) stays in the server log.
+        for m in methods {
+            assert!(
+                !a.body.contains(&format!("{m} failed")),
+                "{action}: {}",
+                a.body
+            );
+        }
     }
     // Nothing was written by the refused calls.
     let ctx = w.admin_ctx();
@@ -1946,6 +2066,52 @@ async fn a_failing_store_never_answers_an_empty_feed() {
 // ---------------------------------------------------------------------------------------------
 
 #[tokio::test]
+async fn odata_harvest_and_shacl_rows_follow_their_operations() {
+    let w = world().await;
+    let app = &w.app;
+    let ctx = RequestCtx::new(
+        w.org,
+        w.cat,
+        Subject::authenticated("seed", vec![w.org], Vec::new()),
+    );
+    for ds in ["pkg-open", "pkg-secret"] {
+        let report: ShaclValidationReport = serde_json::from_value(json!({
+            "orgId": w.org, "catalogueId": w.cat, "id": format!("rep-{ds}"), "datasetId": ds,
+            "profileId": "dcat-ap-3.0.1", "profileVersion": "3.0.1", "conforms": true,
+            "violationCount": 0, "warningCount": 0, "findings": [],
+            "checkedAt": "2026-11-01T10:00:00Z"
+        }))
+        .unwrap();
+        w.store.upsert_shacl_report(&ctx, report).await.unwrap();
+    }
+    let source: HarvestSource = serde_json::from_value(json!({
+        "orgId": w.org, "catalogueId": w.cat, "id": "hs-1", "name": "nkod",
+        "kind": "dcat-ap", "url": "https://data.example.org/catalog.ttl", "publisherId": "city",
+        "allowedHosts": ["data.example.org"], "modified": "2026-11-01T10:00:00Z"
+    }))
+    .unwrap();
+    w.store.upsert_harvest_source(&ctx, source).await.unwrap();
+    let ids = |a: &Answer| -> Vec<String> {
+        a.json()["value"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{}", a.body))
+            .iter()
+            .map(|r| r["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    // A member without grants: no harvest sources (harvest_source.list refuses it too), and
+    // only the reports of datasets it may read.
+    let a = get(app, "/odata/v4/HarvestSources", Some("tok-member")).await;
+    assert!(ids(&a).is_empty(), "{}", a.body);
+    let a = get(app, "/odata/v4/ShaclResults", Some("tok-member")).await;
+    assert_eq!(ids(&a), ["rep-pkg-open"], "{}", a.body);
+    let a = get(app, "/odata/v4/HarvestSources", Some("tok-admin")).await;
+    assert_eq!(ids(&a), ["hs-1"], "{}", a.body);
+    let a = get(app, "/odata/v4/ShaclResults", Some("tok-editor")).await;
+    assert_eq!(ids(&a).len(), 2, "{}", a.body);
+}
+
+#[tokio::test]
 async fn odata_rows_follow_package_show() {
     let w = world().await;
     let app = &w.app;
@@ -2090,10 +2256,21 @@ async fn portal_catalogue_and_dataset_answer_like_package_show() {
             v["page"].as_u64(),
             v["pageSize"].as_u64()
         ),
-        (Some(3), Some(1), Some(20)),
-        "{}",
+        (Some(2), Some(1), Some(20)),
+        "the jc_hide dataset `veiled` is not counted: {}",
         a.body
     );
+    let names: Vec<&str> = v["datasets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|d| d["name"].as_str())
+        .collect();
+    assert!(!names.contains(&"veiled"), "{names:?}");
+    // Its editor sees it, and a signed-in answer is never cached as public.
+    let a = get(app, "/api/v1/catalogue", Some("tok-editor")).await;
+    assert!(a.body.contains("\"veiled\""), "{}", a.body);
+    assert_eq!(a.header("cache-control"), "private, no-store");
     let a = get(
         app,
         "/api/v1/catalogue?q=open&publisher=city&theme=ENVI&format=CSV&licence=cc-by&spatial=SK032&page=1",
@@ -2124,8 +2301,11 @@ async fn portal_catalogue_and_dataset_answer_like_package_show() {
         )
         .await;
         assert_eq!(a.status == StatusCode::OK, editor, "{name}: {}", a.body);
+        // A signed-in answer may hold what an anonymous one may not read: never shared-cached.
+        assert_eq!(a.header("cache-control"), "private, no-store", "{name}");
     }
     let a = get(app, "/api/v1/catalogue/datasets/open", None).await;
+    assert_eq!(a.header("cache-control"), "public, max-age=60");
     assert_eq!(a.json()["name"], "open");
     let a = get(app, "/api/v1/catalogue/datasets/ghost", None).await;
     assert_eq!(a.status, StatusCode::NOT_FOUND);
@@ -2429,10 +2609,21 @@ async fn sample_validation_uses_shapes_only_of_a_dataset_the_caller_sees() {
     .await;
     assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", a.body);
     assert!(a.body.contains("dataset has no custom SHACL shapes"));
+    // Shapes of the caller's own: an editor's draft, refused to anyone else.
+    for token in [None, Some("tok-member")] {
+        let a = post(
+            app,
+            "/api/v1/datasets/second/validate-sample",
+            token,
+            json!({"sample_turtle": bad, "shapes_turtle": SHAPES}),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::FORBIDDEN, "{token:?}: {}", a.body);
+    }
     let a = post(
         app,
         "/api/v1/datasets/second/validate-sample",
-        None,
+        Some("tok-editor"),
         json!({"sample_turtle": bad, "shapes_turtle": SHAPES}),
     )
     .await;
@@ -2753,6 +2944,11 @@ async fn pages_show_a_dataset_its_resources_and_its_map_where_package_show_would
     let a = get(app, "/dataset/open/resource/res-open-0", None).await;
     assert!(a.header("content-type").starts_with("text/html"));
     assert!(a.header("content-security-policy").contains("nonce-"));
+    assert_eq!(a.header("x-content-type-options"), "nosniff");
+    assert_eq!(
+        a.header("referrer-policy"),
+        "strict-origin-when-cross-origin"
+    );
     assert!(a.body.contains("files.example.org/open.csv"));
     let a = get(app, "/map/open", None).await;
     assert!(

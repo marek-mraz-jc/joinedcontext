@@ -584,6 +584,18 @@ async fn restrict_refuses_with_the_count_and_the_readable_ids_and_changes_nothin
     assert!(answer.held(&urn("Building", "b1")).is_some());
 }
 
+/// ISO-03: a caller who may not delete the Building learns no slot, count or id of what points
+/// at it; the refusal is the root's own.
+#[tokio::test]
+async fn restrict_says_nothing_to_a_caller_who_may_not_delete_the_root() {
+    let answer = delete(&["School"], &urn("Building", "b1")).await;
+
+    assert_eq!(answer.status, StatusCode::FORBIDDEN, "{}", answer.body);
+    assert!(answer.body.get("count").is_none(), "{}", answer.body);
+    assert!(!answer.body.to_string().contains("s1"), "{}", answer.body);
+    assert!(answer.writes().is_empty(), "{:?}", answer.writes());
+}
+
 #[tokio::test]
 async fn a_cascade_two_levels_deep_deletes_from_the_farthest_in() {
     let answer = delete(CLASSES, &urn("School", "s1")).await;
@@ -650,6 +662,73 @@ async fn a_many_to_many_cascade_removes_only_the_one_link() {
         .collect();
     assert_eq!(courses, vec![urn("Course", "c2")]);
     assert!(answer.held(&urn("Course", "c2")).is_some());
+}
+
+/// A delete through MCP changes nothing until the person confirms it: the call before the
+/// broker's `requestState` plans the rules, so a refusal is told at once, and unlinks nothing;
+/// the confirmed retry makes the changes.
+#[tokio::test]
+async fn an_mcp_delete_unlinks_nothing_before_the_person_confirms_it() {
+    let realm = common::Realm::new();
+    let mut endpoint = endpoint(CLASSES);
+    endpoint.representations.push(Representation::Mcp);
+    let (upstream, store) = broker(campus(), &[]).await;
+    let gateway = Gateway::new(Broker::new(upstream), Box::new(PolicyPdp), DOMAIN)
+        .serve([endpoint])
+        .authenticate(
+            Arc::new(realm.verifier()),
+            context_gateway::auth::accounts::ServiceAccounts::new(),
+            None,
+        );
+    let app = router(Arc::new(gateway));
+    let token = realm.mint(&json!({
+        "iss": common::ISSUER,
+        "sub": "sub-jana",
+        "aud": SLUG,
+        "preferred_username": "jana",
+        "realm_access": { "roles": ["public"] },
+        "exp": common::in_seconds(300),
+        "iat": common::in_seconds(-10),
+    }));
+    let unlinked = || {
+        store
+            .lock()
+            .expect("the store")
+            .calls
+            .iter()
+            .any(|call| call.contains("Teacher") && !call.starts_with("GET "))
+    };
+    let call = |params: Value| {
+        let message =
+            json!({ "jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": params });
+        Request::post(format!("/api/endpoint/{SLUG}/mcp"))
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", format!("Bearer {token}"))
+            .header("jc-reason", "test")
+            .body(Body::from(message.to_string()))
+            .expect("a request")
+    };
+    let asked = json!({ "name": "delete_entity", "arguments": { "id": urn("Desk", "d1") } });
+
+    let response = app
+        .clone()
+        .oneshot(call(asked.clone()))
+        .await
+        .expect("an answer");
+    assert!(response.status().is_success(), "{}", response.status());
+    assert!(!unlinked(), "unlinked before the person confirmed");
+    assert!(
+        store.lock().expect("the store").entities[&urn("Teacher", "t1")]
+            .get("desk")
+            .is_some()
+    );
+
+    let mut confirmed = asked;
+    confirmed["requestState"] = json!("sealed-by-the-broker");
+    let response = app.oneshot(call(confirmed)).await.expect("an answer");
+    assert!(response.status().is_success(), "{}", response.status());
+    assert!(unlinked(), "the confirmed delete runs its rules");
 }
 
 /// T-3767: the reads and the unlinking a held delete makes are the gateway's own and speak as

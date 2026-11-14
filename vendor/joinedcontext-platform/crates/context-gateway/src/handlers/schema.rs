@@ -34,6 +34,8 @@ pub struct Visible {
     /// it says which slots each class has. Held per class, so a caller granted `age` on `User`
     /// is never described an `age` on `Vehicle` (MP-02, T-2132).
     slots: BTreeMap<String, BTreeSet<String>>,
+    /// No permission is in force for the caller: no type is described (EP-47).
+    ungranted: bool,
 }
 
 impl Visible {
@@ -67,7 +69,9 @@ impl Visible {
 
     /// Whether the model may describe this entity type at all.
     fn covers_type(&self, name: &str) -> bool {
-        !self.denied_types.contains(name) && (self.types.is_empty() || self.types.contains(name))
+        !self.ungranted
+            && !self.denied_types.contains(name)
+            && (self.types.is_empty() || self.types.contains(name))
     }
 
     /// Whether the model may describe this attribute at all, on any class it belongs to.
@@ -76,7 +80,8 @@ impl Visible {
     /// the caller reads carries it; a class definition is narrowed by [`Self::covers_slot`].
     fn covers_attr(&self, name: &str) -> bool {
         is_entity_system_member(name)
-            || (!self.denied_attrs.contains(name)
+            || (!self.ungranted
+                && !self.denied_attrs.contains(name)
                 && (self.attrs.is_empty() || self.attrs.contains(name)))
     }
 
@@ -113,7 +118,12 @@ pub fn visible(subject: &Subject, endpoint: &Endpoint, now: DateTime<Utc>) -> Vi
         .into_iter()
         .partition(|policy| policy.effect.is_prohibition());
 
-    let mut visible = Visible::default();
+    let mut visible = Visible {
+        // An Endpoint with no Policy at all describes what it publishes (below); one whose
+        // Policies reach other callers only describes nothing to this one.
+        ungranted: grants.is_empty() && !endpoint.policies.is_empty(),
+        ..Visible::default()
+    };
     for policy in &grants {
         visible.types.extend(granted_types(&policy.information));
         visible.attrs.extend(granted_attrs(&policy.information));
@@ -398,6 +408,29 @@ mod visible_tests {
         DateTime::parse_from_rfc3339("2026-09-18T00:00:00Z")
             .expect("a fixed instant")
             .with_timezone(&Utc)
+    }
+
+    /// EP-47: a caller none of the Endpoint's permissions reaches is described no class and no
+    /// attribute, where an empty grant list once read as every type of the model.
+    #[test]
+    fn a_caller_without_a_permission_is_described_nothing() {
+        let stewards = policy(
+            "contextSpaceRef: ovzdusie\nassigner: did:web:hel.fi\n\
+             assignee: { kind: role, id: steward }\noperations: [queryEntity]\n\
+             information:\n  - entities:\n      - type: AirQualityObserved\n",
+        );
+        let ungranted = endpoint(vec![stewards]);
+        let seen = visible(&Subject::anonymous(), &ungranted, now());
+        assert!(!seen.covers_type("AirQualityObserved"));
+        assert!(!seen.covers_attr("pm10"));
+        assert!(visible_types(&ungranted, &seen).is_empty());
+        let granted = endpoint(vec![granting(&["AirQualityObserved"], &[])]);
+        let seen = visible(&Subject::anonymous(), &granted, now());
+        assert_eq!(visible_types(&granted, &seen), vec!["AirQualityObserved"]);
+        assert!(
+            seen.covers_attr("pm10"),
+            "a grant naming no attribute reads them all"
+        );
     }
 
     /// T-1158, GW8, EP-47: a prohibition that names no attribute takes the whole type back, and

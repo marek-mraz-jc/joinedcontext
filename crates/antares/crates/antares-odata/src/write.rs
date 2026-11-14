@@ -12,8 +12,8 @@
 use crate::edm::{Member, Set, Shape};
 use crate::filter::Translated;
 use crate::read::{
-    body_id, canonical_key, encode, entity, key_id, not_found, resource, run, run_request, set_of,
-    Reads,
+    body_id, body_resource, canonical_key, encode, entity, key_id, not_found, run, run_request,
+    set_of, Reads,
 };
 use antares_ops::{Caller, OperationId, OpsRequest};
 use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE, LOCATION};
@@ -44,7 +44,7 @@ pub(crate) async fn create(
 ) -> Result<Response, ODataErrorResponse> {
     let version = ctx.version;
     let set = set_of(reads, set_name, version)?;
-    let resource = resource(reads, set_name, version)?;
+    let resource = body_resource(reads, set_name, version)?;
     let payload = read_entity_body(
         ctx,
         &resource,
@@ -182,7 +182,7 @@ pub(crate) async fn change(
     let version = ctx.version;
     let set = set_of(reads, set_name, version)?;
     let id = id_of(set, key, version)?;
-    let resource = resource(reads, set_name, version)?;
+    let resource = body_resource(reads, set_name, version)?;
     let payload = read_entity_body(ctx, &resource, kind, body, &BodyLimits::strict())
         .map_err(|e| body_error(&e, version))?;
     if payload

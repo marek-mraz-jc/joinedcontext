@@ -2657,6 +2657,7 @@ dependencies = [
  "subtle",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
  "url",
  "uuid",
 ]
@@ -6383,6 +6384,7 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus 0.18.3",
  "ort",
+ "percent-encoding",
  "reqwest 0.12.28",
  "rustls",
  "serde",

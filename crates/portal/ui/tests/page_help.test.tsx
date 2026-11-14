@@ -32,6 +32,8 @@ describe("help for this page (T-3269)", () => {
 
   it("knows each main page by its address, and no page it has no help for", () => {
     expect(helpFor("/")?.key).toBe("home");
+    // The project home is where "/" lands (T-6917): its help is the home help.
+    expect(helpFor("/projects/helsinki/home")?.key).toBe("home");
     expect(helpFor("/organization/people")?.key).toBe("organization");
     expect(helpFor("/projects/helsinki/spaces")?.key).toBe("spaces");
     expect(helpFor("/projects/helsinki/spaces/air/")?.key).toBe("spaces");

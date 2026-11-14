@@ -57,9 +57,16 @@ impl Account {
     /// scoping it (PF-35). A role scoped to a project reaches that project only when it is the
     /// account's own: a project's manifest binds roles of its own project, so neither its own
     /// project scope nor one naming another project reaches an Endpoint of another project that
-    /// admits the account (F-SEC1-001, T-5860).
-    pub fn roles_in(&self, project: &str, space: &str) -> BTreeSet<String> {
-        self.roles_in_at(project, space, chrono::Utc::now())
+    /// admits the account (F-SEC1-001, T-5860). A role scoped to the organization reaches only
+    /// an Endpoint of the account's own Organization: `same_organization` says whether the
+    /// Endpoint's project is of it (ADR-N-058).
+    pub fn roles_in(
+        &self,
+        project: &str,
+        space: &str,
+        same_organization: bool,
+    ) -> BTreeSet<String> {
+        self.roles_in_at(project, space, same_organization, chrono::Utc::now())
     }
 
     /// [`Self::roles_in`] at `now`: a grant outside its validity window is no role, so an
@@ -68,13 +75,14 @@ impl Account {
         &self,
         project: &str,
         space: &str,
+        same_organization: bool,
         now: chrono::DateTime<chrono::Utc>,
     ) -> BTreeSet<String> {
         self.roles
             .iter()
             .filter(|scoped| scoped.validity.as_ref().is_none_or(|v| v.contains(now)))
             .filter(|scoped| {
-                scoped.organization
+                (scoped.organization && same_organization)
                     || (project == self.project && scoped.project.as_deref() == Some(project))
                     || scoped.context_space.as_deref() == Some(space)
             })

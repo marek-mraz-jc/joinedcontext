@@ -240,6 +240,7 @@ export function RegistrationsPage({ project, edit }: { project: string; edit?: s
   const addButton = (
     <PermissionGuard project={project} kind={KIND} verb="propose">
       <Button
+        data-shortcut="new"
         variant="primary"
         icon={<Icon name="plus" className="size-4" />}
         onClick={() => {

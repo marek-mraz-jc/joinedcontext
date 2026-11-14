@@ -21,7 +21,7 @@ pub use password::{
 };
 pub use totp::{
     generate_recovery_codes, generate_totp_code, generate_totp_code_for_credential,
-    generate_totp_secret, verify_recovery_code, verify_totp_code,
+    generate_totp_secret, verify_any_totp_code, verify_recovery_code, verify_totp_code,
 };
 pub use webauthn::{
     AUTH_DATA_FLAG_AT, AUTH_DATA_FLAG_BE, AUTH_DATA_FLAG_BS, AUTH_DATA_FLAG_ED, AUTH_DATA_FLAG_UP,

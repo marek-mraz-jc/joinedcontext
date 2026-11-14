@@ -290,7 +290,30 @@ fn date(c: &mut Cursor<'_>) -> Option<String> {
         }
     };
     let ok = year_ok && c.eat("-") && two(c, 1, 12) && c.eat("-") && two(c, 1, 31);
-    ok.then(|| c.slice(start).to_owned())
+    let text = c.slice(start);
+    (ok && in_month(text)).then(|| text.to_owned())
+}
+
+/// Whether the day of `[-]YYYY-MM-DD` is one its month has (proleptic Gregorian, as
+/// `Edm.Date` is): `2024-02-29` is, `2026-02-31` is not.
+fn in_month(text: &str) -> bool {
+    let mut parts = text.trim_start_matches('-').rsplitn(3, '-');
+    let (Some(day), Some(month), Some(year)) = (parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+    let (Ok(day), Ok(month), Ok(year)) =
+        (day.parse::<u8>(), month.parse::<u8>(), year.parse::<u64>())
+    else {
+        return false;
+    };
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = match month {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    day <= days
 }
 
 /// Two digits forming a number from `low` to `high`, consumed as far as they match the ABNF

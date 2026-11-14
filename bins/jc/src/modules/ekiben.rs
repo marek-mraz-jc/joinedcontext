@@ -239,10 +239,14 @@ fn admit(hosts: &[PrivateHost], stream: Option<&str>, filled: &Value) -> Result<
     strings(filled, &mut texts);
     for text in texts {
         let lower = text.to_ascii_lowercase();
-        if let Some(host) = hosts
-            .iter()
-            .find(|h| Some(h.project.as_str()) != project && names_host(&lower, &h.name))
-        {
+        // A URL host may arrive percent-encoded (`%6dqtt-…`): the client decodes it, so does this.
+        let decoded = percent_encoding::percent_decode_str(&lower)
+            .decode_utf8_lossy()
+            .to_ascii_lowercase();
+        if let Some(host) = hosts.iter().find(|h| {
+            Some(h.project.as_str()) != project
+                && (names_host(&lower, &h.name) || names_host(&decoded, &h.name))
+        }) {
             return Err(format!(
                 "names the private host {}, which belongs to another project",
                 host.name
@@ -626,6 +630,11 @@ mod tests {
             format!("{OVZDUSIE}.:1883"),
             format!("ws://{OVZDUSIE}:1883/mqtt"),
             format!("root = \"tcp://{OVZDUSIE}:1883\""),
+            format!(
+                "http://%{:02x}{}:1883",
+                OVZDUSIE.as_bytes()[0],
+                &OVZDUSIE[1..]
+            ),
         ] {
             let config = serde_json::json!({"output": {"socket": {"address": text}}});
             assert!(

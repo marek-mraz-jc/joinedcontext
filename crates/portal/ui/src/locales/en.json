@@ -11099,6 +11099,7 @@
     "notAllowed": "Only the assistant's administrator, who approves its deployments, reads the stored conversations. Ask them for that right.",
     "empty": "No stored conversations",
     "emptyHint": "Conversations appear here once visitors ask, for as long as the deployment's transcriptRetention keeps them.",
+    "previous": "Previous page",
     "next": "Next page",
     "detail": "Conversation",
     "erase": "Erase the conversation",
