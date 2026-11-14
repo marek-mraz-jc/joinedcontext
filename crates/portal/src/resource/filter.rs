@@ -522,15 +522,18 @@ impl OrderBy {
             .map_or(Value::Null, |v| (*v).clone())
     }
 
-    /// Orders two (key, name) pairs: missing keys last, numbers as numbers, then by name.
+    /// Orders two (key, name) pairs: missing keys last, numbers as numbers before any text, then
+    /// by name. Numbers first keeps the order total when a field mixes both, as sort_by needs.
     pub fn cmp(&self, a: (&Value, &str), b: (&Value, &str)) -> Ordering {
         let keys = match (a.0, b.0) {
             (Value::Null, Value::Null) => Ordering::Equal,
             (Value::Null, _) => return Ordering::Greater,
             (_, Value::Null) => return Ordering::Less,
             (x, y) => match (x.as_f64(), y.as_f64()) {
-                (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(Ordering::Equal),
-                _ => text_of(x).cmp(&text_of(y)),
+                (Some(x), Some(y)) => x.total_cmp(&y),
+                (Some(_), None) => Ordering::Less,
+                (None, Some(_)) => Ordering::Greater,
+                (None, None) => text_of(x).cmp(&text_of(y)),
             },
         };
         let keys = if self.descending {
@@ -621,6 +624,37 @@ mod tests {
     fn without_a_schema_only_the_envelope_is_known() {
         assert!(Filter::parse("spec.anything = 1", None).is_ok());
         assert!(Filter::parse("other = 1", None).is_err());
+    }
+
+    #[test]
+    fn order_by_is_a_total_order_over_numbers_and_text_mixed() {
+        let order = OrderBy::default();
+        let keys = [
+            json!(2),
+            json!(10),
+            json!("1x"),
+            json!("10"),
+            json!(true),
+            json!(1.5),
+        ];
+        for a in &keys {
+            for b in &keys {
+                for c in &keys {
+                    let (ab, bc) = (order.cmp((a, "n"), (b, "n")), order.cmp((b, "n"), (c, "n")));
+                    if ab == bc && ab != Ordering::Equal {
+                        assert_eq!(order.cmp((a, "n"), (c, "n")), ab, "{a} {b} {c}");
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            order.cmp((&json!(2), "a"), (&json!(10), "b")),
+            Ordering::Less
+        );
+        assert_eq!(
+            order.cmp((&json!(10), "a"), (&json!("1x"), "b")),
+            Ordering::Less
+        );
     }
 
     #[test]
