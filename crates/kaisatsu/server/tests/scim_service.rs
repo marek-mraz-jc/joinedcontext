@@ -284,6 +284,43 @@ async fn an_admin_manages_users_and_groups_through_scim() {
         )
         .await;
     assert_eq!(st, StatusCode::CREATED, "{g}");
+    // A second create of the name answers 409 and leaves the group as it is; the create is audited.
+    let gid = g["id"].as_str().unwrap().to_owned();
+    let mut held = api
+        .store
+        .get_group("dev", None, &gid)
+        .await
+        .unwrap()
+        .unwrap();
+    held.attributes
+        .insert("jc.secondFactor".into(), vec!["required".into()]);
+    api.store.upsert_group(held).await.unwrap();
+    let (st, body) = api
+        .call(
+            Method::POST,
+            &format!("{SCIM}/Groups"),
+            &admin,
+            Some(json!({ "displayName": "Night Shift" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    let held = api
+        .store
+        .get_group("dev", None, &gid)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        held.attributes["jc.secondFactor"],
+        vec!["required".to_owned()]
+    );
+    let events = api.store.list_admin_events("dev", None).await.unwrap();
+    assert!(
+        events.iter().any(|e| e.operation_type == "CREATE"
+            && e.resource_type == "GROUP"
+            && e.resource_path == format!("scim/Groups/{gid}")),
+        "{events:?}"
+    );
     let (st, groups) = api
         .call(
             Method::GET,

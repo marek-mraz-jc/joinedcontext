@@ -1189,6 +1189,13 @@ async fn scim_create_group(
         Some(org) => format!("/{org}/{name}"),
         None => format!("/{name}"),
     };
+    if group_path_taken(&state, &realm, &path, None).await? {
+        return Ok(scim_error_response(
+            StatusCode::CONFLICT,
+            Some("uniqueness"),
+            "a group with this displayName exists: choose another name",
+        ));
+    }
     let grp = state
         .oidc
         .store
@@ -1224,6 +1231,15 @@ async fn scim_create_group(
         .store
         .list_group_members(&realm, allowed.as_deref(), &grp.id, 1000)
         .await?;
+    record_admin_write(
+        &state,
+        &ctx,
+        "CREATE",
+        "GROUP",
+        &format!("scim/Groups/{}", grp.id),
+        None,
+    )
+    .await?;
     Ok(scim_json_with_etag(
         StatusCode::CREATED,
         to_scim_group_json(&grp, &members),
@@ -1345,7 +1361,23 @@ async fn scim_put_group(
         Some(org) => format!("/{org}/{name}"),
         None => format!("/{name}"),
     };
+    if group_path_taken(&state, &realm, &grp.path, Some(&grp.id)).await? {
+        return Ok(scim_error_response(
+            StatusCode::CONFLICT,
+            Some("uniqueness"),
+            "a group with this displayName exists: choose another name",
+        ));
+    }
     let grp = state.oidc.store.upsert_group(grp).await?;
+    record_admin_write(
+        &state,
+        &ctx,
+        "UPDATE",
+        "GROUP",
+        &format!("scim/Groups/{}", grp.id),
+        None,
+    )
+    .await?;
 
     for old in &cur_members {
         state
@@ -1573,7 +1605,23 @@ async fn scim_patch_group(
         }
     }
 
+    if group_path_taken(&state, &realm, &grp.path, Some(&grp.id)).await? {
+        return Ok(scim_error_response(
+            StatusCode::CONFLICT,
+            Some("uniqueness"),
+            "a group with this displayName exists: choose another name",
+        ));
+    }
     let grp = state.oidc.store.upsert_group(grp).await?;
+    record_admin_write(
+        &state,
+        &ctx,
+        "UPDATE",
+        "GROUP",
+        &format!("scim/Groups/{}", grp.id),
+        None,
+    )
+    .await?;
     for old in &cur_members {
         if !member_ids.contains(&old.id) {
             state
@@ -1636,7 +1684,32 @@ async fn scim_delete_group(
         .store
         .delete_group(&realm, allowed.as_deref(), &id)
         .await?;
+    record_admin_write(
+        &state,
+        &ctx,
+        "DELETE",
+        "GROUP",
+        &format!("scim/Groups/{id}"),
+        None,
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Whether another group already holds `path`: the stores upsert by id or path, so a SCIM write
+/// onto a taken name would replace that group's attributes and roles (RFC 7644 3.3: 409).
+async fn group_path_taken(
+    state: &AdminState,
+    realm: &str,
+    path: &str,
+    own_id: Option<&str>,
+) -> Result<bool> {
+    Ok(state
+        .oidc
+        .store
+        .get_group_by_path(realm, None, path)
+        .await?
+        .is_some_and(|g| Some(g.id.as_str()) != own_id))
 }
 
 #[cfg(test)]
