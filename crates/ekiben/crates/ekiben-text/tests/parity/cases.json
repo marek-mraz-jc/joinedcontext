@@ -3363,5 +3363,44 @@
   "expected": {
    "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 25]\n"
   }
+ },
+ {
+  "name": "parse_log refused: default_year not an integer",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "twenty"
+   }
+  },
+  "input": "<12>1 - - - - - -",
+  "expected": {
+   "config_error": "failed to convert year twenty into integer:  strconv.Atoi: parsing \"twenty\": invalid syntax"
+  }
+ },
+ {
+  "name": "parse_log refused: unknown default_timezone",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_timezone": "Mars/Base"
+   }
+  },
+  "input": "<12>1 - - - - - -",
+  "expected": {
+   "config_error": "failed to lookup timezone UTC - unknown time zone Mars/Base"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 ignores an unknown default_timezone",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424",
+    "default_timezone": "Nowhere/Town"
+   }
+  },
+  "input": "<12>1 - - - - - -",
+  "expected": {
+   "text": "{\"facility\":1,\"priority\":12,\"severity\":4,\"version\":1}\n"
+  }
  }
 ]
