@@ -1062,7 +1062,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         });
     } else if let Some(late) = built.gateway {
         if cfg.portal_siblings
-            && let Err(e) = crate::provision::forge(&siblings, &setup, &cfg).await
+            && let Err(e) = crate::provision::forge(&siblings, &setup, cfg).await
         {
             let _ = running.stop().await;
             return Err(e);
