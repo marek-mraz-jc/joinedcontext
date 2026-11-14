@@ -2524,7 +2524,7 @@ mod tests {
     /// organization-wide still does, and the project's own kinds keep every verb.
     #[test]
     fn a_project_binding_changes_no_organization_group_or_binding() {
-        let mut mirror = Mirror::new();
+        let mirror = Mirror::new();
         mirror.upsert(org(
             "Role",
             "wide",
