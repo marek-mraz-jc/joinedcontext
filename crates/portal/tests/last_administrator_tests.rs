@@ -120,6 +120,52 @@ fn the_last_administrator_is_not_demoted_or_emptied_by_an_edit() {
     assert!(keeps_an_administrator(&mirror, AccessChange::Write(&handed_over)).is_ok());
 }
 
+/// PF-03: the one administrator binding names a group; emptying the group, or removing the
+/// person binding beside a binding to an empty group, leaves nobody to run the organization.
+#[test]
+fn the_administrators_group_is_not_emptied() {
+    let group = |members: Value| {
+        json!({
+            "apiVersion": API_VERSION, "kind": "Group",
+            "metadata": { "name": "admins", "namespace": ORG_NAMESPACE },
+            "spec": { "members": members },
+        })
+    };
+    let mirror = organization(&[]);
+    mirror.upsert(envelope(
+        "Group",
+        "admins",
+        ORG_NAMESPACE,
+        json!({ "members": [{ "user": "ana@hel.fi" }] }),
+    ));
+    let to_group = binding("admins-run-it", "org-admin", json!([{ "group": "admins" }]));
+    mirror.upsert(envelope(
+        "RoleBinding",
+        "admins-run-it",
+        ORG_NAMESPACE,
+        to_group["spec"].clone(),
+    ));
+    refused(keeps_an_administrator(
+        &mirror,
+        AccessChange::Write(&group(json!([]))),
+    ));
+    let handed_over = group(json!([{ "user": "bo@hel.fi" }]));
+    assert!(keeps_an_administrator(&mirror, AccessChange::Write(&handed_over)).is_ok());
+
+    let emptied = organization(&[("admin", "org-admin")]);
+    emptied.upsert(envelope("Group", "admins", ORG_NAMESPACE, json!({ "members": [] })));
+    emptied.upsert(envelope(
+        "RoleBinding",
+        "admins-run-it",
+        ORG_NAMESPACE,
+        to_group["spec"].clone(),
+    ));
+    refused(keeps_an_administrator(
+        &emptied,
+        remove("RoleBinding", "admin"),
+    ));
+}
+
 #[test]
 fn the_administrators_role_does_not_lose_what_makes_it_one() {
     let mirror = organization(&[("admin", "org-admin")]);

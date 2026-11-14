@@ -1686,9 +1686,15 @@ pub fn keeps_an_administrator_after(
         .into_iter()
         .map(|env| (env.metadata.name, env.spec))
         .collect();
+    let mut groups: BTreeMap<String, Value> = mirror
+        .list(ORG_NAMESPACE, "Group", &ListOptions::default())
+        .items
+        .into_iter()
+        .map(|env| (env.metadata.name, env.spec))
+        .collect();
     let now = Utc::now();
     let installation = installation_scope(mirror);
-    let before = administrators(&roles, &bindings, installation.as_ref(), now);
+    let before = administrators(&roles, &bindings, &groups, installation.as_ref(), now);
     if before.is_empty() {
         return Ok(());
     }
@@ -1716,21 +1722,25 @@ pub fn keeps_an_administrator_after(
                 name,
             } => (*kind, *namespace, *name, None),
         };
-        if !matches!(kind, "Role" | "RoleBinding") || !matches!(namespace, ORG_NAMESPACE | "") {
+        if !matches!(kind, "Role" | "RoleBinding" | "Group")
+            || !matches!(namespace, ORG_NAMESPACE | "")
+        {
             continue;
         }
         touched = true;
-        let table = if kind == "Role" {
-            &mut roles
-        } else {
-            &mut bindings
+        let table = match kind {
+            "Role" => &mut roles,
+            "Group" => &mut groups,
+            _ => &mut bindings,
         };
         match written {
             Some(spec) => table.insert(name.to_owned(), spec),
             None => table.remove(name),
         };
     }
-    if touched && administrators(&roles, &bindings, installation.as_ref(), now).is_empty() {
+    if touched
+        && administrators(&roles, &bindings, &groups, installation.as_ref(), now).is_empty()
+    {
         return Err(ApiError::Conflict(format!(
             "this change would leave the organization without an administrator: after it, no \
              binding at organization scope grants approve and delete on RoleBinding (today: {}). \
@@ -1759,6 +1769,7 @@ pub fn administrator_people(mirror: &Mirror) -> BTreeSet<String> {
     for name in administrators(
         &roles,
         &bindings,
+        &groups,
         installation_scope(mirror).as_ref(),
         Utc::now(),
     ) {
@@ -1792,10 +1803,13 @@ fn installation_scope(mirror: &Mirror) -> Option<Option<String>> {
 
 /// The organization bindings that make somebody an administrator, by name (PF-03). With several
 /// Organizations only the installation's count: another Organization's administrator keeps none
-/// of the installation running (ADR-N-058 section 2.2).
+/// of the installation running (ADR-N-058 section 2.2). A binding counts when it names a person,
+/// directly or through a group whose manifest lists one; a `Group` manifest with no member makes
+/// nobody an administrator.
 fn administrators(
     roles: &BTreeMap<String, Value>,
     bindings: &BTreeMap<String, Value>,
+    groups: &BTreeMap<String, Value>,
     installation: Option<&Option<String>>,
     now: DateTime<Utc>,
 ) -> Vec<String> {
@@ -1823,7 +1837,17 @@ fn administrators(
                     installation.is_some() && binding.scope.organization == *installation
                 }
             };
-            (counts && !binding.subjects.is_empty() && in_force && administers(&binding.role))
+            let names_a_person = binding.subjects.iter().any(|subject| {
+                subject.user.is_some()
+                    || subject.group.as_ref().is_some_and(|group| {
+                        groups.get(group).is_none_or(|spec| {
+                            spec.get("members")
+                                .and_then(Value::as_array)
+                                .is_some_and(|members| !members.is_empty())
+                        })
+                    })
+            });
+            (counts && names_a_person && in_force && administers(&binding.role))
                 .then(|| name.clone())
         })
         .collect()
