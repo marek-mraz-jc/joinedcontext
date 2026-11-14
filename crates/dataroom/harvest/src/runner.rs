@@ -558,11 +558,14 @@ impl HarvestEngine {
             {
                 FetchResponse::Ok { content_type, body } => {
                     if body.len() > self.max_bytes {
-                        return Err((Stop::TooLarge, DataroomError::OutboundRefused(format!(
-                            "{current_url} body size {} exceeded cap of {} bytes",
-                            body.len(),
-                            self.max_bytes
-                        ))));
+                        return Err((
+                            Stop::TooLarge,
+                            DataroomError::OutboundRefused(format!(
+                                "{current_url} body size {} exceeded cap of {} bytes",
+                                body.len(),
+                                self.max_bytes
+                            )),
+                        ));
                     }
                     return Ok((content_type, body));
                 }
@@ -1596,10 +1599,7 @@ mod tests {
             schedule: "23 3 * * *".into(),
             enabled: true,
             modified: Utc::now(),
-            budget: budget.map(|bytes| HarvestBudget {
-                records: 10,
-                bytes,
-            }),
+            budget: budget.map(|bytes| HarvestBudget { records: 10, bytes }),
             position: 0,
         };
         (ctx, store, source)
@@ -1734,17 +1734,27 @@ mod tests {
             FEED,
         );
         let engine = probe_engine(&fetcher);
-        let before = store.get_catalogue(ctx.org_id, ctx.catalogue_id).await.unwrap();
+        let before = store
+            .get_catalogue(ctx.org_id, ctx.catalogue_id)
+            .await
+            .unwrap();
         assert_eq!(
             engine.test_source(&ctx, &store, &source).await.unwrap(),
             SourceTest::Ok
         );
-        assert!(store.list_harvest_runs(&ctx, None).await.unwrap().is_empty());
+        assert!(store
+            .list_harvest_runs(&ctx, None)
+            .await
+            .unwrap()
+            .is_empty());
         assert!(store.list_datasets(&ctx).await.unwrap().is_empty());
         assert!(store.list_harvest_sources(&ctx).await.unwrap().is_empty());
         assert!(store.get_publisher(&ctx, "feed").await.unwrap().is_none());
         assert_eq!(
-            store.get_catalogue(ctx.org_id, ctx.catalogue_id).await.unwrap(),
+            store
+                .get_catalogue(ctx.org_id, ctx.catalogue_id)
+                .await
+                .unwrap(),
             before
         );
     }

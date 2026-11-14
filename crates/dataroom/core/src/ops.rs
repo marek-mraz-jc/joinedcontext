@@ -1254,10 +1254,8 @@ pub async fn execute_operation(
                 .store
                 .list_harvest_runs(req_ctx, source.as_deref())
                 .await?;
-            runs.retain(|r| {
-                r.org_id == req_ctx.org_id && r.catalogue_id == req_ctx.catalogue_id
-            });
-            runs.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+            runs.retain(|r| r.org_id == req_ctx.org_id && r.catalogue_id == req_ctx.catalogue_id);
+            runs.sort_by_key(|r| std::cmp::Reverse(r.started_at));
             runs.truncate(RUN_LIST_MAX);
             let runs: Vec<Value> = runs
                 .into_iter()

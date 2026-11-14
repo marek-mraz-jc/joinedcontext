@@ -1291,8 +1291,13 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
 
         let res = execute_operation(&op_ctx, &ctx_a, op.name, probe_b_input).await;
         match op.name {
-            "dataset.get" | "dataset.withdraw" | "harvest_run.start" | "harvest_run.get"
-            | "harvest_run.logs" | "harvest_source.test" | "harvest_run.list"
+            "dataset.get"
+            | "dataset.withdraw"
+            | "harvest_run.start"
+            | "harvest_run.get"
+            | "harvest_run.logs"
+            | "harvest_source.test"
+            | "harvest_run.list"
             | "publisher.withdraw" => {
                 assert!(
                     matches!(res, Err(dataroom_core::DataroomError::NotFound(_))),
