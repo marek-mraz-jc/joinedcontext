@@ -445,7 +445,43 @@ pub(super) async fn run(
     input: DataQueryInput,
 ) -> Result<Value, OpError> {
     let (path, query) = request_of(&input)?;
-    let name = &input.endpoint;
+    let page = Page {
+        path,
+        query: &query,
+        accept: "application/json",
+        history: input.temporal.is_some(),
+    };
+    let (bytes, total) = endpoint_page(caller, state, project, &input.endpoint, page).await?;
+    let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    answer_of(&input, body, total)
+}
+
+/// What [`endpoint_page`] reads: a path under the Endpoint, its query, the media type asked for
+/// and whether it is a history read (a 404 then means the view serves none).
+pub(super) struct Page<'a, Q: ?Sized> {
+    pub path: &'a str,
+    pub query: &'a Q,
+    pub accept: &'a str,
+    pub history: bool,
+}
+
+/// One page of `path` under Endpoint `name`, read as the caller: the Endpoint [`readable_slug`]
+/// picks, the caller's token exchanged for it (none for a public one), the gateway's refusal in
+/// words the caller can act on, a shared Endpoint's every failure as a missing one. The page's
+/// bytes and the NGSI-LD total when the gateway sent one.
+pub(super) async fn endpoint_page<Q: serde::Serialize + ?Sized>(
+    caller: &Caller,
+    state: &AppState,
+    project: &str,
+    name: &str,
+    page: Page<'_, Q>,
+) -> Result<(Vec<u8>, Option<u64>), OpError> {
+    let Page {
+        path,
+        query,
+        accept,
+        history,
+    } = page;
     let target = readable_slug(caller, state, project, name)?;
     let shared = matches!(target, Target::Shared(_));
     let own = matches!(target, Target::Own(_));
@@ -454,7 +490,7 @@ pub(super) async fn run(
     // without a right that it exists, and some would name its slug.
     let hide = |err: OpError| {
         if shared {
-            tracing::info!(error = %err, endpoint = name.as_str(), "a shared Endpoint read failed; answered as missing");
+            tracing::info!(error = %err, endpoint = name, "a shared Endpoint read failed; answered as missing");
             unshared(project, name)
         } else {
             err
@@ -477,7 +513,7 @@ pub(super) async fn run(
         }
         Target::Public(slug) => (slug, None),
     };
-    let answer = gateway_read(base, &slug, path, &query, token, GATEWAY_TIMEOUT)
+    let answer = gateway_get(base, &slug, path, query, token, GATEWAY_TIMEOUT, accept)
         .await
         .map_err(|err| {
             tracing::warn!(error = %err.without_url(), endpoint = slug, "the gateway did not answer a data read");
@@ -499,14 +535,16 @@ pub(super) async fn run(
         return Err(unshared(project, name));
     }
     let bytes = capped_page(answer).await?;
-    let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-    // The caller's groups mean nothing on a public read, and a project Endpoint named like its
-    // slug may be one they cannot see (T-6451 review).
-    if own {
-        not_admitted(status, caller, state, project, name)?;
+    if status != 200 {
+        let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        // The caller's groups mean nothing on a public read, and a project Endpoint named like
+        // its slug may be one they cannot see (T-6451 review).
+        if own {
+            not_admitted(status, caller, state, project, name)?;
+        }
+        refusal_of(status, history, name, &slug, &body)?;
     }
-    refusal_of(status, input.temporal.is_some(), name, &slug, &body)?;
-    answer_of(&input, body, total)
+    Ok((bytes, total))
 }
 
 /// A read of `path` under Endpoint `slug` at the gateway: anonymous without a bearer, so the
@@ -519,13 +557,26 @@ pub(crate) async fn gateway_read<Q: serde::Serialize + ?Sized>(
     bearer: Option<String>,
     timeout: std::time::Duration,
 ) -> reqwest::Result<reqwest::Response> {
+    gateway_get(base, slug, path, query, bearer, timeout, "application/json").await
+}
+
+/// [`gateway_read`] asking for `accept`: a CSV file answers `text/csv`.
+async fn gateway_get<Q: serde::Serialize + ?Sized>(
+    base: &str,
+    slug: &str,
+    path: &str,
+    query: &Q,
+    bearer: Option<String>,
+    timeout: std::time::Duration,
+    accept: &str,
+) -> reqwest::Result<reqwest::Response> {
     let request = crate::api::pipelines::http()
         .get(format!(
             "{}/api/endpoint/{slug}/{path}",
             base.trim_end_matches('/')
         ))
         .query(query)
-        .header("accept", "application/json")
+        .header("accept", accept)
         .timeout(timeout);
     match bearer {
         Some(token) => request.bearer_auth(token),
