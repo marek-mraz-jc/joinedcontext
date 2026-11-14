@@ -13,6 +13,7 @@ import { Card, EmptyState, Skeleton } from "../ui";
 import { PageFailed } from "../ui/PageState";
 import { VegaChart, chartTheme, loadVega } from "../panels/VegaChart";
 import type { ChartTheme, Spec } from "../panels/specs";
+import { narrowConfig } from "../panels/palette";
 import { csvRecords, readSource } from "./vegaLiteSource";
 import type { WidgetSource } from "./vegaLiteSource";
 
@@ -36,13 +37,11 @@ export function withRows(spec: Spec, rows: Record<string, unknown>[], theme: Cha
     height: PLOT_HEIGHT,
     autosize: { type: "fit", contains: "padding" },
     ...rest,
-    // The Portal's type and colours, under whatever the author configured.
+    // The chart theme (T-6886) on the card's own surface, under whatever the author configured.
     config: {
-      font: theme.font,
-      axis: { labelColor: theme.muted, titleColor: theme.text, titleFontWeight: "normal", gridColor: theme.grid },
-      legend: { labelColor: theme.muted, titleColor: theme.text },
-      // A wide card would otherwise number every unit of a short range.
-      axisQuantitative: { tickCount: 6 },
+      ...theme.config,
+      ...narrowConfig(),
+      background: null,
       ...((spec.config as Record<string, unknown>) ?? {}),
     },
     datasets: { ...((spec.datasets as Record<string, unknown>) ?? {}), source: rows },

@@ -74,6 +74,82 @@ describe("csv.js", () => {
   });
 });
 
+// render.js in a stand-in frame (T-6886): the spec it hands vega-embed, for the host's scheme and width.
+function drawn(message: Record<string, unknown>, width = 1440) {
+  const self: Record<string, unknown> = { jcRefuse: () => [], jcCsv: csvRecords };
+  new Function("self", source("theme.js"))(self);
+  const listeners: ((event: unknown) => void)[] = [];
+  const parent = { postMessage: () => undefined };
+  const win = { parent, innerWidth: width, addEventListener: (_: string, f: (event: unknown) => void) => listeners.push(f) };
+  const doc = {
+    getElementById: () => ({}),
+    documentElement: { dataset: {} as Record<string, string>, lang: "" },
+    body: { style: {} as Record<string, string>, getBoundingClientRect: () => ({ height: 100 }) },
+  };
+  const location = { origin: "https://viz.dev.example.org", hostname: "viz.dev.example.org" };
+  let spec: Record<string, unknown> = {};
+  const vegaEmbed = (_el: unknown, given: Record<string, unknown>) => {
+    spec = given;
+    return Promise.resolve();
+  };
+  class ResizeObserver {
+    observe() {}
+  }
+  new Function("window", "document", "location", "self", "vega", "vegaEmbed", "ResizeObserver", source("render.js"))(
+    win, doc, location, self, vega, vegaEmbed, ResizeObserver,
+  );
+  listeners.forEach((f) => f({ source: parent, origin: location.origin, data: { type: "jc-viz-render", data: { format: "json", rows: [] }, ...message } }));
+  return { spec: () => spec as { config: Record<string, Record<string, unknown>> }, doc, theme: self.jcTheme as Record<string, Record<string, unknown>> };
+}
+
+describe("render.js draws in the chart theme (T-6886)", () => {
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("draws a spec in the light theme unless the host says dark, the spec's own config over it", async () => {
+    const light = drawn({ spec: { ...SPEC, config: { axis: { labelColor: "#000000" } } } });
+    await tick();
+    expect(light.spec().config.range).toEqual(light.theme.light.range);
+    expect(light.spec().config.font).toBe(light.theme.light.font);
+    expect(light.spec().config.axis.labelColor).toBe("#000000");
+    expect(light.spec().config.axis.gridColor).toBe((light.theme.light.axis as Record<string, unknown>).gridColor);
+    expect(light.doc.documentElement.dataset.theme).toBe("light");
+    expect(light.doc.body.style.backgroundColor).toBe(light.theme.light.background);
+
+    const dark = drawn({ spec: SPEC, theme: "dark" });
+    await tick();
+    expect(dark.spec().config.range).toEqual(dark.theme.dark.range);
+    expect(dark.doc.documentElement.dataset.theme).toBe("dark");
+    expect(dark.doc.body.style.backgroundColor).toBe(dark.theme.dark.background);
+    // Anything but "dark" is light.
+    const odd = drawn({ spec: SPEC, theme: "<script>" });
+    await tick();
+    expect(odd.doc.documentElement.dataset.theme).toBe("light");
+  });
+
+  it("keeps the theme on a phone and puts the legend under the chart", async () => {
+    const phone = drawn({ spec: SPEC, theme: "dark" }, 390);
+    await tick();
+    const config = phone.spec().config;
+    expect(config.range).toEqual(phone.theme.dark.range);
+    expect(config.legend.orient).toBe("bottom");
+    expect(config.legend.labelColor).toBe((phone.theme.dark.legend as Record<string, unknown>).labelColor);
+    expect(config.title.limit).toBe(390 - 48);
+    expect(config.title.color).toBe((phone.theme.dark.title as Record<string, unknown>).color);
+    expect(config.axisY.labelLimit).toBe(130);
+  });
+
+  it("the theme passes the renderer's own refusal list", () => {
+    const self: Record<string, unknown> = {};
+    new Function("self", source("refuse.js"))(self);
+    new Function("self", source("theme.js"))(self);
+    const refuse = self.jcRefuse as (spec: unknown, domain: string) => unknown[];
+    for (const mode of ["light", "dark"]) {
+      const spec = { ...SPEC, config: (self.jcTheme as Record<string, unknown>)[mode] };
+      expect(refuse(spec, "dev.example.org")).toEqual([]);
+    }
+  });
+});
+
 describe("render.js under a CSP without 'unsafe-eval'", () => {
   it("vega's own CSV reader needs Function: the path the renderer must not take", () => {
     forbidFunction();

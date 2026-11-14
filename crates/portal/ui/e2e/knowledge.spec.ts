@@ -267,6 +267,79 @@ test.describe("the knowledge sources", () => {
   });
 });
 
+// T-6889: the chat's chart is drawn by Vega in the chart theme (T-6886), in each of its states. With
+// JC_EVIDENCE_DIR set, each state is kept at 1440 and 400 px in the light and the dark scheme.
+const DATA_ROUND = {
+  type: "AirQualityObserved",
+  columns: ["dateObserved", "pm10"],
+  rows: [["2026-11-14T06:00:00Z", 12.5], ["2026-11-14T07:00:00Z", 18.25], ["2026-11-14T08:00:00Z", 24], ["2026-11-14T09:00:00Z", 21.5], ["2026-11-14T10:00:00Z", 16]],
+};
+const STATIONS = { type: "AirQualityObserved", columns: ["station", "pm10"], rows: [["Banská Bystrica, Štefánikovo nábrežie", 21.4], ["Žilina, Obežná", 14], ["Zvolen", 9.6]] };
+const answerOf = (...events: [string, unknown][]) =>
+  events.map(([name, data]) => `event: ${name}\ndata: ${JSON.stringify(data)}`).join("\n\n") + "\n\n";
+const VISUAL = {
+  spec: {
+    $schema: "https://vega.github.io/schema/vega-lite/v5.json",
+    data: { name: "source" },
+    mark: { type: "bar", tooltip: true },
+    encoding: { y: { field: "label", type: "nominal", sort: "-x", title: null }, x: { field: "value", type: "quantitative", title: "pm10 (µg/m³)" } },
+  },
+  rows: STATIONS.rows.map(([label, value]) => ({ label, value })),
+};
+const CHART_STATES: [string, string][] = [
+  ["chart", answerOf(["data", DATA_ROUND], ["answer", { text: "PM10 rose to 24 µg/m³ at 08:00." }], ["done", { tokens: 9 }])],
+  ["visualization", answerOf(["data", STATIONS], ["visualization", VISUAL], ["answer", { text: "Banská Bystrica reads highest." }], ["done", { tokens: 9 }])],
+  ["text-only", answerOf(["answer", { text: "The roads are icy at Kamppi." }], ["done", { tokens: 9 }])],
+  ["too-few-points", answerOf(["data", { ...DATA_ROUND, rows: DATA_ROUND.rows.slice(0, 1) }], ["answer", { text: "One reading so far." }], ["done", { tokens: 9 }])],
+  ["refused-spec", answerOf(["data", STATIONS], ["visualization", { ...VISUAL, spec: { ...VISUAL.spec, data: { url: "https://evil.example/rows.json" } } }], ["answer", { text: "Three stations." }], ["done", { tokens: 9 }])],
+  ["library-failed", answerOf(["data", DATA_ROUND], ["answer", { text: "PM10 rose to 24 µg/m³ at 08:00." }], ["done", { tokens: 9 }])],
+];
+
+test.describe("the assistant chat's chart (T-6889)", () => {
+  for (const scheme of ["light", "dark"] as const) {
+    for (const [state, body] of CHART_STATES) {
+      // Each width from the first paint: a chart is laid out for the width it is drawn at.
+      for (const width of [1440, 400]) {
+      test(`${state} in the ${scheme} scheme at ${width} px`, async ({ page: p }) => {
+        await p.setViewportSize({ width, height: 900 });
+        await p.emulateMedia({ colorScheme: scheme });
+        await stubApi(p);
+        await p.route("**/api/v1/projects/helsinki/knowledge/deployments/staff/chat", (route) =>
+          route.fulfill({ status: 200, contentType: "text/event-stream", body }),
+        );
+        // The library's chunks refused: the chart says it is unavailable, the table stays.
+        if (state === "library-failed") await p.route(/\/(?:assets|node_modules)\/.*vega[^/]*\.js/, (route) => route.abort());
+        await p.goto("/projects/helsinki/knowledge?lang=en");
+        await p.getByRole("button", { name: "Ask staff" }).click();
+        const dialog = p.getByRole("dialog", { name: "Ask staff" });
+        await dialog.getByRole("textbox", { name: "Your question" }).fill("How is the air?");
+        await dialog.getByRole("textbox", { name: "Your question" }).press("Enter");
+        const chart = dialog.getByTestId("assistant-chart");
+        if (state === "text-only" || state === "too-few-points") {
+          await expect(dialog.getByText(/icy at Kamppi|One reading so far/)).toBeVisible();
+          await expect(chart).toHaveCount(0);
+        } else if (state === "library-failed") {
+          await expect(chart.getByText("The chart is unavailable here. The table above holds the same values.")).toBeVisible();
+          await expect(dialog.getByRole("table", { name: "AirQualityObserved" })).toBeVisible();
+        } else {
+          await expect(chart).toHaveCount(1);
+          await expect(chart.locator("canvas")).toBeVisible();
+          await expect(chart.getByRole("img")).toHaveAccessibleName(state === "visualization" ? /assistant's chart/ : /Chart of|Chart of pm10/);
+        }
+        expect(await p.locator("img[src='x']").count()).toBe(0);
+        const dir = process.env.JC_EVIDENCE_DIR;
+        if (!dir) return;
+        mkdirSync(dir, { recursive: true });
+        await p.waitForTimeout(300);
+        // The chart, or the answer where there is none, in view as the person scrolls to it.
+        await ((await chart.count()) ? chart : dialog.getByText(/icy at Kamppi|One reading so far/)).scrollIntoViewIfNeeded();
+        await dialog.screenshot({ path: join(dir, `${state}-${scheme}-${width}.png`) });
+      });
+      }
+    }
+  }
+});
+
 // T-4869: an upload source as journey 41 met it on dev, after the fixes: its state in words, its
 // file on a phone, a search hit by file and page, and an answer that cites the file. With
 // JC_EVIDENCE_DIR set, each screen is kept at 1440 and 400 px.
