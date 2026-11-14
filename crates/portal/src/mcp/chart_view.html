@@ -289,7 +289,8 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
     if (spec.color && p.color !== null) lines.push((spec.color.title || "color") + ": #" + (p.color + 1) + (cats.color[p.color] !== undefined ? " " + cats.color[p.color] : ""));
     if (spec.size && p.size !== null) lines.push((spec.size.title || "size") + ": " + number(p.size));
     if (spec.theta && p.theta !== null) lines.push((spec.theta.title || "theta") + ": " + number(p.theta));
-    if (p.observedAt) lines.push("observedAt: " + p.observedAt.toISOString().replace(".000Z", "Z"));
+    // A time axis already says when; observedAt is added only where the x channel is not time.
+    if (p.observedAt && !(spec.x && spec.x.scale === "temporal")) lines.push("observedAt: " + p.observedAt.toISOString().replace(".000Z", "Z"));
     return lines.join("\n");
   }
 
