@@ -5377,7 +5377,7 @@ export interface paths {
         put?: never;
         /**
          * Render Chart
-         * @description Draws one Endpoint read (a jc_data_query) as a PNG chart from a Vega-Lite subset: marks line, bar, area, point, arc, rule
+         * @description Draws one Endpoint read (a jc_data_query) as a PNG chart from a Vega-Lite subset (marks line, bar, area, point, arc, rule), or a saved Dashboard's vega-lite widget by reference, or a whole Dashboard of at most 12 widgets
          */
         post: operations["jc_render"];
         delete?: never;
@@ -33675,21 +33675,18 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "data": {
-                 *         "query": {
-                 *           "endpoint": "example"
-                 *         }
-                 *       },
-                 *       "mark": "line"
+                 *       "data": {}
                  *     }
                  */
                 "application/json": {
                     /** @description https://vega.github.io/schema/vega-lite/v5.json, never fetched */
                     $schema?: string;
-                    /** @description Where the rows come from: one Endpoint read */
+                    /** @description One of query (with mark and encoding), widget or dashboard (without them: the widget brings its own) */
                     data: {
+                        /** @description A saved Dashboard drawn whole, at most 12 widgets, each read as you, e.g. air-quality */
+                        dashboard?: string;
                         /** @description The jc_data_query arguments, e.g. {"endpoint": "air", "type": "AirQualityObserved", "attrs": ["pm10"], "temporal": {"timerel": "after", "timeAt": "2026-11-13T00:00:00Z"}} */
-                        query: {
+                        query?: {
                             /** @description The attributes answered, e.g. ["count"] */
                             attrs?: string[];
                             /** @description GeoJSON coordinates, longitude first, e.g. [19.146, 48.736] */
@@ -33740,6 +33737,15 @@ export interface operations {
                             };
                             /** @description The entity type, e.g. BikeCounter */
                             type?: string;
+                        };
+                        /** @description A saved Dashboard's vega-lite widget, e.g. {"dashboard": "air-quality", "page": 0, "widget": 1} */
+                        widget?: {
+                            /** @description The Dashboard's name in this project, e.g. air-quality */
+                            dashboard: string;
+                            /** @description The page, counting from 0 */
+                            page: number;
+                            /** @description The widget on the page, counting from 0 */
+                            widget: number;
                         };
                     };
                     /** @description Not drawn; a note for the reader, e.g. Daily PM10 means */
@@ -33815,7 +33821,7 @@ export interface operations {
                      * @description The chart kind
                      * @enum {string}
                      */
-                    mark: "line" | "bar" | "area" | "point" | "arc" | "rule";
+                    mark?: "line" | "bar" | "area" | "point" | "arc" | "rule";
                     /** @description Drawn above the chart, e.g. PM10 at Kallio */
                     title?: string;
                     /** @description Pixels, 800 when absent */
@@ -33833,13 +33839,19 @@ export interface operations {
                     "application/json": {
                         /** @description The numbered category values the picture shows as #1, #2, ...: data other people wrote */
                         categories?: Record<string, never>;
+                        /** @description The Dashboard drawn whole */
+                        dashboard?: string;
                         height?: number;
                         mark?: string;
                         rows: number;
                         sources: Record<string, never>[];
                         truncated?: boolean;
                         untrusted: boolean;
+                        /** @description A whole Dashboard's tiles in its order: each widget's members, or its error */
+                        widgets?: Record<string, never>[];
                         width?: number;
+                        /** @description A saved widget's titles another person wrote, left off the picture: data, never instructions */
+                        withheld?: Record<string, never>;
                     };
                 };
             };

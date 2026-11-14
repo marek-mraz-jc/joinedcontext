@@ -770,17 +770,8 @@ fn limited() -> OpError {
     )))
 }
 
-/// A drawn chart: the PNG, the categories it numbered, whether rows were left out and what
-/// the chart view draws ([`view_of`]).
-#[derive(Debug)]
-struct Drawn {
-    png: Vec<u8>,
-    categories: Value,
-    truncated: bool,
-    view: Value,
-}
-
-/// A charted spec before its pixels: the chart and the rest of [`Drawn`].
+/// A charted spec before its pixels: the chart, the categories it numbered, whether rows were
+/// left out and what the chart view draws ([`view_of`]).
 #[derive(Debug)]
 struct Prepared {
     chart: Chart,
@@ -820,23 +811,6 @@ async fn paint(tiles: Vec<chart::Tile>, deadline: Instant, at: &str) -> Result<V
         ));
     }
     Ok(png)
-}
-
-/// Draws `spec` over `rows` within `deadline` in a blocking thread, the rows' charting
-/// included; the PNG or `limited`.
-async fn draw(
-    spec: &Spec,
-    rows: Vec<Map<String, Value>>,
-    deadline: Instant,
-) -> Result<Drawn, OpError> {
-    let prepared = prepare(spec, rows).await?;
-    let png = paint(vec![chart::Tile::Chart(prepared.chart)], deadline, "/width").await?;
-    Ok(Drawn {
-        png,
-        categories: prepared.categories,
-        truncated: prepared.truncated,
-        view: prepared.view,
-    })
 }
 
 /// One picture before its pixels: the spec, how many rows it read, where they came from and
@@ -1672,7 +1646,7 @@ fn input_schema() -> Value {
                         "type": "object",
                         "description": "A saved Dashboard's vega-lite widget, e.g. {\"dashboard\": \"air-quality\", \"page\": 0, \"widget\": 1}",
                         "properties": {
-                            "dashboard": { "type": "string", "description": "The Dashboard's name in this project, e.g. air-quality" },
+                            "dashboard": text("The Dashboard's name in this project, e.g. air-quality", 63),
                             "page": { "type": "integer", "minimum": 0, "maximum": 99, "description": "The page, counting from 0" },
                             "widget": { "type": "integer", "minimum": 0, "maximum": 99, "description": "The widget on the page, counting from 0" }
                         },
@@ -1732,6 +1706,30 @@ pub fn operations() -> Vec<Operation> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A drawn chart: the PNG, the categories it numbered and what the chart view draws.
+    #[derive(Debug)]
+    struct Drawn {
+        png: Vec<u8>,
+        categories: Value,
+        view: Value,
+    }
+
+    /// Draws `spec` over `rows` within `deadline` in a blocking thread, the rows' charting
+    /// included; the PNG or `limited`.
+    async fn draw(
+        spec: &Spec,
+        rows: Vec<Map<String, Value>>,
+        deadline: Instant,
+    ) -> Result<Drawn, OpError> {
+        let prepared = prepare(spec, rows).await?;
+        let png = paint(vec![chart::Tile::Chart(prepared.chart)], deadline, "/width").await?;
+        Ok(Drawn {
+            png,
+            categories: prepared.categories,
+            view: prepared.view,
+        })
+    }
 
     fn spec(mark: &str) -> Value {
         json!({
