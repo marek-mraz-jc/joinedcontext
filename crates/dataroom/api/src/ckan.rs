@@ -51,7 +51,7 @@ fn ckan_ok(base: &str, action: &str, result: Value, cache_public: bool) -> Respo
 }
 
 fn ckan_err(base: &str, action: &str, err: DataroomError) -> Response {
-    let err = crate::client_safe(err);
+    let err = err.client_safe();
     let status = StatusCode::from_u16(err.status_code()).unwrap_or(StatusCode::BAD_REQUEST);
     let mut err_obj = Map::new();
     err_obj.insert("__type".into(), json!(err.ckan_error_type()));
@@ -691,6 +691,22 @@ async fn answer_ckan_action(
             let fallback_id = format!("res-{}-{pos}", ds.name);
             let dist =
                 distribution_from_ckan(&payload, &ds.id, &fallback_id, &cat.default_language);
+            // A create never takes over a stored resource id: its views and updates would
+            // resolve to this dataset, decided on its editors instead of the owner's.
+            match state.store.get_distribution(&ctx, &dist.id).await {
+                Ok(None) => {}
+                Ok(Some(_)) => {
+                    return ckan_err(
+                        &base,
+                        &action,
+                        DataroomError::Conflict(format!(
+                            "a resource with id '{}' exists: use resource_update",
+                            dist.id
+                        )),
+                    )
+                }
+                Err(e) => return ckan_err(&base, &action, e),
+            }
             ds.distributions.push(dist.clone());
             ds.modified = Utc::now();
             if let Err(e) = state.store.upsert_dataset(&ctx, ds.clone()).await {

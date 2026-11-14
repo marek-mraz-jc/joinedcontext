@@ -528,20 +528,8 @@ pub fn operations() -> Vec<OperationDef> {
 }
 
 /// Converts a [`DataroomError`] into an RFC 9457 Problem Details JSON response with a slug (A5).
-/// What a client may read of `err`: a storage error's text names tables, constraints and
-/// values, so it goes to the server log and the client reads that it failed.
-pub(crate) fn client_safe(err: DataroomError) -> DataroomError {
-    match err {
-        DataroomError::Storage(detail) => {
-            tracing::error!(error = %detail, "dataroom storage error");
-            DataroomError::Storage("storage failed: the server log has the cause".into())
-        }
-        other => other,
-    }
-}
-
 pub fn problem_response(err: DataroomError) -> Response {
-    let err = client_safe(err);
+    let err = err.client_safe();
     let status =
         StatusCode::from_u16(err.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let body = json!({
@@ -800,12 +788,6 @@ async fn handle_portal_catalogue(
         Ok(o) => o,
         Err(e) => return problem_response(e),
     };
-    // A signed-in caller's answer may hold what an anonymous one may not read: no shared cache.
-    let cache = if ctx.subject.is_anonymous() {
-        "public, max-age=60"
-    } else {
-        "private, no-store"
-    };
 
     let body = json!({
         "total": outcome.total,
@@ -815,7 +797,21 @@ async fn handle_portal_catalogue(
         "facets": outcome.facets,
         "unavailable": [],
     });
-    (StatusCode::OK, [(header::CACHE_CONTROL, cache)], Json(body)).into_response()
+    (
+        StatusCode::OK,
+        [(header::CACHE_CONTROL, cache_control_for(&ctx))],
+        Json(body),
+    )
+        .into_response()
+}
+
+/// A signed-in caller's answer may hold what an anonymous one may not read: no shared cache.
+fn cache_control_for(ctx: &RequestCtx) -> &'static str {
+    if ctx.subject.is_anonymous() {
+        "public, max-age=60"
+    } else {
+        "private, no-store"
+    }
 }
 
 async fn handle_portal_dataset(
@@ -846,7 +842,7 @@ async fn handle_portal_dataset(
     }
     (
         StatusCode::OK,
-        [(header::CACHE_CONTROL, "public, max-age=60")],
+        [(header::CACHE_CONTROL, cache_control_for(&ctx))],
         Json(ds),
     )
         .into_response()
