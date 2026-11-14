@@ -8420,7 +8420,8 @@
       "back": "Back to the projects",
       "notAdmin": "Administration is for organization administrators. Your projects are one step back.",
       "notAdminCatalogue": "Administration is for organization administrators. The catalogue is one step back.",
-      "toCatalogue": "Back to the catalogue"
+      "toCatalogue": "Back to the catalogue",
+      "portals": "Open data portals"
     },
     "group": {
       "access": "People and access",
@@ -12591,5 +12592,91 @@
     "searchRowsHint": "Type part of any value, e.g. a name or a space.",
     "noMatch": "No rows match the search or the filters.",
     "rowCount": "{n} rows"
+  },
+  "portals": {
+    "nav": {
+      "back": "Back to Administration",
+      "title": "Open data portals",
+      "list": "All portals",
+      "new": "New portal"
+    },
+    "notAdmin": "Open data portals are made by an Organization's administrators. Ask one of them, or your operator, for access.",
+    "list": {
+      "title": "Open data portals",
+      "description": "Each portal of your Organizations, where it answers and how many sources fill it.",
+      "new": "New portal",
+      "empty": "No portal yet",
+      "emptyHint": "Your Organization's default portal appears here once the operator configures it. Create a further one, for example for mobility data, with New portal.",
+      "sources": "Sources",
+      "default": "Default",
+      "noBase": "Slug address …/-/{path}/ (open data base not known here)"
+    },
+    "field": {
+      "title": "Title",
+      "organization": "Organization",
+      "organizationPick": "Choose an Organization",
+      "path": "Name in the address",
+      "languages": "Languages",
+      "titleIn": "Title in {language}",
+      "address": "Address",
+      "host": "Domain",
+      "hostPick": "Choose a domain",
+      "keepSlug": "Also keep the usual slug address",
+      "instanceName": "Name in the header",
+      "primary": "Main colour",
+      "profiles": "DCAT-AP profiles"
+    },
+    "hint": {
+      "organization": "The Organization the portal belongs to; it never moves to another one. For example bratislava.",
+      "path": "Lower-case letters, digits and dashes, unique in the Organization, for example mobility: the portal answers at …/opendata/-/mobility/.",
+      "languages": "The languages the portal is shown in; the first ticked one is its default, for example Slovak and English.",
+      "title": "Shown on every page of the portal, for example Doprava or Mobility.",
+      "address": "The slug address lives under your Organization's open data portal; a domain is one your operator listed for the Organization.",
+      "host": "Only the domains the operator listed for this Organization, for example mobility.bratislava.sk.",
+      "keepSlug": "Off: the slug address redirects to the domain. On: both answer, and the domain is named as the canonical one.",
+      "instanceName": "Replaces the Organization's name in this portal's header, for example Doprava Bratislava. Empty keeps the Organization's.",
+      "primary": "A hex colour for this portal's buttons and links, for example #0b5394. Empty keeps the Organization's.",
+      "profiles": "The profiles the portal's DCAT-AP feeds are served in, for example dcat-ap-3.0.1."
+    },
+    "mode": {
+      "slug": "Slug address under the Organization's open data portal",
+      "domain": "A domain of its own"
+    },
+    "language": {
+      "sk": "Slovak",
+      "en": "English",
+      "cs": "Czech",
+      "de": "German"
+    },
+    "fault": {
+      "organization": "Choose the Organization the portal belongs to.",
+      "path": "Use lower-case letters, digits and dashes, for example mobility.",
+      "pathDefault": "default is the Organization's own portal; choose another name.",
+      "pathTaken": "This Organization already has a portal of this name; choose another one.",
+      "languages": "Tick at least one language.",
+      "title": "Write the title in the first language.",
+      "host": "Choose a domain, or switch to the slug address.",
+      "primary": "Write the colour as # and six hex digits."
+    },
+    "editor": {
+      "newTitle": "New portal",
+      "editTitle": "Portal {name}",
+      "description": "The portal's title, address, languages and look. Saving proposes a Change for an approver.",
+      "missing": "No portal {name} in your Organizations",
+      "missingHint": "It was removed, or it belongs to an Organization you do not administer. All portals lists yours.",
+      "refused": "The portal was not proposed",
+      "backToList": "Back to all portals",
+      "noHosts": "The operator has listed no domain for {organization} yet.",
+      "proposeDomain": "A domain not in the list starts with the Organization's domain verification; once it passes, ask your operator to list it.",
+      "proposeDomainLink": "Propose a new domain",
+      "addressWill": "The portal will answer at {address}",
+      "addressUnknown": "The address appears once an Organization and a name are chosen.",
+      "create": "Propose the portal",
+      "save": "Propose the changes",
+      "open": "Open the portal",
+      "delete": "Remove portal",
+      "defaultKept": "The default portal stays: it is the Organization's own catalogue.",
+      "fixed": "Fixed once the portal exists: a portal never moves to another Organization or name."
+    }
   }
 }

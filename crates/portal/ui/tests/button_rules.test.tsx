@@ -30,6 +30,8 @@ const PROJECT = "helsinki";
  */
 const PAGES = [
   "/login",
+  "/portals",
+  "/portals/new",
   "/connect/bbsk/otvorene-data",
   `/projects/${PROJECT}/activity`,
   `/projects/${PROJECT}/grafana`,

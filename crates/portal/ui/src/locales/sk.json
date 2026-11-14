@@ -8420,7 +8420,8 @@
       "back": "Späť na projekty",
       "notAdmin": "Správa je pre administrátorov organizácie. Vaše projekty sú o krok späť.",
       "notAdminCatalogue": "Správa je pre administrátorov organizácie. Katalóg je o krok späť.",
-      "toCatalogue": "Späť na katalóg"
+      "toCatalogue": "Späť na katalóg",
+      "portals": "Portály otvorených údajov"
     },
     "group": {
       "access": "Ľudia a prístup",
@@ -12591,5 +12592,91 @@
     "searchRowsHint": "Napíšte časť ľubovoľnej hodnoty, napr. názov alebo priestor.",
     "noMatch": "Hľadaniu ani filtrom nezodpovedá žiadny riadok.",
     "rowCount": "Riadkov: {n}"
+  },
+  "portals": {
+    "nav": {
+      "back": "Späť do Správy",
+      "title": "Portály otvorených údajov",
+      "list": "Všetky portály",
+      "new": "Nový portál"
+    },
+    "notAdmin": "Portály otvorených údajov zakladajú správcovia organizácie. Požiadajte o prístup niektorého z nich alebo prevádzkovateľa.",
+    "list": {
+      "title": "Portály otvorených údajov",
+      "description": "Každý portál vašich organizácií, kde odpovedá a koľko zdrojov ho plní.",
+      "new": "Nový portál",
+      "empty": "Zatiaľ žiadny portál",
+      "emptyHint": "Predvolený portál vašej organizácie sa tu zobrazí, keď ho prevádzkovateľ nastaví. Ďalší, napríklad pre údaje o doprave, založíte tlačidlom Nový portál.",
+      "sources": "Zdroje",
+      "default": "Predvolený",
+      "noBase": "Adresa …/-/{path}/ (základ portálu tu nie je známy)"
+    },
+    "field": {
+      "title": "Názov",
+      "organization": "Organizácia",
+      "organizationPick": "Vyberte organizáciu",
+      "path": "Meno v adrese",
+      "languages": "Jazyky",
+      "titleIn": "Názov ({language})",
+      "address": "Adresa",
+      "host": "Doména",
+      "hostPick": "Vyberte doménu",
+      "keepSlug": "Ponechať aj bežnú adresu",
+      "instanceName": "Meno v hlavičke",
+      "primary": "Hlavná farba",
+      "profiles": "Profily DCAT-AP"
+    },
+    "hint": {
+      "organization": "Organizácia, ktorej portál patrí; nikdy sa nepresunie k inej. Napríklad bratislava.",
+      "path": "Malé písmená, číslice a pomlčky, jedinečné v organizácii, napríklad mobility: portál odpovedá na …/opendata/-/mobility/.",
+      "languages": "Jazyky portálu; prvý zaškrtnutý je predvolený, napríklad slovenčina a angličtina.",
+      "title": "Zobrazí sa na každej stránke portálu, napríklad Doprava.",
+      "address": "Bežná adresa je pod portálom otvorených údajov organizácie; doména je jedna z tých, ktoré prevádzkovateľ pre organizáciu uviedol.",
+      "host": "Len domény, ktoré prevádzkovateľ uviedol pre túto organizáciu, napríklad mobility.bratislava.sk.",
+      "keepSlug": "Vypnuté: bežná adresa presmeruje na doménu. Zapnuté: odpovedajú obe a doména je uvedená ako kanonická.",
+      "instanceName": "Nahradí meno organizácie v hlavičke tohto portálu, napríklad Doprava Bratislava. Prázdne ponechá meno organizácie.",
+      "primary": "Farba tlačidiel a odkazov portálu v tvare hex, napríklad #0b5394. Prázdne ponechá farbu organizácie.",
+      "profiles": "Profily, v ktorých portál ponúka DCAT-AP, napríklad dcat-ap-3.0.1."
+    },
+    "mode": {
+      "slug": "Bežná adresa pod portálom otvorených údajov organizácie",
+      "domain": "Vlastná doména"
+    },
+    "language": {
+      "sk": "slovenčina",
+      "en": "angličtina",
+      "cs": "čeština",
+      "de": "nemčina"
+    },
+    "fault": {
+      "organization": "Vyberte organizáciu, ktorej portál patrí.",
+      "path": "Použite malé písmená, číslice a pomlčky, napríklad mobility.",
+      "pathDefault": "default je vlastný portál organizácie; vyberte iné meno.",
+      "pathTaken": "Táto organizácia už má portál s týmto menom; vyberte iné.",
+      "languages": "Zaškrtnite aspoň jeden jazyk.",
+      "title": "Napíšte názov v prvom jazyku.",
+      "host": "Vyberte doménu alebo prepnite na bežnú adresu.",
+      "primary": "Farbu napíšte ako # a šesť hex číslic."
+    },
+    "editor": {
+      "newTitle": "Nový portál",
+      "editTitle": "Portál {name}",
+      "description": "Názov, adresa, jazyky a vzhľad portálu. Uloženie navrhne zmenu na schválenie.",
+      "missing": "Vo vašich organizáciách nie je portál {name}",
+      "missingHint": "Bol odstránený alebo patrí organizácii, ktorú nespravujete. Vaše portály sú v zozname Všetky portály.",
+      "refused": "Portál nebol navrhnutý",
+      "backToList": "Späť na všetky portály",
+      "noHosts": "Prevádzkovateľ zatiaľ pre {organization} neuviedol žiadnu doménu.",
+      "proposeDomain": "Doména, ktorá nie je v zozname, začína overením domény organizácie; keď prejde, požiadajte prevádzkovateľa, aby ju uviedol.",
+      "proposeDomainLink": "Navrhnúť novú doménu",
+      "addressWill": "Portál bude odpovedať na {address}",
+      "addressUnknown": "Adresa sa zobrazí po výbere organizácie a mena.",
+      "create": "Navrhnúť portál",
+      "save": "Navrhnúť zmeny",
+      "open": "Otvoriť portál",
+      "delete": "Odstrániť portál",
+      "defaultKept": "Predvolený portál zostáva: je to vlastný katalóg organizácie.",
+      "fixed": "Po založení portálu sa nemení: portál sa nikdy nepresunie k inej organizácii ani menu."
+    }
   }
 }
