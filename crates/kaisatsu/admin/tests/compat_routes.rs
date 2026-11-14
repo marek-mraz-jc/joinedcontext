@@ -2276,6 +2276,16 @@ async fn writes_cannot_take_over_other_objects_or_grant_through_group_bodies() {
     )
     .await;
     assert_eq!(st, StatusCode::FORBIDDEN);
+    // The Organization's sign-in rule is the Portal's to write from its Change (T-6895).
+    let (st, _, _) = call(
+        &f.app,
+        &Method::PUT,
+        &format!("{R}/groups/hel-group"),
+        h,
+        Some(&json!({ "name": "members", "attributes": { "jc.secondFactor": ["optional"] } })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
     let (st, _, _) = call(
         &f.app,
         &Method::POST,

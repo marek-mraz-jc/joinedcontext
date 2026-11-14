@@ -97,6 +97,25 @@ pub fn egress_client() -> reqwest::Client {
         .expect("the egress HTTP client builds")
 }
 
+/// What the proxy does besides answering, for as long as it runs; every binary that serves
+/// [`router`] runs it beside. A run's grant and data credentials end with the run (ADR-N-038
+/// §3.5, decision 6): once a minute every held one whose run the Portal no longer holds as active
+/// is revoked, and the usage counted for it goes with it (F-PLT1-013). The model key's state
+/// reaches the Portal within a probe interval (AG-96).
+pub async fn maintain(state: ProxyState) {
+    let ending = state.clone();
+    let end_finished = async move {
+        let mut every = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            every.tick().await;
+            ending.credentials.grants().end_finished(&ending.runs).await;
+            ending.data_credentials.end_finished(&ending.runs).await;
+            ending.limits.end_finished(&ending.runs).await;
+        }
+    };
+    tokio::join!(end_finished, model_key::watch(state));
+}
+
 pub fn router(state: Arc<ProxyState>) -> Router {
     Router::new()
         .route("/healthz", get(|| async { "ok" }))

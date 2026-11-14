@@ -8311,6 +8311,9 @@
       "gatewayHint": "Was ein Schreibvorgang über einen Endpunkt tragen darf.",
       "signIn": "Anmeldung",
       "signInHint": "Sitzungen und Passwörter.",
+      "signInPoliciesHint": "Der zweite Faktor und was ein Passwort erfüllen muss.",
+      "sessions": "Sitzungen",
+      "sessionsHint": "Wann eine Anmeldung endet.",
       "password": "Passwörter",
       "passwordHint": "Wie ein Passwort sein muss.",
       "people": "Personen",
@@ -8367,7 +8370,17 @@
       "publicApps_refused": "Abgelehnt",
       "models": "Modelle, die der Assistent nutzen darf",
       "modelsHint": "Leer lassen, um jedes Modell der Installation zu erlauben.",
-      "everyModel": "Jedes Modell der Installation"
+      "everyModel": "Jedes Modell der Installation",
+      "secondFactor": "Zweiter Faktor bei der Anmeldung",
+      "secondFactorHint": "Erforderlich bittet Personen mit einer Rolle in der ganzen Organisation, bei der nächsten Anmeldung eine Authenticator-App einzurichten, zum Beispiel wenn sie personenbezogene Daten bearbeiten.",
+      "secondFactor_required": "Erforderlich",
+      "secondFactor_optional": "Optional",
+      "secondFactor_optionalUnderFloor": "Optional (ohne Wirkung: die Installation verlangt ihn)",
+      "secondFactorInherited": "Erforderlich (von der Installation geerbt)",
+      "secondFactorInheritedHint": "Geerbt: erforderlich (Installation). Jedes Mitglied meldet sich bereits mit einer Authenticator-App an, Optional hat hier keine Wirkung.",
+      "secondFactorByDefault": "Optional (Standard der Installation)",
+      "secondFactorFixed": "Von der Installation festgelegt",
+      "secondFactorChoice": "Erforderlich oder Optional"
     },
     "brokers": {
       "title": "Context-Broker",

@@ -178,6 +178,7 @@ describe("Administration lists on the shared grid", () => {
     const limits = (names: string[]) => ({
       entries: [],
       projects: names.map((project) => ({ project, origin: "project" as const, quota: { contextSpaces: { limit: 12, used: 3 } } })),
+      secondFactorFloor: "optional",
     });
     const view = (names: string[]) => (
       <OrganizationLimitsView limits={limits(names)} />

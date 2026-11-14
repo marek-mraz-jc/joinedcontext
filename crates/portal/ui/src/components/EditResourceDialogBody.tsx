@@ -1,5 +1,5 @@
 /** The edit dialog itself, loaded when it opens (T-3316): see EditResourceDialog.tsx. */
-import { Suspense, lazy, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useMemo, useState } from "react";
 import type { JSX, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -208,6 +208,11 @@ export function EditResourceDialogBody({
   const parseFailure = parseError
     ? t("resourceEdit.parseError", { line: parseError.line, reason: parseError.message })
     : null;
+  // A refusal is brought into view once, when it appears (T-6895): in a form it stands above the
+  // Propose button the person just pressed, beside the fields they changed; above a manifest.
+  const showFailure = useCallback((element: HTMLDivElement | null) => {
+    element?.scrollIntoView?.({ block: "nearest" });
+  }, []);
   const failure =
     invalid ??
     parseFailure ??
@@ -216,6 +221,14 @@ export function EditResourceDialogBody({
       : propose.error
         ? t("app.error.generic")
         : null);
+  const failureAlert = failure ? (
+    // The margin keeps the Propose button under the refusal in view too.
+    <div ref={showFailure} className="scroll-mb-24">
+      <Alert tone="danger" role="alert">
+        {failure}
+      </Alert>
+    </div>
+  ) : null;
 
   const refusals =
     propose.error instanceof ApiError ? (propose.error.problem?.errors ?? []).filter((e): e is string => typeof e === "string") : [];
@@ -308,11 +321,7 @@ export function EditResourceDialogBody({
         <ChangeNotice change={change} project={project} />
       ) : (
         <div className="flex flex-col gap-4">
-          {failure ? (
-            <Alert tone="danger" role="alert">
-              {failure}
-            </Alert>
-          ) : null}
+          {form && current.data ? null : failureAlert}
           {current.isPending ? (
             // The wait and the failure are two states, not one (T-1752). They used to be the
             // same `current.data ? … : "Loading…"` branch, so a GET that failed left the dialog
@@ -350,9 +359,14 @@ export function EditResourceDialogBody({
                   setInvalid(null);
                 }}
                 onSubmit={(next) => proposeManifest(form.toManifest(next, current.data))}
-                afterFields={form.afterFields?.(
-                  form.toManifest(edited ?? form.fromManifest(current.data), current.data),
-                )}
+                afterFields={
+                  form.afterFields || failureAlert ? (
+                    <>
+                      {form.afterFields?.(form.toManifest(edited ?? form.fromManifest(current.data), current.data))}
+                      {failureAlert}
+                    </>
+                  ) : undefined
+                }
               />
               </Suspense>
               </Disclosure>

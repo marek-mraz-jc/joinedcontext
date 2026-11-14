@@ -100,6 +100,72 @@ async fn the_assistant_proposes_a_settings_edit_as_the_page_does() {
     assert_eq!(tool["change"]["kind"], "Change", "{tool}");
 }
 
+/// T-6895: the second factor of an Organization's members is a Change like any setting, through
+/// the page and the tool alike; a value it does not take is refused naming the field, and a Change
+/// that loosens it waits at the approval door, so the Organization stays at `required`.
+#[tokio::test]
+async fn the_second_factor_is_set_and_loosened_only_through_a_change() {
+    let state = state().await;
+    let with = |second_factor: Value| {
+        let mut manifest = settings("en");
+        manifest["spec"]["policies"] = json!({ "signIn": { "secondFactor": second_factor } });
+        manifest
+    };
+    let page = checked_send(
+        &state,
+        administrator(),
+        "PUT",
+        &format!("/api/v1/projects/{ORG_NAMESPACE}/organizations/hel"),
+        Some(with(json!("required"))),
+    )
+    .await;
+    assert_eq!(page.status, StatusCode::ACCEPTED, "{}", page.text);
+    let tool = checked_send(
+        &state,
+        administrator(),
+        "POST",
+        &op("jc_resource_propose"),
+        Some(json!({ "manifest": with(json!("required")) })),
+    )
+    .await;
+    assert_eq!(tool.status, StatusCode::ACCEPTED, "{}", tool.text);
+
+    let refused = checked_send(
+        &state,
+        administrator(),
+        "POST",
+        &op("jc_resource_propose"),
+        Some(json!({ "manifest": with(json!("sometimes")) })),
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
+    assert!(refused.text.contains("secondFactor"), "{}", refused.text);
+
+    state.mirror.upsert(envelope(
+        "Organization",
+        "hel",
+        ORG_NAMESPACE,
+        with(json!("required"))["spec"].clone(),
+    ));
+    let loosen = checked_send(
+        &state,
+        administrator(),
+        "POST",
+        &op("jc_resource_propose"),
+        Some(json!({ "manifest": settings("en") })),
+    )
+    .await;
+    assert_eq!(loosen.status, StatusCode::ACCEPTED, "{}", loosen.text);
+    let held = state
+        .mirror
+        .get(ORG_NAMESPACE, "Organization", "hel")
+        .expect("held");
+    assert_eq!(
+        held.spec["policies"]["signIn"]["secondFactor"], "required",
+        "a proposal changes nothing before it is approved"
+    );
+}
+
 #[tokio::test]
 async fn a_person_who_may_not_edit_the_organization_is_refused_by_the_tool_too() {
     let state = state().await;
