@@ -1680,6 +1680,7 @@ impl Store for PgStore {
                     .list_catalogues(ctx.org_id)
                     .await?
                     .iter()
+                    .filter(|c| c.deleted.is_none())
                     .map(catalogue_to_row)
                     .collect(),
                 "Datasets" => self
