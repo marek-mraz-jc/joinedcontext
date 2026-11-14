@@ -312,14 +312,18 @@ impl OutboxDispatcher {
 pub struct RealmSmtpSender {
     store: Arc<dyn Store>,
     password_file: std::path::PathBuf,
+    /// The one SMTP host the deployment's password goes to; a realm naming another host gets
+    /// no mail, so a realm's settings never carry the deployment's credential elsewhere.
+    host: String,
 }
 
 impl RealmSmtpSender {
     #[must_use]
-    pub fn new(store: Arc<dyn Store>, password_file: std::path::PathBuf) -> Self {
+    pub fn new(store: Arc<dyn Store>, password_file: std::path::PathBuf, host: String) -> Self {
         Self {
             store,
             password_file,
+            host,
         }
     }
 }
@@ -340,6 +344,12 @@ impl MailSender for RealmSmtpSender {
                 .await?
                 .and_then(|r| r.smtp_server)
                 .ok_or_else(|| KaisatsuError::BadRequest("realm has no smtpServer".into()))?;
+            if !smtp.host.trim().eq_ignore_ascii_case(self.host.trim()) {
+                return Err(KaisatsuError::BadRequest(format!(
+                    "realm smtpServer.host is not the deployment's SMTP host {}: set it to that host",
+                    self.host
+                )));
+            }
             let sender = EmailSender::from_secret_mount(smtp, &self.password_file)?;
             sender
                 .send_mail(realm_id, to_address, subject, body, action_link)

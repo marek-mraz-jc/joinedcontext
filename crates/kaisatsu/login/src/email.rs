@@ -172,7 +172,8 @@ impl EmailSender {
             lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::starttls_relay(&smtp.host)
         }
         .map_err(|_| KaisatsuError::BadRequest("invalid SMTP host".into()))?
-        .port(port);
+        .port(port)
+        .timeout(Some(std::time::Duration::from_secs(10)));
         let builder = if smtp.auth == "true" {
             builder.credentials(lettre::transport::smtp::authentication::Credentials::new(
                 smtp.user.clone(),
