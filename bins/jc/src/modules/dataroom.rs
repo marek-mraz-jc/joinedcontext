@@ -9,7 +9,7 @@
 //! (`dataroom_api::portal_publisher`).
 
 use crate::app::StartError;
-use crate::config::{DataroomSection, HarvestSeed, OrganizationSection};
+use crate::config::{DataroomSection, OrganizationSection};
 use crate::module::Module;
 use crate::setup::Secret;
 use crate::siblings::Siblings;
@@ -17,8 +17,8 @@ use axum::Router;
 use dataroom_api::DataroomState;
 use dataroom_core::branding::{BrandingAddresses, BrandingBlock, PublisherBranding};
 use dataroom_core::{
-    CatalogueId, DataroomError, HarvestSource, HarvestSourceKind, LiveAuthorizer, OrgId, Publisher,
-    RecordState, RequestCtx, Store, Subject,
+    CatalogueId, DataroomError, LiveAuthorizer, OrgId, Publisher, RecordState, RequestCtx, Store,
+    Subject,
 };
 use dataroom_harvest::{HarvestEngine, HarvestScheduler, HttpFetcher};
 use dataroom_store_memory::MemoryStore;
@@ -303,37 +303,6 @@ pub async fn build_with_writer(
         grants.push(dataroom_harvest::harvest_principal(o, c).1);
     }
     let own_gateway = own_gateway(&live, siblings);
-    for seed in &cfg.harvest {
-        let (org, cat, site) = match &seed.organization {
-            None => (org_id, catalogue_id, mount.public_base()),
-            Some(name) => {
-                let org = organizations
-                    .iter()
-                    .find(|o| &o.name == name)
-                    .ok_or_else(|| {
-                        err(&format!(
-                            "[[dataroom.harvest]] {}: no [[organizations]] {name}",
-                            seed.name
-                        ))
-                    })?;
-                (
-                    own_org[&org.name],
-                    CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| err(&e))?,
-                    format!("{}://{}", mount.scheme, org.hosts.opendata),
-                )
-            }
-        };
-        seed_harvest(
-            store.as_ref(),
-            org,
-            cat,
-            seed,
-            &site,
-            own_gateway.as_ref().map(|(public, _)| public.as_str()),
-        )
-        .await
-        .map_err(|e| err(&format!("[[dataroom.harvest]] {}: {e}", seed.name)))?;
-    }
     let authorizer = Arc::new(LiveAuthorizer::new(grants));
     let mut engine = HarvestEngine::new(Arc::new(HttpFetcher::new()));
     if let Some((public, Some(internal))) = &own_gateway {
@@ -707,107 +676,6 @@ pub async fn seed_hidden(
     Ok(())
 }
 
-/// Holds one `[[dataroom.harvest]]` source in catalogue `catalogue_id`, whose public base is
-/// `site`: its publisher created when missing, the source written over the stored one. A
-/// source naming a scheme other than https, a URL or gateway host outside its own
-/// `allowed_hosts`, a schedule that is not cron or a converted file that does not read is
-/// refused. A source with converted datasets and no gateway reads `own_gateway`, the origin of
-/// this instance's gateway.
-pub async fn seed_harvest(
-    store: &dyn Store,
-    org_id: OrgId,
-    catalogue_id: CatalogueId,
-    seed: &HarvestSeed,
-    site: &str,
-    own_gateway: Option<&str>,
-) -> dataroom_core::Result<HarvestSource> {
-    let kind: HarvestSourceKind =
-        serde_json::from_value(serde_json::Value::from(seed.kind.as_str())).map_err(|_| {
-            DataroomError::field_error("kind", format!("unknown kind '{}'", seed.kind))
-        })?;
-    dataroom_harvest::validate_outbound_url(&seed.url, &seed.allowed_hosts, &[], false)?;
-    dataroom_harvest::cron_matches(&seed.schedule, chrono::Utc::now())?;
-    // A source that names no gateway reads its converted datasets from this instance's own.
-    let gateway = match (&seed.gateway, own_gateway) {
-        (Some(gateway), _) => {
-            dataroom_harvest::validate_outbound_url(gateway, &seed.allowed_hosts, &[], false)?;
-            Some(gateway.clone())
-        }
-        (None, Some(own)) if seed.converted_file.is_some() => Some(own.to_owned()),
-        (None, _) => None,
-    };
-    let converted = match &seed.converted_file {
-        None => BTreeMap::new(),
-        Some(path) => converted_datasets(path, seed.datasets_base.as_deref(), site)?,
-    };
-    let ctx = RequestCtx::new(org_id, catalogue_id, Subject::anonymous());
-    let now = chrono::Utc::now();
-    if store.get_publisher(&ctx, &seed.publisher).await?.is_none() {
-        store
-            .upsert_publisher(
-                &ctx,
-                Publisher {
-                    org_id,
-                    catalogue_id,
-                    id: String::new(),
-                    name: seed.publisher.clone(),
-                    title: BTreeMap::from([("sk".to_owned(), seed.publisher_title.clone())]),
-                    description: seed
-                        .publisher_description
-                        .iter()
-                        .map(|d| ("sk".to_owned(), d.clone()))
-                        .collect(),
-                    uri: seed.publisher_uri.clone(),
-                    publisher_type: None,
-                    identifier: None,
-                    email: None,
-                    homepage: None,
-                    logo_url: None,
-                    contact_point: None,
-                    state: RecordState::Active,
-                    merged_into: None,
-                    editor_grants: Vec::new(),
-                    badge_initials: None,
-                    badge_colour: None,
-                    declared_by_instance: None,
-                    created: now,
-                    modified: now,
-                },
-            )
-            .await?;
-    }
-    store
-        .upsert_harvest_source(
-            &ctx,
-            HarvestSource {
-                org_id,
-                catalogue_id,
-                id: format!("hs-{}", seed.name),
-                name: seed.name.clone(),
-                kind,
-                url: seed.url.clone(),
-                publisher_id: seed.publisher.clone(),
-                target_publisher_iri: Some(seed.publisher_uri.clone()),
-                spatial_uri: seed.spatial_uri.clone(),
-                name_prefix: seed.name_prefix.clone(),
-                allowed_hosts: seed.allowed_hosts.clone(),
-                rewrite_hosts: seed.rewrite_hosts.clone(),
-                skip_items: seed.skip.clone(),
-                title_overrides: seed.titles.clone(),
-                spelling_fixes: seed.spelling.clone(),
-                require_column: seed.require_column.clone(),
-                schedule: seed.schedule.clone(),
-                enabled: seed.enabled,
-                converted,
-                gateway,
-                modified: now,
-                budget: None,
-                position: 0,
-            },
-        )
-        .await
-}
-
 /// The converted datasets of `path` (prod's `od-datasets.json`), each `dataset` URL moved from
 /// `base` to this catalogue's `site`, as prod's harvest CronJob replaces `datasetsBase`.
 pub(crate) fn converted_datasets(
@@ -837,8 +705,8 @@ pub(crate) fn converted_datasets(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dataroom_core::HarvestRunState;
     use dataroom_core::ops::HarvestRunner;
+    use dataroom_core::{HarvestRunState, HarvestSource};
     use dataroom_harvest::{MapFetcher, validate_outbound_url};
     use std::collections::BTreeSet;
 
@@ -1653,15 +1521,62 @@ mod tests {
     const SITE: &str = "https://opendata.smartcity.joinedcontext.com";
     const GATEWAY: &str = "https://api.smartcity.joinedcontext.com";
 
-    /// The `[[dataroom.harvest]]` block of prod's two sources, read as jc reads jc.toml (its
-    /// `od-datasets.json` beside it).
-    fn prod_seeds() -> Vec<HarvestSeed> {
+    /// prod's two sources as the installation's `default` Portal holds them (docs/
+    /// default-portal.yaml: what T-6880's migration wrote from the `[[dataroom.harvest]]` block).
+    #[cfg(feature = "portal")]
+    fn prod_portal() -> jc_core::kinds::PortalSpec {
         let docs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs");
-        crate::config::Config::read_file(&docs.join("harvest-sources.toml"))
-            .expect("the block parses")
-            .dataroom
-            .expect("[dataroom]")
-            .harvest
+        let text = std::fs::read_to_string(docs.join("default-portal.yaml")).unwrap();
+        let read =
+            jc_core::envelope::ResourceEnvelope::<jc_core::kinds::PortalSpec>::from_yaml(&text)
+                .expect("the manifest parses");
+        read.validate().expect("the manifest is valid");
+        read.spec
+    }
+
+    /// The installation Organization `ops` of catalogue `ctx`, at prod's open data host, whose
+    /// sources read `convertedFile` in `config_dir` and may fetch every host `portal` names.
+    #[cfg(feature = "portal")]
+    fn ops(
+        ctx: &RequestCtx,
+        portal: &jc_core::kinds::PortalSpec,
+        config_dir: std::path::PathBuf,
+        own_gateway: Option<&str>,
+    ) -> Vec<super::super::portals::OrganizationPortals> {
+        use super::super::portals::{OrganizationPortals, named};
+        let hosts = portal.sources.iter().flat_map(|s| s.allowed_hosts.clone());
+        named(
+            &[OrganizationPortals::installation(OrganizationPortals {
+                name: String::new(),
+                org_id: ctx.org_id,
+                catalogue_id: ctx.catalogue_id,
+                scheme: "https".into(),
+                opendata: SITE.trim_start_matches("https://").into(),
+                listed: Vec::new(),
+                harvest_hosts: hosts.collect(),
+                config_dir: Some(config_dir),
+                own_gateway: own_gateway.map(str::to_owned),
+            })],
+            Some("ops".into()),
+        )
+    }
+
+    /// The harvest sources of `portal` written as the Portal's reconciler writes them, each
+    /// with its publisher.
+    #[cfg(feature = "portal")]
+    async fn hold(
+        store: &MemoryStore,
+        ctx: &RequestCtx,
+        portal: &jc_core::kinds::PortalSpec,
+        orgs: &[super::super::portals::OrganizationPortals],
+    ) -> Vec<HarvestSource> {
+        let mut held = Vec::new();
+        for (source, publisher) in super::super::portals::harvest_sources_of(portal, orgs).unwrap()
+        {
+            store.upsert_publisher(ctx, publisher).await.unwrap();
+            held.push(store.upsert_harvest_source(ctx, source).await.unwrap());
+        }
+        held
     }
 
     /// The gateway on jc's own listener (slug mode, the rehearsal) is read there; one on a host
@@ -1719,36 +1634,31 @@ mod tests {
     /// Without a gateway of their own, prod's sources keep prod's converted datasets and read
     /// their Endpoints on this instance's gateway, which no outbound check refuses for being
     /// jc's own loopback listener (gate 4: no converted filter on the rehearsal).
+    #[cfg(feature = "portal")]
     #[tokio::test]
     async fn prods_sources_read_their_converted_datasets_on_the_own_gateway() {
         let own = "http://localhost:42102";
-        let (store, ctx) = catalogue().await;
-        for seed in prod_seeds() {
-            assert_eq!(seed.gateway, None, "{}", seed.name);
-            let src = seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &seed, SITE, Some(own))
-                .await
-                .expect("seeded");
-            assert_eq!(src.gateway.as_deref(), Some(own), "{}", seed.name);
-            assert_eq!(src.converted.len(), 139, "{}", seed.name);
+        let docs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs");
+        let (_, ctx) = catalogue().await;
+        let mut portal = prod_portal();
+        let orgs = ops(&ctx, &portal, docs, Some(own));
+        let sources = super::super::portals::harvest_sources_of(&portal, &orgs).unwrap();
+        assert_eq!(sources.len(), 2);
+        for (src, _) in sources {
+            assert_eq!(src.gateway.as_deref(), Some(own), "{}", src.name);
+            assert_eq!(src.converted.len(), 139, "{}", src.name);
             let entry = &src.converted["bbsk-kontaktne-miesta-2128a0"];
             assert_eq!(
                 entry.dataset,
                 format!("{SITE}/dataset/bbsk-kontaktne-miesta-2128a0")
             );
-            // Without converted datasets the own gateway is not taken.
-            let mut plain = seed.clone();
-            plain.converted_file = None;
-            let src = seed_harvest(
-                &store,
-                ctx.org_id,
-                ctx.catalogue_id,
-                &plain,
-                SITE,
-                Some(own),
-            )
-            .await
-            .expect("seeded");
-            assert_eq!(src.gateway, None);
+        }
+        // Without converted datasets the own gateway is not taken.
+        for source in &mut portal.sources {
+            source.converted_file = None;
+        }
+        for (src, _) in super::super::portals::harvest_sources_of(&portal, &orgs).unwrap() {
+            assert_eq!(src.gateway, None, "{}", src.name);
         }
     }
 
@@ -1764,94 +1674,35 @@ mod tests {
         (store, RequestCtx::new(org, cat, subject))
     }
 
-    /// ODP-11: prod's two seeds moved into the installation's `default` Portal manifest (through
-    /// its YAML, as provisioning writes it) become the very harvest sources the seeds wrote,
-    /// converted datasets, skips, titles, spelling and columns included.
     #[cfg(feature = "portal")]
     #[tokio::test]
-    async fn every_seed_field_survives_the_migration() {
+    async fn prods_two_sources_hold_their_publishers_and_only_their_hosts() {
         let docs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs");
-        let seeds = prod_seeds();
-        let refs: Vec<&HarvestSeed> = seeds.iter().collect();
-        let elsewhere = super::super::portals::default_portal_of("ops", &refs, None).unwrap_err();
-        assert!(elsewhere.contains("not beside jc.toml"), "{elsewhere}");
-        let spec = super::super::portals::default_portal_of("ops", &refs, Some(&docs)).unwrap();
-        let yaml = jc_core::envelope::ResourceEnvelope::new(
-            jc_core::envelope::ObjectMeta::new("ops-default", "org"),
-            spec,
-        )
-        .to_yaml()
-        .unwrap();
-        let read =
-            jc_core::envelope::ResourceEnvelope::<jc_core::kinds::PortalSpec>::from_yaml(&yaml)
-                .unwrap();
-        read.validate().unwrap();
+        let portal = prod_portal();
         let (store, ctx) = catalogue().await;
-        let orgs = super::super::portals::named(
-            &[super::super::portals::OrganizationPortals::installation(
-                super::super::portals::OrganizationPortals {
-                    name: String::new(),
-                    org_id: ctx.org_id,
-                    catalogue_id: ctx.catalogue_id,
-                    scheme: "https".into(),
-                    opendata: SITE.trim_start_matches("https://").into(),
-                    listed: Vec::new(),
-                    harvest_hosts: DataroomSection {
-                        harvest: seeds.clone(),
-                        ..DataroomSection::default()
-                    }
-                    .harvest_hosts(),
-                    config_dir: Some(docs.clone()),
-                    own_gateway: None,
-                },
-            )],
-            Some("ops".into()),
-        );
-        let migrated = super::super::portals::harvest_sources_of(&read.spec, &orgs).unwrap();
-        assert_eq!(migrated.len(), seeds.len());
-        for (seed, (from_portal, _)) in seeds.iter().zip(migrated) {
-            let seeded = seed_harvest(&store, ctx.org_id, ctx.catalogue_id, seed, SITE, None)
-                .await
-                .unwrap();
-            assert!(
-                !from_portal.converted.is_empty(),
-                "{}: converted datasets",
-                seed.name
-            );
-            let same = HarvestSource {
-                modified: seeded.modified,
-                position: seeded.position,
-                ..from_portal
-            };
-            assert_eq!(same, seeded, "{}", seed.name);
-        }
-    }
-
-    #[tokio::test]
-    async fn prods_two_sources_seed_with_their_publishers_and_only_their_hosts() {
-        let seeds = prod_seeds();
+        let orgs = ops(&ctx, &portal, docs, None);
+        let held = hold(&store, &ctx, &portal, &orgs).await;
         assert_eq!(
-            seeds
-                .iter()
-                .map(|s| (s.name.as_str(), s.kind.as_str(), s.schedule.as_str()))
+            held.iter()
+                .map(|s| (
+                    s.name.as_str(),
+                    serde_json::to_value(s.kind).unwrap(),
+                    s.schedule.as_str()
+                ))
                 .collect::<Vec<_>>(),
             [
-                ("nkod-banskabystrica", "nkod-sparql", "23 3 * * *"),
-                ("hub-bbsk", "arcgis-hub", "23 3 * * *")
+                ("nkod-banskabystrica", "nkod-sparql".into(), "23 3 * * *"),
+                ("hub-bbsk", "arcgis-hub".into(), "23 3 * * *")
             ]
         );
-        let (store, ctx) = catalogue().await;
-        for seed in &seeds {
-            let src = seed_harvest(&store, ctx.org_id, ctx.catalogue_id, seed, SITE, None)
-                .await
-                .expect("seeded");
+        for src in &held {
             assert!(src.enabled);
             let publisher = store
-                .get_publisher(&ctx, &seed.publisher)
+                .get_publisher(&ctx, &src.publisher_id)
                 .await
                 .unwrap()
                 .unwrap();
-            assert_eq!(publisher.uri, seed.publisher_uri);
+            assert_eq!(Some(&publisher.uri), src.target_publisher_iri.as_ref());
             // The source's own host is admitted; any other host, an internal one included, is not.
             validate_outbound_url(&src.url, &src.allowed_hosts, &[], false).expect("own host");
             for refused in [
@@ -1864,43 +1715,34 @@ mod tests {
                 assert!(
                     validate_outbound_url(refused, &src.allowed_hosts, &[], false).is_err(),
                     "{}: {refused}",
-                    seed.name
+                    src.name
                 );
             }
         }
         assert_eq!(store.list_harvest_sources(&ctx).await.unwrap().len(), 2);
-        // Seeding again on the next start writes over the stored source, nothing doubles.
-        seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &seeds[0], SITE, None)
-            .await
-            .unwrap();
-        assert_eq!(store.list_harvest_sources(&ctx).await.unwrap().len(), 2);
     }
 
+    /// A source reading a host off the deployment's allow-list (ODP-10), a schedule that is not
+    /// cron and a kind dataroom does not run are refused before anything is written.
+    #[cfg(feature = "portal")]
     #[tokio::test]
-    async fn a_seed_outside_its_hosts_or_off_cron_is_refused() {
-        let (store, ctx) = catalogue().await;
-        let mut off_list = prod_seeds()[0].clone();
-        off_list.allowed_hosts.retain(|h| h != "data.slovensko.sk");
+    async fn a_source_off_the_allow_list_or_off_cron_is_refused() {
+        let docs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs");
+        let portal = prod_portal();
+        let (_, ctx) = catalogue().await;
+        let mut orgs = ops(&ctx, &portal, docs.clone(), None);
+        orgs[0].harvest_hosts.retain(|h| h != "data.slovensko.sk");
+        let off_list = super::super::portals::harvest_sources_of(&portal, &orgs).unwrap_err();
+        assert!(off_list.contains("data.slovensko.sk"), "{off_list}");
+        let mut bad_cron = portal.clone();
+        bad_cron.sources[1].schedule = Some("nightly".into());
+        assert!(bad_cron.validate().is_err());
+        let text = std::fs::read_to_string(docs.join("default-portal.yaml")).unwrap();
+        let bad_kind = text.replace("type: arcgis-hub", "type: ftp");
         assert!(
-            seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &off_list, SITE, None)
-                .await
+            jc_core::envelope::ResourceEnvelope::<jc_core::kinds::PortalSpec>::from_yaml(&bad_kind)
                 .is_err()
         );
-        let mut bad_cron = prod_seeds()[1].clone();
-        bad_cron.schedule = "nightly".into();
-        assert!(
-            seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &bad_cron, SITE, None)
-                .await
-                .is_err()
-        );
-        let mut bad_kind = prod_seeds()[1].clone();
-        bad_kind.kind = "ftp".into();
-        assert!(
-            seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &bad_kind, SITE, None)
-                .await
-                .is_err()
-        );
-        assert!(store.list_harvest_sources(&ctx).await.unwrap().is_empty());
     }
 
     /// Both sources run once against what their hosts answered on 2026-11-09 (recorded fixtures,
@@ -1908,26 +1750,24 @@ mod tests {
     /// `od-datasets.json` and its gateway's `schema/index.json` of each Endpoint): every fetch
     /// goes to an allow-listed host, and the datasets prod's CKAN serves for the two publishers
     /// are among those listed, each with prod's distributions.
+    #[cfg(feature = "portal")]
     #[tokio::test]
     async fn prods_sources_harvest_from_recorded_answers() {
         let (store, ctx) = catalogue().await;
         let fetcher = MapFetcher::new();
         let fixtures =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/harvest");
-        let mut seeds = prod_seeds();
-        for seed in &mut seeds {
-            seed.converted_file = Some(fixtures.join("od-datasets.json"));
-            seed.datasets_base = Some("https://opendata.dev.joinedcontext.com/".into());
-            seed.gateway = Some(GATEWAY.into());
-            seed.allowed_hosts
+        let mut portal = prod_portal();
+        for source in &mut portal.sources {
+            assert_eq!(source.converted_file.as_deref(), Some("od-datasets.json"));
+            source.gateway = Some(GATEWAY.into());
+            source
+                .allowed_hosts
                 .push("api.smartcity.joinedcontext.com".into());
         }
-        let nkod = seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &seeds[0], SITE, None)
-            .await
-            .unwrap();
-        let hub = seed_harvest(&store, ctx.org_id, ctx.catalogue_id, &seeds[1], SITE, None)
-            .await
-            .unwrap();
+        let orgs = ops(&ctx, &portal, fixtures, None);
+        let [nkod, hub]: [HarvestSource; 2] =
+            hold(&store, &ctx, &portal, &orgs).await.try_into().unwrap();
         fetcher.insert(
             dataroom_harvest::runner::nkod_query_url(&nkod).unwrap(),
             Some("application/sparql-results+json"),

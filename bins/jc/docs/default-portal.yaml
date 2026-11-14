@@ -1,0 +1,75 @@
+# prod's two catalogue harvests (joinedcontext-deployment release,
+# components/ckan/values/catalogue/development-values.yaml.gotmpl:96-140, charts/ckan/values.yaml:160)
+# as sources of the installation Organization's default Portal (ODP-11): what jc's one-time
+# migration (T-6880) wrote from the former jc.toml `[[dataroom.harvest]]` block at
+# portals/<organization>-default.yaml in the Portal's repository, here for the Organization `ops`.
+# dataroom runs each on `schedule` (UTC) as the catalogue's harvest principal; a run fetches only
+# from `allowedHosts`, each of which must be on jc.toml's `[dataroom] harvest_allowed_hosts`
+# (ODP-10). Each source keeps only the datasets prod converted (`od-datasets.json` beside jc.toml:
+# a copy of bins/jc/docs/od-datasets.json, release 23a43801 charts/ckan/files/od-datasets.json byte
+# for byte). No `gateway`: the Endpoints are read on this instance's own gateway.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Portal
+metadata:
+  name: ops-default
+  namespace: org
+spec:
+  organizationRef: ops
+  path: default
+  slug: redirect
+  sources:
+  - name: nkod-banskabystrica
+    type: nkod-sparql
+    url: https://data.slovensko.sk/api/sparql
+    schedule: 23 3 * * *
+    allowedHosts:
+    - data.slovensko.sk
+    - egov.banskabystrica.sk
+    - dtm-banskabystrica.tmapserver.sk
+    - www.banskabystrica.sk
+    publisher: banskabystrica
+    publisherTitle: Mesto Banská Bystrica
+    publisherUri: https://data.gov.sk/id/legal-subject/00313271
+    spatialUri: http://data.europa.eu/nuts/code/SK032
+    namePrefix: bb-
+    rewriteHosts:
+      banskabystrica.sk: www.banskabystrica.sk
+    skip:
+      Evidencia psov: not ingested, street, house, flat and floor of each dog owner (Open data integration rules §1)
+      Počet občanov podľa mena: not ingested, link points to Počet občanov podľa veku (105 rows of ages)
+      Počet občanov podľa ulíc BB: not ingested, link points to Prírastky a úbytky občanov za jednotlivé roky (27 rows of years)
+      Ulice: not ingested, link points to Počet občanov podľa dňa narodenia (732 rows of Deň, Pohlavie, Počet)
+      Členovia orgánov samosprávy: not ingested, link points to Evidencia psov (3 299 dog records)
+    requireColumn:
+      Dotácie: IČO_žiadateľa
+      Objednávky BB: IČO
+      Zmluvy BB: Zmluvné_strany_s_údajom_IČO
+    convertedFile: od-datasets.json
+    datasetsBase: https://opendata.dev.joinedcontext.com/
+  - name: hub-bbsk
+    type: arcgis-hub
+    url: https://opendata.bbsk.sk
+    schedule: 23 3 * * *
+    allowedHosts:
+    - opendata.bbsk.sk
+    - services-eu1.arcgis.com
+    - www.arcgis.com
+    publisher: bbsk
+    publisherTitle: Banskobystrický samosprávny kraj
+    publisherUri: https://data.gov.sk/id/legal-subject/37828100
+    publisherDescription: Otvorené údaje Banskobystrického samosprávneho kraja (IČO 37828100) z opendata.bbsk.sk, prevzaté a opravené.
+    spatialUri: http://data.europa.eu/nuts/code/SK032
+    skip:
+      b5486911cb0342e48d475130d1d5e960: personal data (section 8), a count per okres at most
+    titles:
+      3844c8ed6ade4c2e96e547005c5f2178: Obyvateľstvo podľa náboženského vyznania (2011), okresy
+      404a3d55408b439891269e5985056db9: Obyvateľstvo podľa materinského jazyka (2021), okresy
+      4d7df96609bd49deabf028eca4fdf301: Obyvateľstvo podľa náboženského vyznania (2021), okresy
+      59064392c3e248d39199c0376ba56d22: Obyvateľstvo podľa materinského jazyka (2011), okresy
+      81576bdd05ea48a6b660a217a61097c8: Obyvateľstvo podľa náboženského vyznania (2011), obce
+      c0f097d92ceb4a90b006fdee8af6da1d: Obyvateľstvo podľa materinského jazyka (2011), obce
+      fc02ff58590647ed98f1df29d18e617f: Obyvateľstvo podľa materinského jazyka (2021), obce
+    spelling:
+      Bystrinská: Bystrianska
+    convertedFile: od-datasets.json
+    datasetsBase: https://opendata.dev.joinedcontext.com/

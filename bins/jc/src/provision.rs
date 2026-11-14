@@ -19,11 +19,7 @@ fn err(e: impl std::fmt::Display) -> StartError {
 /// Creates the organization repository ([`forge_repo`]) in shako (Gitea `POST /api/v1/orgs/{owner}/repos`, with
 /// `auto_init`) when `jc` points the Portal at shako. Errors name the call and the status, never
 /// the token.
-pub async fn forge(
-    siblings: &Siblings,
-    setup: &Setup,
-    cfg: &crate::config::Config,
-) -> Result<(), StartError> {
+pub async fn forge(siblings: &Siblings, setup: &Setup) -> Result<(), StartError> {
     let vars = portal_vars(siblings, setup, crate::config::portal_env);
     let (Some(base), Some(token)) = (vars.get("JC_SHAKO_URL"), setup.value(Secret::ShakoToken))
     else {
@@ -45,7 +41,7 @@ pub async fn forge(
         .map_err(|e| err(format!("GET {repo}: {e}")))?
         .status();
     if status.is_success() {
-        return migrate_harvest_seeds(&client, &auth, &repo, cfg).await;
+        return Ok(());
     }
     if status != StatusCode::NOT_FOUND {
         return Err(err(format!("GET {repo} answered {status}")));
@@ -70,110 +66,7 @@ pub async fn forge(
     tracing::info!(repo = %format!("{owner}/{name}"), "shako: the Portal's repository is ready");
     let org = organization_manifest(&domain(siblings.portal_base().as_deref()));
     seed(&client, &auth, &repo, "org.yaml", &org).await?;
-    seed(&client, &auth, &repo, "users/roles/steward.yaml", STEWARD).await?;
-    migrate_harvest_seeds(&client, &auth, &repo, cfg).await
-}
-
-/// Moves the `[[dataroom.harvest]]` seeds into their Organization's `default` Portal manifest,
-/// `portals/{organization}-default.yaml`, written once when absent (ODP-11): from then on the
-/// Portal's reconciler holds the sources, and the Portal shows and runs them. A seed of the
-/// `[dataroom]` catalogue belongs to the installation's Organization (`org.yaml`), and only
-/// without `[[organizations]]`, whose catalogues are their own.
-#[cfg(feature = "portal")]
-async fn migrate_harvest_seeds(
-    client: &reqwest::Client,
-    auth: &str,
-    repo: &str,
-    cfg: &crate::config::Config,
-) -> Result<(), StartError> {
-    let seeds = &cfg.dataroom.harvest;
-    if seeds.is_empty() {
-        return Ok(());
-    }
-    let mut by_organization: std::collections::BTreeMap<String, Vec<_>> = Default::default();
-    for seed in seeds {
-        let organization = match &seed.organization {
-            Some(name) => name.clone(),
-            None if cfg.organizations.is_empty() => installation_name(client, auth, repo).await?,
-            None => {
-                tracing::warn!(
-                    source = %seed.name,
-                    "[[dataroom.harvest]] of the [dataroom] catalogue beside [[organizations]]: \
-                     no Portal holds that catalogue, so it stays a seed"
-                );
-                continue;
-            }
-        };
-        by_organization.entry(organization).or_default().push(seed);
-    }
-    for (organization, seeds) in by_organization {
-        let spec = crate::modules::portals::default_portal_of(
-            &organization,
-            &seeds,
-            cfg.dataroom.config_dir.as_deref(),
-        )
-        .map_err(err)?;
-        let name = format!("{organization}-default");
-        let manifest = jc_core::envelope::ResourceEnvelope::new(
-            jc_core::envelope::ObjectMeta::new(&name, "org"),
-            spec,
-        )
-        .to_yaml()
-        .map_err(err)?;
-        seed(
-            client,
-            auth,
-            repo,
-            &format!("portals/{name}.yaml"),
-            &manifest,
-        )
-        .await?;
-        tracing::info!(portal = %name, sources = seeds.len(), "[[dataroom.harvest]] moved into its Portal manifest (ODP-11)");
-    }
-    Ok(())
-}
-
-#[cfg(not(feature = "portal"))]
-async fn migrate_harvest_seeds(
-    _: &reqwest::Client,
-    _: &str,
-    _: &str,
-    _: &crate::config::Config,
-) -> Result<(), StartError> {
-    Ok(())
-}
-
-/// The installation Organization's name, `metadata.name` of the repository's `org.yaml`.
-#[cfg(feature = "portal")]
-async fn installation_name(
-    client: &reqwest::Client,
-    auth: &str,
-    repo: &str,
-) -> Result<String, StartError> {
-    let file = format!("{repo}/contents/org.yaml?ref=main");
-    let answer = client
-        .get(&file)
-        .header("authorization", auth)
-        .send()
-        .await
-        .map_err(|e| err(format!("GET {file}: {e}")))?;
-    let status = answer.status();
-    if !status.is_success() {
-        return Err(err(format!("GET {file} answered {status}")));
-    }
-    let body: serde_json::Value = answer
-        .json()
-        .await
-        .map_err(|e| err(format!("GET {file}: {e}")))?;
-    let text = body["content"]
-        .as_str()
-        .map(|b64| b64.split_whitespace().collect::<String>())
-        .and_then(|b64| base64::engine::general_purpose::STANDARD.decode(b64).ok())
-        .and_then(|bytes| String::from_utf8(bytes).ok())
-        .ok_or_else(|| err(format!("GET {file}: no base64 content")))?;
-    jc_core::envelope::ResourceEnvelope::<jc_core::kinds::OrganizationSpec>::from_yaml(&text)
-        .map(|org| org.metadata.name)
-        .map_err(|e| err(format!("org.yaml: {e}")))
+    seed(&client, &auth, &repo, "users/roles/steward.yaml", STEWARD).await
 }
 
 /// Writes `path` when the repository has no such file.
