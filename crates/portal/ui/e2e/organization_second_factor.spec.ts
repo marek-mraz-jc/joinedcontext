@@ -38,7 +38,7 @@ const REFUSAL = {
     "eva may not propose a change to Organization zilina: the organization-admin binding ran out on 2026-11-14. Ask another administrator of zilina to renew it.",
 };
 
-async function stubApi(page: Page, floor: string, proposed: unknown[], refuse = false): Promise<void> {
+async function stubApi(page: Page, floor: string, proposed: unknown[], refuse = false, organization: unknown = ZILINA): Promise<void> {
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -54,31 +54,35 @@ async function stubApi(page: Page, floor: string, proposed: unknown[], refuse = 
     }
     if (path === "/api/v1/organization/limits") {
       return json({
+        // The catalog's Sign-in section as jc-core lists it (org_settings.rs CATALOG).
         entries: [
-          {
-            path: "spec.limits.signIn.sessionIdleMinutes",
-            section: "signIn",
-            security: true,
-            default: 60,
-            min: 5,
-            max: 600,
-            value: null,
-            origin: "default",
-          },
-        ],
+          ["spec.limits.signIn.sessionIdleMinutes", 60, 5, 480, true],
+          ["spec.limits.signIn.sessionMaxHours", 10, 1, 24, true],
+          ["spec.policies.signIn.password.minLength", 12, 12, null, true],
+          ["spec.policies.signIn.password.history", 0, 0, 24, false],
+        ].map(([path, value, min, max, security]) => ({
+          path,
+          section: "signIn",
+          security,
+          default: value,
+          min,
+          max,
+          value: null,
+          origin: "default",
+        })),
         projects: [],
         secondFactorFloor: floor,
       });
     }
     if (path === "/api/v1/projects/org/permissions/me") return json(PERMISSIONS);
-    if (path === "/api/v1/projects/org/organizations") return json(list([ZILINA]));
+    if (path === "/api/v1/projects/org/organizations") return json(list([organization]));
     if (/\/drafts\//.test(path)) {
       if (request.method() !== "PUT") return route.fulfill({ status: 204 });
       const { manifest } = request.postDataJSON() as { manifest: unknown };
       return json({ project: "org", kind: "Organization", name: "zilina", manifest, version: 1, updatedAt: new Date().toISOString() });
     }
     if (path === "/api/v1/projects/org/organizations/zilina") {
-      if (request.method() === "GET") return json(ZILINA);
+      if (request.method() === "GET") return json(organization);
       if (url.searchParams.get("dryRun")) return json({ valid: true });
       if (refuse) return route.fulfill({ status: 403, contentType: "application/problem+json", body: JSON.stringify(REFUSAL) });
       proposed.push(request.postDataJSON());
@@ -102,12 +106,16 @@ async function choose(page: Page, value: string): Promise<void> {
   await page.getByRole("button", { name: "Edit zilina.sk" }).click();
   const policies = page.getByRole("group", { name: "Policies" });
   await policies.locator("summary").first().click();
-  const signIn = policies.getByRole("group", { name: "Sign-in" });
+  // Limits has a Sign-in group of its own (sessions); the policies one holds the second factor.
+  const signIn = policies
+    .getByRole("group", { name: /^Sign-in/ })
+    .filter({ has: page.getByRole("combobox", { name: /Second factor at sign-in/ }) });
   if ((await signIn.locator("summary").count()) > 0) await signIn.locator("summary").first().click();
   const field = page.getByRole("combobox", { name: /Second factor at sign-in/ });
   await field.selectOption({ label: value });
   await expect(page.getByText(/set up an authenticator app at their next sign-in/).locator("visible=true").first()).toBeVisible();
-  await field.evaluate((element) => element.scrollIntoView({ block: "center" }));
+  // The Sign-in group in frame: its legend names the section the read view lists the rule under.
+  await signIn.evaluate((element) => element.scrollIntoView({ block: "center" }));
 }
 
 test.describe("an Organization's second factor", () => {
@@ -134,7 +142,17 @@ test.describe("an Organization's second factor", () => {
       await expect.poll(() => proposed.length).toBe(1);
       const spec = (proposed[0] as { spec: { policies?: { signIn?: { secondFactor?: string } } } }).spec;
       expect(spec.policies?.signIn?.secondFactor).toBe("required");
-      await page.getByText("chg-2fa0c1").first().evaluate((element) => element.scrollIntoView({ block: "center" }));
+      await expect(page.getByText("chg-2fa0c1").first()).toBeVisible();
+    });
+
+    test(`shows Required once the Change is approved at ${width} px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      const approved = { ...ZILINA, spec: { ...ZILINA.spec, policies: { signIn: { secondFactor: "required" } } } };
+      await stubApi(page, "optional", [], false, approved);
+      await page.goto("/organization/settings?lang=en");
+      await expect(row(page)).toContainText("Required");
+      await expect(row(page)).not.toContainText("inherited");
+      await row(page).evaluate((element) => element.scrollIntoView({ block: "center" }));
       await shot(page, `second-factor-required-${width}`);
     });
 
@@ -146,8 +164,9 @@ test.describe("an Organization's second factor", () => {
       await page.getByRole("button", { name: "Propose change" }).click();
       const reason = page.getByText(/organization-admin binding ran out/).first();
       await expect(reason).toBeVisible();
-      // The dialog brings its refusal into view: the person was scrolled down at the field.
+      // The refusal stands above the Propose button, in one frame with the field it was about.
       await expect(reason).toBeInViewport({ ratio: 1 });
+      await expect(page.getByRole("combobox", { name: /Second factor at sign-in/ })).toBeInViewport();
       // Whole, and below the fixed top bar rather than under it.
       const top = (await reason.boundingBox())?.y ?? 0;
       expect(top).toBeGreaterThan(80);

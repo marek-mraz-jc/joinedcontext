@@ -208,10 +208,10 @@ export function EditResourceDialogBody({
   const parseFailure = parseError
     ? t("resourceEdit.parseError", { line: parseError.line, reason: parseError.message })
     : null;
-  // A refusal is shown above the fields, out of sight of a person who scrolled down to the one
-  // they changed: brought into view once, when it appears (T-6895).
+  // A refusal is brought into view once, when it appears (T-6895): in a form it stands above the
+  // Propose button the person just pressed, beside the fields they changed; above a manifest.
   const showFailure = useCallback((element: HTMLDivElement | null) => {
-    element?.scrollIntoView?.({ block: "center" });
+    element?.scrollIntoView?.({ block: "nearest" });
   }, []);
   const failure =
     invalid ??
@@ -221,6 +221,13 @@ export function EditResourceDialogBody({
       : propose.error
         ? t("app.error.generic")
         : null);
+  const failureAlert = failure ? (
+    <div ref={showFailure}>
+      <Alert tone="danger" role="alert">
+        {failure}
+      </Alert>
+    </div>
+  ) : null;
 
   const refusals =
     propose.error instanceof ApiError ? (propose.error.problem?.errors ?? []).filter((e): e is string => typeof e === "string") : [];
@@ -313,13 +320,7 @@ export function EditResourceDialogBody({
         <ChangeNotice change={change} project={project} />
       ) : (
         <div className="flex flex-col gap-4">
-          {failure ? (
-            <div ref={showFailure}>
-              <Alert tone="danger" role="alert">
-                {failure}
-              </Alert>
-            </div>
-          ) : null}
+          {form && current.data ? null : failureAlert}
           {current.isPending ? (
             // The wait and the failure are two states, not one (T-1752). They used to be the
             // same `current.data ? … : "Loading…"` branch, so a GET that failed left the dialog
@@ -357,9 +358,14 @@ export function EditResourceDialogBody({
                   setInvalid(null);
                 }}
                 onSubmit={(next) => proposeManifest(form.toManifest(next, current.data))}
-                afterFields={form.afterFields?.(
-                  form.toManifest(edited ?? form.fromManifest(current.data), current.data),
-                )}
+                afterFields={
+                  form.afterFields || failureAlert ? (
+                    <>
+                      {form.afterFields?.(form.toManifest(edited ?? form.fromManifest(current.data), current.data))}
+                      {failureAlert}
+                    </>
+                  ) : undefined
+                }
               />
               </Suspense>
               </Disclosure>

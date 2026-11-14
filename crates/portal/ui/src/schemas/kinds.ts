@@ -3107,7 +3107,7 @@ export function organizationSchema(
           signIn: {
             type: "object",
             title: t("organization.limitGroup.signIn"),
-            description: t("organization.limitGroup.signInHint"),
+            description: t("organization.limitGroup.signInPoliciesHint"),
             properties: {
               secondFactor: {
                 type: "string",
