@@ -26,7 +26,8 @@ describe("runner lists (T-6825)", () => {
     const offered = bentoInputs.inputs.map(({ name }) => name).filter(offeredInput);
     expect(offered).toContain("http_client");
     expect(offered).toContain("nats");
-    for (const name of ["kafka", "amqp_0_9", "sql_select", "stdin", "http_server"]) {
+    expect(offered).toContain("sql_select");
+    for (const name of ["kafka", "amqp_0_9", "mongodb", "stdin", "http_server"]) {
       expect(offered).not.toContain(name);
     }
   });
@@ -34,8 +35,9 @@ describe("runner lists (T-6825)", () => {
   it("offer only the processors the runner builds", () => {
     const offered = PROCESSOR_GROUPS.flatMap(({ processors }) => processors.map(({ name }) => name));
     expect(offered).toContain("mapping");
+    expect(offered).toContain("jq");
     expect(offered.every((name) => RUNNER_PROCESSORS.has(name))).toBe(true);
-    for (const name of ["jq", "sql_select", "javascript", "python"]) {
+    for (const name of ["couchbase", "sql_select", "javascript", "python"]) {
       expect(offered).not.toContain(name);
     }
   });

@@ -1,0 +1,8 @@
+input:
+  stdin: {}
+buffer:
+  system_window:
+    size: 1h
+    slide: 2h
+output:
+  stdout: {}

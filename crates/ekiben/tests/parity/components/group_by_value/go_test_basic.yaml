@@ -1,0 +1,14 @@
+input:
+  stdin:
+    scanner:
+      to_the_end: {}
+pipeline:
+  threads: 1
+  processors:
+    - unarchive:
+        format: lines
+    - group_by_value:
+        value: ${!json("foo")}
+    - mapping: 'root = {"b": content().string(), "m": @, "i": batch_index(), "n": batch_size()}'
+output:
+  stdout: {}

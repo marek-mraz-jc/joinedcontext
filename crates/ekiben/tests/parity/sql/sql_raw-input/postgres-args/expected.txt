@@ -1,0 +1,5 @@
+## step 1 exit 0
+## step 2 exit 0
+## step 3 exit 0
+{"amount":"1.50","at":"2024-01-02T00:00:00Z","id":2,"name":"n2"}
+{"amount":"1.50","at":"2024-01-03T00:00:00Z","id":3,"name":"n3"}

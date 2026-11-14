@@ -1,0 +1,8 @@
+logger: {level: OFF}
+input:
+  sql_raw:
+    driver: postgres
+    dsn: ${PG_DSN}
+    query: "SELECT * FROM footable ORDER BY foo"
+output:
+  stdout: {}

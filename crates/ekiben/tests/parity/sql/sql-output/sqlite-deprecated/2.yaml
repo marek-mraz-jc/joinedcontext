@@ -1,0 +1,12 @@
+logger: {level: OFF}
+input:
+  generate:
+    count: 3
+    interval: ""
+    mapping: 'root = {"i": counter()}'
+output:
+  sql:
+    driver: sqlite
+    data_source_name: ${LITE_DSN}
+    query: "INSERT INTO t (v) VALUES (?)"
+    args_mapping: 'root = [ this.i ]'

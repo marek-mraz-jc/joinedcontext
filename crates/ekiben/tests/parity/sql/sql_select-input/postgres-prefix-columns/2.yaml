@@ -1,0 +1,12 @@
+logger: {level: OFF}
+input:
+  generate:
+    count: 4
+    interval: ""
+    mapping: 'root = {"i": counter()}'
+output:
+  sql_raw:
+    driver: postgres
+    dsn: ${PG_DSN}
+    query: "INSERT INTO footable (foo, bar, created_at) VALUES ($1, $2, $3)"
+    args_mapping: 'root = [ "doc-" + this.i.string(), this.i, this.i * 100 ]'

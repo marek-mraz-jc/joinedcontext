@@ -5,6 +5,10 @@
 pub mod inputs;
 pub mod outputs;
 pub mod path_guard;
+pub mod scanner_decompress;
+pub mod scanner_re_match;
+pub mod scanner_skip_bom;
+pub mod scanner_xml;
 
 use ekiben_core::Registry;
 

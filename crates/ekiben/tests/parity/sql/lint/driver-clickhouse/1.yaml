@@ -1,0 +1,8 @@
+logger: {level: OFF}
+input:
+  sql_raw:
+    driver: clickhouse
+    dsn: clickhouse://localhost:9000/db
+    query: "SELECT 1"
+output:
+  stdout: {}

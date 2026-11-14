@@ -1,0 +1,21 @@
+input:
+  stdin: {}
+pipeline:
+  threads: 1
+  processors:
+    - branch:
+        request_map: 'root = ""'
+        processors:
+          - cached:
+              key: static_foo
+              cache: foo_cache
+              ttl: 10m
+              processors:
+                - mapping: 'root = {"looked_up": counter()}'
+        result_map: 'root.foo = this'
+    - mapping: 'root = {"b": content().string(), "m": @, "i": batch_index(), "n": batch_size()}'
+cache_resources:
+  - label: foo_cache
+    memory: {}
+output:
+  stdout: {}
