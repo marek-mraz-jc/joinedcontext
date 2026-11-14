@@ -1677,6 +1677,73 @@ async fn an_organizations_catalogue_keeps_the_dataset_its_endpoint_still_publish
     assert_eq!(bikes.len(), 1, "{reports:?}");
 }
 
+/// T-6853, ADR-N-058 2.6: a project's datasets go to its own Organization's catalogue, so the
+/// pass after its `organizationRef` moved from `hel` to `bbsk` publishes them in `bbsk`'s, and
+/// the pass after the move back in `hel`'s again. Neither catalogue has its token here, so each
+/// publication fails naming the catalogue it went to, and never the other.
+#[tokio::test]
+async fn a_moved_projects_datasets_follow_its_organization() {
+    let bikes = endpoint("bikes", "public", Some(dataset_only()));
+    let previous = Mirror::new();
+    previous.upsert(envelope("CkanInstance", "hel-fi", instance()));
+    previous.upsert(envelope("Endpoint", "bikes", bikes.clone()));
+    let org = |kind: &str, name: &str, spec: Value| {
+        serde_norway::to_string(&json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": kind,
+            "metadata": { "name": name },
+            "spec": spec,
+        }))
+        .expect("yaml")
+    };
+    for (owner, other) in [("bbsk", "hel"), ("hel", "bbsk")] {
+        let repository = std::env::temp_dir().join(format!(
+            "jc-ckan-moved-{owner}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&repository).expect("a scratch directory");
+        std::fs::write(
+            repository.join("helsinki.yaml"),
+            [
+                org("Organization", "hel", json!({ "domain": "hel.fi" })),
+                org("Organization", "bbsk", json!({ "domain": "bbsk.sk" })),
+                org("Project", PROJECT, json!({ "organizationRef": owner })),
+                manifest_in(PROJECT, "CkanInstance", "hel-fi", instance()),
+                manifest_in(PROJECT, "Endpoint", "bikes", bikes.clone()),
+            ]
+            .join("---\n"),
+        )
+        .expect("the project");
+        let catalogue = |organization: &str| {
+            joinedcontext_portal::organization_host::OrganizationCatalogue {
+                organization: organization.to_owned(),
+                url: format!("http://opendata.{organization}.localhost:9")
+                    .parse()
+                    .expect("a url"),
+                api: None,
+                reach: Some("127.0.0.1:9".parse().expect("an address")),
+                data_host: None,
+                token_file: repository.join(format!("{organization}.token")),
+            }
+        };
+        let repo = jcctl::loader::Repository::load(&repository).expect("the repository loads");
+        let reports = CkanSync::new(HOST)
+            .for_organizations(vec![catalogue("hel"), catalogue("bbsk")])
+            .converge(&repo, &previous, &repository)
+            .await;
+        std::fs::remove_dir_all(&repository).expect("cleaned up");
+        let published: Vec<_> = reports.iter().filter(|r| r.dataset == "bikes").collect();
+        assert!(!published.is_empty(), "{reports:?}");
+        for report in published {
+            let Publication::Failed(reason) = &report.publication else {
+                panic!("{owner}: published without a token: {report:?}");
+            };
+            assert!(reason.contains(&format!("{owner}'s catalogue")), "{owner}: {reason}");
+            assert!(!reason.contains(&format!("{other}'s")), "{owner}: {reason}");
+        }
+    }
+}
+
 #[tokio::test]
 async fn an_endpoint_the_pass_cannot_place_keeps_its_dataset() {
     let previous = Mirror::new();

@@ -173,6 +173,87 @@ async fn two_organizations() -> DataroomState {
         .with_catalogue_bases([(b, "http://other.city.test".to_owned())].into())
 }
 
+/// `name` from the Endpoint `slug`, `visibility`, in `catalogue` of `state`'s store; withdrawn
+/// when `withdrawn`.
+async fn seed(
+    state: &DataroomState,
+    catalogue: u128,
+    (name, slug, visibility): (&str, &str, &str),
+    withdrawn: bool,
+) {
+    let ctx = RequestCtx::new(
+        state.default_org_id,
+        CatalogueId::from_uuid(Uuid::from_u128(catalogue)),
+        dataroom_core::Subject::authenticated("seed", vec![state.default_org_id], Vec::new()),
+    );
+    let dataset: dataroom_core::Dataset = serde_json::from_value(serde_json::json!({
+        "orgId": Uuid::nil(), "catalogueId": Uuid::nil(), "id": "", "name": name,
+        "title": {"en": name}, "description": {}, "publisherId": "city",
+        "visibility": visibility, "state": "active",
+        "endpointUrl": format!("https://api.city.test/api/endpoint/{slug}/"),
+        "distributions": [], "issued": "2026-11-01T10:00:00Z", "modified": "2026-11-02T10:00:00Z"
+    }))
+    .expect("dataset");
+    state.store.upsert_dataset(&ctx, dataset).await.expect("upsert");
+    if withdrawn {
+        state.store.withdraw_dataset(&ctx, name).await.expect("withdraw");
+    }
+}
+
+/// `GET path` on `com_alpha`'s mount: the status and the `Location`.
+async fn on_alpha(state: DataroomState, path: &str) -> (StatusCode, Option<String>) {
+    let mut req = Request::get(path).body(Body::empty()).unwrap();
+    req.extensions_mut()
+        .insert(mount("https", "city.test", "/com_alpha/opendata"));
+    req.extensions_mut()
+        .insert(jc_router::Organization("com_alpha".to_owned()));
+    let resp = router(state).oneshot(req).await.unwrap();
+    let location = resp
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    (resp.status(), location)
+}
+
+/// T-6853: a project moved from `com_alpha` to `com_beta` withdrew its dataset here and published
+/// it there; its old address answers 301 to the new one, its file format and query kept. Only the
+/// same Endpoint's dataset, public and active, in a catalogue of this deployment is a new home:
+/// another Endpoint's dataset of the name, a non-public one, or none keep the 404.
+#[tokio::test]
+async fn an_old_dataset_address_redirects() {
+    let state = two_organizations().await;
+    for (name, slug, beta) in [
+        ("air", "airslug", Some(("airslug", "public"))),
+        ("noise", "noiseslug", Some(("otherslug", "public"))),
+        ("inner", "innerslug", Some(("innerslug", "internal"))),
+        ("gone", "goneslug", None),
+    ] {
+        seed(&state, DEFAULT, (name, slug, "public"), true).await;
+        if let Some((slug, visibility)) = beta {
+            seed(&state, OTHER, (name, slug, visibility), false).await;
+        }
+    }
+    assert_eq!(
+        on_alpha(state.clone(), "/dataset/air").await,
+        (
+            StatusCode::MOVED_PERMANENTLY,
+            Some("http://other.city.test/dataset/air".to_owned())
+        )
+    );
+    assert_eq!(
+        on_alpha(state.clone(), "/dataset/air.ttl?_profile=dcat-ap-sk-2.0").await,
+        (
+            StatusCode::MOVED_PERMANENTLY,
+            Some("http://other.city.test/dataset/air.ttl?_profile=dcat-ap-sk-2.0".to_owned())
+        )
+    );
+    for kept in ["noise", "inner", "gone", "never"] {
+        let (status, location) = on_alpha(state.clone(), &format!("/dataset/{kept}")).await;
+        assert_eq!((status, location), (StatusCode::NOT_FOUND, None), "{kept}");
+    }
+}
+
 /// T-6797: every absolute id and link names the catalogue's canonical base, whichever
 /// registered host (bound or shared with the Organization's prefix) and scheme read it; the
 /// Host header never reaches an id.
