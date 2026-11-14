@@ -786,7 +786,10 @@ async fn an_escaped_metadata_name_never_reads_the_whole_model() -> Result<(), St
     let (_b, app) = broker(true).await?;
     for path in ["%24metadata", "$metadata/", "./$metadata", "$Metadata"] {
         let (status, body) = send(&app, Method::GET, &format!("{ROOT}/{path}"), None).await;
-        assert!(!body.to_string().contains("owner"), "{path}: {status} {body}");
+        assert!(
+            !body.to_string().contains("owner"),
+            "{path}: {status} {body}"
+        );
         let members = json!({"requests": [{"id": "1", "method": "get", "url": path}]});
         let (_, body) = send(
             &app,
