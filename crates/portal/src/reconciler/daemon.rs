@@ -5743,6 +5743,7 @@ output_error{stream="kpi"} 6
         assert!(is_candidate_manifest("users/delegation/stewards.yaml"));
         assert!(!is_candidate_manifest("users/delegation/README.md"));
         assert!(is_candidate_manifest("agentprofiles/app-builder.yaml"));
+        assert!(is_candidate_manifest("portals/bratislava-mobility.yaml"));
         assert!(is_candidate_manifest("environments/rehearsal.yaml"));
         assert!(!is_candidate_manifest("agentprofiles/README.md"));
         assert!(!is_candidate_manifest("platform-settings.yaml"));
