@@ -32,8 +32,8 @@ The roles a source maps, per format:
 
 | Format | Roles of one source | URL of an output |
 |---|---|---|
-| feed | title and updated (required), summary, content, link, published, author, category, image; presets `event`, `article`, `generic`; `sort` `updated` or `published`, `limit` 1..200 (50) | `/feed/v1/{name}/{atom.xml\|rss.xml\|feed.json}` (EP-150) |
-| ical | the RFC 5545 fields of API/02 §8b (SUMMARY, DTSTART, DTEND or DURATION, LOCATION, GEO, URL, ORGANIZER, CATEGORIES, STATUS); `timezone` (default `Europe/Bratislava`); `sort` `start` or `-start` | `/ical/v1/{name}.ics`; `/ical/v1/events.ics` stays an alias of the first iCal output, deprecated |
+| feed | title and updated (required), summary, content, link, published, author, category, image; presets `event`, `article`, `generic`; `sort` `updated` or `published`, `limit` 1..200 (50) | `/feed/v1/{name}/{atom.xml\|rss.xml\|feed.json}` (EP-150); the same output is the preset at `feeds/{name}.{atom,rss,json}` (API/02 §4a) |
+| ical | the RFC 5545 fields of API/02 §8b (SUMMARY, DTSTART, DTEND or DURATION, LOCATION, GEO, URL, ORGANIZER, CATEGORIES, STATUS); `timezone` (default `Europe/Bratislava`); `sort` `start` or `-start` | `/ical/v1/{name}.ics`, a permanent alias of `feeds/{name}.ics` (API/02 §4a, EP-177); `/ical/v1/events.ics` stays an alias of the first iCal output, deprecated |
 | ogc, geojson | the geometry (`location`, `observationSpace`, `operationSpace` or a model GeoProperty), the time instant or interval, the served properties | OGC `collections/{name}`; GeoJSON `/geojson/v1/{name}` |
 | csv | columns in order with labels; one CSV per type, or a union with a `type` column | `/csv/v1/{name}.csv` |
 | sta | the attributes that become Datastreams | `/sta/v1.1/` with the output's Things |

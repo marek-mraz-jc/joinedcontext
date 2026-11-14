@@ -13,6 +13,10 @@ pub enum DataroomError {
     #[error("not found: {0}")]
     NotFound(String),
 
+    /// The resource existed and was removed on purpose: its catalogue was deleted (ODP-09).
+    #[error("gone: {0}")]
+    Gone(String),
+
     /// Caller is authenticated/identified, the resource is visible, and the action is denied.
     #[error("forbidden: {0}")]
     Forbidden(String),
@@ -76,6 +80,7 @@ impl DataroomError {
     pub fn slug(&self) -> &'static str {
         match self {
             Self::NotFound(_) => "not-found",
+            Self::Gone(_) => "gone",
             Self::Forbidden(_) => "forbidden",
             Self::Unauthorized(_) => "unauthorized",
             Self::Validation { .. } => "validation-error",
@@ -98,6 +103,7 @@ impl DataroomError {
     pub fn status_code(&self) -> u16 {
         match self {
             Self::NotFound(_) => 404,
+            Self::Gone(_) => 410,
             Self::Forbidden(_) => 403,
             Self::Unauthorized(_) => 401,
             Self::Validation { .. }
@@ -114,7 +120,7 @@ impl DataroomError {
     /// CKAN Action API `__type` string.
     pub fn ckan_error_type(&self) -> &'static str {
         match self {
-            Self::NotFound(_) => "Not Found Error",
+            Self::NotFound(_) | Self::Gone(_) => "Not Found Error",
             Self::Forbidden(_) | Self::Unauthorized(_) => "Authorization Error",
             Self::Validation { .. } | Self::ShaclViolation { .. } | Self::Conflict(_) => {
                 "Validation Error"

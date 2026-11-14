@@ -1957,6 +1957,7 @@ mod tests {
             allowed_outbound_hosts: Vec::new(),
             applicable_legislation: Vec::new(),
             modified: Utc::now(),
+            deleted: None,
             public_base: None,
         }
     }

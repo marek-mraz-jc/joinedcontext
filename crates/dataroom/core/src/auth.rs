@@ -485,3 +485,47 @@ impl Authorizer for PolicyAuthorizer {
         }
     }
 }
+
+/// A [`PolicyAuthorizer`] whose rules of one catalogue the host swaps while it serves (ODP-11):
+/// a catalogue created or deleted at runtime gains or loses its grants at once, every other
+/// catalogue's rules untouched. Each check reads one consistent rule set.
+#[derive(Debug, Default)]
+pub struct LiveAuthorizer {
+    policy: std::sync::RwLock<PolicyAuthorizer>,
+}
+
+impl LiveAuthorizer {
+    pub fn new(rules: Vec<GrantRule>) -> Self {
+        Self {
+            policy: std::sync::RwLock::new(PolicyAuthorizer::new(rules)),
+        }
+    }
+
+    /// Replaces every rule scoped to `catalogue_id` of `org_id` with `rules` (each one is
+    /// scoped to that catalogue: a rule naming another is dropped, never widened).
+    pub fn replace_catalogue(
+        &self,
+        org_id: OrgId,
+        catalogue_id: CatalogueId,
+        rules: Vec<GrantRule>,
+    ) {
+        let mut policy = self.policy.write().unwrap_or_else(|e| e.into_inner());
+        policy
+            .rules
+            .retain(|r| !(r.org_id == org_id && r.catalogue_id == Some(catalogue_id)));
+        policy.rules.extend(
+            rules
+                .into_iter()
+                .filter(|r| r.org_id == org_id && r.catalogue_id == Some(catalogue_id)),
+        );
+    }
+}
+
+impl Authorizer for LiveAuthorizer {
+    fn check(&self, ctx: &RequestCtx, action: Action, object: &ObjectTarget) -> Decision {
+        self.policy
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .check(ctx, action, object)
+    }
+}

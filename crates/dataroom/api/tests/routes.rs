@@ -76,6 +76,7 @@ impl Store for FailingStore {
         list_catalogues<'a>(org_id: OrgId) -> Vec<Catalogue>;
         get_catalogue<'a>(org_id: OrgId, catalogue_id: CatalogueId) -> Option<Catalogue>;
         upsert_catalogue<'a>(catalogue: Catalogue) -> Catalogue;
+        delete_catalogue<'a>(org_id: OrgId, catalogue_id: CatalogueId) -> bool;
         list_publishers<'a>(ctx: &'a RequestCtx) -> Vec<Publisher>;
         get_publisher<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<Publisher>;
         upsert_publisher<'a>(ctx: &'a RequestCtx, publisher: Publisher) -> Publisher;
@@ -94,6 +95,7 @@ impl Store for FailingStore {
         list_harvest_sources<'a>(ctx: &'a RequestCtx) -> Vec<HarvestSource>;
         get_harvest_source<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<HarvestSource>;
         upsert_harvest_source<'a>(ctx: &'a RequestCtx, source: HarvestSource) -> HarvestSource;
+        delete_harvest_source<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> bool;
         list_harvest_runs<'a>(ctx: &'a RequestCtx, source_id: Option<&'a str>) -> Vec<HarvestRun>;
         get_harvest_run<'a>(ctx: &'a RequestCtx, run_id: &'a str) -> Option<HarvestRun>;
         upsert_harvest_run<'a>(ctx: &'a RequestCtx, run: HarvestRun) -> HarvestRun;

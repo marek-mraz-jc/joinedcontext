@@ -160,6 +160,7 @@ async fn call(
 /// Two Organizations, `com_alpha` on the default catalogue and `com_beta` on the other, each
 /// with its canonical base: the default one https under a prefix, the other http on its host.
 async fn two_organizations() -> DataroomState {
+    let org = OrgId::from_uuid(Uuid::from_u128(ORG));
     let (a, b) = (
         CatalogueId::from_uuid(Uuid::from_u128(DEFAULT)),
         CatalogueId::from_uuid(Uuid::from_u128(OTHER)),
@@ -168,7 +169,11 @@ async fn two_organizations() -> DataroomState {
         .await
         .with_public_base("https://data.city.test/opendata")
         .with_organization_catalogues(
-            [("com_alpha".to_owned(), a), ("com_beta".to_owned(), b)].into(),
+            [
+                ("com_alpha".to_owned(), (org, a)),
+                ("com_beta".to_owned(), (org, b)),
+            ]
+            .into(),
         )
         .with_catalogue_bases([(b, "http://other.city.test".to_owned())].into())
 }
