@@ -157,6 +157,26 @@ fn allow_viz_origin(response: &mut Response, origin: Option<&HeaderValue>, viz: 
     }
 }
 
+/// The actions that change data; GET refuses them.
+const CKAN_WRITE_ACTIONS: &[&str] = &[
+    "package_create",
+    "package_update",
+    "package_patch",
+    "package_delete",
+    "dataset_purge",
+    "resource_create",
+    "resource_update",
+    "resource_patch",
+    "resource_delete",
+    "resource_view_create",
+    "resource_view_update",
+    "resource_view_delete",
+    "organization_create",
+    "organization_update",
+    "organization_patch",
+    "organization_delete",
+];
+
 async fn answer_ckan_action(
     state: DataroomState,
     ctx: RequestCtx,
@@ -177,6 +197,21 @@ async fn answer_ckan_action(
                 "{action} is not supported: dataroom holds no data copies and queries Endpoints live (C3)"
             )),
         );
+    }
+
+    // CKAN answers a write only to POST: a GET link or redirect never changes a catalogue, and a
+    // write's payload never lands in a URL (and so in an access log).
+    if is_get && CKAN_WRITE_ACTIONS.contains(&action.as_str()) {
+        let mut response = ckan_err(
+            &base,
+            &action,
+            DataroomError::field_error("method", format!("{action} changes data: send it as POST")),
+        );
+        *response.status_mut() = StatusCode::METHOD_NOT_ALLOWED;
+        response
+            .headers_mut()
+            .insert(header::ALLOW, HeaderValue::from_static("POST"));
+        return response;
     }
 
     match action.as_str() {

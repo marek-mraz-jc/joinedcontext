@@ -853,6 +853,34 @@ async fn ckan_site_and_listing_actions() {
 }
 
 #[tokio::test]
+async fn ckan_get_refuses_every_write_and_purge_action() {
+    let w = world().await;
+    let app = &w.app;
+    for action in [
+        "dataset_purge?id=open",
+        "package_delete?id=open",
+        "package_patch?id=open&title=x",
+        "resource_view_delete?id=v",
+        "organization_delete?id=city",
+    ] {
+        let a = get(app, &format!("/api/3/action/{action}"), Some("tok-admin")).await;
+        assert_eq!(
+            a.status,
+            StatusCode::METHOD_NOT_ALLOWED,
+            "{action}: {}",
+            a.body
+        );
+        assert_eq!(a.headers[header::ALLOW], "POST");
+        assert!(ckan_error(&a)["method"][0]
+            .as_str()
+            .unwrap()
+            .contains("POST"));
+    }
+    let a = get(app, "/api/3/action/package_show?id=open", None).await;
+    assert_eq!(a.json()["result"]["state"], "active", "{}", a.body);
+}
+
+#[tokio::test]
 async fn ckan_request_parsing_and_identity() {
     let w = world().await;
     let app = &w.app;
