@@ -2,7 +2,7 @@
 
   bins/jc/smoke/run pipelines --base-url http://localhost:<port> --export <export dir> \
       --state <jc state dir> --out <dir> \
-      [--runs N] [--only project/name ...] [--wait 300]
+      [--runs N] [--only project/name ...] [--wait 300] [--budget 2400]
 
 Expectations come from the export's manifests (gitea/files/<owner>/<project>/pipelines/*/pipeline.yaml,
 their DataSources and target Endpoints). Per Pipeline, as the Portal's administrator client
@@ -28,6 +28,10 @@ portal-reconciler client of --state, signed in by the browser flow, deleted at t
              fewer runs are ahead than at the last look; a look with no progress ends the wait
              a run is read once the status says it ended (nothing running, the last run ended
              after the request), at most RUN_TIMEOUT after it was listed
+             --budget caps every run's wait together, counted from the suite's start: a run still
+             waited for when it is spent fails naming its status then, and each Pipeline not run
+             yet fails `run` (jc-dev 2026-11-14: ten runs that did not end held the suite past
+             the harness's 3600 s with an empty log). One line per run goes to stderr as it ends.
   log        GET  .../runs/{run}/log                             one line per record
   landed     GET  /api/endpoint/{slug}/ngsi-ld/v1/entities/{id}  a record the run sent, modifiedAt
              not before the run started; entities?type=T&count=true at least the run's sent
@@ -310,10 +314,18 @@ def ended_since(http: Http, base: str, t0: float) -> bool:
     return bool(not RUNNING.search(said) and ended and (_ts(ended.group(1)) or 0) >= int(t0))
 
 
+def status_of(http: Http, base: str) -> str:
+    """The Pipeline's conditions as one line, for a row that says where a run stopped."""
+    st, _, raw = http.call("GET", base)
+    return "; ".join(f"{c.get('reason')}: {c.get('message')}" for c in conditions(as_json(raw) or {}))[:200]
+
+
 def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float, projects=(),
-                 prod: dict | None = None, runlog: Path | None = None, found: dict | None = None) -> None:
+                 prod: dict | None = None, runlog: Path | None = None, found: dict | None = None,
+                 until: float = float("inf")) -> None:
     """One run-now of `p`. `found` collects for the whole suite run: "landed" (key, source host)
-    of each run that landed from a non-loopback source, "unreachable" the candidates of (d)."""
+    of each run that landed from a non-loopback source, "unreachable" the candidates of (d).
+    `until` is the suite's budget end: no wait passes it."""
     found = found if found is not None else {}
     base = f"/api/v1/projects/{p.project}/pipelines/{p.name}"
     st, _, raw = http.call("GET", base + "/runs?limit=5")
@@ -328,7 +340,7 @@ def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float, p
     started = (as_json(raw) or {}).get("run")
     run, deadline, extended, rounds, ran_on, listed, ended = None, time.time() + wait, None, 0, False, None, False
     while True:
-        while time.time() < deadline:
+        while time.time() < min(deadline, until):
             time.sleep(5)
             st, _, raw = http.call("GET", base + "/runs?limit=5")
             items = (as_json(raw) or {}).get("items") or [] if st == 200 else []
@@ -344,7 +356,7 @@ def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float, p
                     run, ended = next((x for x in items if x.get("run") == run.get("run")), run), True
                     break
                 deadline = max(deadline, listed + RUN_TIMEOUT)
-        if run:
+        if run or time.time() >= until:
             break
         # Still queued. Prod's Portal has no spacing to wait out: a run-now keeps its place in
         # due order (dd7d5ce5 src/reconciler/run_queue.rs:767-776, run_now returns
@@ -365,14 +377,15 @@ def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float, p
         # The first estimate counts from the start, the --wait already spent included.
         deadline = time.time() + extended[0] - (wait if rounds == 1 else 0)
     why = ""
+    cut = "" if time.time() < until else "; the suite's --budget ended the wait"
     if not run:
-        st, _, raw = http.call("GET", base)
-        said = [f"{c.get('reason')}: {c.get('message')}" for c in conditions(as_json(raw) or {})]
         waited = (f"{time.time() - t0:.0f} s ({extended[1]} still queued ahead after {rounds} round(s) of "
-                  f"the queue's estimate, its runs {extended[2]:.0f} s each)" if extended else f"{wait:.0f} s")
-        why = f"none within {waited}; status {'; '.join(said)[:200]}"
+                  f"the queue's estimate, its runs {extended[2]:.0f} s each)" if extended
+                  else f"{time.time() - t0:.0f} s" if cut else f"{wait:.0f} s")
+        why = f"none within {waited}{cut}; status {status_of(http, base)}"
     if run and not ended:
-        why = f"listed, not ended within {RUN_TIMEOUT} s of it (status: running, or no end after the request)"
+        within = f"{time.time() - listed:.0f}" if cut else RUN_TIMEOUT
+        why = f"listed, not ended within {within} s of it{cut}; status {status_of(http, base)}"
     r.check("history", p.key, f"GET {base}/runs", "the started run listed with its counts, ended",
             (json.dumps(run)[:240] + ("" if ended else f"; {why}")) if run else why, run is not None and ended)
     if not run:
@@ -430,6 +443,25 @@ def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float, p
                 st == 200 and n is not None and int(n) >= int(run["sent"]))
 
 
+def ask_run(r: Results, http: Http, anon: Http, p: Pipeline, a, projects, prod, runlog, found,
+            until: float) -> None:
+    """One run of `p` within the suite's budget, or a `run` fail once it is spent; either way one
+    line on stderr, so a run that does not end shows while the suite still runs."""
+    t = time.time()
+    if t >= until:
+        r.check("run", p.key, "", f"asked within --budget {a.budget:.0f} s",
+                "not asked: the suite's budget was spent on the runs before it", False)
+        for x in ("history", "log", "landed"):
+            r.skip(x, p.key, "", "", "not run: the suite's budget was spent")
+    else:
+        run_pipeline(r, http, anon, p, a.wait, projects, prod, runlog, found, until)
+    rows = [x for x in r.rows if x["target"] == p.key and x["id"] in ("run", "history")]
+    said = ", ".join(f"{x['id']} {x['result']}" for x in rows)
+    tail = next((x["actual"] for x in reversed(rows) if x["result"] == FAIL), "")
+    print(f"pipelines: {p.key}: {said} ({time.time() - t:.0f} s){': ' + tail[-240:] if tail else ''}",
+          file=sys.stderr, flush=True)
+
+
 def runner_list(headers: dict, raw: bytes):
     """The stream list ekiben answers, or None: without the ekiben module /streams falls through
     to the Portal's page, a 200 that is HTML."""
@@ -470,7 +502,10 @@ def main(argv):
     ap.add_argument("--only", action="append", default=[])
     ap.add_argument("--runlog", help="prod's Portal run log dir (default: <export>-runlog when it exists)")
     ap.add_argument("--wait", type=float, default=300, help="seconds a run may take")
+    ap.add_argument("--budget", type=float, default=2400,
+                    help="seconds all runs may take together, from the suite's start (jc-dev's ten took 1047-1668 s)")
     a = ap.parse_args(argv)
+    until = time.time() + a.budget
     loopback_only(a.base_url)
     http = Http(a.base_url)
     r = Results("pipelines", a.base_url)
@@ -500,8 +535,8 @@ def main(argv):
                     r.skip("run", p.key, "", "", f"resident {p.source_type} source: runs continuously, no one-shot run")
                 elif ran < a.runs:
                     ran += 1
-                    run_pipeline(r, admin.browser, http, p, a.wait, sorted({q.project for q in pipelines}),
-                                 prod, runlog, found)
+                    ask_run(r, admin.browser, http, p, a, sorted({q.project for q in pipelines}),
+                            prod, runlog, found, until)
             decide_unreachable(r, found.get("unreachable", []), found.get("landed", []))
         finally:
             admin.close()
