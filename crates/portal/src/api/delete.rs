@@ -240,8 +240,10 @@ impl DeleteOutcome {
                 .collect();
             msg.push_str(&format!(": {}", names.join(", ")));
         }
-        if elsewhere > 0 && !here.is_empty() {
-            msg.push_str(&format!(" and {elsewhere} in other projects"));
+        match (here.is_empty(), elsewhere) {
+            (_, 0) => {}
+            (true, _) => msg.push_str(" in other projects"),
+            (false, _) => msg.push_str(&format!(" and {elsewhere} in other projects")),
         }
         msg
     }
@@ -778,6 +780,23 @@ mod tests {
     }
 
     /// F-POR4-016: a LinkML source another model names on the workspace's branch stays.
+    /// Q-5-05: a removal blocked only from other projects says where, without naming them.
+    #[test]
+    fn a_block_from_other_projects_alone_says_so() {
+        assert_eq!(
+            DeleteOutcome::conflict_message(&[], 2),
+            "2 dependent resources block deletion in other projects"
+        );
+        let here = [Reference {
+            kind: "Endpoint".into(),
+            name: "feed".into(),
+        }];
+        assert_eq!(
+            DeleteOutcome::conflict_message(&here, 1),
+            "2 dependent resources block deletion: Endpoint feed and 1 in other projects"
+        );
+    }
+
     #[test]
     fn a_source_the_branch_still_names_stays() {
         let branch = crate::store::Mirror::new();
