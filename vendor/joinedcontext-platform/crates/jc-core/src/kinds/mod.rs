@@ -32,7 +32,6 @@ pub mod model_projection;
 pub mod mqtt_allowance;
 pub mod mqtt_broker;
 pub mod org_settings;
-pub mod portal;
 pub mod organization;
 pub mod pipeline;
 pub mod pipeline_history;
@@ -41,6 +40,7 @@ pub mod pipeline_lifetime;
 pub mod pipeline_source_deletes;
 pub mod policy;
 pub mod policy_odrl;
+pub mod portal;
 pub mod role;
 pub mod service_account;
 pub mod space;
@@ -106,10 +106,6 @@ pub use feed_output::{
     FeedSource, FEED_FORMATS, MAX_FEED_OUTPUTS,
 };
 pub use group::{is_person_id, GroupSpec, Member};
-pub use portal::{
-    http_url_host, is_portal_host, HarvestBudget, PortalSource, PortalSourceType, PortalSpec,
-    SlugAddress, DEFAULT_PORTAL,
-};
 pub use ical_mapping::{
     ical_links, outputs_gaps, Accepts, DateMode, FieldRemap, FieldSource, IcalField, IcalMapping,
     IcalOutput, OutputFilter, Preset, Representations, MAX_OUTPUTS, PRESET_TYPES,
@@ -142,6 +138,10 @@ pub use policy::{
     OperationGroup, OperationRef, PlatformAction, PolicyEffect, PolicyRule, PolicySpec, Principal,
     PrincipalKind, RegistrationInfo, ScopeDefinitionSpec, Validity, VersionsCapability,
     WriteCapability,
+};
+pub use portal::{
+    http_url_host, is_portal_host, HarvestBudget, PortalSource, PortalSourceType, PortalSpec,
+    SlugAddress, DEFAULT_PORTAL,
 };
 pub use role::{
     BindingValidity, Constraint, RoleBindingSpec, RoleSpec, Rule, Subject, SubjectSource, Verb,

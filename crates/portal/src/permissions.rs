@@ -901,7 +901,10 @@ fn narrowed_to_own_settings(mirror: &Mirror, organization: &str, grant: Grant) -
             "Portal" => push(
                 kind,
                 verbs,
-                vec![one_of("spec.organizationRef", vec![organization.to_owned()])],
+                vec![one_of(
+                    "spec.organizationRef",
+                    vec![organization.to_owned()],
+                )],
             ),
             "RoleBinding" => {
                 let projects: Vec<String> = mirror

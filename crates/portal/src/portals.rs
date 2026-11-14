@@ -26,11 +26,7 @@ pub struct PortalSettings {
 
 /// `JC_PORTAL_PORTAL_HOSTS` and `JC_PORTAL_PORTALS_MAX`, checked: a plain host each, no host
 /// listed twice, a positive cap.
-pub fn parse(
-    hosts: &str,
-    max: Option<&str>,
-    harvest: &str,
-) -> Result<PortalSettings, String> {
+pub fn parse(hosts: &str, max: Option<&str>, harvest: &str) -> Result<PortalSettings, String> {
     let mut out = PortalSettings::default();
     for host in harvest.split(',').map(str::trim).filter(|h| !h.is_empty()) {
         let host = host.to_ascii_lowercase();
@@ -151,11 +147,12 @@ pub fn check(
         }
     }
     for (i, source) in spec.sources.iter().enumerate() {
-        if let Some(host) = source
-            .allowed_hosts
-            .iter()
-            .find(|h| !settings.harvest_hosts.iter().any(|a| a.eq_ignore_ascii_case(h)))
-        {
+        if let Some(host) = source.allowed_hosts.iter().find(|h| {
+            !settings
+                .harvest_hosts
+                .iter()
+                .any(|a| a.eq_ignore_ascii_case(h))
+        }) {
             return Err(refused(
                 &format!("spec.sources[{i}].allowedHosts"),
                 format!(
@@ -237,13 +234,22 @@ mod tests {
     fn mirror() -> Mirror {
         let mirror = Mirror::new();
         for org in ["ba", "ke"] {
-            mirror.upsert(envelope("Organization", org, json!({ "domain": format!("{org}.sk") })));
+            mirror.upsert(envelope(
+                "Organization",
+                org,
+                json!({ "domain": format!("{org}.sk") }),
+            ));
         }
         mirror
     }
 
     fn settings(max: usize) -> PortalSettings {
-        parse("ba=mobility.ba.sk", Some(&max.to_string()), "data.kosice.sk").expect("settings")
+        parse(
+            "ba=mobility.ba.sk",
+            Some(&max.to_string()),
+            "data.kosice.sk",
+        )
+        .expect("settings")
     }
 
     fn field(err: ApiError) -> String {
@@ -257,8 +263,12 @@ mod tests {
     fn a_host_not_listed_for_the_organization_is_refused() {
         let mirror = mirror();
         let s = settings(10);
-        check(&mirror, Some(&s), &portal("ba-mobility", "ba", "mobility", Some("mobility.ba.sk")))
-            .expect("a listed host");
+        check(
+            &mirror,
+            Some(&s),
+            &portal("ba-mobility", "ba", "mobility", Some("mobility.ba.sk")),
+        )
+        .expect("a listed host");
         for (org, host) in [("ba", "evil.example.com"), ("ke", "mobility.ba.sk")] {
             let detail = field(
                 check(&mirror, Some(&s), &portal("p", org, "mobility", Some(host))).unwrap_err(),
@@ -276,23 +286,44 @@ mod tests {
         // Two Organizations hold their `default` already: two of three.
         let s = settings(3);
         mirror.upsert(portal("ba-mobility", "ba", "mobility", None));
-        let detail = field(check(&mirror, Some(&s), &portal("ke-skoly", "ke", "skoly", None)).unwrap_err());
+        let detail =
+            field(check(&mirror, Some(&s), &portal("ke-skoly", "ke", "skoly", None)).unwrap_err());
         assert!(detail.contains("portals.max (3) reached"), "{detail}");
-        check(&mirror, Some(&s), &portal("ba-mobility", "ba", "mobility", None))
-            .expect("a change of a portal counts it once");
-        check(&mirror, Some(&s), &portal("ke-default", "ke", "default", None))
-            .expect("a default is always there");
+        check(
+            &mirror,
+            Some(&s),
+            &portal("ba-mobility", "ba", "mobility", None),
+        )
+        .expect("a change of a portal counts it once");
+        check(
+            &mirror,
+            Some(&s),
+            &portal("ke-default", "ke", "default", None),
+        )
+        .expect("a default is always there");
     }
 
     #[test]
     fn a_path_is_unique_in_its_organization_and_a_portal_never_moves() {
         let mirror = mirror();
         mirror.upsert(portal("ba-mobility", "ba", "mobility", None));
-        let detail = field(check(&mirror, None, &portal("ba-two", "ba", "mobility", None)).unwrap_err());
+        let detail =
+            field(check(&mirror, None, &portal("ba-two", "ba", "mobility", None)).unwrap_err());
         assert!(detail.starts_with("spec.path:"), "{detail}");
-        check(&mirror, None, &portal("ke-mobility", "ke", "mobility", None))
-            .expect("another Organization's path of the same name");
-        let detail = field(check(&mirror, None, &portal("ba-mobility", "ke", "mobility", None)).unwrap_err());
+        check(
+            &mirror,
+            None,
+            &portal("ke-mobility", "ke", "mobility", None),
+        )
+        .expect("another Organization's path of the same name");
+        let detail = field(
+            check(
+                &mirror,
+                None,
+                &portal("ba-mobility", "ke", "mobility", None),
+            )
+            .unwrap_err(),
+        );
         assert!(detail.starts_with("spec.organizationRef:"), "{detail}");
         let detail = field(check(&mirror, None, &portal("x", "praha", "x", None)).unwrap_err());
         assert!(detail.contains("no Organization praha"), "{detail}");
@@ -304,7 +335,10 @@ mod tests {
         mirror.upsert(portal("ba-default", "ba", "default", None));
         mirror.upsert(portal("ba-mobility", "ba", "mobility", None));
         let detail = field(deletion(&mirror, "Portal", ORG_NAMESPACE, "ba-default").unwrap_err());
-        assert!(detail.contains("the default portal cannot be deleted"), "{detail}");
+        assert!(
+            detail.contains("the default portal cannot be deleted"),
+            "{detail}"
+        );
         deletion(&mirror, "Portal", ORG_NAMESPACE, "ba-mobility").expect("a further portal");
     }
 

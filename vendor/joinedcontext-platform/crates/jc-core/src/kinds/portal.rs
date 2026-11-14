@@ -188,15 +188,21 @@ fn invalid(field: impl Into<String>, reason: impl Into<String>) -> Error {
 }
 
 fn label(field: &str, value: &str) -> Result<()> {
-    names::validate_dns1123_label(value)
-        .map_err(|_| invalid(field, format!("`{value}` is not a DNS label, e.g. `mobility`")))
+    names::validate_dns1123_label(value).map_err(|_| {
+        invalid(
+            field,
+            format!("`{value}` is not a DNS label, e.g. `mobility`"),
+        )
+    })
 }
 
 /// A bare lower-case host name of two labels or more: no scheme, port, path or wildcard.
 pub fn is_portal_host(host: &str) -> bool {
     host.len() <= 253
         && host.contains('.')
-        && host.split('.').all(|l| names::validate_dns1123_label(l).is_ok())
+        && host
+            .split('.')
+            .all(|l| names::validate_dns1123_label(l).is_ok())
 }
 
 impl PortalSpec {
@@ -227,7 +233,10 @@ impl PortalSpec {
         }
         for name in &self.hidden {
             if name.is_empty() || name.len() > 100 {
-                return Err(invalid("spec.hidden", "a dataset name of 1 to 100 characters"));
+                return Err(invalid(
+                    "spec.hidden",
+                    "a dataset name of 1 to 100 characters",
+                ));
             }
         }
         if self.sources.len() > MAX_PORTAL_SOURCES {
@@ -301,7 +310,11 @@ impl PortalSource {
                 "only an https:// or http:// address without user info is harvested",
             )
         })?;
-        if !self.allowed_hosts.iter().any(|h| h.eq_ignore_ascii_case(&host)) {
+        if !self
+            .allowed_hosts
+            .iter()
+            .any(|h| h.eq_ignore_ascii_case(&host))
+        {
             return Err(invalid(
                 field("allowedHosts"),
                 format!("must list `{host}`, the url's own host"),
@@ -309,12 +322,18 @@ impl PortalSource {
         }
         for h in &self.allowed_hosts {
             if !is_portal_host(h) {
-                return Err(invalid(field("allowedHosts"), format!("`{h}` is not a host name")));
+                return Err(invalid(
+                    field("allowedHosts"),
+                    format!("`{h}` is not a host name"),
+                ));
             }
         }
         if let Some(schedule) = &self.schedule {
             if !crate::cron::is_valid(schedule) {
-                return Err(invalid(field("schedule"), "five cron fields, UTC, e.g. `23 3 * * *`"));
+                return Err(invalid(
+                    field("schedule"),
+                    "five cron fields, UTC, e.g. `23 3 * * *`",
+                ));
             }
         }
         if let Some(gateway) = &self.gateway {
@@ -394,9 +413,18 @@ mod tests {
 
     #[test]
     fn only_http_urls_have_a_host() {
-        assert_eq!(http_url_host("HTTPS://Data.sk:8443/x").as_deref(), Some("data.sk"));
+        assert_eq!(
+            http_url_host("HTTPS://Data.sk:8443/x").as_deref(),
+            Some("data.sk")
+        );
         assert_eq!(http_url_host("http://a.sk?x").as_deref(), Some("a.sk"));
-        for bad in ["javascript:alert(1)", "data:text/html,x", "ftp://a.sk", "https://u@a.sk/", "https:///x"] {
+        for bad in [
+            "javascript:alert(1)",
+            "data:text/html,x",
+            "ftp://a.sk",
+            "https://u@a.sk/",
+            "https:///x",
+        ] {
             assert_eq!(http_url_host(bad), None, "{bad}");
         }
     }

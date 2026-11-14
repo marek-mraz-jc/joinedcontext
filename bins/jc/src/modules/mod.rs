@@ -38,8 +38,6 @@ pub(crate) mod appearance;
 pub mod assistant;
 #[cfg(feature = "daiya")]
 pub(crate) mod daiya;
-#[cfg(all(feature = "portal", feature = "dataroom"))]
-pub(crate) mod portals;
 #[cfg(feature = "dataroom")]
 pub mod dataroom;
 #[cfg(feature = "ekiben")]
@@ -54,6 +52,8 @@ mod kaisatsu;
 pub mod model_tools;
 #[cfg(feature = "portal")]
 pub mod portal;
+#[cfg(all(feature = "portal", feature = "dataroom"))]
+pub(crate) mod portals;
 #[cfg(feature = "shako")]
 pub mod shako;
 #[cfg(feature = "viz")]

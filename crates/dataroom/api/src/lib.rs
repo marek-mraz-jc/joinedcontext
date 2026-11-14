@@ -13,10 +13,10 @@
 //! - Server-rendered HTML UI (`/`, `/dataset`, `/dataset/{name}`, `/publisher/{name}`)
 
 mod aliases;
-mod portals;
 pub mod ckan;
 pub mod feeds;
 pub mod odata_routes;
+mod portals;
 
 pub use aliases::{aliased, check_aliases, with_dataset_aliases};
 pub use portals::{synthetic_host, PortalAddress, PortalTables};

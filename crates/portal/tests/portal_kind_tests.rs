@@ -37,11 +37,15 @@ fn admin(name: &str) -> Identity {
 fn world() -> AppState {
     let mut config = Config::for_tests();
     config.portal_settings =
-        joinedcontext_portal::portals::parse("bbsk=doprava.bbsk.sk", Some("6"), "").expect("settings");
+        joinedcontext_portal::portals::parse("bbsk=doprava.bbsk.sk", Some("6"), "")
+            .expect("settings");
     let state = AppState::new(config, None).with_mirror(Arc::new(Mirror::new()));
     let m = &state.mirror;
     for (name, spec) in [
-        ("ops", json!({ "domain": "ops.example", "installation": true })),
+        (
+            "ops",
+            json!({ "domain": "ops.example", "installation": true }),
+        ),
         ("bbsk", json!({ "domain": "bbsk.sk" })),
         ("praha", json!({ "domain": "praha.eu" })),
     ] {
@@ -71,7 +75,11 @@ fn world() -> AppState {
     state
 }
 
-fn portal(org: &str, path: &str, host: Option<&str>) -> joinedcontext_portal::resource::ResourceEnvelope {
+fn portal(
+    org: &str,
+    path: &str,
+    host: Option<&str>,
+) -> joinedcontext_portal::resource::ResourceEnvelope {
     let mut spec = json!({ "organizationRef": org, "path": path, "title": { "sk": "Doprava" } });
     if let Some(host) = host {
         spec["host"] = json!(host);
@@ -88,8 +96,18 @@ fn route(name: &str) -> String {
 }
 
 async fn put(state: &AppState, who: &str, manifest: Value) -> common::doors::Answer {
-    let name = manifest["metadata"]["name"].as_str().expect("name").to_owned();
-    http(state, admin(who), "PUT", &format!("{}?dryRun=All", route(&name)), Some(manifest)).await
+    let name = manifest["metadata"]["name"]
+        .as_str()
+        .expect("name")
+        .to_owned();
+    http(
+        state,
+        admin(who),
+        "PUT",
+        &format!("{}?dryRun=All", route(&name)),
+        Some(manifest),
+    )
+    .await
 }
 
 /// What refused `answer`: a 422's body, or a dry run's red verdict; `None` when it passed.
@@ -124,7 +142,10 @@ async fn nobody_signed_in_reads_or_writes_a_portal() {
         // A write without a session meets the CSRF door first: 403, never a write.
         let refused = match method {
             "GET" => response.status() == StatusCode::UNAUTHORIZED,
-            _ => matches!(response.status(), StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN),
+            _ => matches!(
+                response.status(),
+                StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+            ),
         };
         assert!(refused, "{method} {uri}: {}", response.status());
     }
@@ -134,7 +155,12 @@ async fn nobody_signed_in_reads_or_writes_a_portal() {
 async fn an_organization_admin_proposes_only_its_own_portals() {
     let state = world();
     let own = put(&state, "bbadmin", manifest("bbsk", "mobility", None)).await;
-    assert!(own.status.is_success() && refusal(&own).is_none(), "{} {}", own.status, own.body);
+    assert!(
+        own.status.is_success() && refusal(&own).is_none(),
+        "{} {}",
+        own.status,
+        own.body
+    );
     let foreign = put(&state, "bbadmin", manifest("praha", "mobility", None)).await;
     assert_eq!(foreign.status, StatusCode::FORBIDDEN, "{}", foreign.body);
     // Taking another Organization's portal over by naming its manifest.
@@ -166,31 +192,92 @@ async fn another_organizations_portal_is_not_there() {
     )
     .await;
     let listed = list.body.to_string();
-    assert!(listed.contains("bbsk-skoly") && !listed.contains("praha-skoly"), "{listed}");
-    let gone = http(&state, admin("bbadmin"), "DELETE", &route("praha-skoly"), None).await;
+    assert!(
+        listed.contains("bbsk-skoly") && !listed.contains("praha-skoly"),
+        "{listed}"
+    );
+    let gone = http(
+        &state,
+        admin("bbadmin"),
+        "DELETE",
+        &route("praha-skoly"),
+        None,
+    )
+    .await;
     assert_eq!(gone.status, StatusCode::NOT_FOUND, "{}", gone.body);
 }
 
 #[tokio::test]
 async fn deleting_the_default_portal_is_refused_and_a_further_one_is_not() {
     let state = world();
-    let refused = http(&state, admin("bbadmin"), "DELETE", &format!("{}?dryRun=All", route("bbsk-default")), None).await;
-    assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", refused.body);
-    assert!(refused.body.to_string().contains("the default portal cannot be deleted"), "{}", refused.body);
-    let further = http(&state, admin("bbadmin"), "DELETE", &format!("{}?dryRun=All", route("bbsk-skoly")), None).await;
-    assert!(further.status.is_success(), "{} {}", further.status, further.body);
+    let refused = http(
+        &state,
+        admin("bbadmin"),
+        "DELETE",
+        &format!("{}?dryRun=All", route("bbsk-default")),
+        None,
+    )
+    .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.body
+    );
+    assert!(
+        refused
+            .body
+            .to_string()
+            .contains("the default portal cannot be deleted"),
+        "{}",
+        refused.body
+    );
+    let further = http(
+        &state,
+        admin("bbadmin"),
+        "DELETE",
+        &format!("{}?dryRun=All", route("bbsk-skoly")),
+        None,
+    )
+    .await;
+    assert!(
+        further.status.is_success(),
+        "{} {}",
+        further.status,
+        further.body
+    );
 }
 
 #[tokio::test]
 async fn a_host_not_listed_and_the_cap_are_refused_naming_the_field() {
     let state = world();
-    let listed = put(&state, "bbadmin", manifest("bbsk", "doprava", Some("doprava.bbsk.sk"))).await;
-    assert!(refusal(&listed).is_none(), "{} {}", listed.status, listed.body);
-    let taken = put(&state, "bbadmin", manifest("bbsk", "doprava", Some("www.praha.eu"))).await;
+    let listed = put(
+        &state,
+        "bbadmin",
+        manifest("bbsk", "doprava", Some("doprava.bbsk.sk")),
+    )
+    .await;
+    assert!(
+        refusal(&listed).is_none(),
+        "{} {}",
+        listed.status,
+        listed.body
+    );
+    let taken = put(
+        &state,
+        "bbadmin",
+        manifest("bbsk", "doprava", Some("www.praha.eu")),
+    )
+    .await;
     let taken = refusal(&taken).unwrap_or_else(|| panic!("{}", taken.body));
-    assert!(taken.contains("spec.host") && taken.contains("www.praha.eu is not listed"), "{taken}");
+    assert!(
+        taken.contains("spec.host") && taken.contains("www.praha.eu is not listed"),
+        "{taken}"
+    );
     // Three Organizations and three further portals: six, the cap.
-    state.mirror.upsert(portal("bbsk", "doprava", Some("doprava.bbsk.sk")));
+    state
+        .mirror
+        .upsert(portal("bbsk", "doprava", Some("doprava.bbsk.sk")));
     let past = put(&state, "bbadmin", manifest("bbsk", "sport", None)).await;
     let past = refusal(&past).unwrap_or_else(|| panic!("{}", past.body));
     assert!(past.contains("portals.max (6) reached"), "{past}");

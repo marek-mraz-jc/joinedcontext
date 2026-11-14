@@ -74,7 +74,12 @@ pub(crate) fn catalogue_of(
         .ok_or_else(|| format!("no [[organizations]] {}", portal.organization_ref))?;
     let at = |host: &str| format!("{}://{host}", org.scheme);
     let (id, host, base, route) = if portal.is_default() {
-        (org.catalogue_id, org.opendata.clone(), at(&org.opendata), None)
+        (
+            org.catalogue_id,
+            org.opendata.clone(),
+            at(&org.opendata),
+            None,
+        )
     } else {
         let id = CatalogueId::of_portal(org.org_id, &portal.path);
         let route = PortalRoute {
@@ -138,13 +143,19 @@ pub(crate) fn catalogue_of(
 }
 
 /// The catalogue a further portal holds, whatever its host: what a delete removes.
-fn further_catalogue(portal: &PortalSpec, orgs: &[OrganizationPortals]) -> Option<(OrgId, CatalogueId)> {
+fn further_catalogue(
+    portal: &PortalSpec,
+    orgs: &[OrganizationPortals],
+) -> Option<(OrgId, CatalogueId)> {
     let org = orgs.iter().find(|o| o.name == portal.organization_ref)?;
     (!portal.is_default()).then(|| (org.org_id, CatalogueId::of_portal(org.org_id, &portal.path)))
 }
 
 /// The catalogue `portal` writes its sources into: `default`'s is the configured one.
-fn catalogue_key(portal: &PortalSpec, orgs: &[OrganizationPortals]) -> Option<(OrgId, CatalogueId)> {
+fn catalogue_key(
+    portal: &PortalSpec,
+    orgs: &[OrganizationPortals],
+) -> Option<(OrgId, CatalogueId)> {
     let org = orgs.iter().find(|o| o.name == portal.organization_ref)?;
     Some(match further_catalogue(portal, orgs) {
         Some(key) => key,
@@ -203,7 +214,10 @@ pub(crate) fn harvest_sources_of(
                 title_overrides: source.titles.clone(),
                 spelling_fixes: source.spelling.clone(),
                 require_column: source.require_column.clone(),
-                schedule: source.schedule.clone().unwrap_or_else(|| "23 3 * * *".into()),
+                schedule: source
+                    .schedule
+                    .clone()
+                    .unwrap_or_else(|| "23 3 * * *".into()),
                 enabled: true,
                 converted: BTreeMap::new(),
                 gateway: source.gateway.clone(),
@@ -228,7 +242,10 @@ fn publisher_of(
     name: &str,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Publisher {
-    let title = source.publisher_title.clone().unwrap_or_else(|| name.to_owned());
+    let title = source
+        .publisher_title
+        .clone()
+        .unwrap_or_else(|| name.to_owned());
     Publisher {
         org_id,
         catalogue_id,
@@ -281,7 +298,9 @@ async fn sync_sources(
     };
     let mut ok = true;
     for gone in before.into_iter().flat_map(|b| &b.sources) {
-        if wanted.iter().any(|(s, _)| s.name == gone.name) || gone.kind == PortalSourceType::Endpoints {
+        if wanted.iter().any(|(s, _)| s.name == gone.name)
+            || gone.kind == PortalSourceType::Endpoints
+        {
             continue;
         }
         if let Err(e) = writer.delete_harvest_source(org, id, &gone.name).await {
@@ -291,7 +310,10 @@ async fn sync_sources(
     }
     for (source, publisher) in wanted {
         let name = source.name.clone();
-        if let Err(e) = writer.upsert_harvest_source(org, id, source, Some(publisher)).await {
+        if let Err(e) = writer
+            .upsert_harvest_source(org, id, source, Some(publisher))
+            .await
+        {
             tracing::warn!(source = %name, error = %e, "harvest source not written");
             ok = false;
         }
@@ -437,8 +459,14 @@ mod tests {
         assert_eq!(spec.id, CatalogueId::of_portal(orgs[0].org_id, "mobility"));
         assert_ne!(spec.id, orgs[0].catalogue_id);
         assert_eq!(spec.host, "mobility.city.portal.invalid");
-        assert_eq!(spec.base.as_deref(), Some("https://data.city.test/-/mobility"));
-        assert!(spec.organization.is_none(), "never the Organization's own catalogue");
+        assert_eq!(
+            spec.base.as_deref(),
+            Some("https://data.city.test/-/mobility")
+        );
+        assert!(
+            spec.organization.is_none(),
+            "never the Organization's own catalogue"
+        );
         let own = catalogue_of(&portal("mobility", Some("mobility.city.test")), &orgs).unwrap();
         assert_eq!(own.id, spec.id, "a new address keeps the catalogue");
         assert_eq!(own.base.as_deref(), Some("https://mobility.city.test"));
@@ -460,10 +488,22 @@ mod tests {
         let wanted = harvest_sources_of(&region, &orgs).unwrap();
         assert_eq!(wanted.len(), 2, "an endpoints source harvests nothing");
         let (kosice, publisher) = &wanted[0];
-        assert_eq!(kosice.catalogue_id, CatalogueId::of_portal(orgs[0].org_id, "region"));
+        assert_eq!(
+            kosice.catalogue_id,
+            CatalogueId::of_portal(orgs[0].org_id, "region")
+        );
         assert_eq!((kosice.id.as_str(), kosice.position), ("hs-kosice", 1));
-        assert_eq!(kosice.budget, Some(HarvestBudget { records: 10, bytes: 1000 }));
-        assert_eq!((publisher.name.as_str(), kosice.publisher_id.as_str()), ("kosice", "kosice"));
+        assert_eq!(
+            kosice.budget,
+            Some(HarvestBudget {
+                records: 10,
+                bytes: 1000
+            })
+        );
+        assert_eq!(
+            (publisher.name.as_str(), kosice.publisher_id.as_str()),
+            ("kosice", "kosice")
+        );
         assert_eq!(publisher.title["en"], "Mesto Košice");
         let (nkod, publisher) = &wanted[1];
         assert_eq!((nkod.position, publisher.name.as_str()), (2, "city"));
@@ -482,7 +522,10 @@ mod tests {
         ]))
         .unwrap();
         let err = harvest_sources_of(&region, &orgs).unwrap_err();
-        assert!(err.contains("data.praha.eu is not in the deployment's harvest allow-list"), "{err}");
+        assert!(
+            err.contains("data.praha.eu is not in the deployment's harvest allow-list"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -492,6 +535,9 @@ mod tests {
         assert!(err.contains("not listed"), "{err}");
         let mut other = portal("mobility", None);
         other.organization_ref = "town".into();
-        assert!(catalogue_of(&other, &orgs).is_err(), "an Organization jc does not serve");
+        assert!(
+            catalogue_of(&other, &orgs).is_err(),
+            "an Organization jc does not serve"
+        );
     }
 }

@@ -621,7 +621,12 @@ fn check_hosts(hosts: &mut [HostSection], orgs: &[OrganizationSection]) -> Resul
     let bad = |m: String| Err(ConfigError::Organization(m));
     let mut seen: std::collections::BTreeSet<String> = orgs
         .iter()
-        .flat_map(|o| o.hosts.by_module().into_iter().map(|(_, h)| bare_host(h).to_owned()))
+        .flat_map(|o| {
+            o.hosts
+                .by_module()
+                .into_iter()
+                .map(|(_, h)| bare_host(h).to_owned())
+        })
         .collect();
     for row in hosts.iter_mut() {
         row.host = row.host.trim().to_ascii_lowercase();

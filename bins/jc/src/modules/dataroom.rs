@@ -1182,7 +1182,12 @@ mod tests {
     }
 
     /// One GET on `path` as jc's host router hands it on: `host`'s mount, Organization `org`.
-    async fn routed(router: &Router, org: &str, host: &str, path: &str) -> axum::response::Response {
+    async fn routed(
+        router: &Router,
+        org: &str,
+        host: &str,
+        path: &str,
+    ) -> axum::response::Response {
         use tower::ServiceExt;
         let mut request = axum::http::Request::builder()
             .uri(path)
@@ -1198,7 +1203,9 @@ mod tests {
     }
 
     async fn text(response: axum::response::Response) -> String {
-        let bytes = axum::body::to_bytes(response.into_body(), 1 << 22).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 22)
+            .await
+            .unwrap();
         String::from_utf8_lossy(&bytes).into_owned()
     }
 
@@ -1206,7 +1213,11 @@ mod tests {
     /// portal `path` at its slug address (path mode) with dataset `air` of its own: the writer.
     async fn city_with_portal(
         path: &str,
-    ) -> (Router, dataroom_server::CatalogueWriter, dataroom_server::CatalogueSpec) {
+    ) -> (
+        Router,
+        dataroom_server::CatalogueWriter,
+        dataroom_server::CatalogueSpec,
+    ) {
         let (router, writer) = runtime_dataroom().await;
         let mut default = portal_spec(0xB1, 0xD1, "city");
         default.host = "data.city.test".into();
@@ -1259,7 +1270,13 @@ mod tests {
             .upsert(on_host(mobility, "mobility.city.test", true))
             .await
             .unwrap();
-        let moved = routed(&router, "city", "data.city.test", "/-/mobility/dataset/air?lang=sk&x=1").await;
+        let moved = routed(
+            &router,
+            "city",
+            "data.city.test",
+            "/-/mobility/dataset/air?lang=sk&x=1",
+        )
+        .await;
         assert_eq!(moved.status(), axum::http::StatusCode::PERMANENT_REDIRECT);
         assert_eq!(
             moved.headers()["location"],
@@ -1267,8 +1284,18 @@ mod tests {
         );
         let home = routed(&router, "city", "data.city.test", "/-/mobility").await;
         assert_eq!(home.headers()["location"], "https://mobility.city.test/");
-        let served = routed(&router, "city", "mobility.city.test", "/api/3/action/package_show?id=air").await;
-        assert_eq!(served.status(), axum::http::StatusCode::OK, "the domain serves it");
+        let served = routed(
+            &router,
+            "city",
+            "mobility.city.test",
+            "/api/3/action/package_show?id=air",
+        )
+        .await;
+        assert_eq!(
+            served.status(),
+            axum::http::StatusCode::OK,
+            "the domain serves it"
+        );
     }
 
     #[tokio::test]
@@ -1311,7 +1338,8 @@ mod tests {
     async fn an_address_change_keeps_every_dataset_iri() {
         let (router, writer, mobility) = city_with_portal("mobility").await;
         let iri = "<https://data.city.test/-/mobility/dataset/air>";
-        let before = text(routed(&router, "city", "data.city.test", "/-/mobility/catalog.ttl").await).await;
+        let before =
+            text(routed(&router, "city", "data.city.test", "/-/mobility/catalog.ttl").await).await;
         assert!(before.contains(iri), "{before}");
         writer
             .upsert(on_host(mobility.clone(), "mobility.city.test", false))
@@ -1321,9 +1349,16 @@ mod tests {
         assert!(after.contains(iri), "the dataset keeps its IRI: {after}");
         // And back to the slug address: the IRI still does not move, the old host still answers.
         writer.upsert(mobility).await.unwrap();
-        let back = text(routed(&router, "city", "data.city.test", "/-/mobility/catalog.ttl").await).await;
+        let back =
+            text(routed(&router, "city", "data.city.test", "/-/mobility/catalog.ttl").await).await;
         assert!(back.contains(iri), "{back}");
-        let old = routed(&router, "city", "mobility.city.test", "/api/3/action/package_show?id=air").await;
+        let old = routed(
+            &router,
+            "city",
+            "mobility.city.test",
+            "/api/3/action/package_show?id=air",
+        )
+        .await;
         assert_eq!(old.status(), axum::http::StatusCode::OK);
     }
 
@@ -1331,14 +1366,25 @@ mod tests {
     async fn a_portal_named_like_a_default_path_still_cannot_shadow_it() {
         let (router, _writer, _) = city_with_portal("dataset").await;
         let own = text(routed(&router, "city", "data.city.test", "/catalog.ttl").await).await;
-        assert!(own.contains("<https://data.city.test/dataset/air>"), "{own}");
+        assert!(
+            own.contains("<https://data.city.test/dataset/air>"),
+            "{own}"
+        );
         assert!(!own.contains("/-/dataset/"), "default lists its own: {own}");
-        let portal = text(routed(&router, "city", "data.city.test", "/-/dataset/catalog.ttl").await).await;
-        assert!(portal.contains("<https://data.city.test/-/dataset/dataset/air>"), "{portal}");
+        let portal =
+            text(routed(&router, "city", "data.city.test", "/-/dataset/catalog.ttl").await).await;
+        assert!(
+            portal.contains("<https://data.city.test/-/dataset/dataset/air>"),
+            "{portal}"
+        );
         let none = routed(&router, "city", "data.city.test", "/-/nosuch/catalog.ttl").await;
         assert_eq!(none.status(), axum::http::StatusCode::NOT_FOUND);
         let other = routed(&router, "town", "data.city.test", "/-/dataset/catalog.ttl").await;
-        assert_eq!(other.status(), axum::http::StatusCode::NOT_FOUND, "another Organization's");
+        assert_eq!(
+            other.status(),
+            axum::http::StatusCode::NOT_FOUND,
+            "another Organization's"
+        );
     }
 
     #[tokio::test]

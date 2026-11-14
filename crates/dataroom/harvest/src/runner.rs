@@ -1093,7 +1093,9 @@ impl HarvestEngine {
                 .collect();
             let mut held_identifiers: BTreeMap<String, (u32, Dataset)> = BTreeMap::new();
             for ds in store.list_datasets(ctx).await? {
-                let (Some(identifier), Some(holder)) = (ds.identifier.clone(), ds.harvest_source_id.clone()) else {
+                let (Some(identifier), Some(holder)) =
+                    (ds.identifier.clone(), ds.harvest_source_id.clone())
+                else {
                     continue;
                 };
                 if holder == source.name || ds.state != RecordState::Active {
@@ -1306,12 +1308,22 @@ fn non_http_link(ds: &Dataset) -> Option<&'static str> {
     one("landing page", ds.landing_page.as_ref())
         .or_else(|| one("licence", ds.licence_url.as_ref()))
         .or_else(|| one("endpoint", ds.endpoint_url.as_ref()))
-        .or_else(|| ds.documentation.iter().any(|u| bad(u)).then_some("documentation"))
+        .or_else(|| {
+            ds.documentation
+                .iter()
+                .any(|u| bad(u))
+                .then_some("documentation")
+        })
         .or_else(|| {
             ds.distributions.iter().find_map(|d| {
                 one("download link", d.download_url.as_ref())
                     .or_else(|| bad(&d.access_url).then_some("access link"))
-                    .or_else(|| d.uri.as_deref().filter(|u| bad(u)).map(|_| "distribution IRI"))
+                    .or_else(|| {
+                        d.uri
+                            .as_deref()
+                            .filter(|u| bad(u))
+                            .map(|_| "distribution IRI")
+                    })
             })
         })
 }
@@ -1675,7 +1687,10 @@ mod tests {
                 budget: None,
                 position: *position,
             };
-            store.upsert_harvest_source(ctx, source.clone()).await.unwrap();
+            store
+                .upsert_harvest_source(ctx, source.clone())
+                .await
+                .unwrap();
             fetcher.insert(
                 &format!(
                     "https://{hub}/api/search/v1/collections/dataset/items?limit=100&sortBy=properties.created"
@@ -1698,12 +1713,21 @@ mod tests {
     async fn a_javascript_url_in_a_harvested_record_is_refused() {
         let (_, _, ctx, store) = test_setup();
         let fetcher = MapFetcher::new();
-        let mut feed = hub_world(&store, &ctx, &[("feed", "feeds.bbsk.sk", 0)], &fetcher, json!({}))
-            .await
-            .remove(0);
+        let mut feed = hub_world(
+            &store,
+            &ctx,
+            &[("feed", "feeds.bbsk.sk", 0)],
+            &fetcher,
+            json!({}),
+        )
+        .await
+        .remove(0);
         feed.kind = HarvestSourceKind::DcatAp;
         feed.url = "https://feeds.bbsk.sk/catalog.ttl".into();
-        store.upsert_harvest_source(&ctx, feed.clone()).await.unwrap();
+        store
+            .upsert_harvest_source(&ctx, feed.clone())
+            .await
+            .unwrap();
         let ttl = "@prefix dcat: <http://www.w3.org/ns/dcat#> .\n\
                    @prefix dct: <http://purl.org/dc/terms/> .\n\
                    <https://feeds.bbsk.sk/ds/ok> a dcat:Dataset ; dct:title \"Dobré\"@sk ;\n\
@@ -1720,10 +1744,21 @@ mod tests {
         let refused: Vec<&str> = run.skipped.iter().map(|s| s.reason.as_str()).collect();
         assert_eq!(run.created_count, 1, "only the http(s) record: {refused:?}");
         assert_eq!(refused.len(), 2, "{refused:?}");
-        assert!(refused.iter().all(|r| r.contains("is not an http(s) address")), "{refused:?}");
-        assert!(refused.iter().all(|r| !r.contains("javascript") && !r.contains("data:")));
+        assert!(
+            refused
+                .iter()
+                .all(|r| r.contains("is not an http(s) address")),
+            "{refused:?}"
+        );
+        assert!(refused
+            .iter()
+            .all(|r| !r.contains("javascript") && !r.contains("data:")));
         for ds in store.list_datasets(&ctx).await.unwrap() {
-            assert!(non_http_link(&ds).is_none(), "{} kept a non-http link", ds.name);
+            assert!(
+                non_http_link(&ds).is_none(),
+                "{} kept a non-http link",
+                ds.name
+            );
         }
     }
 
@@ -1735,11 +1770,23 @@ mod tests {
             "state": "active", "issued": "2026-11-14T10:00:00Z", "modified": "2026-11-14T10:00:00Z"
         }))
         .unwrap();
-        for bad in [" JavaScript:alert(1)", "java\tscript:alert(1)", "data:text/html,x", "vbscript:x"] {
+        for bad in [
+            " JavaScript:alert(1)",
+            "java\tscript:alert(1)",
+            "data:text/html,x",
+            "vbscript:x",
+        ] {
             ds.landing_page = Some(bad.to_owned());
             assert_eq!(non_http_link(&ds), Some("landing page"), "{bad:?}");
         }
-        for fine in ["https://a.sk/x", "HTTP://a.sk", "wss://a.sk/s", "/odata/v4/x:y", "dataset/x", ""] {
+        for fine in [
+            "https://a.sk/x",
+            "HTTP://a.sk",
+            "wss://a.sk/s",
+            "/odata/v4/x:y",
+            "dataset/x",
+            "",
+        ] {
             ds.landing_page = Some(fine.to_owned());
             assert_eq!(non_http_link(&ds), None, "{fine:?}");
         }
@@ -1753,22 +1800,42 @@ mod tests {
             hub_item("item1", "Cesty", "https://hub.bbsk.sk/a"),
             hub_item("item2", "Mosty", "https://hub.bbsk.sk/b"),
         ] });
-        let mut sources = hub_world(&store, &ctx, &[("hub", "hub.bbsk.sk", 0)], &fetcher, items).await;
+        let mut sources =
+            hub_world(&store, &ctx, &[("hub", "hub.bbsk.sk", 0)], &fetcher, items).await;
         let engine = HarvestEngine::new(Arc::new(fetcher)).with_dns_resolution(false);
         let first = engine.run_source(&ctx, &store, &sources[0]).await.unwrap();
         assert_eq!(first.created_count, 2);
         let before = store.list_datasets(&ctx).await.unwrap();
         for budget in [
-            HarvestBudget { records: 1, bytes: u64::MAX },
-            HarvestBudget { records: 100, bytes: 10 },
+            HarvestBudget {
+                records: 1,
+                bytes: u64::MAX,
+            },
+            HarvestBudget {
+                records: 100,
+                bytes: 10,
+            },
         ] {
             sources[0].budget = Some(budget);
-            let err = engine.run_source(&ctx, &store, &sources[0]).await.unwrap_err();
+            let err = engine
+                .run_source(&ctx, &store, &sources[0])
+                .await
+                .unwrap_err();
             assert!(err.to_string().contains("past its budget"), "{err}");
-            assert_eq!(store.list_datasets(&ctx).await.unwrap(), before, "nothing written or withdrawn");
+            assert_eq!(
+                store.list_datasets(&ctx).await.unwrap(),
+                before,
+                "nothing written or withdrawn"
+            );
         }
-        let runs = store.list_harvest_runs(&ctx, Some(&sources[0].id)).await.unwrap();
-        assert!(runs.iter().any(|r| r.error.as_deref().is_some_and(|e| e.contains("past its budget"))));
+        let runs = store
+            .list_harvest_runs(&ctx, Some(&sources[0].id))
+            .await
+            .unwrap();
+        assert!(runs.iter().any(|r| r
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("past its budget"))));
     }
 
     #[tokio::test]
@@ -1791,11 +1858,18 @@ mod tests {
         let later = engine.run_source(&ctx, &store, &sources[1]).await.unwrap();
         assert_eq!(later.created_count, 1);
         let earlier = engine.run_source(&ctx, &store, &sources[0]).await.unwrap();
-        assert_eq!(earlier.updated_count, 1, "takes it over: {:?}", earlier.skipped);
+        assert_eq!(
+            earlier.updated_count, 1,
+            "takes it over: {:?}",
+            earlier.skipped
+        );
         let again = engine.run_source(&ctx, &store, &sources[1]).await.unwrap();
         assert_eq!(again.created_count + again.updated_count, 0);
         assert!(
-            again.skipped.iter().any(|s| s.reason.contains("of an earlier source")),
+            again
+                .skipped
+                .iter()
+                .any(|s| s.reason.contains("of an earlier source")),
             "{:?}",
             again.skipped
         );

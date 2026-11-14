@@ -129,7 +129,10 @@ impl CatalogueWriter {
         }
 
         let before = read(&self.state.catalogue_bases).get(&id).cloned();
-        if let Some(old) = before.as_deref().filter(|old| spec.base.as_deref() != Some(*old)) {
+        if let Some(old) = before
+            .as_deref()
+            .filter(|old| spec.base.as_deref() != Some(*old))
+        {
             keep_dataset_iris(store, &ctx, old).await?;
         }
 
@@ -158,7 +161,10 @@ impl CatalogueWriter {
                 PortalAddress {
                     org_id: org,
                     id,
-                    redirect: spec.base.clone().filter(|_| route.host.is_some() && route.redirect),
+                    redirect: spec
+                        .base
+                        .clone()
+                        .filter(|_| route.host.is_some() && route.redirect),
                 },
             ),
             None => self.state.portals.unroute(id),
@@ -234,7 +240,11 @@ impl CatalogueWriter {
 /// Pins every dataset of `ctx` that names no IRI of its own to the one it has under `old`, the
 /// address the catalogue leaves: an address change never moves a dataset IRI (ODP-08), and the
 /// old address keeps answering (a slug address redirects).
-async fn keep_dataset_iris(store: &dyn dataroom_core::Store, ctx: &RequestCtx, old: &str) -> Result<()> {
+async fn keep_dataset_iris(
+    store: &dyn dataroom_core::Store,
+    ctx: &RequestCtx,
+    old: &str,
+) -> Result<()> {
     for mut ds in store.list_datasets(ctx).await? {
         let own = ds.uri.as_deref().is_some_and(|u| !u.trim().is_empty())
             || ds.extras.get("uri").is_some_and(|u| !u.trim().is_empty());

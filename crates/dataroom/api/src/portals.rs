@@ -105,7 +105,11 @@ async fn slug_address(
     let Some(found) = tables.slug(&org, path) else {
         return problem_response(DataroomError::NotFound("no portal here".into()));
     };
-    let query = req.uri().query().map(|q| format!("?{q}")).unwrap_or_default();
+    let query = req
+        .uri()
+        .query()
+        .map(|q| format!("?{q}"))
+        .unwrap_or_default();
     if let Some(base) = &found.redirect {
         let to = format!("{}{tail}{query}", base.trim_end_matches('/'));
         return (StatusCode::PERMANENT_REDIRECT, [(header::LOCATION, to)]).into_response();

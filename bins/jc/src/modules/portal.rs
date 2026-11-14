@@ -140,7 +140,12 @@ pub(crate) fn organization_vars(
     let portal_hosts: Vec<String> = cfg
         .organizations
         .iter()
-        .flat_map(|org| org.hosts.portals.iter().map(|h| format!("{}={h}", org.name)))
+        .flat_map(|org| {
+            org.hosts
+                .portals
+                .iter()
+                .map(|h| format!("{}={h}", org.name))
+        })
         .collect();
     out.insert("JC_PORTAL_PORTAL_HOSTS".to_owned(), portal_hosts.join(","));
     out.insert(
@@ -149,7 +154,9 @@ pub(crate) fn organization_vars(
     );
     out.insert(
         "JC_PORTAL_PORTALS_MAX".to_owned(),
-        cfg.dataroom.portals_max(cfg.organizations.len()).to_string(),
+        cfg.dataroom
+            .portals_max(cfg.organizations.len())
+            .to_string(),
     );
     if cfg.roles.contains(&Module::Dataroom) {
         let reach = crate::siblings::reach(listener);
