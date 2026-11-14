@@ -190,6 +190,10 @@ struct ArtifactRow {
     head_sha: String,
 }
 
+/// The most pull requests [`ShakoClient::list_pull_requests`] reads, so one repository with
+/// years of history costs a bounded number of calls.
+const MAX_PULL_REQUESTS: u32 = 1000;
+
 /// A body read to its end, refused once it passes `limit` bytes rather than held in memory.
 async fn read_capped(
     mut res: reqwest::Response,
@@ -1324,17 +1328,18 @@ impl ShakoClient {
         self.reserve_as(&me).await
     }
 
-    /// `POST R/Shako.Protect` for `portal/*` and `workspace/*`: only this client's forge account
-    /// cuts, writes, rewrites or deletes a Change branch, so a Change's head commit, and the
-    /// author it names, is one the Portal wrote for the signed-in proposer, never what another
-    /// pusher's git configured (AUZ-08, CHG-07, T-6706).
+    /// `POST R/Shako.Protect` for `portal/*`, `workspace/*`, `sync/*` and `mirror/*`: only this
+    /// client's forge account cuts, writes, rewrites or deletes a Change branch, so a Change's
+    /// head commit, and the author it names, is one the Portal wrote for the signed-in proposer,
+    /// never what another pusher's git configured (AUZ-08, CHG-07, T-6706). A SyncSource or
+    /// mirror proposal may merge itself (MF-29), so its branch holds only what the Portal wrote.
     pub async fn reserve_change_branches(&self) -> Result<(), GitError> {
         let me = self.login().await?;
         self.reserve_as(&me).await
     }
 
     async fn reserve_as(&self, me: &str) -> Result<(), GitError> {
-        for pattern in ["portal/*", "workspace/*"] {
+        for pattern in ["portal/*", "workspace/*", "sync/*", "mirror/*"] {
             let rule = json!({
                 "rule_name": pattern,
                 "enable_push": true,
@@ -1714,9 +1719,27 @@ impl ShakoClient {
             .collect())
     }
 
-    /// The 50 most recently updated pull requests in `state` (`open`, `closed` or `all`).
+    /// The pull requests in `state` (`open`, `closed` or `all`), most recently updated first, a
+    /// page of 50 at a time up to [`MAX_PULL_REQUESTS`]: a caller that looks for a branch's own
+    /// pull request finds it past the newest 50 too (CC-34). A page shorter than 50, or one
+    /// holding nothing new, is the last.
     pub async fn list_pull_requests(&self, state: &str) -> Result<Vec<PullRequest>, GitError> {
-        self.list_pull_requests_page(state, 1, 50).await
+        const PAGE: u32 = 50;
+        let mut all: Vec<PullRequest> = Vec::new();
+        for page in 1..=MAX_PULL_REQUESTS / PAGE {
+            let rows = self.list_pull_requests_page(state, page, PAGE).await?;
+            let full = rows.len() == PAGE as usize;
+            let before = all.len();
+            for pull in rows {
+                if !all.iter().any(|seen| seen.number == pull.number) {
+                    all.push(pull);
+                }
+            }
+            if !full || all.len() == before {
+                break;
+            }
+        }
+        Ok(all)
     }
 
     /// `GET R/PullRequests?$filter=State eq '{state}'&$orderby=UpdatedAt desc&$top&$skip`: one
@@ -2202,6 +2225,44 @@ mod project_repository_tests {
             commits.first().and_then(|c| c.email.as_deref()),
             Some("jana@hel.fi")
         );
+    }
+
+    /// CC-34: a branch's own pull request is found past the newest 50: the list reads page after
+    /// page until one is short.
+    #[tokio::test]
+    async fn open_pull_requests_are_read_past_the_first_page() {
+        let forge = wiremock::MockServer::start().await;
+        let row = |number: u64| {
+            serde_json::json!({
+                "Number": number, "HtmlUrl": "", "State": "open", "Title": "t",
+                "Head": format!("portal/b-{number}"), "HeadSha": "s", "Base": "main",
+                "CreatedAt": "2026-10-25T09:14:22Z", "Author": "a", "Mergeable": true,
+                "Merged": false
+            })
+        };
+        for (skip, numbers) in [("0", 6..56), ("50", 1..6)] {
+            wiremock::Mock::given(wiremock::matchers::method("GET"))
+                .and(wiremock::matchers::path(
+                    "/odata/Repositories(Owner='joinedcontext',Name='configuration')/PullRequests",
+                ))
+                .and(wiremock::matchers::query_param("$skip", skip))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({ "value": numbers.rev().map(row).collect::<Vec<_>>() }),
+                ))
+                .expect(1)
+                .mount(&forge)
+                .await;
+        }
+        let client = ShakoClient::new(
+            forge.uri().parse().expect("url"),
+            "joinedcontext",
+            "configuration",
+            "t",
+        )
+        .expect("client");
+        let open = client.list_pull_requests("open").await.expect("the list");
+        assert_eq!(open.len(), 55);
+        assert!(open.iter().any(|pull| pull.head_branch == "portal/b-1"));
     }
 
     /// CC-87: a project repository is spoken to in render paths; one outside the project is not

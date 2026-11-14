@@ -56,6 +56,14 @@ const UNIX_SYMLINK: u32 = 0o120_000;
 /// The file-type half of a unix mode.
 const UNIX_FILE_TYPE: u32 = 0o170_000;
 
+/// Whether an archive entry is a symbolic link: never a file of a project, whichever door reads
+/// the archive (MF-05).
+pub(crate) fn is_symlink<R: Read + ?Sized>(entry: &zip::read::ZipFile<'_, R>) -> bool {
+    entry
+        .unix_mode()
+        .is_some_and(|mode| mode & UNIX_FILE_TYPE == UNIX_SYMLINK)
+}
+
 /// The path of an archive entry inside the archive, or `None` for one that climbs out of it or
 /// is absolute. zip 9 strips a leading `/`, `\` or drive and calls the rest enclosed; a name that
 /// says `/etc/cron.d/x` was written to go there, so it is refused rather than read as `etc/cron.d/x`.
@@ -436,10 +444,7 @@ fn parse_archive(bytes: &[u8]) -> Result<Vec<Incoming>, ApiError> {
         // A symbolic link is not a file of the project. Read as one it becomes a manifest whose
         // body is the path it pointed at, which is how an archive smuggles `/etc/passwd` in as
         // content nobody uploaded; refused by name rather than quietly flattened (MF-05).
-        if entry
-            .unix_mode()
-            .is_some_and(|mode| mode & UNIX_FILE_TYPE == UNIX_SYMLINK)
-        {
+        if is_symlink(&entry) {
             return Err(ApiError::BadRequest(format!(
                 "the archive entry '{name}' is a symbolic link, and a bundle carries files"
             )));

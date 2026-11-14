@@ -335,6 +335,14 @@ fn unpack(
                     .unwrap_or_else(|_| "(a name that is not text)".into())
             )));
         };
+        // A symbolic link read as a file becomes a manifest whose body is the path it named
+        // (MF-05): refused by name, as an import refuses it.
+        if crate::api::import::is_symlink(&entry) {
+            return Err(RemoteError::Refused(format!(
+                "the archive entry `{}` is a symbolic link, and a source carries files",
+                name.display()
+            )));
+        }
         let relative = if strip_root {
             let mut parts = name.components();
             parts.next();
@@ -713,6 +721,26 @@ mod tests {
             .expect("a parent")
             .join("escape.yaml")
             .exists());
+        let _ = std::fs::remove_dir_all(&into);
+    }
+
+    #[test]
+    fn an_archive_entry_that_is_a_symbolic_link_is_refused() {
+        let mut buffer = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buffer));
+            let options = zip::write::SimpleFileOptions::default();
+            zip.add_symlink("root/models/passwd.yaml", "/etc/passwd", options)
+                .expect("a link");
+            zip.finish().expect("the archive");
+        }
+        let into = scratch("symlink");
+        let error = unpack(&buffer, &into, None, true).unwrap_err();
+        assert!(
+            matches!(error, RemoteError::Refused(ref why) if why.contains("symbolic link")),
+            "{error}"
+        );
+        assert!(!into.join("models/passwd.yaml").exists());
         let _ = std::fs::remove_dir_all(&into);
     }
 

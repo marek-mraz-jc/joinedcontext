@@ -44,6 +44,9 @@ fn usable(jwk: &jsonwebtoken::jwk::Jwk) -> bool {
         ),
     }
 }
+/// A realm's key set is a few keys of under a kilobyte each; anything far larger is refused
+/// before it is held in memory.
+const MAX_JWKS_BYTES: usize = 256 * 1024;
 /// Minimum distance between two JWKS fetches caused by unknown key ids.
 const REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -123,7 +126,8 @@ impl BearerVerifier {
     }
 
     /// Replaces the cached keys with the ES256 and RS256 keys of `set`; returns how many were
-    /// usable.
+    /// usable. A set with none keeps the keys held: an empty or garbled answer from the realm
+    /// signs nobody out (T-6650).
     pub fn install(&self, set: &JwkSet) -> usize {
         let keys: HashMap<String, DecodingKey> = set
             .keys
@@ -135,6 +139,10 @@ impl BearerVerifier {
             })
             .collect();
         let n = keys.len();
+        if n == 0 {
+            tracing::warn!(jwks = %self.jwks_url, "the realm's key set holds no usable key; the keys held stay");
+            return 0;
+        }
         if let Ok(mut cache) = self.keys.write() {
             *cache = keys;
         }
@@ -154,15 +162,27 @@ impl BearerVerifier {
             }
             *last = Some(Instant::now());
         }
-        let set: JwkSet = self
+        let mut answer = self
             .http
             .get(self.jwks_url.clone())
             .send()
             .await
             .and_then(|r| r.error_for_status())
-            .map_err(|e| ApiError::Unavailable(format!("JWKS fetch failed: {e}")))?
-            .json()
+            .map_err(|e| ApiError::Unavailable(format!("JWKS fetch failed: {e}")))?;
+        let mut body = Vec::new();
+        while let Some(chunk) = answer
+            .chunk()
             .await
+            .map_err(|e| ApiError::Unavailable(format!("JWKS fetch failed: {e}")))?
+        {
+            if body.len() + chunk.len() > MAX_JWKS_BYTES {
+                return Err(ApiError::Unavailable(format!(
+                    "JWKS is larger than {MAX_JWKS_BYTES} bytes"
+                )));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let set: JwkSet = serde_json::from_slice(&body)
             .map_err(|e| ApiError::Unavailable(format!("JWKS is not a key set: {e}")))?;
         Ok(self.install(&set))
     }
@@ -1145,20 +1165,24 @@ mod tests {
         ));
     }
 
-    /// AP-27: a realm that publishes an empty set has no usable key, and the Portal then verifies
-    /// nothing rather than keeping yesterday's. It fails closed.
+    /// T-6650 (as jc-core `auth::jwks::read`): a set with no usable key is an answer the realm
+    /// garbled, not a rotation, so the keys held stay and the tokens they signed still verify;
+    /// a rotation publishes the new key and withdraws the old one in a set that has one.
     #[tokio::test]
-    async fn an_empty_or_unusable_key_set_empties_the_cache() {
+    async fn an_empty_or_unusable_key_set_keeps_the_keys_held() {
         let v = verifier();
         let (signer, set) = keypair("k1");
         assert_eq!(v.install(&set), 1);
 
         assert_eq!(v.install(&set_of(vec![])), 0);
-        assert!(v.key("k1").is_none());
-        assert!(matches!(
-            v.verify(&sign(&signer, "k1", &claims(now() + 60))).await,
-            Err(ApiError::Unauthorized)
-        ));
+        let mut unusable = jwk_of(&set);
+        unusable["alg"] = json!("RSA-OAEP");
+        assert_eq!(v.install(&set_of(vec![unusable])), 0);
+        assert!(v.key("k1").is_some(), "an empty set dropped the key held");
+        assert!(v
+            .verify(&sign(&signer, "k1", &claims(now() + 60)))
+            .await
+            .is_ok());
     }
 
     /// AP-27: a key with no `kid` cannot be looked up by a token's header, so it is dropped
