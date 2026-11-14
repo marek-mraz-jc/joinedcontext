@@ -353,7 +353,6 @@ impl PgStore {
         self.outbox_notifications.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
-
 }
 
 impl Store for PgStore {
