@@ -1227,7 +1227,11 @@ class Suite:
                 t = self.template(r["id"])
                 skips[t] = skips.get(t, 0) + 1
         mode = "hosts" if self.hosts else "path"
-        bound = json.loads(BOUND.read_text())[mode] if BOUND.is_file() else {}
+        bound = dict(json.loads(BOUND.read_text())[mode]) if BOUND.is_file() else {}
+        if self.live:  # a live run adds no Dashboard (no write outside the fixtures): an Organization
+            # whose export holds none of its own has nothing to judge there
+            bound["dashboards.{o}"] = bound.get("dashboards.{o}", 0) + sum(
+                1 for e in self.exp.values() if not any(p["Dashboard"] for p in e["projects"].values()))
         for t, n in sorted(skips.items()):
             if n > bound.get(t, 0):
                 self.row(f"skips.{t}", mode, "skips of one row template", f"<= {bound.get(t, 0)} (skip-bound.json)",
@@ -1371,7 +1375,8 @@ class Suite:
 
     def write(self, out: Path):
         out.mkdir(parents=True, exist_ok=True)
-        counted = self.count(not self.a.only) if self.exp else {}
+        made = getattr(self.a, "make_personas", None)  # setup alone: no pair to count
+        counted = self.count(not self.a.only and not made) if self.exp else {}
         (out / "results.json").write_text(json.dumps({"suite": "multiorg", "base": self.base, "checks": self.rows},
                                                      indent=1))
         tools = {k: {"portal": v.get("tools"), "connector": v.get("connectorTools")}

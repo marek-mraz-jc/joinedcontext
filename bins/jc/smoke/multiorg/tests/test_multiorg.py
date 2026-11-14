@@ -372,3 +372,16 @@ def test_a_personas_file_others_can_read_is_refused(tmp_path):
     f.chmod(0o644)
     with pytest.raises(RuntimeError, match="readable by others"):
         s.personas_from(f)
+
+
+def test_a_live_run_may_skip_the_dashboards_of_organizations_whose_export_holds_none(tmp_path):
+    exp = {"hel": {"projects": {"helsinki": EMPTY | {"Dashboard": ["d"]}}}, "zilina": {"projects": {"zilina": EMPTY}}}
+    rows = [row("dashboards.zilina", "zilina", "skip")]
+    s, _ = counted(tmp_path, [dict(r) for r in rows], exp, full=False)
+    assert [r["id"] for r in s.rows if r["result"] == "fail"] == ["skips.dashboards.{o}"]  # the gate adds one
+    d = tmp_path / "live"
+    d.mkdir()
+    s = suite.Suite(args(d))
+    s.exp, s.rows, s.live = exp, [dict(r) for r in rows], True
+    s.count(False)
+    assert not [r for r in s.rows if r["result"] == "fail"]
