@@ -657,6 +657,86 @@ async fn ranking_concat_and_search_never_reach_what_is_hidden() -> Result<(), St
     Ok(())
 }
 
+/// A plain-text answer (`$count`, `$value`) names its OData version as every answer does.
+#[tokio::test]
+async fn a_plain_text_answer_names_its_version() -> Result<(), String> {
+    let (_b, app) = broker(false).await?;
+    for (path, version) in [("Car/$count", None), ("Car/$count", Some("4.01"))] {
+        let mut req = Request::builder()
+            .uri(format!("{ROOT}/{path}"))
+            .header("NGSILD-Tenant", "city");
+        if let Some(v) = version {
+            req = req.header("OData-MaxVersion", v);
+        }
+        let Ok(resp) = app
+            .clone()
+            .oneshot(req.body(Body::empty()).unwrap_or_default())
+            .await;
+        assert_eq!(resp.status(), StatusCode::OK, "{path}");
+        assert_eq!(
+            resp.headers()
+                .get("odata-version")
+                .and_then(|v| v.to_str().ok()),
+            Some(version.unwrap_or("4.0")),
+            "{path}"
+        );
+    }
+    Ok(())
+}
+
+/// `in ()` (OData 4.01) is a list of nothing: it matches no Entity, by any member.
+#[tokio::test]
+async fn an_empty_in_list_matches_nothing() -> Result<(), String> {
+    let (_b, app) = broker(false).await?;
+    for filter in ["seats%20in%20()", "id%20in%20()", "brand%20in%20()"] {
+        let (status, body) = send(
+            &app,
+            Method::GET,
+            &format!("{ROOT}/Car?$filter={filter}"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{filter}: {body}");
+        assert_eq!(body["value"], json!([]), "{filter}: {body}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_chain_of_compute_is_refused_before_it_outgrows_the_evaluator() -> Result<(), String> {
+    let (_b, app) = broker(false).await?;
+    // each step names the one before twice: 2^22 nodes once every name is replaced
+    let steps: Vec<String> = (0..22)
+        .map(|i| format!("compute(c{i} add c{i} as c{})", i + 1))
+        .collect();
+    let apply = format!("compute(seats as c0)/{}", steps.join("/")).replace(' ', "%20");
+    let started = std::time::Instant::now();
+    let (status, body) = send(
+        &app,
+        Method::GET,
+        &format!("{ROOT}/Car?$apply={apply}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.to_string().contains("TooComplexQuery"), "{body}");
+    assert!(
+        started.elapsed().as_millis() < 500,
+        "{:?}",
+        started.elapsed()
+    );
+    // a short chain is served
+    let (status, body) = send(
+        &app,
+        Method::GET,
+        &format!("{ROOT}/Car?$apply=compute(seats%20as%20c0)/compute(c0%20add%20c0%20as%20c1)"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_chain_of_concat_is_refused_before_it_outgrows_one_scan() -> Result<(), String> {
     let (_b, app) = broker(false).await?;
@@ -696,6 +776,53 @@ async fn the_metadata_hides_what_the_engine_hides() -> Result<(), String> {
             assert!(text.contains("brand"), "{text}");
             assert_eq!(text.contains("owner"), named, "hiding {hiding}: {text}");
         }
+    }
+    Ok(())
+}
+
+/// A model document asked by an escaped name is the narrowed one or none.
+#[tokio::test]
+async fn an_escaped_metadata_name_never_reads_the_whole_model() -> Result<(), String> {
+    let (_b, app) = broker(true).await?;
+    for path in ["%24metadata", "$metadata/", "./$metadata", "$Metadata"] {
+        let (status, body) = send(&app, Method::GET, &format!("{ROOT}/{path}"), None).await;
+        assert!(
+            !body.to_string().contains("owner"),
+            "{path}: {status} {body}"
+        );
+        let members = json!({"requests": [{"id": "1", "method": "get", "url": path}]});
+        let (_, body) = send(
+            &app,
+            Method::POST,
+            &format!("{ROOT}/$batch"),
+            Some(members.to_string()),
+        )
+        .await;
+        assert!(!body.to_string().contains("owner"), "batch {path}: {body}");
+    }
+    Ok(())
+}
+
+/// A `$batch` member reading `$metadata` or the service document is shown the
+/// same narrowed model as the request alone.
+#[tokio::test]
+async fn a_batch_member_reads_the_metadata_the_engine_narrows() -> Result<(), String> {
+    for (hiding, named) in [(true, false), (false, true)] {
+        let (_b, app) = broker(hiding).await?;
+        let members = json!({"requests": [
+            {"id": "1", "method": "get", "url": "$metadata"},
+        ]});
+        let (status, body) = send(
+            &app,
+            Method::POST,
+            &format!("{ROOT}/$batch"),
+            Some(members.to_string()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let text = body.to_string();
+        assert!(text.contains("brand"), "{text}");
+        assert_eq!(text.contains("owner"), named, "hiding {hiding}: {text}");
     }
     Ok(())
 }

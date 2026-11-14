@@ -45,13 +45,15 @@ pub struct Limits {
     pub max_in_list_len: usize,
     /// Bytes of one literal as written in the URL.
     pub max_literal_len: usize,
+    /// The value of `$skip`: past it a client follows `@odata.nextLink`.
+    pub max_skip: usize,
 }
 
 impl Limits {
     /// The defaults T-3441 decided (`odata-linkml-mapping.md` section 10, S1 and S2): 2048-byte
     /// path, 8192-byte query (`MAX_URI_BYTES`), 32 segments, 32 options, expression depth 32
     /// with 256 nodes, expand depth 3 with 8 items, 64 select and 8 orderby items, 100-item
-    /// lists, 1024-byte literals.
+    /// lists, 1024-byte literals; a `$skip` of at most 10,000 (ODA-04).
     ///
     /// ```
     /// let limits = odata_url::Limits::strict();
@@ -72,6 +74,7 @@ impl Limits {
             max_orderby_items: 8,
             max_in_list_len: 100,
             max_literal_len: 1024,
+            max_skip: 10_000,
         }
     }
 }

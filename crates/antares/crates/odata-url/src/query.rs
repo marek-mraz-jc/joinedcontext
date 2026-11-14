@@ -222,18 +222,22 @@ impl<'m, M: Model> Query<'_, '_, '_, 'm, M> {
         // (`pchar-no-SQUOTE`): one inside quotes starts nothing, so
         // `$filter=n eq 'a&$apply=...'` stays a filter (F-R2ANT4-016). An
         // escaped quote `''` toggles twice and keeps the literal open; `%27`
-        // is a quote as well.
+        // is a quote as well. A `$search` phrase is in double quotes (`%22`) and may hold an
+        // apostrophe, as a string literal may hold a double quote: each quote counts only
+        // outside the other.
         let rest = self.c.rest().as_bytes();
-        let mut quoted = false;
+        let (mut single, mut double) = (false, false);
+        let quote_at = |at: usize, raw: u8, escaped: &[u8]| {
+            rest.get(at).copied() == Some(raw)
+                || rest
+                    .get(at..at.saturating_add(3))
+                    .is_some_and(|t| t.eq_ignore_ascii_case(escaped))
+        };
         let starts: Vec<usize> = std::iter::once(0)
             .chain((0..rest.len()).filter_map(|at| {
-                let b = rest.get(at).copied();
-                let quote = b == Some(b'\'')
-                    || rest
-                        .get(at..at.saturating_add(3))
-                        .is_some_and(|t| t.eq_ignore_ascii_case(b"%27"));
-                quoted ^= quote;
-                (b == Some(b'&') && !quoted).then_some(at.saturating_add(1))
+                single ^= !double && quote_at(at, b'\'', b"%27");
+                double ^= !single && quote_at(at, b'"', b"%22");
+                (rest.get(at) == Some(&b'&') && !single && !double).then_some(at.saturating_add(1))
             }))
             .collect();
         for at in starts {
@@ -335,7 +339,14 @@ impl<'m, M: Model> Query<'_, '_, '_, 'm, M> {
             Name::Select => options.select = Some(self.select(scope)?),
             Name::Expand => options.expand = Some(self.expand(scope, 1)?),
             Name::Top => options.top = Some(unsigned(self.c)?),
-            Name::Skip => options.skip = Some(unsigned(self.c)?),
+            Name::Skip => {
+                let skip = unsigned(self.c)?;
+                let max = self.budget.limits.max_skip;
+                if usize::try_from(skip).map_or(true, |s| s > max) {
+                    return Err(self.c.limit(LimitKind::Skip, max));
+                }
+                options.skip = Some(skip);
+            }
             Name::Count => options.count = Some(boolean(self.c)?),
             Name::Format => options.format = Some(format(self.c)?),
             Name::Skiptoken => options.skiptoken = Some(qchars(self.c, "skiptoken")?),
@@ -344,7 +355,10 @@ impl<'m, M: Model> Query<'_, '_, '_, 'm, M> {
                 options.search = Some(search(self.c, limits, &mut self.budget.nodes, false)?);
             }
             Name::Id => options.id = Some(qchars(self.c, "IRI-in-query")?),
-            _ => options.schemaversion = Some(schemaversion(self.c)?),
+            Name::Schemaversion => options.schemaversion = Some(schemaversion(self.c)?),
+            // `$apply` and `$compute` are read by `find` before the others, `$index` and
+            // `$deltatoken` refused above: none of them is read here
+            _ => return Err(self.c.syntax("queryOption")),
         }
         Ok(())
     }
