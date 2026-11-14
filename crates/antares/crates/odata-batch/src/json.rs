@@ -50,6 +50,24 @@ fn member(
             .ok_or(BatchError::Malformed)?,
         Some(_) => return Err(BatchError::Malformed),
     };
+    // The bounds a multipart part's header block keeps, by the bytes the headers would take there.
+    if headers.len() > limits.max_headers_per_part {
+        return Err(BatchError::limit(
+            BatchLimit::Headers,
+            limits.max_headers_per_part,
+        ));
+    }
+    let bytes = headers.iter().fold(0usize, |sum, (n, v)| {
+        sum.saturating_add(n.len())
+            .saturating_add(v.len())
+            .saturating_add(4)
+    });
+    if bytes > limits.max_part_header_bytes {
+        return Err(BatchError::limit(
+            BatchLimit::HeaderBytes,
+            limits.max_part_header_bytes,
+        ));
+    }
     let depends_on = match object.get("dependsOn") {
         None => Vec::new(),
         Some(Value::Array(ids)) if ids.len() > limits.max_depends_on => {

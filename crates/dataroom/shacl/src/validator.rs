@@ -103,7 +103,8 @@ pub struct ShapeConstraints {
     pub max_count: Option<usize>,
     pub min_length: Option<usize>,
     pub max_length: Option<usize>,
-    pub pattern: Option<(String, Option<String>)>,
+    /// `sh:pattern` and its regex, compiled once with its `sh:flags` (`None`: it does not compile).
+    pub pattern: Option<(String, Option<regex::Regex>)>,
     pub in_values: Option<Vec<Term>>,
     pub has_value: Option<Term>,
     pub language_in: Option<Vec<String>>,
@@ -430,7 +431,9 @@ fn parse_constraints(g: &RdfGraph, subj: &SubjectNode) -> ShapeConstraints {
         let flags = g
             .first_object(subj, &sh("flags"))
             .map(|f| f.string_value().to_owned());
-        (p.string_value().to_owned(), flags)
+        let pattern = p.string_value().to_owned();
+        let compiled = compile_pattern(&pattern, flags.as_deref()).ok();
+        (pattern, compiled)
     });
     let in_values = g
         .first_object(subj, &sh("in"))
@@ -950,25 +953,23 @@ fn check_value_constraints(
     }
 
     // 5. pattern
-    if let Some((ref pat, ref flags)) = c.pattern {
-        if let Ok(re) = compile_pattern(pat, flags.as_deref()) {
-            if !re.is_match(val.string_value()) {
-                findings.push(ShaclFinding {
-                    focus_node: focus.string_value().to_owned(),
-                    result_path: path.map(str::to_owned),
-                    value: Some(val.string_value().to_owned()),
-                    source_constraint_component: sh("PatternConstraintComponent"),
-                    source_shape: shape_id.to_owned(),
-                    severity,
-                    message: default_msg(
-                        &c.message,
-                        format!(
-                            "Value '{}' does not match pattern /{pat}/",
-                            val.string_value()
-                        ),
+    if let Some((pat, Some(re))) = &c.pattern {
+        if !re.is_match(val.string_value()) {
+            findings.push(ShaclFinding {
+                focus_node: focus.string_value().to_owned(),
+                result_path: path.map(str::to_owned),
+                value: Some(val.string_value().to_owned()),
+                source_constraint_component: sh("PatternConstraintComponent"),
+                source_shape: shape_id.to_owned(),
+                severity,
+                message: default_msg(
+                    &c.message,
+                    format!(
+                        "Value '{}' does not match pattern /{pat}/",
+                        val.string_value()
                     ),
-                });
-            }
+                ),
+            });
         }
     }
 

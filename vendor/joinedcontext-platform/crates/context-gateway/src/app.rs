@@ -778,6 +778,10 @@ impl Gateway {
 /// The project an address names (`/api/endpoint/{slug}`, `/cs/{space}`, `/api/mcp/{project}/..`),
 /// when it names one the gateway holds.
 fn project_of_path(gateway: &Gateway, path: &str) -> Option<String> {
+    // A server's metadata names the server's address after the well-known prefix (RFC 9728).
+    let path = path
+        .strip_prefix("/.well-known/oauth-protected-resource")
+        .unwrap_or(path);
     let mut segments = path.trim_start_matches('/').split('/');
     match (segments.next(), segments.next(), segments.next()) {
         (Some("api"), Some("endpoint"), Some(slug)) => {
@@ -787,7 +791,19 @@ fn project_of_path(gateway: &Gateway, path: &str) -> Option<String> {
             .resolver
             .resolve_space(space)
             .map(|s| s.endpoint.project.clone()),
-        (Some("api"), Some("mcp"), Some(project)) if project != "me" => Some(project.to_owned()),
+        // The hub's metadata, the personal, organization and deployment servers are no project's: their handlers
+        // keep them to the host (`mcp::server::on_host`).
+        (Some("api"), Some("mcp"), Some(project))
+            if ![
+                "me",
+                ".well-known",
+                jc_core::envelope::ORG_NAMESPACE,
+                crate::mcp::server::DEPLOYMENTS,
+            ]
+            .contains(&project) =>
+        {
+            Some(project.to_owned())
+        }
         _ => None,
     }
 }

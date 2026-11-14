@@ -653,7 +653,7 @@ fn ids_of(e: &Expr, aliases: &[(String, Literal)]) -> Result<Option<Vec<String>>
     let literals: Vec<&Literal> = match e {
         Expr::Compare(l, CompareOp::Eq, r) if is_id(l) => vec![literal(r, aliases)?],
         Expr::Compare(l, CompareOp::Eq, r) if is_id(r) => vec![literal(l, aliases)?],
-        Expr::In(l, list) if is_id(l) => list.iter().collect(),
+        Expr::In(l, list) if is_id(l) && !list.is_empty() => list.iter().collect(),
         _ => return Ok(None),
     };
     literals
@@ -718,6 +718,8 @@ impl<'a> Terms<'a> {
             Expr::And(l, r) => Ok(format!("({});({})", self.term(l)?, self.term(r)?)),
             Expr::Or(l, r) => Ok(format!("({})|({})", self.term(l)?, self.term(r)?)),
             Expr::Compare(l, op, r) => self.compare(l, *op, r),
+            // `q` has no empty list: the residual reads `in ()` as false
+            Expr::In(_, list) if list.is_empty() => Err(Refused::Later),
             Expr::In(l, list) => {
                 let (name, edm) = self.typed_member(l)?;
                 typed(edm, list)?;

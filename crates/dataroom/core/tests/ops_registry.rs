@@ -288,6 +288,126 @@ async fn catalogue_operations() {
 }
 
 #[tokio::test]
+async fn catalogue_propose_without_admin_cannot_edit_branding_hosts_or_outbound_allowlist() {
+    let w = world().await;
+    // A catalogue-wide Propose grant (the Portal's CKAN publisher holds one).
+    let authz = Arc::new((*w.authz).clone().with_rule(GrantRule {
+        org_id: w.org,
+        catalogue_id: Some(w.cat),
+        principal: "proposer".into(),
+        actions: vec![Action::Read, Action::Propose],
+        publisher_id: None,
+    }));
+    let ops = OpContext {
+        authorizer: authz,
+        ..w.ops()
+    };
+    let proposer = w.ctx(Subject::authenticated("proposer", vec![w.org], Vec::new()));
+    let before = w.store.get_catalogue(w.org, w.cat).await.unwrap().unwrap();
+    let mut cat = serde_json::to_value(&before).unwrap();
+    cat["title"] = json!({"sk": "Nový názov"});
+    cat["host"] = json!("other.example.org");
+    cat["name"] = json!("squat");
+    cat["branding"] = json!({"site": {"title": "x"}});
+    cat["activeProfiles"] = json!([]);
+    cat["mainProfile"] = json!("none");
+    cat["allowedOutboundHosts"] = json!(["*"]);
+    cat["allowCrossOrgHarvest"] = json!(!before.allow_cross_org_harvest);
+    cat["hiddenDatasets"] = json!({});
+    execute_operation(
+        &ops,
+        &proposer,
+        "catalogue.propose",
+        json!({"catalogue": cat}),
+    )
+    .await
+    .unwrap();
+    let after = w.store.get_catalogue(w.org, w.cat).await.unwrap().unwrap();
+    assert_eq!(
+        after.title["sk"], "Nový názov",
+        "the plain metadata changes"
+    );
+    assert_eq!(
+        Catalogue {
+            title: before.title.clone(),
+            modified: before.modified,
+            ..after.clone()
+        },
+        before,
+        "every Admin field keeps its stored value"
+    );
+
+    // Admin changes them, and a host or name that is not one is refused.
+    for (key, value) in [("host", "https://x/\nDisallow"), ("name", "Bad Name")] {
+        let mut bad = serde_json::to_value(&after).unwrap();
+        bad[key] = json!(value);
+        let r = w
+            .run(&w.admin(), "catalogue.propose", json!({"catalogue": bad}))
+            .await;
+        assert!(field(&r, &format!("catalogue.{key}")), "{r:?}");
+    }
+    let mut ok = serde_json::to_value(&after).unwrap();
+    ok["host"] = json!("data2.example.org");
+    let saved = w
+        .run(&w.admin(), "catalogue.propose", json!({"catalogue": ok}))
+        .await
+        .unwrap();
+    assert_eq!(saved["host"], "data2.example.org");
+}
+
+#[tokio::test]
+async fn cross_publisher_id_collision_cannot_overwrite_dataset() {
+    let w = world().await;
+    let target = w
+        .store
+        .get_dataset(&w.admin(), "open")
+        .await
+        .unwrap()
+        .unwrap();
+    // A dataset of dept named after city's dataset id (seeded: the op refuses that name) ...
+    let mut bait = dataset(&target.id, "dept", "public", json!({}));
+    bait.id = "a-bait".into();
+    w.store.upsert_dataset(&w.admin(), bait).await.unwrap();
+    let r = w
+        .run(
+            &w.dept_editor(),
+            "dataset.propose",
+            json!({"dataset": dataset(&target.id, "dept", "public", json!({}))}),
+        )
+        .await;
+    assert!(r.is_err(), "a name equal to another publisher's id: {r:?}");
+    // ... then proposes under city's id, and under city's name.
+    for (id, name) in [(target.id.as_str(), "taken"), ("a-bait", "open")] {
+        let mut attack = dataset(name, "dept", "public", json!({}));
+        attack.id = id.into();
+        let r = w
+            .run(
+                &w.dept_editor(),
+                "dataset.propose",
+                json!({"dataset": attack}),
+            )
+            .await;
+        assert!(r.is_err(), "{id}/{name}: {r:?}");
+    }
+    let after = w
+        .store
+        .get_dataset(&w.admin(), &target.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(after, target, "city's dataset is unchanged");
+    assert_eq!(
+        w.store
+            .get_dataset(&w.admin(), "a-bait")
+            .await
+            .unwrap()
+            .unwrap()
+            .name,
+        target.id
+    );
+}
+
+#[tokio::test]
 async fn dataset_search_shows_each_caller_what_it_may_read() {
     let w = world().await;
     let anon = w
@@ -355,6 +475,20 @@ async fn dataset_get_hides_what_the_caller_may_not_read() {
         .await
         .unwrap();
     assert_eq!(open["name"], "open");
+    // The title in the catalogue's language (sk), as package_show answers it.
+    let mut both = w
+        .store
+        .get_dataset(&w.admin(), "open")
+        .await
+        .unwrap()
+        .unwrap();
+    both.title.insert("en".into(), "Open data".into());
+    w.store.upsert_dataset(&w.admin(), both).await.unwrap();
+    let open = w
+        .run(&w.anonymous(), "dataset.get", json!({"id": "pkg-open"}))
+        .await
+        .unwrap();
+    assert_eq!(open["title"], "Dataset open", "{open}");
     for name in ["internal", "restricted"] {
         let r = w
             .run(&w.anonymous(), "dataset.get", json!({"name": name}))
@@ -665,10 +799,25 @@ async fn dataset_withdraw() {
 async fn publisher_operations_and_no_self_granted_editing() {
     let w = world().await;
     let listed = w
-        .run(&w.anonymous(), "publisher.list", json!({}))
+        .run(&w.member(), "publisher.list", json!({}))
         .await
         .unwrap();
     assert_eq!(names(&listed, "publishers"), ["city", "dept", "gone"]);
+    // Anonymous: the active publishers, without who may edit them.
+    w.run(
+        &w.admin(),
+        "publisher.propose",
+        json!({"publisher": {"name": "dept", "title": {"sk": "Odbor"}, "description": {},
+            "uri": "https://example.org/dept", "state": "active", "editorGrants": ["dept-team"]}}),
+    )
+    .await
+    .unwrap();
+    let listed = w
+        .run(&w.anonymous(), "publisher.list", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(names(&listed, "publishers"), ["city", "dept"]);
+    assert!(!listed.to_string().contains("dept-team"), "{listed}");
 
     // A member without rights may not create a publisher by naming itself its editor...
     let selfgrant = json!({"publisher": {"name": "mine", "title": {"sk": "Môj"},
@@ -1146,7 +1295,7 @@ fn a_stored_run_error_reads_as_one_word() {
 async fn plugins_profiles_branding_activity_and_feed_check() {
     let w = world().await;
     let plugin = json!({"plugin": {"name": "maps", "version": "1.0.0", "digest": "sha256:00",
-        "enabled": true}});
+        "enabled": true, "allowedHosts": ["tiles.example.org"], "config": {"style": "dark"}}});
     let r = w.run(&w.member(), "plugin.propose", plugin.clone()).await;
     assert!(is_forbidden(&r), "{r:?}");
     let saved = w.run(&w.admin(), "plugin.propose", plugin).await.unwrap();
@@ -1164,6 +1313,14 @@ async fn plugins_profiles_branding_activity_and_feed_check() {
         .await
         .unwrap();
     assert_eq!(listed["plugins"].as_array().unwrap().len(), 1);
+    // Which plugin runs is public; its settings are not.
+    let p = &listed["plugins"][0];
+    assert!(
+        p["config"].is_null() && p["allowedHosts"] == json!([]),
+        "{p}"
+    );
+    let listed = w.run(&w.admin(), "plugin.list", json!({})).await.unwrap();
+    assert_ne!(listed["plugins"][0]["allowedHosts"], json!([]), "{listed}");
 
     let profile = json!({"profile": {"id": "city-ext", "version": "1",
         "uri": "https://example.org/p", "title": {"en": "City"}, "shapesTurtle": "",
@@ -1230,7 +1387,22 @@ async fn plugins_profiles_branding_activity_and_feed_check() {
         .await
         .unwrap();
     assert_eq!(fc["conforms"], true);
-    assert_eq!(fc["datasetsChecked"], 3, "public active datasets: {fc}");
+    assert_eq!(
+        fc["datasetsChecked"], 2,
+        "public active datasets of active publishers: {fc}"
+    );
+    // A jc_hide dataset is not in the feed, so not in its check either.
+    let mut cat = w.store.get_catalogue(w.org, w.cat).await.unwrap().unwrap();
+    cat.hidden_datasets
+        .insert("open".into(), "quality check".into());
+    w.store.upsert_catalogue(cat.clone()).await.unwrap();
+    let fc = w
+        .run(&w.anonymous(), "catalogue.feed_check", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(fc["datasetsChecked"], 1, "{fc}");
+    cat.hidden_datasets.clear();
+    w.store.upsert_catalogue(cat).await.unwrap();
     let mut ops = w.ops();
     ops.validator = Some(Arc::new(Validator { conforms: true }));
     let fc = execute_operation(
@@ -1241,7 +1413,7 @@ async fn plugins_profiles_branding_activity_and_feed_check() {
     )
     .await
     .unwrap();
-    assert_eq!(fc, json!({"checked": 3, "profile": "dcat-ap-sk-2.0"}));
+    assert_eq!(fc, json!({"checked": 2, "profile": "dcat-ap-sk-2.0"}));
 }
 
 /// `allowed` answers what the call does: allowed exactly when the call is not refused for

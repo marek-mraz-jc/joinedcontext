@@ -716,6 +716,27 @@ impl Dataset {
     /// Validates slug, tags and required fields.
     pub fn validate_basic(&self) -> Result<()> {
         validate_slug("name", &self.name)?;
+        let texts = [
+            &self.title,
+            &self.description,
+            &self.version_notes,
+            &self.provenance,
+        ]
+        .into_iter()
+        .chain(
+            self.distributions
+                .iter()
+                .flat_map(|d| [&d.title, &d.description, &d.rights]),
+        )
+        .flat_map(|t| t.keys().map(|k| ("language", k)));
+        for (field, key) in texts.chain(self.keywords.keys().map(|k| ("keywords", k))) {
+            if !is_language_tag(key) {
+                return Err(DataroomError::field_error(
+                    field,
+                    format!("'{key}' is not a language tag such as sk or en-GB"),
+                ));
+            }
+        }
         if self.title.values().all(|v| v.trim().is_empty()) {
             return Err(DataroomError::field_error(
                 "title",
@@ -748,6 +769,17 @@ impl Dataset {
         }
         Ok(())
     }
+}
+
+/// Whether `tag` has the BCP 47 shape `[a-zA-Z]{1,8}(-[a-zA-Z0-9]{1,8})*` (RDF 1.1 LANGTAG).
+pub fn is_language_tag(tag: &str) -> bool {
+    let mut parts = tag.split('-');
+    let ok = |p: &str, first: bool| {
+        (1..=8).contains(&p.len())
+            && p.bytes()
+                .all(|b| b.is_ascii_alphabetic() || (!first && b.is_ascii_digit()))
+    };
+    parts.next().is_some_and(|p| ok(p, true)) && parts.all(|p| ok(p, false))
 }
 
 /// Validates a CKAN-compatible slug (`2..=100` chars of `a-z`, `0-9`, `-`, `_`).

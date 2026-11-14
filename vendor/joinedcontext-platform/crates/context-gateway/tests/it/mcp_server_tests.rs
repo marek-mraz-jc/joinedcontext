@@ -751,6 +751,16 @@ async fn a_fan_out_asks_each_members_view_and_a_refusing_view_is_a_failed_member
         structured["nextCursor"],
         json!({ AIR: "opaque-1", OPEN: "opaque-1" })
     );
+    // The members' data reaches the model fenced and marked as data, as a member's own answer is.
+    assert_eq!(
+        answer["result"]["_meta"]["jc/untrusted"],
+        json!(true),
+        "{answer}"
+    );
+    let text = answer["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(text.contains("```json\n{"), "{text}");
 
     let hops = hops.lock().expect("the hop log");
     let mut asked: Vec<&str> = hops.iter().map(|hop| hop.view.as_str()).collect();

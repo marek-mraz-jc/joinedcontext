@@ -884,9 +884,15 @@ async fn indicator_stays_open(
         "jc_kpi_compute" if args.get("endpoint").is_some() => vec![text("/attribute"), text("/q")],
         crate::ops::render::NAME => {
             let channels = args["encoding"].as_object().into_iter().flatten();
+            // The order and the attributes read rank and pick entities as the filter does.
+            let attrs = match args.pointer("/data/query/attrs") {
+                Some(Value::Array(attrs)) => attrs.iter().filter_map(Value::as_str).collect(),
+                _ => vec![text("/data/query/attrs")],
+            };
             channels
                 .filter_map(|(_, channel)| channel["field"].as_str())
-                .chain([text("/data/query/q")])
+                .chain([text("/data/query/q"), text("/data/query/orderBy")])
+                .chain(attrs)
                 .collect()
         }
         _ => return Ok(()),

@@ -622,6 +622,45 @@ pub(crate) const MAX_TREE_DEPTH: usize = 256;
 /// Most tree entries one walk visits: a tree naming one subtree many times grows the path count
 /// exponentially from a pack of a few KB.
 pub(crate) const MAX_TREE_ENTRIES: usize = 500_000;
+/// Longest path a walk builds (Linux `PATH_MAX`): a chain of long directory names otherwise makes
+/// every path below it tens of KB.
+pub(crate) const MAX_TREE_PATH_BYTES: usize = 4096;
+/// Most path bytes one walk holds, so entries times path length stays bounded too.
+pub(crate) const MAX_TREE_WALK_BYTES: usize = 64 << 20;
+
+/// What one tree walk has visited so far, checked against the limits above.
+#[derive(Default)]
+struct TreeWalk {
+    entries: usize,
+    path_bytes: usize,
+}
+
+impl TreeWalk {
+    fn enter(&self, depth: usize) -> ShakoResult<()> {
+        if depth > MAX_TREE_DEPTH {
+            return Err(ShakoError::Unprocessable(format!(
+                "tree nesting deeper than {MAX_TREE_DEPTH} levels"
+            )));
+        }
+        Ok(())
+    }
+
+    fn visit(&mut self, path: &str) -> ShakoResult<()> {
+        self.entries += 1;
+        self.path_bytes += path.len();
+        if self.entries > MAX_TREE_ENTRIES {
+            return Err(ShakoError::Unprocessable(format!(
+                "tree holds more than {MAX_TREE_ENTRIES} entries"
+            )));
+        }
+        if path.len() > MAX_TREE_PATH_BYTES || self.path_bytes > MAX_TREE_WALK_BYTES {
+            return Err(ShakoError::Unprocessable(format!(
+                "tree paths longer than {MAX_TREE_PATH_BYTES} bytes or {MAX_TREE_WALK_BYTES} bytes in all"
+            )));
+        }
+        Ok(())
+    }
+}
 
 /// Collects every blob path under `tree`, refusing a tree past [`MAX_TREE_DEPTH`] or
 /// [`MAX_TREE_ENTRIES`] with [`ShakoError::Unprocessable`].
@@ -631,8 +670,7 @@ pub(crate) fn collect_tree_blobs(
     prefix: &str,
     out: &mut BTreeMap<String, (EntryKind, ObjectId)>,
 ) -> ShakoResult<()> {
-    let mut visited = 0;
-    walk_tree(repo, tree, prefix, 0, &mut visited, out)
+    walk_tree(repo, tree, prefix, 0, &mut TreeWalk::default(), out)
 }
 
 fn walk_tree(
@@ -640,35 +678,26 @@ fn walk_tree(
     tree: &gix::Tree<'_>,
     prefix: &str,
     depth: usize,
-    visited: &mut usize,
+    walk: &mut TreeWalk,
     out: &mut BTreeMap<String, (EntryKind, ObjectId)>,
 ) -> ShakoResult<()> {
-    if depth > MAX_TREE_DEPTH {
-        return Err(ShakoError::Unprocessable(format!(
-            "tree nesting deeper than {MAX_TREE_DEPTH} levels"
-        )));
-    }
+    walk.enter(depth)?;
     let decoded = tree
         .decode()
         .map_err(|e| ShakoError::Git(format!("decode tree: {e}")))?;
     for entry in decoded.entries {
-        *visited += 1;
-        if *visited > MAX_TREE_ENTRIES {
-            return Err(ShakoError::Unprocessable(format!(
-                "tree holds more than {MAX_TREE_ENTRIES} entries"
-            )));
-        }
         let name = entry.filename.to_str_lossy();
         let full = if prefix.is_empty() {
             name.into_owned()
         } else {
             format!("{prefix}/{name}")
         };
+        walk.visit(&full)?;
         if entry.mode.is_tree() {
             let sub = repo
                 .find_tree(entry.oid)
                 .map_err(|e| ShakoError::Git(format!("find subtree: {e}")))?;
-            walk_tree(repo, &sub, &full, depth + 1, visited, out)?;
+            walk_tree(repo, &sub, &full, depth + 1, walk, out)?;
         } else {
             let kind = if entry.mode.is_executable() {
                 EntryKind::BlobExecutable
@@ -799,7 +828,8 @@ pub fn list_tree_entries(
 
     let tree_sha = tree.id.to_hex().to_string();
     let mut out = Vec::new();
-    walk_tree_entries(&repo, &tree, "", recursive, &mut out)?;
+    let walk = &mut TreeWalk::default();
+    walk_tree_entries(&repo, &tree, "", recursive, 0, walk, &mut out)?;
     Ok((tree_sha, out))
 }
 
@@ -808,8 +838,11 @@ fn walk_tree_entries(
     tree: &gix::Tree<'_>,
     prefix: &str,
     recursive: bool,
+    depth: usize,
+    walk: &mut TreeWalk,
     out: &mut Vec<TreeEntryInfo>,
 ) -> ShakoResult<()> {
+    walk.enter(depth)?;
     let decoded = tree
         .decode()
         .map_err(|e| ShakoError::Git(format!("decode tree: {e}")))?;
@@ -820,6 +853,7 @@ fn walk_tree_entries(
         } else {
             format!("{prefix}/{name}")
         };
+        walk.visit(&path)?;
         let is_tree = entry.mode.is_tree();
         let (mode_str, type_str, size) = if is_tree {
             ("040000".to_owned(), "tree".to_owned(), 0)
@@ -845,7 +879,7 @@ fn walk_tree_entries(
             let sub = repo
                 .find_tree(entry.oid)
                 .map_err(|e| ShakoError::Git(format!("find subtree: {e}")))?;
-            walk_tree_entries(repo, &sub, &path, true, out)?;
+            walk_tree_entries(repo, &sub, &path, true, depth + 1, walk, out)?;
         }
     }
     Ok(())
@@ -1247,6 +1281,38 @@ mod tests {
             .expect_err("deep chain");
         assert!(
             matches!(err, ShakoError::Unprocessable(ref m) if m.contains("deeper")),
+            "{err}"
+        );
+
+        // Length: a chain of long names makes every path below it long.
+        let long = "n".repeat(250);
+        let mut tall = tree_of(&repo, &[("f", EntryKind::Blob, blob)]);
+        for _ in 0..20 {
+            tall = tree_of(&repo, &[(long.as_str(), EntryKind::Tree, tall)]);
+        }
+        let mut out = BTreeMap::new();
+        let err = collect_tree_blobs(&repo, &repo.find_tree(tall).unwrap(), "", &mut out)
+            .expect_err("long paths");
+        assert!(
+            matches!(err, ShakoError::Unprocessable(ref m) if m.contains("bytes")),
+            "{err}"
+        );
+
+        // The tree listing walks under the same limits.
+        let mut listed = Vec::new();
+        let walk = &mut TreeWalk::default();
+        let err = walk_tree_entries(
+            &repo,
+            &repo.find_tree(level).unwrap(),
+            "",
+            true,
+            0,
+            walk,
+            &mut listed,
+        )
+        .expect_err("listing a fan-out bomb");
+        assert!(
+            matches!(err, ShakoError::Unprocessable(ref m) if m.contains("entries")),
             "{err}"
         );
 
