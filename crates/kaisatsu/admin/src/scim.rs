@@ -1068,7 +1068,9 @@ fn eval_json_item_filter(expr: &ScimExpr, item: &Value) -> bool {
     }
 }
 
-async fn end_sessions_for_deactivated_user(
+/// Ends every SSO session of the person (client sessions and refresh families with them) and
+/// tells each client by back-channel logout: on deactivation and on delete.
+pub(crate) async fn end_sessions_for_deactivated_user(
     state: &AdminState,
     mount: &Mount,
     realm: &str,

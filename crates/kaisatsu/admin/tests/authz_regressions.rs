@@ -508,6 +508,77 @@ async fn a_revoked_admin_token_is_refused() {
     );
 }
 
+/// Deleting a person ends their sessions (refresh families revoked, clients told); a client's
+/// service-account user is its own, never a person who took the name.
+#[tokio::test]
+async fn person_delete_and_service_account_user_follow_the_person() {
+    let f = Fixture::new().await;
+    let now = chrono::Utc::now();
+    f.store
+        .upsert_refresh_family(RefreshTokenFamily {
+            id: "fam-1".into(),
+            realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
+            sso_session_id: "sso-1".into(),
+            user_id: "hel-person".into(),
+            client_id: "hel-app".into(),
+            scope: "openid".into(),
+            mapper_scopes: Vec::new(),
+            acr: "pwd".into(),
+            amr: Vec::new(),
+            auth_time: now.timestamp(),
+            rotation_counter: 0,
+            current_jti_hash: "h".into(),
+            previous_hashes: Vec::new(),
+            dpop_jkt: None,
+            offline: false,
+            revoked: false,
+            expires_at: now + chrono::Duration::hours(1),
+        })
+        .await
+        .unwrap();
+    let admin = f
+        .token(
+            "dev",
+            "boss",
+            json!({ "realm_access": { "roles": ["realm-admin"] } }),
+        )
+        .await;
+    assert_eq!(
+        f.send(
+            Method::DELETE,
+            "/admin/realms/dev/users/hel-person",
+            &admin,
+            None
+        )
+        .await,
+        StatusCode::NO_CONTENT
+    );
+    let family = f.store.get_refresh_family("dev", "fam-1").await.unwrap();
+    assert!(family.as_ref().is_none_or(|fam| fam.revoked), "{family:?}");
+
+    f.store
+        .create_user(UserRepresentation {
+            id: "squatter".into(),
+            realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
+            username: "service-account-hel-app".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        f.send(
+            Method::GET,
+            "/admin/realms/dev/clients/uuid-hel-app/service-account-user",
+            &admin,
+            None
+        )
+        .await,
+        StatusCode::NOT_FOUND
+    );
+}
+
 /// Only an existing, enabled realm's keys verify an admin token: a disabled realm's tokens stop
 /// working, and a token on an unknown realm's path is refused before any key is read for it.
 #[tokio::test]

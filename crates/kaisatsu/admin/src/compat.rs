@@ -1107,6 +1107,7 @@ async fn compat_delete_user(
         },
     ))?;
     crate::operations::ensure_person_ceiling(&state, &ctx, &existing).await?;
+    crate::scim::end_sessions_for_deactivated_user(&state, &mount, &realm, &id).await?;
     state
         .oidc
         .store
@@ -2436,6 +2437,8 @@ async fn compat_get_service_account_user(
         .store
         .get_user_by_username_or_email(&realm, None, &sa_name)
         .await?
+        // The client's own service account, never a person who took the name.
+        .filter(|u| u.service_account_client_id.as_deref() == Some(client.client_id.as_str()))
         .ok_or_else(|| KaisatsuError::NotFound("service account user not found".into()))?;
     Ok(Json(user))
 }
