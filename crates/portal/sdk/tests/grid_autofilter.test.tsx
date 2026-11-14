@@ -129,7 +129,7 @@ describe("the header filter (T-6328)", () => {
     fireEvent.change(within(dialog).getByRole("combobox", { name: "Condition: Name" }), { target: { value: "contains" } });
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Value: Name" }), { target: { value: 'a"b.(' } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Apply" }));
-    await waitFor(() => expect(asked.at(-1)?.q).toBe('name~="a\\"b\\.\\("'));
+    await waitFor(() => expect(asked.at(-1)?.q).toBe('name~="a\\x22b\\.\\("'));
   });
 
   it("Escape and a click outside close it, Escape back to its funnel", async () => {
