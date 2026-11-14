@@ -99,6 +99,7 @@ export function GridDetail({ view }: { view: GridView }): React.JSX.Element | nu
           id={detailRow.id}
           attr={attr}
           cell={detailRow.cells[attr]}
+          publicView={props.publicView}
           locale={where}
           labels={options.labels?.metadataLabels}
         />

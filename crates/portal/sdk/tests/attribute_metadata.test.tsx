@@ -105,14 +105,21 @@ describe("AttributeMetadata (T-5529)", () => {
     }
   });
 
-  it("asks a public Endpoint for nothing and hides who wrote it", () => {
+  it("asks a public Endpoint for nothing and names no access (T-6869)", () => {
     const history = vi.fn();
     render(<AttributeMetadata source={{ history }} id={ID} attr="kpiValue" cell={{ kind: "property", value: 1 }} publicView locale="en" />);
-    for (const term of ["Created", "Changed by"]) {
-      expect(value(term).textContent).toBe("hidden: no access (public view)");
-    }
-    expect(screen.queryByText("Organization")).toBeNull();
+    expect(screen.getByText("No change was recorded")).toBeTruthy();
+    expect(screen.queryByText("Created")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/access/i);
+    for (const term of ["Changed by", "Organization"]) expect(screen.queryByText(term)).toBeNull();
     expect(history).not.toHaveBeenCalled();
+  });
+
+  it("shows a public Endpoint's times it has and nothing about who wrote them (T-6869)", () => {
+    render(<AttributeMetadata source={{}} id={ID} attr="kpiValue" cell={{ ...cell, createdAt: undefined }} publicView locale="en" now={() => NOW} />);
+    expect(screen.queryByText("Created")).toBeNull();
+    expect(value("Last changed").textContent).not.toMatch(/access/i);
+    expect(screen.queryByText("Changed by")).toBeNull();
   });
 
   it("says a failed read in the server's words", async () => {
