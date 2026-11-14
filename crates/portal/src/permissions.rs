@@ -801,9 +801,9 @@ fn without_organization_kinds(mirror: &Mirror, project: &str, grants: Vec<Grant>
 }
 
 /// The kinds a non-installation Organization's administrator keeps at [`ORG_NAMESPACE`]
-/// (ADR-N-058 section 2.4): its own `Organization` manifest, the bindings inside it and the groups
-/// those bindings name. Roles, brokers, environments and platform settings stay the installation's.
-const OWN_SETTINGS_KINDS: [&str; 3] = ["Organization", "RoleBinding", "Group"];
+/// (ADR-N-058 section 2.4): its own `Organization` manifest, the bindings inside it, the groups
+/// those bindings name and its open data portals (ODP-08). Roles, brokers, environments and platform settings stay the installation's.
+const OWN_SETTINGS_KINDS: [&str; 4] = ["Organization", "RoleBinding", "Group", "Portal"];
 
 /// The members of an Organization's own manifest its administrator leaves as they are: its
 /// domain (the `{orgDomain}` of its URNs), repository, limits and catalogue publisher are set by
@@ -896,6 +896,15 @@ fn narrowed_to_own_settings(mirror: &Mirror, organization: &str, grant: Grant) -
                     one_of("metadata.name", vec![organization.to_owned()]),
                     none_of("spec.installation", vec!["true".to_owned()]),
                 ],
+            ),
+            // ODP-12: an Organization's administrator manages its own portals alone.
+            "Portal" => push(
+                kind,
+                verbs,
+                vec![one_of(
+                    "spec.organizationRef",
+                    vec![organization.to_owned()],
+                )],
             ),
             "RoleBinding" => {
                 let projects: Vec<String> = mirror

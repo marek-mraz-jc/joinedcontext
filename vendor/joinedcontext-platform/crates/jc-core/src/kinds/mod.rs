@@ -40,6 +40,7 @@ pub mod pipeline_lifetime;
 pub mod pipeline_source_deletes;
 pub mod policy;
 pub mod policy_odrl;
+pub mod portal;
 pub mod role;
 pub mod service_account;
 pub mod space;
@@ -138,6 +139,10 @@ pub use policy::{
     PrincipalKind, RegistrationInfo, ScopeDefinitionSpec, Validity, VersionsCapability,
     WriteCapability,
 };
+pub use portal::{
+    http_url_host, is_portal_host, HarvestBudget, PortalSource, PortalSourceType, PortalSpec,
+    SlugAddress, DEFAULT_PORTAL,
+};
 pub use role::{
     BindingValidity, Constraint, RoleBindingSpec, RoleSpec, Rule, Subject, SubjectSource, Verb,
     PERSON,
@@ -227,6 +232,8 @@ pub type Environment = crate::envelope::ResourceEnvelope<EnvironmentSpec>;
 
 /// `kind: Group` as a whole manifest.
 pub type Group = crate::envelope::ResourceEnvelope<GroupSpec>;
+/// `kind: Portal` as a whole manifest.
+pub type Portal = crate::envelope::ResourceEnvelope<PortalSpec>;
 /// `kind: DelegationPolicy` as a whole manifest.
 pub type DelegationPolicy = crate::envelope::ResourceEnvelope<DelegationPolicySpec>;
 /// `kind: ContextBroker` as a whole manifest.

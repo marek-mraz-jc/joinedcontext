@@ -677,6 +677,10 @@ const EXAMPLES: &[(&str, &str)] = &[
         r#"{"spec":{"pages":[{"title":"Overview","widgets":[{"widgetType":"kpi"}]}]}}"#,
     ),
     ("Layer", r#"{"spec":{"entityType":"ExampleType"}}"#),
+    (
+        "Portal",
+        r#"{"spec":{"organizationRef":"example","path":"mobility"}}"#,
+    ),
 ];
 
 /// The smallest value a schema accepts that has every required member.
