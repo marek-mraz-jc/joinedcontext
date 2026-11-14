@@ -281,12 +281,32 @@ pub fn is_sensitive_path(path: &str) -> bool {
     crate::api::mutate::SECRET_KEYS.contains(&clean)
 }
 
-/// Replaces sensitive field values with `"[REDACTED]"` (CC-06).
+/// Whether `value`, written at `path`, holds what the propose door refuses as a literal secret
+/// (`mutate::find_literal_secret`): a credential's field, a request header holding one, a token
+/// or a URL with a password, at any depth of an object it replaces (CC-06, SEC-02).
+fn holds_a_secret(path: &str, value: Option<&Value>) -> bool {
+    let Some(value) = value else {
+        return false;
+    };
+    let leaf = path.rsplit('.').next().unwrap_or(path);
+    let leaf = leaf.split('[').next().unwrap_or(leaf);
+    let mut wrapped = serde_json::json!({ leaf: value });
+    if path.rsplit('.').nth(1) == Some("headers") {
+        wrapped = serde_json::json!({ "headers": wrapped });
+    }
+    crate::api::mutate::find_literal_secret(&wrapped).is_some()
+}
+
+/// Replaces sensitive field values with `"[REDACTED]"` (CC-06): a credential's field by name,
+/// and any value the propose door would refuse as a literal secret, in the old and the new.
 pub fn redact(fields: Vec<FieldChange>) -> Vec<FieldChange> {
     fields
         .into_iter()
         .map(|mut f| {
-            if is_sensitive_path(&f.path) {
+            if is_sensitive_path(&f.path)
+                || holds_a_secret(&f.path, f.from.as_ref())
+                || holds_a_secret(&f.path, f.to.as_ref())
+            {
                 if f.from.is_some() {
                     f.from = Some(Value::String("[REDACTED]".to_string()));
                 }
@@ -3649,6 +3669,30 @@ mod tests {
         assert_eq!(redacted[3].to, None);
         assert_eq!(redacted[4].from, Some(json!("[REDACTED]")));
         assert_eq!(redacted[4].to, Some(json!("[REDACTED]")));
+    }
+
+    /// SEC-02, CC-06: a credential the propose door would refuse is redacted in a diff too: a
+    /// request header holding one, a URL carrying a key, an object replaced whole; a header
+    /// naming a `${VAR}` and a plain address stay the review.
+    #[test]
+    fn a_literal_secret_by_value_is_redacted() {
+        let field = |path: &str, to: Value| FieldChange {
+            path: path.to_string(),
+            from: Some(to.clone()),
+            to: Some(to),
+        };
+        let hidden = |path: &str, to: Value| {
+            let out = redact(vec![field(path, to)]);
+            out[0].to == Some(json!("[REDACTED]")) && out[0].from == Some(json!("[REDACTED]"))
+        };
+        assert!(hidden("spec.http.headers.Authorization", json!("Bearer abc123")));
+        assert!(hidden("spec.http.headers.X-Api-Key", json!("k-1")));
+        assert!(hidden("spec.http.headers", json!({ "Cookie": "session=1" })));
+        assert!(hidden("spec.url", json!("https://example.com/feed?api_key=f00dfeed1234")));
+        assert!(hidden("spec.auth", json!({ "password": "hunter2" })));
+        assert!(!hidden("spec.http.headers.Authorization", json!("${FEED_TOKEN}")));
+        assert!(!hidden("spec.http.headers.Accept", json!("application/json")));
+        assert!(!hidden("spec.url", json!("https://example.com/feed")));
     }
 
     /// T-1142, CC-06: the rule is the path's last segment, which is what makes it predictable.
