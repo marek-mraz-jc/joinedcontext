@@ -699,7 +699,8 @@ fn of_its_organization(gateway: &Gateway, endpoint: &Endpoint, project: &str) ->
 /// by name (`None` before it loads). Where the repository holds Organizations, `ours` has to be
 /// one of them: an Endpoint of a project naming none, or naming one that does not exist, admits
 /// nobody (I-4). An installation without any Organization manifest is one Organization and every
-/// member passes, as before ADR-N-058 (T-6806); before the repository loads nobody does.
+/// member passes, as before ADR-N-058 (T-6806); with `None` (before the repository loads, or
+/// Organization manifests of which none parses, [`judged_organizations`]) nobody does.
 fn in_its_organization(
     audience: Audience,
     ours: Option<&str>,
@@ -709,13 +710,27 @@ fn in_its_organization(
     if audience != Audience::Organization {
         return true;
     }
-    match (ours, organizations) {
-        (Some(ours), Some(known)) if !known.is_empty() => {
-            known.contains_key(ours) && theirs == Some(ours)
-        }
-        (Some(ours), _) => theirs == Some(ours),
-        (None, known) => known.is_some_and(BTreeMap::is_empty),
+    let Some(known) = organizations else {
+        return false;
+    };
+    match ours {
+        Some(ours) if !known.is_empty() => known.contains_key(ours) && theirs == Some(ours),
+        Some(ours) => theirs == Some(ours),
+        None => known.is_empty(),
     }
+}
+
+/// The Organizations an `organization` audience is judged against (I-4), from the repository's
+/// Organization manifests, `declared` in all, and `parsed`, the domain of each whose spec parses
+/// by name. Only a parsed one is an Organization a project can be of, on the gateway and in the
+/// Portal's preview alike. A manifest that does not parse never switches I-4 off: with manifests
+/// declared and none parsing this is `None`, and nobody is admitted. Zero manifests is an empty
+/// map, one Organization as before ADR-N-058 (T-6806, T-6868).
+pub fn judged_organizations(
+    declared: usize,
+    parsed: &BTreeMap<String, String>,
+) -> Option<&BTreeMap<String, String>> {
+    (declared == 0 || !parsed.is_empty()).then_some(parsed)
 }
 
 /// Whether `user` may be decided under its own name: any person's username, and a
