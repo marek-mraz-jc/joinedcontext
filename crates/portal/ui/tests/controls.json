@@ -1583,7 +1583,7 @@
     },
     "src/pages/knowledge/ConversationsPage.tsx": {
       "controls": {
-        "Button": 8,
+        "Button": 9,
         "Switch": 2
       },
       "tests": [
