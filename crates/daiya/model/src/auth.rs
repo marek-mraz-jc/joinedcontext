@@ -55,9 +55,9 @@ pub struct Subject {
     /// Read-only connector / MCP flag.
     #[serde(default)]
     pub read_only: bool,
-    /// The person a server administrator reads for (the `sub` of the person's token the Portal
-    /// hands over with its credential): part of every cache key, so one person's frames never
-    /// serve another's.
+    /// Whom a server administrator reads for: `token:<sha256>` of the person's token the Portal
+    /// hands over with its credential, or `public`. Part of every cache key, so one person's
+    /// frames never serve another's; a server administrator without it reads no data.
     #[serde(default, skip_serializing)]
     pub on_behalf_of: Option<String>,
 }

@@ -392,27 +392,53 @@ fn basic_matches(headers: &HeaderMap, expected: &str) -> bool {
 /// credential; on any other request it is ignored.
 pub const PERSON_TOKEN_HEADER: &str = "x-daiya-person-token";
 
-/// The server administrator reading for the person whose token is in [`PERSON_TOKEN_HEADER`]:
-/// the token becomes the subject's bearer for the datasource call, and its `sub` (or, without
-/// one, a digest of the token) the person the cache keys on.
+/// The header in which the Portal says, beside its server-administrator credential, that a read
+/// is for nobody in particular: [`READ_AS_PUBLIC`] is its one value. The reads then go out with
+/// no `Authorization`, so an Endpoint answers them by its own audience (public, or dark).
+pub const READ_AS_HEADER: &str = "x-daiya-read-as";
+
+/// The value of [`READ_AS_HEADER`]; any other value counts as absent.
+pub const READ_AS_PUBLIC: &str = "public";
+
+/// The server administrator reading for someone: the person whose token is in
+/// [`PERSON_TOKEN_HEADER`] (the token becomes the subject's bearer for the datasource call, and its
+/// digest the person the cache keys on: a claim read without verifying the token never keys it),
+/// or the public ([`READ_AS_HEADER`]). With neither, `on_behalf_of` stays empty and
+/// [`reads_for_someone`] refuses every data read.
 fn on_behalf_of(mut admin: Subject, headers: &HeaderMap) -> Subject {
-    let Some(token) = headers
-        .get(PERSON_TOKEN_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-    else {
-        return admin;
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
     };
-    let person =
-        token_sub(token).unwrap_or_else(|| format!("token:{}", sha256_hex(token.as_bytes())));
-    admin.on_behalf_of = Some(person);
-    admin.bearer_token = Some(token.to_owned());
+    if let Some(token) = header(PERSON_TOKEN_HEADER) {
+        admin.on_behalf_of = Some(format!("token:{}", sha256_hex(token.as_bytes())));
+        admin.bearer_token = Some(token.to_owned());
+    } else if header(READ_AS_HEADER) == Some(READ_AS_PUBLIC) {
+        admin.on_behalf_of = Some(READ_AS_PUBLIC.to_owned());
+    }
     admin
 }
 
-/// The claims of a JWT, read without verifying it: they only key the cache and pick the
-/// Endpoint the token goes to; the gateway verifies the token itself.
+/// Refuses (401) a data read by the server administrator for nobody: its credential opens every
+/// Organization, so a panel, a datasource query or a datasource resource it reads must name a
+/// person ([`PERSON_TOKEN_HEADER`]) or the public ([`READ_AS_HEADER`]). The server-administration
+/// routes (organizations, datasource and dashboard records, folders, search, health, public
+/// dashboard settings) read no data and stay open to it.
+pub(crate) fn reads_for_someone(subject: &Subject) -> CrResult<()> {
+    if subject.actor_id.as_deref() == Some(SERVER_ADMIN_ACTOR) && subject.on_behalf_of.is_none() {
+        return Err(CrError::Unauthorized(format!(
+            "the server administrator reads data only for a person ({PERSON_TOKEN_HEADER}) \
+             or as the public ({READ_AS_HEADER}: {READ_AS_PUBLIC})"
+        )));
+    }
+    Ok(())
+}
+
+/// The claims of a JWT, read without verifying it: they only pick the Endpoint the token goes
+/// to; the gateway verifies the token itself. Never a cache key or an identity.
 fn claims_of(token: &str) -> Option<serde_json::Value> {
     use base64::Engine as _;
     let payload = token.split('.').nth(1)?;
@@ -420,15 +446,6 @@ fn claims_of(token: &str) -> Option<serde_json::Value> {
         .decode(payload.trim_end_matches('='))
         .ok()?;
     serde_json::from_slice(&bytes).ok()
-}
-
-/// The `sub` claim of a JWT (see [`claims_of`]).
-#[must_use]
-pub fn token_sub(token: &str) -> Option<String> {
-    claims_of(token)?["sub"]
-        .as_str()
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
 }
 
 /// The exchanger of a host whose Portal exchanges the person's token itself, for one Endpoint
