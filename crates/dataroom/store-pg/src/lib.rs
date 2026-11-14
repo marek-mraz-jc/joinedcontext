@@ -529,6 +529,48 @@ impl Store for PgStore {
         })
     }
 
+    fn delete_catalogue<'a>(
+        &'a self,
+        org_id: OrgId,
+        catalogue_id: CatalogueId,
+    ) -> BoxFuture<'a, Result<bool>> {
+        Box::pin(async move {
+            let mut tx = self.begin_tenant(org_id, Some(catalogue_id)).await?;
+            let marked = sqlx::query(
+                "UPDATE dataroom.cat_catalogue
+                 SET doc = jsonb_set(doc, '{deleted}', to_jsonb(now())), modified = now()
+                 WHERE org_id = $1 AND id = $2",
+            )
+            .bind(org_id.as_uuid())
+            .bind(catalogue_id.as_uuid())
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?
+            .rows_affected();
+            if marked == 0 {
+                tx.rollback().await.map_err(db_err)?;
+                return Ok(false);
+            }
+            // Children first, in reverse migration order; the catalogue row stays (tombstone).
+            for table in REQUIRED_RLS_TABLES
+                .iter()
+                .rev()
+                .filter(|t| **t != "cat_catalogue")
+            {
+                sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "DELETE FROM dataroom.{table} WHERE org_id = $1 AND catalogue_id = $2"
+                )))
+                .bind(org_id.as_uuid())
+                .bind(catalogue_id.as_uuid())
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+            }
+            tx.commit().await.map_err(db_err)?;
+            Ok(true)
+        })
+    }
+
     fn upsert_catalogue<'a>(&'a self, catalogue: Catalogue) -> BoxFuture<'a, Result<Catalogue>> {
         Box::pin(async move {
             let mut tx = self
@@ -1041,6 +1083,43 @@ impl Store for PgStore {
             .map_err(db_err)?;
             tx.commit().await.map_err(db_err)?;
             Ok(row.map(|(Json(s),)| s))
+        })
+    }
+
+    fn delete_harvest_source<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        id_or_name: &'a str,
+    ) -> BoxFuture<'a, Result<bool>> {
+        Box::pin(async move {
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            let gone: Option<(String,)> = sqlx::query_as(
+                "DELETE FROM dataroom.cat_harvest_source
+                 WHERE org_id = $1 AND catalogue_id = $2 AND (id = $3 OR name = $3)
+                 RETURNING id",
+            )
+            .bind(ctx.org_id.as_uuid())
+            .bind(ctx.catalogue_id.as_uuid())
+            .bind(id_or_name)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            if let Some((id,)) = &gone {
+                sqlx::query(
+                    "DELETE FROM dataroom.cat_harvest_run
+                     WHERE org_id = $1 AND catalogue_id = $2 AND source_id = $3",
+                )
+                .bind(ctx.org_id.as_uuid())
+                .bind(ctx.catalogue_id.as_uuid())
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+            }
+            tx.commit().await.map_err(db_err)?;
+            Ok(gone.is_some())
         })
     }
 
@@ -1793,6 +1872,7 @@ mod tests {
                     allowed_outbound_hosts: Vec::new(),
                     applicable_legislation: Vec::new(),
                     modified: Utc::now(),
+                    deleted: None,
                     public_base: None,
                 })
                 .await

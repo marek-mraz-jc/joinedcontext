@@ -386,6 +386,49 @@ async fn a_catalogue_of_one_organization_is_invisible_to_another() {
 }
 
 #[tokio::test]
+async fn a_deleted_catalogue_keeps_only_its_tombstone_and_spares_the_other() {
+    let Some(pg) = pg("a_deleted_catalogue_keeps_only_its_tombstone_and_spares_the_other").await
+    else {
+        return;
+    };
+    let store = pg.app_store().await;
+    let [(org_a, cat_a, host_a), (org_b, cat_b, _)] = seed_two_tenants(&store).await;
+    assert!(store.delete_catalogue(org_a, cat_a).await.unwrap());
+    let mut conn = pg.app.acquire().await.unwrap();
+    let mut tx = sqlx::Connection::begin(&mut *conn).await.unwrap();
+    set_tenant_config(&mut tx, org_a, Some(cat_a))
+        .await
+        .unwrap();
+    for table in REQUIRED_RLS_TABLES {
+        let left = if table == "cat_catalogue" { 1 } else { 0 };
+        assert_eq!(visible(&mut tx, table).await, left, "{table}");
+    }
+    tx.rollback().await.unwrap();
+    let tomb = store
+        .resolve_host(&host_a)
+        .await
+        .unwrap()
+        .expect("the host stays held");
+    assert!(tomb.deleted.is_some());
+    let ctx_b = member_ctx(org_b, cat_b);
+    assert!(store.get_dataset(&ctx_b, "air").await.unwrap().is_some());
+    assert!(store.delete_harvest_source(&ctx_b, "nkod").await.unwrap());
+    assert!(!store.delete_harvest_source(&ctx_b, "nkod").await.unwrap());
+    assert!(store
+        .list_harvest_runs(&ctx_b, None)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(!store
+        .delete_catalogue(
+            org_b,
+            dataroom_core::CatalogueId::from_uuid(uuid::Uuid::now_v7())
+        )
+        .await
+        .unwrap());
+}
+
+#[tokio::test]
 async fn a_harvest_run_cannot_write_into_another_organizations_catalogue() {
     let Some(pg) = pg("a_harvest_run_cannot_write_into_another_organizations_catalogue").await
     else {

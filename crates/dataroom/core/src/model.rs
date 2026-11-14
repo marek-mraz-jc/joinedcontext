@@ -270,6 +270,11 @@ pub struct Catalogue {
     #[serde(default)]
     pub applicable_legislation: Vec<String>,
     pub modified: DateTime<Utc>,
+    /// When the catalogue was deleted (ODP-09): its datasets, publishers and sources are gone,
+    /// and the row stays as a tombstone so every address of it answers 410 and its host is
+    /// not handed to another catalogue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<DateTime<Utc>>,
     /// The public URL this catalogue is served at (scheme, host and mount prefix), when the
     /// installation configures one; never stored. [`Catalogue::base_url`] prefers it, so an
     /// http install or a catalogue under a path prefix answers links that reach it.

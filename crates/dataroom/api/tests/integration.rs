@@ -116,6 +116,7 @@ fn make_catalogue(org_id: OrgId, cat_id: CatalogueId, name: &str, host: &str) ->
         allowed_outbound_hosts: vec!["external.example.org".into()],
         applicable_legislation: Vec::new(),
         modified: Utc::now(),
+        deleted: None,
         public_base: None,
     }
 }

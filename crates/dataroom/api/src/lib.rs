@@ -166,7 +166,8 @@ pub struct DataroomState {
     pub harvester: Arc<HarvestEngine>,
     pub default_org_id: OrgId,
     pub default_catalogue_id: CatalogueId,
-    pub tokens: Arc<Vec<TokenBinding>>,
+    /// Swapped at runtime by the catalogue writer (ODP-11), like the two maps below.
+    pub tokens: Arc<std::sync::RwLock<Vec<TokenBinding>>>,
     pub installation_branding: Arc<BrandingBlock>,
     pub mount_prefix: String,
     /// The default catalogue's public URL (scheme, host, mount prefix), when the installation
@@ -185,10 +186,10 @@ pub struct DataroomState {
     pub catalogue_branding: Arc<std::sync::RwLock<BTreeMap<CatalogueId, BrandingBlock>>>,
     /// The catalogue of each Organization the host router may decide for a request
     /// (`jc_router::Organization`), under the Organization's own `OrgId` (ODP-12).
-    pub organization_catalogues: Arc<BTreeMap<String, (OrgId, CatalogueId)>>,
+    pub organization_catalogues: Arc<std::sync::RwLock<BTreeMap<String, (OrgId, CatalogueId)>>>,
     /// Each catalogue's canonical public URL (scheme, host, prefix): every absolute id and link
     /// names it, whichever registered host the catalogue was read on, so an id never moves.
-    pub catalogue_bases: Arc<BTreeMap<CatalogueId, String>>,
+    pub catalogue_bases: Arc<std::sync::RwLock<BTreeMap<CatalogueId, String>>>,
 }
 
 /// Where a request came in, as the host's router resolved it (`jc_router::Mount`: the scheme
@@ -255,7 +256,7 @@ impl DataroomState {
             harvester,
             default_org_id,
             default_catalogue_id,
-            tokens: Arc::new(Vec::new()),
+            tokens: Arc::default(),
             installation_branding: Arc::new(BrandingBlock::default()),
             mount_prefix: String::new(),
             public_base: None,
@@ -264,8 +265,8 @@ impl DataroomState {
             assets: Arc::new(RwLock::new(BTreeMap::new())),
             loopback_default: true,
             catalogue_branding: Arc::default(),
-            organization_catalogues: Arc::new(BTreeMap::new()),
-            catalogue_bases: Arc::new(BTreeMap::new()),
+            organization_catalogues: Arc::default(),
+            catalogue_bases: Arc::default(),
         }
     }
 
@@ -274,13 +275,13 @@ impl DataroomState {
         mut self,
         by: BTreeMap<String, (OrgId, CatalogueId)>,
     ) -> Self {
-        self.organization_catalogues = Arc::new(by);
+        self.organization_catalogues = Arc::new(std::sync::RwLock::new(by));
         self
     }
 
     /// Each catalogue's canonical public URL, e.g. `http://opendata.city.test`.
     pub fn with_catalogue_bases(mut self, by: BTreeMap<CatalogueId, String>) -> Self {
-        self.catalogue_bases = Arc::new(by);
+        self.catalogue_bases = Arc::new(std::sync::RwLock::new(by));
         self
     }
 
@@ -312,7 +313,7 @@ impl DataroomState {
     }
 
     pub fn with_tokens(mut self, tokens: Vec<TokenBinding>) -> Self {
-        self.tokens = Arc::new(tokens);
+        self.tokens = Arc::new(std::sync::RwLock::new(tokens));
         self
     }
 
@@ -388,8 +389,9 @@ impl DataroomState {
 
         let decided = origin.as_ref().and_then(|o| o.organization.as_deref());
         let mut cat = if let Some(org) = decided {
-            let found = match self.organization_catalogues.get(org) {
-                Some(&(org, id)) => self.store.get_catalogue(org, id).await?,
+            let known = read(&self.organization_catalogues).get(org).copied();
+            let found = match known {
+                Some((org, id)) => self.store.get_catalogue(org, id).await?,
                 None => None,
             };
             // The same answer as an unknown host: the name is not echoed.
@@ -409,9 +411,15 @@ impl DataroomState {
                 .await?
                 .ok_or_else(|| DataroomError::NotFound("default catalogue not found".into()))?
         };
+        if cat.deleted.is_some() {
+            return Err(DataroomError::Gone(
+                "this catalogue was deleted, with its datasets".into(),
+            ));
+        }
         let default = cat.org_id == self.default_org_id && cat.id == self.default_catalogue_id;
-        cat.public_base = match self.catalogue_bases.get(&cat.id) {
-            Some(base) => Some(base.clone()),
+        let base = read(&self.catalogue_bases).get(&cat.id).cloned();
+        cat.public_base = match base {
+            Some(base) => Some(base),
             None if default && self.public_base.is_some() => self.public_base.clone(),
             // No canonical URL configured: the origin the router resolved (a registered host).
             None => origin.as_ref().map(RequestOrigin::base),
@@ -430,9 +438,12 @@ impl DataroomState {
             } else {
                 match raw_token.filter(|t| !t.is_empty()) {
                     Some(tok) => {
-                        let matched = self.tokens.iter().find(|b| constant_time_eq(&b.token, tok));
+                        let matched = read(&self.tokens)
+                            .iter()
+                            .find(|b| constant_time_eq(&b.token, tok))
+                            .cloned();
                         match matched {
-                            Some(binding) => binding.subject.clone(),
+                            Some(binding) => binding.subject,
                             None => {
                                 return Err(DataroomError::Unauthorized(
                                     "invalid or unknown API token".into(),
@@ -446,9 +457,12 @@ impl DataroomState {
         } else {
             match raw_token.filter(|t| !t.is_empty()) {
                 Some(tok) => {
-                    let matched = self.tokens.iter().find(|b| constant_time_eq(&b.token, tok));
+                    let matched = read(&self.tokens)
+                        .iter()
+                        .find(|b| constant_time_eq(&b.token, tok))
+                        .cloned();
                     match matched {
-                        Some(binding) => binding.subject.clone(),
+                        Some(binding) => binding.subject,
                         None => {
                             return Err(DataroomError::Unauthorized(
                                 "invalid or unknown API token".into(),
@@ -463,6 +477,13 @@ impl DataroomState {
         let ctx = RequestCtx::new(cat.org_id, cat.id, subject);
         Ok((ctx, cat))
     }
+}
+
+/// A read of one of the state's runtime-swapped tables; a poisoned lock still holds the last
+/// complete table (every writer replaces whole entries).
+fn read<T>(lock: &std::sync::RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Returns all registered operations in `dataroom` (G1, F1).
@@ -1431,8 +1452,13 @@ async fn moved_home(state: &DataroomState, here: &RequestCtx, gone: &Dataset) ->
             .map(str::to_owned)
     };
     let wanted = slug(gone)?;
-    for (org, id) in state.organization_catalogues.values() {
-        let base = match state.catalogue_bases.get(id) {
+    let catalogues: Vec<(OrgId, CatalogueId)> = read(&state.organization_catalogues)
+        .values()
+        .copied()
+        .collect();
+    let bases = read(&state.catalogue_bases).clone();
+    for (org, id) in &catalogues {
+        let base = match bases.get(id) {
             Some(base) => Some(base.clone()),
             None if *id == state.default_catalogue_id => state.public_base.clone(),
             None => None,

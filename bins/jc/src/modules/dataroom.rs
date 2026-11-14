@@ -17,8 +17,8 @@ use axum::Router;
 use dataroom_api::DataroomState;
 use dataroom_core::branding::{BrandingAddresses, BrandingBlock, PublisherBranding};
 use dataroom_core::{
-    CatalogueId, DataroomError, HarvestSource, HarvestSourceKind, OrgId, PolicyAuthorizer,
-    Publisher, RecordState, RequestCtx, Store, Subject,
+    CatalogueId, DataroomError, HarvestSource, HarvestSourceKind, LiveAuthorizer, OrgId, Publisher,
+    RecordState, RequestCtx, Store, Subject,
 };
 use dataroom_harvest::{HarvestEngine, HarvestScheduler, HttpFetcher};
 use dataroom_store_memory::MemoryStore;
@@ -185,6 +185,30 @@ pub async fn build(
     shutdown: &tokio_util::sync::CancellationToken,
     tasks: &tokio_util::task::TaskTracker,
 ) -> Result<Router, StartError> {
+    let (router, _writer) = build_with_writer(
+        cfg,
+        organizations,
+        ctx,
+        mount,
+        assistant_widget,
+        shutdown,
+        tasks,
+    )
+    .await?;
+    Ok(router)
+}
+
+/// [`build`], and the in-process write path of its catalogues (ODP-11): the reconciler creates,
+/// updates and deletes a Portal's catalogue through it while the router serves.
+pub async fn build_with_writer(
+    cfg: &DataroomSection,
+    organizations: &[OrganizationSection],
+    ctx: super::BuildCtx<'_>,
+    mount: Mount,
+    assistant_widget: Option<String>,
+    shutdown: &tokio_util::sync::CancellationToken,
+    tasks: &tokio_util::task::TaskTracker,
+) -> Result<(Router, dataroom_server::CatalogueWriter), StartError> {
     let (tokens, setup, siblings) = (&ctx.secrets.organization_tokens, ctx.setup, ctx.siblings);
     let err = |e: &dyn std::fmt::Display| StartError::module(Module::Dataroom, e);
     dataroom_api::check_aliases(&cfg.aliases)
@@ -301,18 +325,19 @@ pub async fn build(
         .await
         .map_err(|e| err(&format!("[[dataroom.harvest]] {}: {e}", seed.name)))?;
     }
-    let authorizer = Arc::new(PolicyAuthorizer::new(grants));
+    let authorizer = Arc::new(LiveAuthorizer::new(grants));
     let mut engine = HarvestEngine::new(Arc::new(HttpFetcher::new()));
     if let Some((public, Some(internal))) = &own_gateway {
         engine = engine.with_own_gateway(public, *internal);
     }
-    HarvestScheduler::new(
+    let scheduler = HarvestScheduler::new(
         Arc::new(engine),
         store.clone(),
         authorizer.clone(),
         catalogues,
-    )
-    .spawn();
+    );
+    let harvested = scheduler.catalogues();
+    scheduler.spawn();
     #[cfg(feature = "portal")]
     let configured = by_catalogue.clone();
     // Each Organization's catalogue, by the name jc's host registry decides, and its canonical
@@ -324,7 +349,7 @@ pub async fn build(
         by_organization.insert(org.name.clone(), (own_org[&org.name], id));
         bases.insert(id, format!("{}://{}", mount.scheme, org.hosts.opendata));
     }
-    let state = DataroomState::new(store, authorizer, org_id, catalogue_id)
+    let state = DataroomState::new(store, authorizer.clone(), org_id, catalogue_id)
         .with_organization_catalogues(by_organization)
         .with_catalogue_bases(bases)
         .with_tokens(bindings)
@@ -340,9 +365,10 @@ pub async fn build(
     follow_appearances(organizations, configured, &state, shutdown, tasks).map_err(|e| err(&e))?;
     #[cfg(not(feature = "portal"))]
     let _ = (shutdown, tasks);
-    Ok(dataroom_api::with_dataset_aliases(
-        dataroom_api::router(state),
-        cfg.aliases.clone(),
+    let writer = dataroom_server::CatalogueWriter::new(state.clone(), authorizer, harvested);
+    Ok((
+        dataroom_api::with_dataset_aliases(dataroom_api::router(state), cfg.aliases.clone()),
+        writer,
     ))
 }
 
@@ -960,6 +986,217 @@ mod tests {
         .execute(&admin)
         .await
         .unwrap();
+    }
+
+    /// A memory-store dataroom as jc builds it with no `[[organizations]]`, and its writer.
+    async fn runtime_dataroom() -> (Router, dataroom_server::CatalogueWriter) {
+        let (setup, secrets) = (
+            crate::setup::Setup::default(),
+            crate::config::Secrets::default(),
+        );
+        let siblings = crate::siblings::Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
+        let ctx = crate::modules::BuildCtx {
+            setup: &setup,
+            siblings: &siblings,
+            secrets: &secrets,
+            door: None,
+        };
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let tasks = tokio_util::task::TaskTracker::new();
+        let built = build_with_writer(
+            &DataroomSection::default(),
+            &[],
+            ctx,
+            Mount::default(),
+            None,
+            &shutdown,
+            &tasks,
+        )
+        .await
+        .expect("the module starts");
+        shutdown.cancel();
+        built
+    }
+
+    /// The catalogue of a Portal `name` of one Organization, with its own publish token.
+    fn portal_spec(org: u128, cat: u128, name: &str) -> dataroom_server::CatalogueSpec {
+        let uuid = |n: u128| format!("00000000-0000-7000-8000-{n:012x}");
+        let (org_id, id) = (
+            OrgId::parse_verified(&uuid(org)).unwrap(),
+            CatalogueId::parse_verified(&uuid(cat)).unwrap(),
+        );
+        dataroom_server::CatalogueSpec {
+            org_id,
+            id,
+            name: name.into(),
+            host: format!("{name}.city.portal.invalid"),
+            base: Some(format!("https://data.city.test/city/opendata/-/{name}")),
+            organization: None,
+            publisher: serde_json::from_value(serde_json::json!({
+                "orgId": org_id, "catalogueId": id, "id": "", "name": "city",
+                "title": {"sk": "Mesto"}, "description": {}, "uri": "https://data.city.test/publisher/city",
+                "state": "active", "editorGrants": [],
+                "created": "2026-11-14T10:00:00Z", "modified": "2026-11-14T10:00:00Z"
+            }))
+            .unwrap(),
+            publish_token: Some(format!("publish-token-of-{name}-0123456789abcdef")),
+        }
+    }
+
+    /// One CKAN action on the catalogue at `host`, with `token` when given: its status.
+    async fn action(
+        router: &Router,
+        host: &str,
+        token: Option<&str>,
+        call: &str,
+        body: Option<serde_json::Value>,
+    ) -> axum::http::StatusCode {
+        use tower::ServiceExt;
+        let mut request = axum::http::Request::builder()
+            .uri(format!("/api/3/action/{call}"))
+            .header("host", host);
+        if let Some(token) = token {
+            request = request.header("authorization", token);
+        }
+        let request = match body {
+            Some(json) => request
+                .method("POST")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(json.to_string())),
+            None => request.body(axum::body::Body::empty()),
+        }
+        .unwrap();
+        router.clone().oneshot(request).await.unwrap().status()
+    }
+
+    fn package(name: &str) -> serde_json::Value {
+        serde_json::json!({
+            "name": name, "owner_org": "city", "title": "Air quality", "notes": "Hourly.",
+            "private": false,
+            "resources": [{"name": "CSV", "url": "https://data.city.test/air.csv", "format": "CSV"}]
+        })
+    }
+
+    #[tokio::test]
+    async fn a_catalogue_created_at_runtime_is_served_without_restart() {
+        let (router, writer) = runtime_dataroom().await;
+        let spec = portal_spec(0xA1, 0xC1, "mobility");
+        let host = spec.host.clone();
+        let before = action(&router, &host, None, "package_list", None).await;
+        assert_eq!(before, axum::http::StatusCode::NOT_FOUND);
+        writer.upsert(spec.clone()).await.unwrap();
+        let after = action(&router, &host, None, "package_list", None).await;
+        assert_eq!(
+            after,
+            axum::http::StatusCode::OK,
+            "served by the same router"
+        );
+        let token = spec.publish_token.as_deref();
+        let made = action(
+            &router,
+            &host,
+            token,
+            "package_create",
+            Some(package("air")),
+        )
+        .await;
+        assert!(made.is_success(), "{made}");
+        let shown = action(&router, &host, None, "package_show?id=air", None).await;
+        assert_eq!(shown, axum::http::StatusCode::OK);
+        writer
+            .upsert(spec)
+            .await
+            .expect("an update of the same catalogue");
+    }
+
+    #[tokio::test]
+    async fn a_deleted_catalogues_dataset_answers_410() {
+        let (router, writer) = runtime_dataroom().await;
+        let spec = portal_spec(0xA2, 0xC2, "mobility");
+        let (host, token) = (spec.host.clone(), spec.publish_token.clone());
+        let (org, id) = (spec.org_id, spec.id);
+        writer.upsert(spec).await.unwrap();
+        let made = action(
+            &router,
+            &host,
+            token.as_deref(),
+            "package_create",
+            Some(package("air")),
+        )
+        .await;
+        assert!(made.is_success(), "{made}");
+        assert!(writer.delete(org, id).await.unwrap());
+        let shown = action(&router, &host, None, "package_show?id=air", None).await;
+        assert_eq!(shown, axum::http::StatusCode::GONE);
+        let listed = action(&router, &host, None, "package_list", None).await;
+        assert_eq!(listed, axum::http::StatusCode::GONE);
+        let again = action(
+            &router,
+            &host,
+            token.as_deref(),
+            "package_create",
+            Some(package("new")),
+        )
+        .await;
+        assert_eq!(
+            again,
+            axum::http::StatusCode::GONE,
+            "nothing is written into it"
+        );
+        // Its principal went with it: the token binds to no catalogue any more.
+        let mut next = portal_spec(0xA2, 0xC9, "schools");
+        next.publish_token = token.clone();
+        writer.upsert(next).await.expect("the token is free again");
+        assert!(
+            !writer
+                .delete(
+                    org,
+                    CatalogueId::parse_verified("00000000-0000-7000-8000-0000000000ee").unwrap()
+                )
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_publish_principal_of_one_catalogue_cannot_write_another() {
+        let (router, writer) = runtime_dataroom().await;
+        let (x, y) = (
+            portal_spec(0xA3, 0xC3, "mobility"),
+            portal_spec(0xA3, 0xC4, "schools"),
+        );
+        writer.upsert(x.clone()).await.unwrap();
+        writer.upsert(y.clone()).await.unwrap();
+        let foreign = action(
+            &router,
+            &y.host,
+            x.publish_token.as_deref(),
+            "package_create",
+            Some(package("evil")),
+        )
+        .await;
+        assert!(
+            matches!(foreign.as_u16(), 403 | 404),
+            "X's principal on Y's catalogue: {foreign}"
+        );
+        let shown = action(&router, &y.host, None, "package_show?id=evil", None).await;
+        assert_eq!(shown, axum::http::StatusCode::NOT_FOUND);
+        let own = action(
+            &router,
+            &y.host,
+            y.publish_token.as_deref(),
+            "package_create",
+            Some(package("air")),
+        )
+        .await;
+        assert!(own.is_success(), "{own}");
+        // One token cannot become a second catalogue's principal.
+        let mut z = portal_spec(0xA3, 0xC5, "culture");
+        z.publish_token = x.publish_token.clone();
+        assert!(matches!(
+            writer.upsert(z).await,
+            Err(DataroomError::Conflict(_))
+        ));
     }
 
     /// prod's open data catalogue: the base its datasets' `isPartOf` names.

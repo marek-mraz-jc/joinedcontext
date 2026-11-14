@@ -6,6 +6,9 @@
 //! - `feed-check`: validates all public datasets and the catalogue feed against active SHACL profiles.
 //! - `import-ckan`: imports datasets and organizations from a CKAN Action API JSON dump or URL.
 
+pub mod writer;
+pub use writer::{CatalogueSpec, CatalogueWriter};
+
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use dataroom_api::{router, DataroomState};
@@ -186,6 +189,7 @@ fn new_catalogue(org_id: OrgId, catalogue_id: CatalogueId, name: &str, host: &st
         allowed_outbound_hosts: Vec::new(),
         applicable_legislation: Vec::new(),
         modified: Utc::now(),
+        deleted: None,
         public_base: None,
     }
 }
@@ -582,6 +586,7 @@ mod tests {
                 allowed_outbound_hosts: Vec::new(),
                 applicable_legislation: Vec::new(),
                 modified: Utc::now(),
+                deleted: None,
                 public_base: None,
             })
             .await

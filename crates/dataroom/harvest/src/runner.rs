@@ -1305,6 +1305,7 @@ mod tests {
                 allowed_outbound_hosts: vec!["hub.bbsk.sk".into()],
                 applicable_legislation: Vec::new(),
                 modified: Utc::now(),
+                deleted: None,
                 public_base: None,
             })
             .await
