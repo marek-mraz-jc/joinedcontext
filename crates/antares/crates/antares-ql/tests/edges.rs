@@ -42,6 +42,14 @@ fn a_quote_inside_a_pattern_stays_in_the_one_term() {
     assert_eq!(parse_q(r#"name~=a"b"#).unwrap_err().status(), 400);
 }
 
+/// `/#` beside a conjunction is the conjunction, brackets kept: the product is a Scope Query.
+#[test]
+fn any_scope_beside_a_conjunction_keeps_it_one_scope_query() {
+    let both = ngsild_ql::scope::intersect_scope_q("/#", "(/a;/b)").unwrap();
+    assert!(check_scope_q(&both).is_ok(), "{both}");
+    assert_eq!(both, "(/a;/b)");
+}
+
 #[test]
 fn a_self_intersecting_polygon_is_evaluated_not_refused() {
     let params: HashMap<String, String> = [
