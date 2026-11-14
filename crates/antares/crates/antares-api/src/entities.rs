@@ -3650,15 +3650,16 @@ async fn retrieve_attr_inner(
         ))
         .into());
     }
-    // Compact through the entity pipeline so the attribute serializes exactly
+    // Shape the whole Entity, so each rule's condition reads every Attribute
+    // it names, then compact only the one asked for: it serializes exactly
     // as it would inside a full retrieve.
+    let shaped = crate::repr::apply(&doc, &repr);
     let mini = serde_json::json!({
         "id": doc.get("id").cloned().unwrap_or_default(),
         "type": doc.get("type").cloned().unwrap_or_default(),
-        attr_iri.clone(): node.clone(),
+        attr_iri.clone(): shaped.get(&attr_iri).cloned().ok_or_else(lacks)?,
     });
-    let shaped = crate::repr::apply(&mini, &repr);
-    let compacted = compact_for(&repr, &shaped, &ctx);
+    let compacted = compact_for(&repr, &mini, &ctx);
     let key = ctx.compact_iri(&attr_iri);
     let member = compacted.get(&key).cloned().ok_or_else(lacks)?;
     let body = if value_only {
