@@ -91,7 +91,7 @@ async fn upload_pack(
     };
     let body = match inflated(&headers, &body) {
         Ok(body) => body,
-        Err(problem) => return problem,
+        Err(problem) => return problem.into_response(),
     };
     let answer = forge
         .upload_pack("git-upload-pack", protocol(&headers), Some(body))
@@ -133,7 +133,8 @@ async fn admitted(
 
 /// Who reads repository `name` of the configuration owner: the installation repository its
 /// platform administrators (an administrator of the whole installation, never one of an
-/// Organization), a project repository the members of its project; no other repository.
+/// Organization), a project repository whoever reads all of it: a read grant on every kind it
+/// holds, bound to no space and under no constraint; no other repository.
 pub fn readable(state: &AppState, identity: &Identity, name: &str) -> bool {
     let Some(forge) = state.shako.as_ref() else {
         return false;
@@ -146,7 +147,11 @@ pub fn readable(state: &AppState, identity: &Identity, name: &str) -> bool {
         .repositories()
         .into_iter()
         .find(|(_, repository)| repository == name)
-        .is_some_and(|(project, _)| for_request(state, identity, &project).may_read_project())
+        .is_some_and(|(project, _)| {
+            let kinds = state.mirror.kinds_in(&project);
+            for_request(state, identity, &project)
+                .reads_whole_project(kinds.iter().map(String::as_str))
+        })
 }
 
 /// A forge repository name as the Portal creates them; anything else names no repository.
@@ -175,7 +180,7 @@ fn protocol(headers: &HeaderMap) -> Option<&str> {
 
 /// The request body as the forge reads it: git gzips a request over 1 KiB, and the forge takes
 /// plain bytes, so it is inflated here, never past [`MAX_REQUEST_BYTES`].
-fn inflated(headers: &HeaderMap, body: &Bytes) -> Result<Vec<u8>, Response> {
+fn inflated(headers: &HeaderMap, body: &Bytes) -> Result<Vec<u8>, (StatusCode, String)> {
     match headers
         .get(header::CONTENT_ENCODING)
         .map(HeaderValue::as_bytes)
@@ -191,20 +196,17 @@ fn inflated(headers: &HeaderMap, body: &Bytes) -> Result<Vec<u8>, Response> {
                 Ok(_) => Err((
                     StatusCode::PAYLOAD_TOO_LARGE,
                     format!("the request inflates past {MAX_REQUEST_BYTES} bytes"),
-                )
-                    .into_response()),
+                )),
                 Err(_) => Err((
                     StatusCode::BAD_REQUEST,
-                    "the request body is not valid gzip",
-                )
-                    .into_response()),
+                    "the request body is not valid gzip".to_owned(),
+                )),
             }
         }
         Some(_) => Err((
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            "the request body is sent plain or gzip",
-        )
-            .into_response()),
+            "the request body is sent plain or gzip".to_owned(),
+        )),
     }
 }
 
@@ -275,10 +277,10 @@ mod tests {
         );
         let bomb = gzip(&vec![0; MAX_REQUEST_BYTES + 1]);
         let refused = inflated(&headers, &bomb).unwrap_err();
-        assert_eq!(refused.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(refused.0, StatusCode::PAYLOAD_TOO_LARGE);
         headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static("br"));
         assert_eq!(
-            inflated(&headers, &Bytes::new()).unwrap_err().status(),
+            inflated(&headers, &Bytes::new()).unwrap_err().0,
             StatusCode::UNSUPPORTED_MEDIA_TYPE
         );
     }

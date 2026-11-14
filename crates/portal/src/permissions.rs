@@ -300,6 +300,23 @@ impl Effective {
         self.bootstrap || !self.grants.is_empty()
     }
 
+    /// Whether the caller reads every manifest of `kinds` in the whole project, as a clone of its
+    /// repository shows them (T-6896): per kind, a grant bound to no space, no Organization and
+    /// no constraint. A narrowed grant reads less than the repository holds, so it reads none
+    /// of it; a project with no manifest yet asks for some grant here.
+    pub fn reads_whole_project<'a>(&self, kinds: impl IntoIterator<Item = &'a str>) -> bool {
+        self.bootstrap
+            || (!self.grants.is_empty()
+                && kinds.into_iter().all(|kind| {
+                    self.grants.iter().any(|grant| {
+                        grant.space.is_none()
+                            && grant.organization.is_none()
+                            && grant.rule.constraints.is_empty()
+                            && grant.rule.grants(kind, Verb::Read)
+                    })
+                }))
+    }
+
     /// Whether some grant here lets the caller propose anything: what opening a workspace
     /// asks for (API/01 §22) and who a conversation spends model calls for (AG-67). Each write is
     /// still checked on its own kind (PF-82). The build lane's rule proposes nothing but its own

@@ -140,8 +140,24 @@ async fn world() -> World {
         "city",
         json!({ "displayName": "City" }),
     ));
+    // What the project's repository holds, so a reader must read both kinds in the whole project.
+    let mut space = envelope("ContextSpace", "air", json!({}));
+    space.metadata.namespace = Some(PROJECT.into());
+    let mut endpoint = envelope(
+        "Endpoint",
+        "air-quality",
+        json!({ "contextSpaceRef": "air" }),
+    );
+    endpoint.metadata.namespace = Some(PROJECT.into());
+    state.mirror.upsert(space);
+    state.mirror.upsert(endpoint);
     for (role, kinds, verbs) in [
-        ("viewer-role", json!(["Project"]), json!(["read"])),
+        (
+            "viewer-role",
+            json!(["ContextSpace", "Endpoint"]),
+            json!(["read"]),
+        ),
+        ("space-lister", json!(["ContextSpace"]), json!(["read"])),
         (
             "org-admin",
             json!(["*"]),
@@ -159,6 +175,18 @@ async fn world() -> World {
             "viewers",
             "viewers",
             "viewer-role",
+            json!({ "project": PROJECT }),
+        ),
+        (
+            "air-stewards",
+            "air-stewards",
+            "viewer-role",
+            json!({ "contextSpace": "air" }),
+        ),
+        (
+            "space-listers",
+            "space-listers",
+            "space-lister",
             json!({ "project": PROJECT }),
         ),
         (
@@ -323,6 +351,21 @@ async fn a_non_member_gets_404_for_a_project_repository() {
     assert_eq!(w.status("GET", missing, Some(&member)).await, 404);
     let err = w.clone(PROJECT_REPO, Some(outsider)).await.unwrap_err();
     assert!(err.contains("not found"), "{err}");
+}
+
+/// A clone shows every manifest of the project: a binding narrowed to one context space, or a
+/// role that reads only some of the kinds the repository holds, reads less than that and gets
+/// the same 404 as a stranger.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_narrowed_grant_gets_404_for_a_project_repository() {
+    let w = world().await;
+    let refs = format!("{PROJECT_REPO}.git/info/refs?service=git-upload-pack");
+    for group in ["air-stewards", "space-listers"] {
+        let token = w.token("sam", group);
+        assert_eq!(w.status("GET", &refs, Some(&token)).await, 404, "{group}");
+        let err = w.clone(PROJECT_REPO, Some(token)).await.unwrap_err();
+        assert!(err.contains("not found"), "{group}: {err}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
