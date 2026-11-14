@@ -123,6 +123,21 @@ pub fn ascii_slug(text: &str) -> String {
     slug.trim_matches('-').to_owned()
 }
 
+/// A harvested dataset name: `prefix` + `slug` cut to the 100 characters `validate_slug` allows,
+/// with no trailing separator. `fallback` (the item's UUID) stands in for an empty slug (a title
+/// with no Latin letter), so such items do not all share the bare prefix, and for a name under
+/// 2 characters.
+fn harvested_name(prefix: &str, slug: &str, fallback: &str) -> String {
+    let stem = if slug.is_empty() { fallback } else { slug };
+    let name: String = format!("{prefix}{stem}").chars().take(100).collect();
+    let name = name.trim_end_matches(['-', '_']);
+    if name.len() < 2 {
+        fallback.to_owned()
+    } else {
+        name.to_owned()
+    }
+}
+
 /// Computes a deterministic SHA-256 content digest for a harvested dataset (`harvest_hash`).
 pub fn compute_harvest_hash(ds: &Dataset) -> String {
     let mut hasher = Sha256::new();
@@ -664,12 +679,8 @@ pub fn parse_nkod_sparql_bindings(
             continue;
         }
 
-        let base_slug = ascii_slug(&raw.title);
-        let name: String = format!("{}{}", source.name_prefix, base_slug)
-            .chars()
-            .take(100)
-            .collect();
         let fixed_uuid = Uuid::new_v5(&Uuid::NAMESPACE_URL, raw.iri.as_bytes()).to_string();
+        let name = harvested_name(&source.name_prefix, &ascii_slug(&raw.title), &fixed_uuid);
 
         let mut ds = Dataset {
             org_id,
@@ -805,13 +816,10 @@ pub fn parse_dcat_page(
     let mut out = Vec::new();
     for mut ds in parsed {
         let source_item_id = ds.uri.clone().unwrap_or_else(|| ds.name.clone());
-        if !source.name_prefix.is_empty() && !ds.name.starts_with(&source.name_prefix) {
-            ds.name = format!("{}{}", source.name_prefix, ds.name)
-                .chars()
-                .take(100)
-                .collect();
-        }
         ds.id = Uuid::new_v5(&Uuid::NAMESPACE_URL, source_item_id.as_bytes()).to_string();
+        if !source.name_prefix.is_empty() && !ds.name.starts_with(&source.name_prefix) {
+            ds.name = harvested_name(&source.name_prefix, &ds.name, &ds.id);
+        }
         ds.harvest_source_id = Some(source.name.clone());
         ds.harvest_source_item_id = Some(source_item_id.clone());
         ds.extras
@@ -892,4 +900,28 @@ pub fn parse_ckan_search_page(
     }
 
     Ok((out, count))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::harvested_name;
+    use dataroom_core::model::validate_slug;
+
+    #[test]
+    fn a_harvested_name_is_always_a_valid_slug() {
+        let long = format!("{}-b", "a".repeat(95));
+        for (prefix, slug) in [("src-", long.as_str()), ("", "x"), ("", ""), ("src_", "")] {
+            let name = harvested_name(prefix, slug, "0190a3b2-7c1d-7e00-8000-000000000001");
+            assert!(
+                validate_slug("name", &name).is_ok(),
+                "{prefix:?} {slug:?} -> {name:?}"
+            );
+        }
+        assert_eq!(harvested_name("src-", "air", "id"), "src-air");
+        assert_ne!(
+            harvested_name("src-", "", "0190a3b2-0001"),
+            harvested_name("src-", "", "0190a3b2-0002"),
+            "items whose titles have no Latin letter keep apart"
+        );
+    }
 }
