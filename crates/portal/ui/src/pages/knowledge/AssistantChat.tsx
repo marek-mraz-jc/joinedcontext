@@ -8,6 +8,7 @@ import { RecordsGrid } from "../../components/grid/RecordsGrid";
 import { askAssistant, cellText, chartSpec, dataChart, embedSnippet, launcherSnippet } from "./knowledge";
 import type { ChatEvent, ChatTurn, Citation, DataTable, Spec, Visual } from "./knowledge";
 import { VegaChart, chartTheme } from "../../components/panels/VegaChart";
+import { narrowConfig } from "../../components/panels/palette";
 import { label, markdown, sources } from "./answerFormat";
 import type { Block, Inline } from "./answerFormat";
 
@@ -138,9 +139,6 @@ function Sources({ citations, ids, label: name }: { citations: Citation[]; ids: 
   );
 }
 
-/** The chat's chart height: a small chart beside the table that holds its values. */
-const CHART_HEIGHT = 180;
-
 /**
  * A data round's chart (T-4198, T-6889), drawn by Vega with the chart theme (T-6886): the table's
  * one numeric column by the widget's rule, or the assistant's checked `visualization`. The table
@@ -151,16 +149,16 @@ function Chart({ spec, label }: { spec: Spec; label: string }): JSX.Element {
   const drawn = useMemo(
     () => ({
       width: "container",
-      height: CHART_HEIGHT,
       autosize: { type: "fit", contains: "padding" },
       ...spec,
-      config: { ...chartTheme().config, background: null },
+      config: { ...chartTheme().config, ...narrowConfig(), background: null },
     }),
     [spec],
   );
+  const height = typeof spec.height === "number" ? spec.height : 180;
   return (
     <div className="mt-2" data-testid="assistant-chart">
-      <VegaChart spec={drawn} label={label} height={CHART_HEIGHT} failure={t("knowledge.chat.chartUnavailable")} />
+      <VegaChart spec={drawn} label={label} height={height} failure={t("knowledge.chat.chartUnavailable")} />
     </div>
   );
 }

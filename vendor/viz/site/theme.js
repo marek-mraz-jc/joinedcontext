@@ -17,8 +17,10 @@ self.jcTheme = {
       "gridColor": "#e5e7eb",
       "domainColor": "#6b7280",
       "tickColor": "#6b7280",
-      "labelLimit": 160
+      "labelLimit": 240
     },
+    "axisQuantitative": { "tickCount": 6 },
+    "scale": { "bandPaddingInner": 0.25 },
     "legend": {
       "labelColor": "#4b5563",
       "titleColor": "#1f2937",
@@ -54,8 +56,10 @@ self.jcTheme = {
       "gridColor": "#2b3038",
       "domainColor": "#8b939e",
       "tickColor": "#8b939e",
-      "labelLimit": 160
+      "labelLimit": 240
     },
+    "axisQuantitative": { "tickCount": 6 },
+    "scale": { "bandPaddingInner": 0.25 },
     "legend": {
       "labelColor": "#a0a8b3",
       "titleColor": "#e5e7eb",

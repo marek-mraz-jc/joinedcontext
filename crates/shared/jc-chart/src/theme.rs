@@ -55,17 +55,14 @@ static THEME: LazyLock<serde_json::Value> =
     LazyLock::new(|| serde_json::from_str(JSON).unwrap_or_default());
 
 static LIGHT: LazyLock<Look> = LazyLock::new(|| {
-    THEME
-        .get("light")
-        .and_then(look_of)
-        .unwrap_or(Look {
-            background: [255; 3],
-            text: [0; 3],
-            muted: [0; 3],
-            grid: [200; 3],
-            domain: [0; 3],
-            category: vec![[0; 3]],
-        })
+    THEME.get("light").and_then(look_of).unwrap_or(Look {
+        background: [255; 3],
+        text: [0; 3],
+        muted: [0; 3],
+        grid: [200; 3],
+        domain: [0; 3],
+        category: vec![[0; 3]],
+    })
 });
 
 /// The light look, which the PNG is drawn in.
@@ -142,7 +139,11 @@ mod tests {
         ] {
             let text = std::fs::read_to_string(root.join(path)).expect(path);
             for (n, line) in text.lines().enumerate() {
-                assert!(hex_colours(line) < 3, "{path}:{}: a colour list: {line}", n + 1);
+                assert!(
+                    hex_colours(line) < 3,
+                    "{path}:{}: a colour list: {line}",
+                    n + 1
+                );
             }
         }
         assert_eq!(hex_colours("[\"#1d4ed8\", \"#d97706\", \"#7e22ce\"]"), 3);

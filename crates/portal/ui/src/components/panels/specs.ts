@@ -7,7 +7,7 @@ import type { Frame, Series } from "./frames";
 import { displayNameOf, numberOf, reducedOf, rowsOf, seriesOf, timeOf } from "./frames";
 import type { FieldConfigSource, Thresholds } from "./fieldConfig";
 import { colorOf, displayValue, settingsFor, stepFor } from "./fieldConfig";
-import { seriesColor } from "./palette";
+import { narrowConfig, seriesColor } from "./palette";
 
 export type Spec = Record<string, unknown>;
 
@@ -24,7 +24,7 @@ export interface ChartTheme {
 
 /** Shared look: the theme's config on the card's own surface, no Vega legend (the page draws its own). */
 export function configOf(theme: ChartTheme): Spec {
-  return { ...theme.config, background: null, legend: { disable: true } };
+  return { ...theme.config, ...narrowConfig(), background: null, legend: { disable: true } };
 }
 
 /**

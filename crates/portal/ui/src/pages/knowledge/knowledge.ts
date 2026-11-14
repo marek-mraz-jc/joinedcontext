@@ -474,11 +474,20 @@ export function chartSpec(chart: DataChart): Spec {
   return {
     data: { values: chart.points },
     mark: line ? { type: "line", point: true, tooltip: true } : { type: "bar", tooltip: true },
-    encoding: {
-      x: line ? { field: "label", type: "temporal", title: chart.by } : { field: "label", type: "nominal", sort: null, title: chart.by },
-      y: { field: "value", type: "quantitative", title: chart.value },
-    },
+    // Bars lie down, as the assistant's own bar chart draws them: a long name reads along its row.
+    encoding: line
+      ? { x: { field: "label", type: "temporal", title: chart.by }, y: { field: "value", type: "quantitative", title: chart.value } }
+      : { y: { field: "label", type: "nominal", sort: null, title: null }, x: { field: "value", type: "quantitative", title: chart.value } },
+    height: line ? LINE_HEIGHT : barsHeight(chart.points.length),
   };
+}
+
+/** A line chart's height in the chat. */
+const LINE_HEIGHT = 180;
+
+/** The height of `rows` lying bars: 22 px a row and room for the axis, between 120 and 600 px. */
+export function barsHeight(rows: number): number {
+  return Math.min(600, Math.max(120, rows * 22 + 40));
 }
 
 /** A `visualization` event that passed {@link visualOf}: its spec and its rows. */
@@ -524,7 +533,8 @@ export function visualOf(d: Record<string, unknown>): Visual | null {
     .map((row) => Object.fromEntries(Object.entries(row).filter(([, v]) => v === null || ["string", "number", "boolean"].includes(typeof v))));
   if (rows.length === 0) return null;
   const { config: _config, data: _data, ...rest } = s;
-  return { spec: { ...rest, data: { values: rows } }, rows };
+  const lying = !!(s.encoding && typeof s.encoding === "object" && (s.encoding as Record<string, { type?: unknown }>).y?.type === "nominal");
+  return { spec: { height: lying ? barsHeight(rows.length) : LINE_HEIGHT, ...rest, data: { values: rows } }, rows };
 }
 
 /** One event block's name and data as a `ChatEvent`; `null` for one this panel does not show. */

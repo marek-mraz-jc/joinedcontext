@@ -673,7 +673,12 @@ fn draw_xy(
         for (t, text) in axis_marks(ch, lo, hi, room) {
             let x = px(t);
             c.line((x, bottom), (x, bottom + 6), 1, axis());
-            c.text(x - text.len() as i64 * ADVANCE / 2, bottom + 10, &text, muted());
+            c.text(
+                x - text.len() as i64 * ADVANCE / 2,
+                bottom + 10,
+                &text,
+                muted(),
+            );
         }
         c.text(left, bottom + 10 + LINE + 4, &ch.title, ink());
     }
@@ -772,8 +777,9 @@ fn draw_xy(
             if chart.mark == Mark::Area {
                 for (group, line) in lines.iter().enumerate() {
                     let (rgb, back) = (color_of(Some(group)), paper());
-                    let light: [u8; 3] =
-                        std::array::from_fn(|i| ((u16::from(rgb[i]) + 2 * u16::from(back[i])) / 3) as u8);
+                    let light: [u8; 3] = std::array::from_fn(|i| {
+                        ((u16::from(rgb[i]) + 2 * u16::from(back[i])) / 3) as u8
+                    });
                     for pair in line.windows(2) {
                         check(deadline)?;
                         let ((x0, y0), (x1, y1)) = (pair[0], pair[1]);

@@ -110,9 +110,11 @@ export function VegaChart({ spec, label, height, tooltip, className, failure }: 
     <div className={clsx("relative w-full", className)}>
       {/* Vega writes its own role and label onto its container, so the chart's label sits a level up. */}
       <div role="img" aria-label={label}>
-        <div ref={host} className="w-full" style={{ height }} onPointerLeave={() => setHover(null)} />
+        {/* A chart that could not be drawn leaves no empty box: the line below says so. */}
+        <div ref={host} className="w-full" style={{ height: failed ? 0 : height }} onPointerLeave={() => setHover(null)} />
       </div>
-      {failed ? <p className="text-caption text-danger">{failure ?? failed}</p> : null}
+      {/* With `failure` the page holds the values elsewhere: a note, not an error. */}
+      {failed ? <p className={clsx("text-caption", failure ? "text-fg-muted" : "text-danger")}>{failure ?? failed}</p> : null}
       {hover && tooltip ? (
         <div
           role="tooltip"

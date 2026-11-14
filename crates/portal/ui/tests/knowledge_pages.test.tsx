@@ -764,6 +764,51 @@ describe("asking an assistant in the Portal (T-3058, AG-115)", () => {
     expect(spec.config.font).toBe(chartTheme("light").font);
   });
 
+  it("charts one number over time or per name, and nothing else (T-4198, the widget's rule)", () => {
+    const table = (columns: string[], rows: unknown[][]) => ({ caption: "", columns, rows });
+    expect(dataChart(table(["t", "pm10"], [["2026-10-15T10:00:00Z", 2], ["2026-10-15T09:00:00Z", 1]]))?.points.map((p) => p.value)).toEqual([1, 2]);
+    expect(dataChart(table(["name", "pm10"], [["a", 2], ["b", 1]]))?.kind).toBe("bar");
+    expect(dataChart(table(["name", "pm10", "pm25"], [["a", 1, 2], ["b", 3, 4]]))).toBeNull();
+    expect(dataChart(table(["name", "street"], [["a", "x"], ["b", "y"]]))).toBeNull();
+    expect(dataChart(table(["name", "v"], [["a", 1]]))).toBeNull();
+    expect(dataChart(table(["name", "v"], Array.from({ length: 51 }, (_, i) => [`s${i}`, i])))?.points).toHaveLength(50);
+    expect(dataChart(table(["name", "v"], [["a", 1], ["b", Number.NaN], ["c", "7"], ["d", 2]]))?.points.map((p) => p.label)).toEqual(["a", "d"]);
+  });
+
+  it("no_chart_under_two_points and fifty_points_at_most, in the spec Vega gets (T-6889)", () => {
+    const table = (columns: string[], rows: unknown[][]) => ({ caption: "", columns, rows });
+    expect(dataChart(table(["name", "v"], [["a", 1]]))).toBeNull();
+    const many = dataChart(table(["name", "v"], Array.from({ length: 80 }, (_, i) => [`s${i}`, i])));
+    const spec = chartSpec(many!) as { data: { values: unknown[] }; mark: { type: string } };
+    expect(spec.data.values).toHaveLength(50);
+    expect(spec.mark.type).toBe("bar");
+  });
+
+  it("a_refused_visualization_spec_falls_back_to_the_table_rule: url, expression, transform and other members (T-6889)", () => {
+    const good = {
+      $schema: "https://vega.github.io/schema/vega-lite/v6.json",
+      data: { name: "source" },
+      mark: { type: "line", point: true, tooltip: true },
+      encoding: { x: { field: "time", type: "temporal", title: null }, y: { field: "value", type: "quantitative", scale: { zero: false } } },
+    };
+    const rows = [{ time: "2026-10-18T15:00:00Z", value: 14.2 }];
+    expect(visualOf({ spec: good, rows })?.spec.data).toEqual({ values: rows });
+    for (const spec of [
+      { ...good, data: { url: "https://evil.example/rows.json" } },
+      { ...good, data: { name: "source", url: "x" } },
+      { ...good, transform: [{ calculate: "1", as: "x" }] },
+      { ...good, encoding: { ...good.encoding, x: { field: "time", type: "temporal", axis: { labelExpr: "alert(1)" } } } },
+      { ...good, params: [{ name: "p", expr: "1" }] },
+      { ...good, mark: { type: "image" }, encoding: { url: { field: "u" } } },
+      { ...good, $schema: "urn:joinedcontext:map:v1" },
+      { ...good, $schema: "https://evil.example/vega-lite/v5.json" },
+    ]) {
+      expect(visualOf({ spec, rows }), JSON.stringify(spec)).toBeNull();
+    }
+    expect(visualOf({ spec: good, rows: [] })).toBeNull();
+    expect(visualOf({ spec: good, rows: [{ value: { toString: "x" } }] })?.rows).toEqual([{}]);
+  });
+
   it("streams the answer with its sources and script, and sends the conversation back with the connectors switched", async () => {
     const { writes } = renderAt("/projects/banskabystrica/knowledge");
     const table = await screen.findByRole("table", { name: "Assistants" });

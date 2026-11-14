@@ -51,6 +51,21 @@ const show = (node: ReactNode) =>
     </QueryClientProvider>,
   );
 
+describe("a vega-lite widget's look (T-6886)", () => {
+  it("draws in the theme file's config for the scheme, under the author's own config", async () => {
+    const file = (await import("../../../shared/jc-chart/src/theme.json")).default;
+    const { chartTheme } = await import("../src/components/panels/VegaChart");
+    for (const mode of ["light", "dark"] as const) {
+      const config = withRows({ mark: "bar", config: { axis: { labelColor: "#000000" } } }, [], chartTheme(mode)).config as Record<string, unknown>;
+      expect(config.range).toEqual(file[mode].range);
+      expect(config.font).toBe(file[mode].font);
+      expect(config.background).toBeNull();
+      // The author's config wins where it speaks.
+      expect(config.axis).toEqual({ labelColor: "#000000" });
+    }
+  });
+});
+
 describe("the source a vega-lite widget reads", () => {
   it("reads each kind of source under the Endpoint's own path, never elsewhere", () => {
     expect(sourceUrl("air-ops", { source: "csv", type: "AirQualityObserved" }, NOW)).toBe("/api/endpoint/air-ops/file.csv?type=AirQualityObserved");

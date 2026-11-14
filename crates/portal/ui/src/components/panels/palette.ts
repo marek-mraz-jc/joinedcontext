@@ -61,6 +61,11 @@ export function colorOf(name: string | undefined): string {
   return /^#[0-9a-f]{3,8}$/i.test(name) || /^rgba?\([\d\s.,%]+\)$/i.test(name) ? name : NAMED.text;
 }
 
+/** On a phone a band axis's name takes at most a third of the width, as in the viz frame (T-6865); nothing elsewhere. */
+export function narrowConfig(): Record<string, unknown> {
+  return typeof window !== "undefined" && window.innerWidth < 480 ? { axisY: { labelLimit: Math.round(window.innerWidth / 3) } } : {};
+}
+
 /** The colour of the `index`-th series: the theme's `range.category` for the page's scheme, round. */
 export function seriesColor(index: number, mode: ChartMode = chartMode()): string {
   const palette = THEME[mode].range.category;
