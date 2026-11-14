@@ -28,7 +28,7 @@ svg:focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
 .tip { position: absolute; pointer-events: none; background: var(--tip); color: var(--fg); border: 1px solid var(--line);
   border-radius: 6px; padding: 4px 8px; font-size: 12px; white-space: pre-line; max-width: 260px;
   overflow-wrap: anywhere; box-shadow: 0 2px 8px rgba(0, 0, 0, .15); }
-.board { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr)); gap: 16px; margin-top: 8px; align-items: start; }
+.board { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); gap: 16px; margin-top: 8px; align-items: start; }
 .tile { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
 .tile h2 { font-size: 15px; margin: 0 0 2px; overflow-wrap: anywhere; }
 .tip.below { position: static; max-width: none; margin-top: 6px; box-shadow: none; }
@@ -292,7 +292,8 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
     if (spec.color && p.color !== null) lines.push((spec.color.title || "color") + ": #" + (p.color + 1) + (cats.color[p.color] !== undefined ? " " + cats.color[p.color] : ""));
     if (spec.size && p.size !== null) lines.push((spec.size.title || "size") + ": " + number(p.size));
     if (spec.theta && p.theta !== null) lines.push((spec.theta.title || "theta") + ": " + number(p.theta));
-    if (p.observedAt) lines.push("observedAt: " + p.observedAt.toISOString().replace(".000Z", "Z"));
+    // A time axis already says when; observedAt is added only where the x channel is not time.
+    if (p.observedAt && !(spec.x && spec.x.scale === "temporal")) lines.push("observedAt: " + p.observedAt.toISOString().replace(".000Z", "Z"));
     return lines.join("\n");
   }
 
@@ -414,7 +415,7 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
         var error = v && v.error && typeof v.error === "object" ? v.error : {};
         box.appendChild(el("h2", where + ": not drawn"));
         box.appendChild(el("p", (int(error.status) !== null ? error.status + ": " : "") + (str(error.detail) || "The Portal drew nothing for this widget."), "refused"));
-        box.appendChild(el("p", "Draw it alone with data.widget to see more, or ask the Dashboard's owner.", "muted"));
+        box.appendChild(el("p", "Ask for this widget alone to see more, or ask the Dashboard's owner for access.", "muted"));
         return;
       }
       if (!spec.title) spec.title = where;

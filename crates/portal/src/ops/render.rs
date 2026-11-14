@@ -1078,9 +1078,16 @@ async fn whole_dashboard(
                     height: 120,
                     // Counted from 1 for a person, as the chart view says it.
                     text: format!(
-                        "Page {}, widget {}: not drawn ({status})",
+                        "Page {}, widget {}: not drawn ({status}, {})",
                         at.page + 1,
-                        at.widget + 1
+                        at.widget + 1,
+                        match status {
+                            403 => "refused by this connector",
+                            404 => "no data you may read",
+                            422 => "outside the chart subset",
+                            429 => "past the time cap",
+                            _ => "not readable now",
+                        }
                     ),
                 });
                 let error = json!({ "status": status, "detail": detail });
