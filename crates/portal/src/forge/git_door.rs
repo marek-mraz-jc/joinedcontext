@@ -33,17 +33,20 @@ pub const REQUESTS_PER_MINUTE: usize = 60;
 /// The largest upload-pack request read, inflated or not: its wants and haves, never a pack.
 pub const MAX_REQUEST_BYTES: usize = 4 << 20;
 
-/// The door, mounted on the Portal's public router; every other `/git` path is `404`.
+/// The door, mounted on the Portal's public router: another method on its two paths is `404`
+/// too. jc and the edge send it nothing else under `/git`.
 pub fn router() -> Router<AppState> {
-    let door = Router::new()
-        .route("/{owner}/{repo}/info/refs", get(info_refs))
+    Router::new()
         .route(
-            "/{owner}/{repo}/git-upload-pack",
-            post(upload_pack).layer(DefaultBodyLimit::max(MAX_REQUEST_BYTES)),
+            "/git/{owner}/{repo}/info/refs",
+            get(info_refs).fallback(not_found),
         )
-        .method_not_allowed_fallback(not_found)
-        .fallback(not_found);
-    Router::new().nest("/git", door)
+        .route(
+            "/git/{owner}/{repo}/git-upload-pack",
+            post(upload_pack)
+                .fallback(not_found)
+                .layer(DefaultBodyLimit::max(MAX_REQUEST_BYTES)),
+        )
 }
 
 async fn not_found() -> Response {

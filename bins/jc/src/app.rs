@@ -648,9 +648,14 @@ fn public_forge(portal: Option<Router>) -> Router {
         async move {
             let path = req.uri().path();
             let segments: Vec<&str> = path.strip_prefix('/').unwrap_or(path).split('/').collect();
-            let door = match (req.method(), segments.as_slice()) {
-                (&axum::http::Method::GET, [_, repo, "info", "refs"])
-                | (&axum::http::Method::POST, [_, repo, "git-upload-pack"]) => {
+            let query = req.uri().query();
+            let door = match (req.method(), segments.as_slice(), query) {
+                (
+                    &axum::http::Method::GET,
+                    [_, repo, "info", "refs"],
+                    Some("service=git-upload-pack"),
+                )
+                | (&axum::http::Method::POST, [_, repo, "git-upload-pack"], None) => {
                     repo.ends_with(".git")
                 }
                 _ => false,
@@ -658,7 +663,7 @@ fn public_forge(portal: Option<Router>) -> Router {
             let Some(portal) = portal.filter(|_| door) else {
                 return StatusCode::NOT_FOUND.into_response();
             };
-            let target = match req.uri().query() {
+            let target = match query {
                 Some(query) => format!("/git{path}?{query}"),
                 None => format!("/git{path}"),
             };
@@ -1344,13 +1349,22 @@ mod tests {
             (StatusCode::OK, format!("portal POST /git{pack}"))
         );
         for (method, uri) in [
-            ("GET", "/joinedcontext/configuration.git/info/refs?service=git-receive-pack"),
+            (
+                "GET",
+                "/joinedcontext/configuration.git/info/refs?service=git-receive-pack",
+            ),
             ("POST", "/joinedcontext/configuration.git/git-receive-pack"),
             ("POST", refs),
             ("GET", pack),
-            ("GET", "/joinedcontext/configuration/info/refs?service=git-upload-pack"),
+            (
+                "GET",
+                "/joinedcontext/configuration/info/refs?service=git-upload-pack",
+            ),
             ("GET", "/api/v1/version"),
             ("GET", "/joinedcontext/configuration.git/HEAD"),
+            ("GET", "/joinedcontext/configuration.git/info/refs"),
+            ("GET", &format!("{refs}&access_token=x")),
+            ("POST", &format!("{pack}?access_token=x")),
             ("GET", "/"),
         ] {
             let (status, body) = ask(forge.clone(), method, uri).await;

@@ -196,6 +196,17 @@ fn envelope(kind: &str, name: &str, spec: Value) -> ResourceEnvelope {
     }
 }
 
+/// The real git client, with `home` as its whole configuration and no prompt.
+#[allow(clippy::disallowed_methods)] // The test runs git as a person does; jc runs none of this.
+fn git(home: &std::path::Path) -> std::process::Command {
+    let mut git = std::process::Command::new("git");
+    git.env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("HOME", home)
+        .current_dir(home);
+    git
+}
+
 fn keypair() -> (EncodingKey, JwkSet) {
     let secret = p256::SecretKey::random(&mut rand_core::OsRng);
     let signer = EncodingKey::from_ec_der(secret.to_pkcs8_der().unwrap().as_bytes());
@@ -235,10 +246,7 @@ impl World {
         let url = self.url(repo);
         tokio::task::spawn_blocking(move || {
             let into = tempfile::tempdir().unwrap();
-            let mut git = std::process::Command::new("git");
-            git.env("GIT_TERMINAL_PROMPT", "0")
-                .env("GIT_CONFIG_NOSYSTEM", "1")
-                .env("HOME", into.path());
+            let mut git = git(into.path());
             if let Some(token) = token {
                 git.arg("-c")
                     .arg(format!("http.extraHeader=Authorization: Bearer {token}"));
@@ -375,18 +383,15 @@ async fn receive_pack_is_refused() {
     let url = w.url(INSTALLATION);
     let out = tokio::task::spawn_blocking(move || {
         let dir = tempfile::tempdir().unwrap();
-        let git = |args: &[&str]| {
-            std::process::Command::new("git")
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .env("HOME", dir.path())
-                .current_dir(dir.path())
+        let run = |args: &[&str]| {
+            git(dir.path())
                 .arg("-c")
                 .arg(format!("http.extraHeader=Authorization: Bearer {admin}"))
                 .args(args)
                 .output()
                 .unwrap()
         };
-        let cloned = git(&["clone", "--quiet", &url, "c"]);
+        let cloned = run(&["clone", "--quiet", &url, "c"]);
         assert!(
             cloned.status.success(),
             "{}",
@@ -396,7 +401,7 @@ async fn receive_pack_is_refused() {
         let in_clone = |args: &[&str]| {
             let mut all = vec!["-C", "c"];
             all.extend_from_slice(args);
-            git(&all)
+            run(&all)
         };
         in_clone(&["add", "x.yaml"]);
         in_clone(&[
