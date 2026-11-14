@@ -211,7 +211,7 @@ export function EditResourceDialogBody({
   // A refusal is shown above the fields, out of sight of a person who scrolled down to the one
   // they changed: brought into view once, when it appears (T-6895).
   const showFailure = useCallback((element: HTMLDivElement | null) => {
-    element?.scrollIntoView?.({ block: "nearest" });
+    element?.scrollIntoView?.({ block: "center" });
   }, []);
   const failure =
     invalid ??

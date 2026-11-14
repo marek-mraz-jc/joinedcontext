@@ -147,7 +147,10 @@ test.describe("an Organization's second factor", () => {
       const reason = page.getByText(/organization-admin binding ran out/).first();
       await expect(reason).toBeVisible();
       // The dialog brings its refusal into view: the person was scrolled down at the field.
-      await expect(reason).toBeInViewport();
+      await expect(reason).toBeInViewport({ ratio: 1 });
+      // Whole, and below the fixed top bar rather than under it.
+      const top = (await reason.boundingBox())?.y ?? 0;
+      expect(top).toBeGreaterThan(80);
       await shot(page, `second-factor-refused-${width}`);
     });
   }
