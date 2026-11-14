@@ -11099,6 +11099,7 @@
     "notAllowed": "Nur der Administrator des Assistenten, der seine Deployments genehmigt, liest die gespeicherten Unterhaltungen. Bitten Sie ihn um dieses Recht.",
     "empty": "Keine gespeicherten Unterhaltungen",
     "emptyHint": "Unterhaltungen erscheinen hier, sobald Besucher fragen, so lange, wie transcriptRetention des Deployments sie aufbewahrt.",
+    "previous": "Vorherige Seite",
     "next": "Nächste Seite",
     "detail": "Unterhaltung",
     "erase": "Unterhaltung löschen",

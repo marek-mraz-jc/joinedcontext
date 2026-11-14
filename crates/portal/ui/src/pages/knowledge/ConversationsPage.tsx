@@ -78,7 +78,10 @@ export function ConversationsPage({
     enabled: allowed,
     placeholderData: keepPreviousData,
   });
+  // The cursors of the pages before this one, so Previous goes back the way Next came.
+  const [before, setBefore] = useState<(string | undefined)[]>([]);
   const set = (change: ConversationFilter) => {
+    setBefore([]);
     setFilter((now) => ({ ...now, ...change, cursor: undefined }));
   };
 
@@ -272,10 +275,30 @@ export function ConversationsPage({
           empty={<EmptyState bare title={t("conversations.empty")} description={t("conversations.emptyHint")} icon="search" />}
         />
       ) : null}
-      {list.data?.nextCursor ? (
-        <Button onClick={() => setFilter((now) => ({ ...now, cursor: list.data?.nextCursor ?? undefined }))}>
-          {t("conversations.next")}
-        </Button>
+      {before.length > 0 || list.data?.nextCursor ? (
+        <div className="flex flex-wrap gap-2">
+          {before.length > 0 ? (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setFilter((now) => ({ ...now, cursor: before[before.length - 1] }));
+                setBefore((now) => now.slice(0, -1));
+              }}
+            >
+              {t("conversations.previous")}
+            </Button>
+          ) : null}
+          {list.data?.nextCursor ? (
+            <Button
+              onClick={() => {
+                setBefore((now) => [...now, filter.cursor]);
+                setFilter((now) => ({ ...now, cursor: list.data?.nextCursor ?? undefined }));
+              }}
+            >
+              {t("conversations.next")}
+            </Button>
+          ) : null}
+        </div>
       ) : null}
       {open ? (
         <ConversationDetail

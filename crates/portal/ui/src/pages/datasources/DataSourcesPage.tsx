@@ -552,7 +552,7 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
   // The same control in the header and in the empty list (T-1381).
   const addButton = (
     <PermissionGuard project={project} kind="DataSource" verb="propose">
-      <Button variant="primary" onClick={() => (formRoute ? formRoute.openNew() : openCreate())}>
+      <Button data-shortcut="new" variant="primary" onClick={() => (formRoute ? formRoute.openNew() : openCreate())}>
         {t("datasources.add")}
       </Button>
     </PermissionGuard>

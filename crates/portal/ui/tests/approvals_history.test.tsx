@@ -307,6 +307,23 @@ describe("the change history", () => {
     );
   });
 
+  it("an_applied_change_keeps_its_restore_and_undo_once_it_is_live", async () => {
+    const applied = { lane: "green", phase: "Applied", plan: { create: 0, update: 0, delete: 0 } };
+    const removal = closed("chg-00000007", {
+      summary: { key: "change.summary.delete", params: { kind: "Pipeline", name: "air-ingest", fields: 0 } },
+      status: applied,
+    });
+    const edit = closed("chg-00000008", {
+      summary: { key: "change.summary.update", params: { kind: "Pipeline", name: "air-clean", fields: 1 } },
+      status: applied,
+    });
+    const { answer } = historyOf({ "1": { items: [removal, edit] } });
+    await renderRoute({ path: PATH, answer });
+    const table = await openHistory();
+    expect(await within(table).findByRole("button", { name: "Restore air-ingest" })).toBeInTheDocument();
+    expect(within(table).getByRole("button", { name: /^Undo.*air-clean/ })).toBeInTheDocument();
+  });
+
   it("a_restore_the_server_refuses_is_said_in_its_words", async () => {
     const removal = closed("chg-00000007", {
       summary: { key: "change.summary.delete", params: { kind: "Pipeline", name: "air-ingest", fields: 0 } },

@@ -172,7 +172,7 @@ function Sources({ project, names }: { project: string; names: string[] }): JSX.
 
 /** Attribute labels of every type the published model of `slug` declares, by type. */
 function useLabels(slug: string, language: string): (type: string) => Record<string, string> {
-  const { model } = useEndpointSchema(`${window.location.origin}/api/endpoint/${encodeURIComponent(slug)}/schema`, slug);
+  const { model } = useEndpointSchema(`${window.location.origin}/api/endpoint/${encodeURIComponent(slug)}/schema`);
   return useMemo(() => {
     const parsed = model.data;
     const byType = new Map<string, Record<string, string>>();
