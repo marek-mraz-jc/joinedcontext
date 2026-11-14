@@ -41,10 +41,14 @@ pub(crate) async fn property(
         .get(name)
         .ok_or_else(|| not_implemented("a path to a system member", version))?;
     let id = admitted(reads, caller, set, key, options, version).await?;
-    let target = format!(
-        "/ngsi-ld/v1/entities/{}/attrs/{}",
-        encode(&id),
-        encode(&member.iri)
+    // of this set's type: another set's Entity under the id is absent here
+    let target = crate::write::typed(
+        &format!(
+            "/ngsi-ld/v1/entities/{}/attrs/{}",
+            encode(&id),
+            encode(&member.iri)
+        ),
+        set,
     );
     let none = Translated::default();
     let (instances, _) = run(
