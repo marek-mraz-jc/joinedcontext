@@ -18,13 +18,9 @@ p { margin: 4px 0; }
 .refused { color: var(--red); }
 .warn { border-left: 4px solid var(--red); padding: 6px 10px; font-weight: 600; }
 .plot { position: relative; margin-top: 8px; }
-svg { display: block; max-width: 100%; height: auto; overflow: visible; }
-svg:focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
-.axis { stroke: var(--ink); stroke-width: 1; }
-.grid { stroke: var(--grid); stroke-width: 1; }
-.tick { fill: var(--muted); font-size: 12px; }
-.axis-title { fill: var(--fg); font-size: 12px; font-weight: 600; }
-.focus { fill: none; stroke: var(--fg); stroke-width: 2; }
+.plot:focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
+.canvas svg { display: block; max-width: 100%; height: auto; }
+img.picture { display: block; max-width: 100%; height: auto; margin-top: 8px; border: 1px solid var(--line); border-radius: 6px; }
 .tip { position: absolute; pointer-events: none; background: var(--tip); color: var(--fg); border: 1px solid var(--line);
   border-radius: 6px; padding: 4px 8px; font-size: 12px; white-space: pre-line; max-width: 260px;
   overflow-wrap: anywhere; box-shadow: 0 2px 8px rgba(0, 0, 0, .15); }
@@ -44,25 +40,30 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
 </head>
 <body>
 <main id="view" aria-live="polite"><p class="muted">Waiting for the chart…</p></main>
+<!-- The chart library (T-6887), inlined by jc_chart::view_page from vendor/viz/vendor and held
+     to its SHA256SUMS line: vega, vega-lite and Vega's expression interpreter, no vega-embed. -->
+<script>__JC_VEGA__</script>
+<script>__JC_VEGA_LITE__</script>
+<script>__JC_VEGA_INTERPRETER__</script>
 <script>
 // The joinedcontext chart view (MCP Apps, T-6866). It draws the one jc_render result the host
-// hands it and nothing else: no network, no token. The chart is inline SVG made with
-// createElementNS from the result's _meta (the checked spec and its points: numbers only); every
-// text, the data's category values included, goes in through textContent. Its one link goes to
+// hands it and nothing else: no network, no token. The chart library draws it (T-6887) from a
+// Vega-Lite spec this page builds out of the result's _meta (the checked spec's scales and its
+// points: numbers only), through Vega's expression interpreter and a loader that loads nothing;
+// every text, the titles and the data's category values included, goes in through textContent
+// outside the library. When the library cannot draw, the answer's PNG stands in. Its one link goes to
 // the Portal origin the server wrote here when it served the view; with none written (null, the
 // gateway's door) it draws no link.
 (function () {
   "use strict";
   var PORTAL = __PORTAL_ORIGIN__;
   var NAME = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
-  var SVG = "http://www.w3.org/2000/svg";
   var MARKS = ["line", "bar", "area", "point", "arc", "rule"];
   var SCALES = ["quantitative", "temporal", "nominal"];
   // The chart theme (T-6886, jc-chart theme.json), written here by the server that serves the
   // view: the chart's colours and type for the light and the dark host.
   var THEME = __JC_THEME__;
   var PALETTE = THEME.light.range.category;
-  var SLICE = THEME.light.arc.stroke;
   var MAX_CATS = 50;
   var view = document.getElementById("view");
   var project = null;
@@ -77,18 +78,10 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
     if (cls) node.className = cls;
     return node;
   }
-  // An SVG element; each attribute value is a number or one of this page's own constants.
-  function svg(tag, attrs, text) {
-    var node = document.createElementNS(SVG, tag);
-    Object.keys(attrs || {}).forEach(function (k) { node.setAttribute(k, attrs[k]); });
-    if (text !== undefined) node.textContent = String(text);
-    return node;
-  }
   function num(v) { return typeof v === "number" && isFinite(v) ? v : null; }
   function int(v) { return typeof v === "number" && isFinite(v) && v >= 0 && Math.floor(v) === v ? v : null; }
   function str(v) { return typeof v === "string" ? v : ""; }
   function color(i) { return PALETTE[(i || 0) % PALETTE.length]; }
-  function r1(v) { return Math.round(v * 10) / 10; }
 
   // The checked spec as the server sent it, every member kept to its type.
   function specOf(raw) {
@@ -117,172 +110,11 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
     return list.map(function (c) { return c && typeof c === "object" ? String(c.value) : String(c); });
   }
 
-  function niceTicks(lo, hi) {
-    var span = hi - lo;
-    if (!(span > 0)) return [lo];
-    var mag = Math.pow(10, Math.floor(Math.log10(span / 5)));
-    var step = [1, 2, 5, 10].map(function (m) { return m * mag; }).filter(function (s) { return span / s <= 6; })[0] || 10 * mag;
-    var out = [];
-    for (var t = Math.ceil(lo / step) * step; t <= hi + step * 1e-9 && out.length < 12; t += step) out.push(t);
-    return out;
-  }
   function number(v) {
     if (Math.abs(v) >= 1e9) return number(v / 1e9) + "G";
     if (Math.abs(v) >= 1e6) return number(v / 1e6) + "M";
     return String(Math.round(v * 1000) / 1000);
   }
-  function date(ms, span) {
-    var iso = new Date(ms).toISOString();
-    return span <= 2 * 86400000 ? iso.slice(11, 16) : iso.slice(0, 10);
-  }
-  function label(ch, v, span) {
-    if (ch.scale === "temporal") return date(v, span);
-    if (ch.scale === "nominal") return "#" + (Math.round(v) + 1);
-    return number(v);
-  }
-  // The domain of one positional channel, as the PNG takes it.
-  function domain(ch, values, count, fromZero) {
-    if (ch.scale === "nominal") return [-0.5, Math.max(count, 1) - 0.5];
-    var lo = Infinity, hi = -Infinity;
-    values.forEach(function (v) { if (v !== null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } });
-    if (!isFinite(lo)) { lo = 0; hi = 1; }
-    if (fromZero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
-    if (lo === hi) { var pad = ch.scale === "temporal" ? 3600000 : Math.abs(lo) / 10 || 1; lo -= pad; hi += pad; }
-    return [lo, hi];
-  }
-  function axisTicks(ch, d, room) {
-    if (ch.scale === "nominal") {
-      var n = Math.round(d[1] + 0.5), every = Math.max(1, Math.ceil(n / Math.max(room, 1))), out = [];
-      for (var i = 0; i < n; i += every) out.push(i);
-      return out;
-    }
-    if (ch.scale === "temporal") {
-      var k = Math.max(2, Math.min(room, 6)), ts = [];
-      for (var j = 0; j < k; j++) ts.push(d[0] + (d[1] - d[0]) * j / (k - 1));
-      return ts;
-    }
-    return niceTicks(d[0], d[1]);
-  }
-
-  // Draws the chart into a new <svg> of `width` px; returns it with the screen position of each point.
-  function draw(spec, points, cats, width, labelId) {
-    var W = Math.max(240, Math.min(width, 4000));
-    var H = Math.max(W < 600 ? 240 : 180, Math.min(Math.round(spec.height * Math.min(1, W / spec.width)), 900));
-    var root = svg("svg", { width: W, height: H, viewBox: "0 0 " + W + " " + H, role: "img", "aria-labelledby": labelId, tabindex: 0 });
-    root.appendChild(svg("title", {}, spec.title || "Chart"));
-    var marks = svg("g", {});
-    var at = [];
-    if (spec.mark === "arc") {
-      var total = 0;
-      points.forEach(function (p) { if (p.theta !== null && p.theta > 0) total += p.theta; });
-      var cx = W / 2, cy = H / 2, r = Math.max(10, Math.min(W, H) / 2 - 12), a0 = -Math.PI / 2;
-      points.forEach(function (p, i) {
-        if (!(p.theta > 0) || !(total > 0)) return;
-        var a1 = a0 + 2 * Math.PI * p.theta / total, mid = (a0 + a1) / 2, large = a1 - a0 > Math.PI ? 1 : 0;
-        var fill = color(p.color !== null ? p.color : i);
-        if (points.length === 1 || p.theta === total) {
-          marks.appendChild(svg("circle", { cx: r1(cx), cy: r1(cy), r: r1(r), fill: fill }));
-        } else {
-          marks.appendChild(svg("path", { fill: fill, stroke: SLICE, "stroke-width": 1, d: "M" + r1(cx) + " " + r1(cy) +
-            " L" + r1(cx + r * Math.cos(a0)) + " " + r1(cy + r * Math.sin(a0)) + " A" + r1(r) + " " + r1(r) + " 0 " + large + " 1 " +
-            r1(cx + r * Math.cos(a1)) + " " + r1(cy + r * Math.sin(a1)) + " Z" }));
-        }
-        at.push({ i: i, sx: cx + r * 0.6 * Math.cos(mid), sy: cy + r * 0.6 * Math.sin(mid) });
-        a0 = a1;
-      });
-      root.appendChild(marks);
-      return { node: root, at: at };
-    }
-    var left = spec.y ? 64 : 16, right = 28, top = 12, bottom = spec.x ? 44 : 16;
-    var pw = Math.max(20, W - left - right), ph = Math.max(20, H - top - bottom);
-    var bars = spec.mark === "bar" || spec.mark === "area";
-    var horizontal = spec.mark === "bar" && spec.y && spec.y.scale === "nominal" && spec.x && spec.x.scale !== "nominal";
-    var dx = spec.x ? domain(spec.x, points.map(function (p) { return p.x; }), cats.x.length, bars && horizontal) : [0, 1];
-    var dy = spec.y ? domain(spec.y, points.map(function (p) { return p.y; }), cats.y.length, bars && !horizontal) : [0, 1];
-    function sx(v) { return left + (v - dx[0]) / (dx[1] - dx[0]) * pw; }
-    function sy(v) { return top + ph - (v - dy[0]) / (dy[1] - dy[0]) * ph; }
-    var grid = svg("g", {});
-    if (spec.y) {
-      axisTicks(spec.y, dy, Math.floor(ph / 24)).forEach(function (t) {
-        var y = r1(sy(t));
-        grid.appendChild(svg("line", { "class": "grid", x1: left, x2: left + pw, y1: y, y2: y }));
-        grid.appendChild(svg("text", { "class": "tick", x: left - 6, y: y + 4, "text-anchor": "end" }, label(spec.y, t, dy[1] - dy[0])));
-      });
-      grid.appendChild(svg("text", { "class": "axis-title", x: 12, y: r1(top + ph / 2), "text-anchor": "middle",
-        transform: "rotate(-90 12 " + r1(top + ph / 2) + ")" }, spec.y.title));
-    }
-    if (spec.x) {
-      axisTicks(spec.x, dx, Math.floor(pw / (spec.x.scale === "temporal" && dx[1] - dx[0] <= 2 * 86400000 ? 52 : 76))).forEach(function (t) {
-        var x = r1(sx(t));
-        grid.appendChild(svg("line", { "class": "axis", x1: x, x2: x, y1: top + ph, y2: top + ph + 4 }));
-        grid.appendChild(svg("text", { "class": "tick", x: x, y: top + ph + 16, "text-anchor": "middle" }, label(spec.x, t, dx[1] - dx[0])));
-      });
-      grid.appendChild(svg("text", { "class": "axis-title", x: r1(left + pw / 2), y: H - 6, "text-anchor": "middle" }, spec.x.title));
-    }
-    grid.appendChild(svg("line", { "class": "axis", x1: left, x2: left + pw, y1: top + ph, y2: top + ph }));
-    grid.appendChild(svg("line", { "class": "axis", x1: left, x2: left, y1: top, y2: top + ph }));
-    root.appendChild(grid);
-
-    var groups = {};
-    points.forEach(function (p, i) { var g = p.color || 0; (groups[g] = groups[g] || []).push(i); });
-    var groupCount = Math.max(1, cats.color.length);
-    if (spec.mark === "line" || spec.mark === "area") {
-      Object.keys(groups).forEach(function (g) {
-        var idx = groups[g].filter(function (i) { return points[i].x !== null && points[i].y !== null; })
-          .sort(function (a, b) { return points[a].x - points[b].x; });
-        if (!idx.length) return;
-        var d = idx.map(function (i, k) { return (k ? "L" : "M") + r1(sx(points[i].x)) + " " + r1(sy(points[i].y)); }).join(" ");
-        if (spec.mark === "area") {
-          var base = r1(sy(Math.max(dy[0], Math.min(0, dy[1]))));
-          d += " L" + r1(sx(points[idx[idx.length - 1]].x)) + " " + base + " L" + r1(sx(points[idx[0]].x)) + " " + base + " Z";
-          marks.appendChild(svg("path", { d: d, fill: color(+g), "fill-opacity": 0.35, stroke: color(+g), "stroke-width": 2 }));
-        } else {
-          marks.appendChild(svg("path", { d: d, fill: "none", stroke: color(+g), "stroke-width": 2 }));
-        }
-        idx.forEach(function (i) { at.push({ i: i, sx: sx(points[i].x), sy: sy(points[i].y) }); });
-      });
-    } else if (spec.mark === "bar") {
-      var band = horizontal ? (spec.y.scale === "nominal" ? ph / Math.max(cats.y.length, 1) : 8)
-        : (spec.x && spec.x.scale === "nominal" ? pw / Math.max(cats.x.length, 1) : Math.max(2, Math.min(24, pw / Math.max(points.length, 1))));
-      var thick = Math.max(1, band * 0.8 / (spec.x && spec.x.scale === "nominal" || horizontal ? groupCount : 1));
-      points.forEach(function (p, i) {
-        if (p.x === null || p.y === null) return;
-        var off = (spec.x && spec.x.scale === "nominal" || horizontal) && groupCount > 1 ? ((p.color || 0) - (groupCount - 1) / 2) * thick : 0;
-        var x, y, w, h;
-        if (horizontal) {
-          var x0 = sx(Math.max(dx[0], Math.min(0, dx[1])));
-          x = Math.min(x0, sx(p.x)); w = Math.abs(sx(p.x) - x0); y = sy(p.y) + off - thick / 2; h = thick;
-        } else {
-          var y0 = sy(Math.max(dy[0], Math.min(0, dy[1])));
-          x = sx(p.x) + off - thick / 2; w = thick; y = Math.min(y0, sy(p.y)); h = Math.abs(sy(p.y) - y0);
-        }
-        marks.appendChild(svg("rect", { x: r1(x), y: r1(y), width: r1(w), height: r1(Math.max(h, 1)), fill: color(p.color) }));
-        at.push({ i: i, sx: horizontal ? x + w : x + w / 2, sy: horizontal ? y + h / 2 : y });
-      });
-    } else if (spec.mark === "point") {
-      var maxSize = 0;
-      points.forEach(function (p) { if (p.size !== null) maxSize = Math.max(maxSize, Math.abs(p.size)); });
-      points.forEach(function (p, i) {
-        if (p.x === null || p.y === null) return;
-        var r = p.size !== null && maxSize > 0 ? 2 + 10 * Math.sqrt(Math.abs(p.size) / maxSize) : 4;
-        marks.appendChild(svg("circle", { cx: r1(sx(p.x)), cy: r1(sy(p.y)), r: r1(r), fill: color(p.color), "fill-opacity": 0.8 }));
-        at.push({ i: i, sx: sx(p.x), sy: sy(p.y) });
-      });
-    } else {
-      points.forEach(function (p, i) {
-        var a;
-        if (p.x !== null && p.y !== null) a = { x1: sx(p.x), x2: sx(p.x), y1: sy(Math.max(dy[0], Math.min(0, dy[1]))), y2: sy(p.y) };
-        else if (p.x !== null) a = { x1: sx(p.x), x2: sx(p.x), y1: top, y2: top + ph };
-        else if (p.y !== null) a = { x1: left, x2: left + pw, y1: sy(p.y), y2: sy(p.y) };
-        else return;
-        marks.appendChild(svg("line", { x1: r1(a.x1), x2: r1(a.x2), y1: r1(a.y1), y2: r1(a.y2), stroke: color(p.color), "stroke-width": 2 }));
-        at.push({ i: i, sx: a.x2, sy: (a.y1 + a.y2) / 2 });
-      });
-    }
-    root.appendChild(marks);
-    return { node: root, at: at };
-  }
-
   function valueText(ch, v, list) {
     if (v === null || !ch) return null;
     if (ch.scale === "nominal") return "#" + (v + 1) + (list[v] !== undefined ? " " + list[v] : "");
@@ -303,49 +135,158 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
     return lines.join("\n");
   }
 
-  // One tooltip per chart: the nearest point to the pointer, or the next one by arrow key.
-  function interact(plot, drawn, spec, points, cats, live) {
-    var tip = el("div", null, "tip"), ring = svg("circle", { "class": "focus", r: 0, cx: 0, cy: 0 }), current = -1;
-    tip.hidden = true;
-    drawn.node.appendChild(ring);
-    plot.appendChild(tip);
-    function show(k) {
-      if (k < 0 || k >= drawn.at.length) return;
-      current = k;
-      var a = drawn.at[k], scale = drawn.node.getBoundingClientRect().width / (+drawn.node.getAttribute("width") || 1) || 1;
-      ring.setAttribute("r", 7);
-      ring.setAttribute("cx", r1(a.sx));
-      ring.setAttribute("cy", r1(a.sy));
-      tip.textContent = tipText(spec, points[a.i], cats);
-      tip.hidden = false;
-      // A narrow frame shows the values under the chart, so no tooltip covers the plot.
-      var w = plot.clientWidth || 0;
-      tip.className = w && w < 600 ? "tip below" : "tip";
-      if (tip.className === "tip") {
-        var x = a.sx * scale + 14, y = a.sy * scale - tip.offsetHeight - 10;
-        if (x + tip.offsetWidth > w) x = a.sx * scale - tip.offsetWidth - 14;
-        if (y < 0) y = a.sy * scale + 14;
-        tip.style.left = Math.round(Math.max(0, x)) + "px";
-        tip.style.top = Math.round(y) + "px";
+  // The Vega-Lite spec of one chart, built here from the checked spec's scales and the numbers
+  // (T-6887): every value in it is a number, a "#n" label made from an integer, or a constant of
+  // this page. No title, category value or other text of the answer goes in, and nothing in it is
+  // an expression, a signal, a param, a URL or a link; the titles are this page's own HTML text.
+  function label(i) { return "#" + (i + 1); }
+  function vlSpec(spec, points, width, mode) {
+    var W = Math.max(240, Math.min(width, 4000));
+    var H = Math.max(W < 600 ? 240 : 180, Math.min(Math.round(spec.height * Math.min(1, W / spec.width)), 900));
+    var arc = spec.mark === "arc";
+    var colors = 0;
+    var rows = [];
+    points.forEach(function (p, i) {
+      if (arc ? !(p.theta > 0) : (spec.x && p.x === null) || (spec.y && p.y === null) || (!spec.x && !spec.y)) return;
+      if (spec.mark === "rule" && p.x === null && p.y === null) return;
+      var c = p.color !== null ? p.color : arc ? i : 0;
+      colors = Math.max(colors, c + 1);
+      var row = { i: i, c: c, cl: label(c) };
+      if (spec.x && p.x !== null) { row.x = p.x; if (spec.x.scale === "nominal") row.xl = label(p.x); }
+      if (spec.y && p.y !== null) { row.y = p.y; if (spec.y.scale === "nominal") row.yl = label(p.y); }
+      if (spec.size && p.size !== null) row.size = Math.abs(p.size);
+      if (arc) row.theta = p.theta;
+      rows.push(row);
+    });
+    function position(name, ch) {
+      if (!ch) return null;
+      if (ch.scale === "nominal") {
+        return { field: name + "l", type: "nominal", sort: { field: name, op: "min" }, title: null, axis: { labelAngle: 0 } };
       }
-      else sized();
-      live.textContent = tip.textContent;
+      if (ch.scale === "temporal") return { field: name, type: "temporal", scale: { type: "utc" }, title: null };
+      return { field: name, type: "quantitative", title: null, scale: { zero: false, nice: 6 } };
     }
-    function hide() { tip.hidden = true; ring.setAttribute("r", 0); if (tip.className !== "tip") sized(); }
-    drawn.node.addEventListener("mousemove", function (event) {
-      var box = drawn.node.getBoundingClientRect(), scale = box.width / (+drawn.node.getAttribute("width") || 1) || 1;
-      var mx = (event.clientX - box.left) / scale, my = (event.clientY - box.top) / scale, best = -1, bestD = Infinity;
-      drawn.at.forEach(function (a, k) { var d = (a.sx - mx) * (a.sx - mx) + (a.sy - my) * (a.sy - my); if (d < bestD) { bestD = d; best = k; } });
-      show(best);
+    var domain = [];
+    for (var k = 0; k < Math.max(colors, 1); k++) domain.push(label(k));
+    var palette = (THEME[mode] || THEME.light).range.category;
+    var range = domain.map(function (_, k) { return palette[k % palette.length]; });
+    var enc = { tooltip: { field: "i", type: "quantitative" } };
+    var grouped = arc || (spec.color && points.some(function (p) { return p.color !== null; }));
+    if (grouped) enc.color = { field: "cl", type: "nominal", scale: { domain: domain, range: range }, legend: null };
+    // One series takes the theme's first colour: Vega-Lite draws a rule black by default.
+    var mark = grouped ? { type: spec.mark } : { type: spec.mark, color: palette[0] };
+    if (arc) {
+      enc.theta = { field: "theta", type: "quantitative", stack: true };
+    } else {
+      var x = position("x", spec.x), y = position("y", spec.y);
+      var horizontal = spec.mark === "bar" && spec.y && spec.y.scale === "nominal" && !(spec.x && spec.x.scale === "nominal");
+      if (x) enc.x = x;
+      if (y) enc.y = y;
+      if (spec.mark === "bar" || spec.mark === "area") {
+        // A bar or an area starts at zero and draws each group beside, never on top of, the others.
+        var value = horizontal ? x : y;
+        if (value && value.type === "quantitative") { value.scale = { zero: true, nice: 6 }; value.stack = null; }
+        if (grouped && spec.mark === "bar" && horizontal && y && y.type === "nominal") enc.yOffset = { field: "cl", type: "nominal", sort: { field: "c", op: "min" } };
+        else if (grouped && spec.mark === "bar" && x && x.type === "nominal") enc.xOffset = { field: "cl", type: "nominal", sort: { field: "c", op: "min" } };
+      }
+      if (spec.mark === "rule" && x && y) { y.scale = { zero: true, nice: 6 }; enc.y2 = { datum: 0 }; }
+      if (spec.mark === "point" && spec.size) enc.size = { field: "size", type: "quantitative", legend: null };
+      // A line or an area is hovered at its points, which are drawn but not painted.
+      if (spec.mark === "line" || spec.mark === "area") mark.point = { opacity: 0, size: 80 };
+    }
+    var config = Object.assign({}, THEME[mode] || THEME.light, { aria: false });
+    return {
+      $schema: "https://vega.github.io/schema/vega-lite/v6.json",
+      width: W, height: H, autosize: { type: "fit", contains: "padding" },
+      data: { values: rows }, mark: mark, encoding: enc, config: config
+    };
+  }
+
+  // Vega asks its loader for nothing this page's spec names; any ask is refused all the same.
+  function refused() { return Promise.reject(new Error("the chart view loads nothing")); }
+  var LOADER = { load: refused, sanitize: refused, http: refused, file: refused };
+  var views = [];
+
+  // Draws one chart with the library into `plot`, its values in a tooltip of text: the hovered
+  // mark's, or the next one's by arrow key. Throws, or calls `failed`, when the library cannot draw.
+  function plotChart(plot, spec, points, cats, live, failed) {
+    if (typeof vega === "undefined" || typeof vegaLite === "undefined" || !vega.expressionInterpreter) {
+      throw new Error("the chart library did not load");
+    }
+    var mode = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+    var vl = vlSpec(spec, points, plot.clientWidth || spec.width, mode);
+    var canvas = el("div", null, "canvas");
+    var tip = el("div", null, "tip"), current = -1;
+    var order = vl.data.values.map(function (row) { return row.i; });
+    tip.hidden = true;
+    plot.appendChild(canvas);
+    plot.appendChild(tip);
+    function show(i, x, y) {
+      tip.textContent = tipText(spec, points[i], cats);
+      tip.hidden = false;
+      // A narrow frame, or the keyboard, shows the values under the chart, so no tooltip covers it.
+      var w = plot.clientWidth || 0;
+      tip.className = x === undefined || (w && w < 600) ? "tip below" : "tip";
+      if (tip.className === "tip") {
+        var left = x + 14, top = y - tip.offsetHeight - 10;
+        if (left + tip.offsetWidth > w) left = x - tip.offsetWidth - 14;
+        if (top < 0) top = y + 14;
+        tip.style.left = Math.round(Math.max(0, left)) + "px";
+        tip.style.top = Math.round(top) + "px";
+      }
+      live.textContent = tip.textContent;
+      sized();
+    }
+    function hide() { if (!tip.hidden) { tip.hidden = true; sized(); } }
+    var runtime = vega.parse(vegaLite.compile(vl).spec, null, { ast: true });
+    var view = new vega.View(runtime, {
+      renderer: "svg", container: canvas, loader: LOADER, expr: vega.expressionInterpreter, hover: false
     });
-    drawn.node.addEventListener("mouseleave", hide);
-    drawn.node.addEventListener("blur", hide);
-    drawn.node.addEventListener("keydown", function (event) {
-      if (event.key === "ArrowRight" || event.key === "ArrowDown") { show(Math.min(current + 1, drawn.at.length - 1)); event.preventDefault(); }
-      else if (event.key === "ArrowLeft" || event.key === "ArrowUp") { show(Math.max(current - 1, 0)); event.preventDefault(); }
-      else if (event.key === "Escape") hide();
+    views.push(view);
+    view.tooltip(function (handler, event, item, value) {
+      var i = item && item.datum ? int(item.datum.i) : null;
+      if (value === undefined || value === null || i === null || !points[i] || !event) { hide(); return; }
+      var box = plot.getBoundingClientRect();
+      current = order.indexOf(i);
+      show(i, event.clientX - box.left, event.clientY - box.top);
     });
-    drawn.node.addEventListener("focus", function () { if (current < 0) show(0); else show(current); });
+    plot.tabIndex = 0;
+    plot.addEventListener("mouseleave", hide);
+    plot.addEventListener("blur", hide);
+    plot.addEventListener("keydown", function (event) {
+      var step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
+      if (step && order.length) {
+        current = Math.max(0, Math.min(order.length - 1, current < 0 ? 0 : current + step));
+        show(order[current]);
+        event.preventDefault();
+      } else if (event.key === "Escape") hide();
+    });
+    view.runAsync().then(sized, failed);
+  }
+
+  // The library could not draw: the same chart as the answer's picture, or the line that says so.
+  function fallback(result) {
+    if (view.querySelector(".fallback")) return;
+    views.forEach(function (v) { v.finalize(); });
+    views = [];
+    var pictures = result && Array.isArray(result.content) ? result.content : [];
+    var png = pictures.filter(function (c) {
+      return c && c.type === "image" && c.mimeType === "image/png" && typeof c.data === "string" && /^[A-Za-z0-9+/]+={0,2}$/.test(c.data);
+    })[0];
+    // In the first chart's place, or under the heading when no chart got that far.
+    var plot = view.querySelector(".plot");
+    var line = el("p", "The interactive chart could not be drawn in this window" +
+      (png ? "; this is the same chart as a picture." : ". The picture in the chat shows the same chart."), "warn fallback");
+    if (plot) plot.before(line); else view.querySelector("h1").after(line);
+    Array.prototype.forEach.call(view.querySelectorAll(".plot, .hint"), function (node) { node.remove(); });
+    if (png) {
+      var img = el("img", null, "picture");
+      img.alt = "The chart as a picture";
+      img.addEventListener("load", sized);
+      img.src = "data:image/png;base64," + png.data;
+      line.after(img);
+    }
+    sized();
   }
 
   function categoryList(name, title, list, swatches) {
@@ -387,18 +328,29 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
       box.appendChild(el("p", "The read answered no point to draw. Widen the time window, or check that the channel fields name attributes of this type.", "muted"));
       return source;
     }
+    // The axis titles are the caller's words: they stay this page's text, outside the library.
+    var axes = [["Vertical axis", spec.mark === "arc" ? null : spec.y], ["Horizontal axis", spec.mark === "arc" ? null : spec.x],
+      ["Slice size", spec.mark === "arc" ? spec.theta : null]]
+      .filter(function (a) { return a[1] && a[1].title; }).map(function (a) { return a[0] + ": " + a[1].title; });
+    if (axes.length) box.appendChild(el("p", axes.join(" · "), "muted axes"));
     var plot = el("div", null, "plot"), live = el("p", null, "sr-only");
     live.setAttribute("aria-live", "polite");
-    var drawn = draw(spec, points, cats, (box.clientWidth || spec.width), labelId);
-    plot.appendChild(drawn.node);
+    plot.setAttribute("role", "img");
+    plot.setAttribute("aria-labelledby", labelId);
     box.appendChild(plot);
-    interact(plot, drawn, spec, points, cats, live);
-    box.appendChild(el("p", "Hover a point, or focus the chart and use the arrow keys, to read its values.", "muted"));
-    box.appendChild(live);
+    try {
+      plotChart(plot, spec, points, cats, live, function () { fallback(last); });
+    } catch (e) {
+      fallback(last);
+      return source;
+    }
+    // The values the "#n" labels and the colours stand for, right under the chart.
     [["x", spec.x, cats.x, false], ["y", spec.y, cats.y, false], ["color", spec.color, cats.color, true]].forEach(function (c) {
       var list = categoryList(c[0], (c[1] && c[1].title || c[0]) + " values (data)", c[2], c[3]);
       if (list) box.appendChild(list);
     });
+    box.appendChild(el("p", "Hover a point, or focus the chart and use the arrow keys, to read its values.", "muted hint"));
+    box.appendChild(live);
     return source;
   }
 
@@ -437,6 +389,8 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
 
   function render(result) {
     last = result;
+    views.forEach(function (v) { v.finalize(); });
+    views = [];
     drawnWidth = view.clientWidth;
     view.textContent = "";
     var meta = result && result._meta && typeof result._meta === "object" ? result._meta : {};
@@ -489,7 +443,6 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
     [["--bg", t.background], ["--fg", t.title.color], ["--muted", t.axis.labelColor], ["--grid", t.axis.gridColor],
       ["--ink", t.axis.domainColor], ["--line", t.axis.gridColor], ["--tip", t.background], ["--font", t.font]].forEach(function (pair) { root.style.setProperty(pair[0], pair[1]); });
     PALETTE = t.range.category;
-    SLICE = t.arc.stroke;
   }
   function theme(context) {
     if (context && (context.theme === "dark" || context.theme === "light") && context.theme !== document.documentElement.dataset.theme) {

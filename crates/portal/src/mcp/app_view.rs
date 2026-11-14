@@ -107,10 +107,12 @@ mod tests {
     use super::*;
 
     /// The chart view draws from the posted numbers alone (T-6866): no script engine, no markup
-    /// sink, no request and no URL but the one Portal link.
+    /// sink, no request and no URL but the one Portal link and the answer's own PNG. The grep
+    /// reads the page's own code; the chart library it inlines is held to its checksums
+    /// (jc-chart `the_chart_view_inlines_the_checksummed_libraries`, T-6887).
     #[test]
     fn chart_view_page_has_no_eval_innerhtml_or_url_sinks() {
-        let page = jc_chart::view_page();
+        let page = jc_chart::VIEW_SOURCE;
         for sink in [
             "eval(",
             "new Function",
@@ -120,7 +122,6 @@ mod tests {
             "document.write",
             "setAttribute(\"href\"",
             "xlink",
-            ".src =",
             "<img",
             "fetch(",
             "XMLHttpRequest",
@@ -134,6 +135,16 @@ mod tests {
             assert!(!page.contains(sink), "the chart view holds {sink}");
         }
         assert_eq!(page.matches(".href =").count(), 1, "one Portal link");
+        // The one picture is the answer's PNG, base64 checked before it is used.
+        assert_eq!(page.matches(".src =").count(), 1, "one picture");
+        assert!(page.contains(r#"img.src = "data:image/png;base64," + png.data;"#));
+        assert!(page.contains(r#"/^[A-Za-z0-9+/]+={0,2}$/.test(c.data)"#));
+        // The library draws through Vega's interpreter, with a loader that loads nothing.
+        assert!(page.contains("expr: vega.expressionInterpreter"));
+        assert!(page.contains("{ ast: true }"));
+        assert!(page.contains(
+            "var LOADER = { load: refused, sanitize: refused, http: refused, file: refused };"
+        ));
         assert!(page.contains("a.href = url;"));
         assert!(page.contains("var url = PORTAL + \"/projects/\""));
         // Messages only from the parent frame, and only JSON-RPC 2.0.

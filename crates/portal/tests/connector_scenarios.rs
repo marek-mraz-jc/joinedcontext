@@ -3883,7 +3883,10 @@ async fn chart_view_csp_connects_nowhere() {
     assert_eq!(page["_meta"]["ui"]["csp"]["connectDomains"], json!([]));
     assert_eq!(page["_meta"]["ui"]["csp"]["resourceDomains"], json!([]));
     let text = page["text"].as_str().unwrap_or_default();
-    assert!(text.contains("createElementNS"), "{answer}");
+    assert!(
+        text.contains("expr: vega.expressionInterpreter"),
+        "{answer}"
+    );
     assert!(!text.contains("__PORTAL_ORIGIN__"));
     let token = harness.token("viewer").expect("a token");
     assert!(!text.contains(&token));
