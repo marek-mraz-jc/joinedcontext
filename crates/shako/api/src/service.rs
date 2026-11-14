@@ -252,23 +252,41 @@ pub async fn patch_repository(
     name: &str,
     patch: RepositoryPatch,
 ) -> ShakoResult<RepoRecord> {
-    let (mut repo, _) = resolve_and_authorize_repo(state, ctx, owner, name, Action::Admin).await?;
+    let (mut repo, disk_path) =
+        resolve_and_authorize_repo(state, ctx, owner, name, Action::Admin).await?;
     if let Some(a) = patch.archived {
         repo.archived = a;
     }
     if let Some(d) = patch.description {
         repo.description = d;
     }
-    if let Some(b) = patch.default_branch {
-        validate_branch_name(&b)?;
-        repo.default_branch = b;
+    let new_head = patch.default_branch.filter(|b| *b != repo.default_branch);
+    if let Some(b) = &new_head {
+        validate_branch_name(b)?;
+        repo.default_branch.clone_from(b);
     }
     if let Some(p) = patch.private {
         repo.private = p;
     }
-    if let Some(n) = patch.name {
+    if let Some(n) = patch.name.filter(|n| *n != repo.name) {
         validate_repo_or_owner_name(&n, "repository")?;
+        if state
+            .store()
+            .get_repo_by_name(repo.instance_id, repo.org_id, &repo.owner, &n)
+            .await?
+            .is_some()
+        {
+            return Err(ShakoError::Conflict(format!(
+                "repository '{}/{n}' already exists",
+                repo.owner
+            )));
+        }
         repo.name = n;
+    }
+    // A clone checks out what HEAD names: it follows the default branch.
+    if let Some(b) = new_head {
+        std::fs::write(disk_path.join("HEAD"), format!("ref: refs/heads/{b}\n"))
+            .map_err(|e| ShakoError::Internal(format!("write HEAD: {e}")))?;
     }
     state.store().update_repo(repo).await
 }

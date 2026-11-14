@@ -770,6 +770,32 @@ async fn another_organizations_repository_is_404_like_a_missing_one() {
 
 /// A reader of a visible repository is 403 on a write, never 404.
 #[tokio::test]
+async fn a_rename_onto_a_taken_name_is_409_and_a_new_default_branch_moves_head() {
+    let w = world();
+    create_repo(&w, "helsinki").await;
+    create_repo(&w, "other").await;
+    let patch = |body: Value| {
+        call(
+            &w.app,
+            "PATCH",
+            "/api/v1/repos/joinedcontext/helsinki",
+            Some("portal-token"),
+            Some(body),
+        )
+    };
+    let (st, body, _) = patch(json!({"name": "other"})).await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    let (st, body, _) = patch(json!({"default_branch": "release"})).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let (_, repo, _) = call(&w.app, "GET", R, Some("portal-token"), None).await;
+    let id: shako_core::RepoId = repo["Id"].as_str().unwrap().parse().unwrap();
+    let disk =
+        shako_core::repo_disk_path(w.state.repo_root(), InstanceId::from_u128(1), id).unwrap();
+    let head = std::fs::read_to_string(disk.join("HEAD")).unwrap();
+    assert_eq!(head.trim(), "ref: refs/heads/release");
+}
+
+#[tokio::test]
 async fn a_navigated_collection_keeps_to_its_repository_whatever_the_filter() {
     let w = world();
     create_repo(&w, "helsinki").await;
