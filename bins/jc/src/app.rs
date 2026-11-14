@@ -535,17 +535,24 @@ pub async fn build_router(
                 None => (main_router, v2_router),
             };
             // T-6896: with the forge on the in-pod listener (host mode), where the Portal dials
-            // it, its public mount answers the Portal's read-only git door alone.
-            let public = if hosted.contains(&Module::Shako) {
+            // it, its path mount on the public domain (`{domain}/git`, the one the edge opens)
+            // answers the Portal's read-only git door and shako's health alone. A host of its
+            // own (`git.{domain}`) keeps the whole forge, as the edge routes none of them.
+            let public = hosted.contains(&Module::Shako).then(|| {
                 public_forge(
                     cfg.roles
                         .contains(&Module::Portal)
                         .then(|| portal_slot.router()),
+                    main_router.clone(),
                 )
-            } else {
-                main_router.clone()
-            };
-            builder = mount_all(builder, &plan, &public);
+            });
+            for spec in plan.specs() {
+                let router = match &public {
+                    Some(public) if spec.path_prefix.is_some() => public.clone(),
+                    _ => main_router.clone(),
+                };
+                builder = builder.mount(spec.clone(), access::layer(plan.module.name(), router));
+            }
             also_in_pod(&plan, &main_router);
             // S1: mount `/v2/` at the host root in both one-domain and host modes
             let v2_spec = MountSpec {
@@ -641,12 +648,21 @@ pub async fn build_router(
 /// The forge's public mount in host mode (T-6896): a clone's two requests,
 /// `GET /{owner}/{repo}.git/info/refs` and `POST /{owner}/{repo}.git/git-upload-pack`, go to the
 /// Portal's read door at `/git/...`, which checks the person and reads the forge in the pod;
-/// everything else, a push included, is `404`, as is the door when the Portal runs elsewhere.
-fn public_forge(portal: Option<Router>) -> Router {
+/// `GET /api/healthz` reaches `shako`; everything else, a push included, is `404`, as is the
+/// door when the Portal runs elsewhere.
+fn public_forge(portal: Option<Router>, shako: Router) -> Router {
     Router::new().fallback(move |mut req: Request| {
         let portal = portal.clone();
+        let shako = shako.clone();
         async move {
+            use tower::ServiceExt;
             let path = req.uri().path();
+            if req.method() == axum::http::Method::GET && path == "/api/healthz" {
+                return match shako.oneshot(req).await {
+                    Ok(resp) => resp,
+                    Err(never) => match never {},
+                };
+            }
             let segments: Vec<&str> = path.strip_prefix('/').unwrap_or(path).split('/').collect();
             let query = req.uri().query();
             let door = match (req.method(), segments.as_slice(), query) {
@@ -671,7 +687,6 @@ fn public_forge(portal: Option<Router>) -> Router {
                 return StatusCode::NOT_FOUND.into_response();
             };
             *req.uri_mut() = uri;
-            use tower::ServiceExt;
             match portal.oneshot(req).await {
                 Ok(resp) => resp,
                 Err(never) => match never {},
@@ -1337,7 +1352,14 @@ mod tests {
                 (status, String::from_utf8_lossy(&body).into_owned())
             }
         };
-        let forge = public_forge(Some(portal));
+        let shako = Router::new().fallback(|req: Request| async move {
+            format!("shako {} {}", req.method(), req.uri())
+        });
+        let forge = public_forge(Some(portal), shako.clone());
+        assert_eq!(
+            ask(forge.clone(), "GET", "/api/healthz").await,
+            (StatusCode::OK, "shako GET /api/healthz".to_owned())
+        );
         let refs = "/joinedcontext/configuration.git/info/refs?service=git-upload-pack";
         assert_eq!(
             ask(forge.clone(), "GET", refs).await,
@@ -1361,6 +1383,7 @@ mod tests {
                 "/joinedcontext/configuration/info/refs?service=git-upload-pack",
             ),
             ("GET", "/api/v1/version"),
+            ("POST", "/api/healthz"),
             ("GET", "/joinedcontext/configuration.git/HEAD"),
             ("GET", "/joinedcontext/configuration.git/info/refs"),
             ("GET", &format!("{refs}&access_token=x")),
@@ -1371,7 +1394,7 @@ mod tests {
             assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri}: {body}");
         }
         // The Portal in another container: no door here.
-        let (status, _) = ask(public_forge(None), "GET", refs).await;
+        let (status, _) = ask(public_forge(None, shako), "GET", refs).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
