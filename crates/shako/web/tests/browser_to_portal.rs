@@ -147,6 +147,13 @@ async fn the_redirect_lands_on_the_portal_base_and_never_off_it() {
         assert_eq!(location, target, "{path}");
     }
     // The Gitea sign-in shim keeps its own guarded target.
-    let (_, location, _) = get(&app, "/user/oauth2/keycloak?redirect_to=//evil", None).await;
-    assert_eq!(location, "/");
+    for target in ["//evil", "/%09/evil", "/%0A/evil", "/%20/evil"] {
+        let (_, location, _) = get(
+            &app,
+            &format!("/user/oauth2/keycloak?redirect_to={target}"),
+            None,
+        )
+        .await;
+        assert_eq!(location, "/", "{target}");
+    }
 }
