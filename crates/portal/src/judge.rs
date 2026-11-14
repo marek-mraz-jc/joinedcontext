@@ -92,14 +92,14 @@ pub fn manifest(
         .try_for_each(|(_, check)| check(ground, project, envelope))
 }
 
-/// What approval does not judge again, each refused before and after it: a write nobody can
-/// make (`unmade-writes`, PL-111) and a second model of a space (`one-data-model`, DM-61) are
+/// What approval does not judge again, each refused before and after it: the spec's own parse
+/// (`spec`) reads the same bytes the propose door read, a write nobody can make
+/// (`unmade-writes`, PL-111) and a second model of a space (`one-data-model`, DM-61) are
 /// properties of the whole project once the change merged, read beside Endpoint and model
 /// rights the approval checks itself (PL-94, DM-77). The propose door refuses them before the
 /// Change exists and the reconciler's load refuses them on `main`, whoever pushed to the branch
-/// between, so no path serves them. The spec's own parse is judged again: a writer's branch of a
-/// project repository (ADR-N-029) never passed the propose door (CHG-03).
-pub const NOT_AT_APPROVAL: [&str; 2] = ["unmade-writes", "one-data-model"];
+/// between, so no path serves them.
+pub const NOT_AT_APPROVAL: [&str; 3] = ["spec", "unmade-writes", "one-data-model"];
 
 /// [`manifest`] at approval: every check but [`NOT_AT_APPROVAL`].
 pub fn manifest_at_approval(
@@ -888,33 +888,6 @@ mod tests {
         let refused = replay(&Mirror::new(), (&bounds, None, None), vec![feed]);
         assert_eq!(refused.len(), 1, "load refuses it: {refused:?}");
         said(&refused[0].1);
-    }
-
-    /// CHG-03: a spec its kind does not parse, as a writer's branch may carry one, is refused at
-    /// approval as at the propose door.
-    #[test]
-    fn approval_refuses_a_spec_its_kind_does_not_parse() {
-        let space = envelope(
-            "ContextSpace",
-            "air",
-            "ovzdusie",
-            json!({ "notAField": true }),
-        );
-        let bounds = OrganizationBounds::default();
-        let mirror = Mirror::new();
-        let ground = Ground {
-            mirror: &mirror,
-            bounds: &bounds,
-            apex: None,
-            domain: None,
-            portals: None,
-        };
-        assert!(manifest(&ground, "ovzdusie", &space).is_err());
-        let refused = manifest_at_approval(&ground, "ovzdusie", &space).expect_err("refused");
-        assert!(
-            reason(&refused).contains("spec is not a valid ContextSpace"),
-            "{refused:?}"
-        );
     }
 
     /// P-2: what reaches `main` past the propose door is judged as its proposals would be: of
