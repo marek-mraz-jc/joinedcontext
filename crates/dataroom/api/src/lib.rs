@@ -764,6 +764,18 @@ async fn handle_portal_catalogue(
         filter.years.push(y);
     }
 
+    // The datasets `package_show` would show this caller: a `jc_hide` one only to its editors.
+    let pub_map: BTreeMap<&str, &Publisher> = publishers
+        .iter()
+        .flat_map(|p| [(p.id.as_str(), p), (p.name.as_str(), p)])
+        .collect();
+    let datasets: Vec<Dataset> = datasets
+        .into_iter()
+        .filter(|ds| {
+            let pub_rec = pub_map.get(ds.publisher_id.as_str()).copied();
+            dataset_shown(&state, &ctx, &cat, ds, pub_rec)
+        })
+        .collect();
     let outcome = match search_datasets(
         &ctx,
         state.authorizer.as_ref(),
@@ -775,6 +787,12 @@ async fn handle_portal_catalogue(
         Ok(o) => o,
         Err(e) => return problem_response(e),
     };
+    // A signed-in caller's answer may hold what an anonymous one may not read: no shared cache.
+    let cache = if ctx.subject.is_anonymous() {
+        "public, max-age=60"
+    } else {
+        "private, no-store"
+    };
 
     let body = json!({
         "total": outcome.total,
@@ -784,12 +802,7 @@ async fn handle_portal_catalogue(
         "facets": outcome.facets,
         "unavailable": [],
     });
-    (
-        StatusCode::OK,
-        [(header::CACHE_CONTROL, "public, max-age=60")],
-        Json(body),
-    )
-        .into_response()
+    (StatusCode::OK, [(header::CACHE_CONTROL, cache)], Json(body)).into_response()
 }
 
 async fn handle_portal_dataset(

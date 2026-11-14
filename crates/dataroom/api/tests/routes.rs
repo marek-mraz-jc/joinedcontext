@@ -2144,10 +2144,21 @@ async fn portal_catalogue_and_dataset_answer_like_package_show() {
             v["page"].as_u64(),
             v["pageSize"].as_u64()
         ),
-        (Some(3), Some(1), Some(20)),
-        "{}",
+        (Some(2), Some(1), Some(20)),
+        "the jc_hide dataset `veiled` is not counted: {}",
         a.body
     );
+    let names: Vec<&str> = v["datasets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|d| d["name"].as_str())
+        .collect();
+    assert!(!names.contains(&"veiled"), "{names:?}");
+    // Its editor sees it, and a signed-in answer is never cached as public.
+    let a = get(app, "/api/v1/catalogue", Some("tok-editor")).await;
+    assert!(a.body.contains("\"veiled\""), "{}", a.body);
+    assert_eq!(a.header("cache-control"), "private, no-store");
     let a = get(
         app,
         "/api/v1/catalogue?q=open&publisher=city&theme=ENVI&format=CSV&licence=cc-by&spatial=SK032&page=1",
