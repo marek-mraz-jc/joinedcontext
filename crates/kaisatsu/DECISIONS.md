@@ -39,6 +39,8 @@
 - **Section C (Authorization & tenancy)**:
   - `organization:<alias>` scope is checked against the person's memberships (`user_is_member_of_org`) before pinning `active_org` onto an `AuthSession`, `SsoSession`, or token claim (K2).
   - `view-clients` is read-only on `Role` and `ClientScope` and cannot create/delete client roles or client scopes (K3).
+  - `view-clients` writes, and reads the secret of, only clients marked `managed-by: joinedcontext`; an unmarked
+    client is not adopted, its secret is left out of the client and the list, and an edit cannot drop the mark.
   - Cross-organization lookups on People, Groups, Applications, Domains, WebAuthnCredentials, and EmailOutbox return `404 NotFound` (`visible: false`).
 - **Section D (Injection & parsing of untrusted input)**:
   - `PgScopedTable` uses `sqlx::QueryBuilder::push_bind` for all filter literals and JSON paths, preventing SQL injection in OData `$filter` (K15).

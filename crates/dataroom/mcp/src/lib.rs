@@ -132,7 +132,7 @@ pub async fn handle_mcp_jsonrpc(
                         "content": [
                             {
                                 "type": "text",
-                                "text": err.to_string()
+                                "text": err.client_safe().to_string()
                             }
                         ],
                         "isError": true

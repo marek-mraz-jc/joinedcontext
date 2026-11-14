@@ -7,7 +7,7 @@
  * refuses a registration that names both an Endpoint and an address, and it asks for the account to
  * forward as whenever the identity is a service account, because jc-core refuses it without one.
  */
-import { screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
@@ -19,6 +19,7 @@ import { SchemaForm } from "../src/components/forms/SchemaForm";
 import validator from "../src/components/forms/validator";
 import { errorMessageKey } from "../src/components/forms/errorMessages";
 import { registrationSchema, registrationUiSchema } from "../src/schemas/kinds";
+import { act as shortcut } from "../src/navigation/shortcuts";
 import type { RegistrationTarget } from "../src/schemas/kinds";
 import {
   RegistrationsPage,
@@ -324,6 +325,18 @@ describe("the registrations page", () => {
     page(["delete"]);
     const add = await screen.findByRole("button", { name: en.registrations.add });
     await waitFor(() => expect(add).toHaveAttribute("aria-disabled", "true"));
+  });
+
+  it("opens New registration on N, and leaves it shut for a person who may not propose one (T-6917)", async () => {
+    page(["propose"]);
+    await screen.findByText("zvolen-ovzdusie");
+    expect(shortcut(new KeyboardEvent("keydown", { key: "n", bubbles: true }))).toBe(true);
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    cleanup();
+    page(["delete"]);
+    const add = await screen.findByRole("button", { name: en.registrations.add });
+    await waitFor(() => expect(add).toHaveAttribute("aria-disabled", "true"));
+    expect(shortcut(new KeyboardEvent("keydown", { key: "n", bubbles: true }))).toBe(false);
   });
 
   it("opens its form on the registration the assistant drafted, read from the draft (`?draft=`, AG-73)", async () => {

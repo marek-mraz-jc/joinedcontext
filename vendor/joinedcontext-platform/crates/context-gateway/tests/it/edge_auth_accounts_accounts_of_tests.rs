@@ -174,13 +174,13 @@ fn a_space_scope_is_stored_as_the_segment_the_gateway_sees() {
 
     let accounts = accounts_of(&repo.load());
     let account = accounts.resolve("helsinki-etl").expect("azp resolves");
-    let here = account.roles_in("helsinki", "hel-waste");
+    let here = account.roles_in("helsinki", "hel-waste", true);
     assert!(
         here.contains("space-writer"),
         "the segment is what the call carries"
     );
     assert!(
-        account.roles_in("helsinki", "waste").is_empty(),
+        account.roles_in("helsinki", "waste", true).is_empty(),
         "the manifest name is not the segment and must not be accepted as one",
     );
 }
@@ -193,7 +193,7 @@ fn an_account_with_no_roles_resolves_and_grants_nothing() {
     let accounts = accounts_of(&repo.load());
     let account = accounts.resolve("helsinki-silent").expect("azp resolves");
     assert!(account.roles.is_empty());
-    assert!(account.roles_in("helsinki", "mobility").is_empty());
+    assert!(account.roles_in("helsinki", "mobility", true).is_empty());
 }
 
 #[test]

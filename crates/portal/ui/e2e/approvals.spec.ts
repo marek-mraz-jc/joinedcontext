@@ -327,6 +327,46 @@ test.describe("approvals", () => {
     });
   }
 
+  // T-6917: a removal and an edit that went live keep their Restore and Undo in History.
+  for (const width of [1440, 400]) {
+    test(`an applied change keeps Restore and Undo in History at ${width} px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      const applied = { lane: "green", phase: "Applied", plan: {}, mergeRequest: "https://gitea.example/city/city-config/pulls/43" };
+      const change = (name: string, key: string, target: string) => ({
+        apiVersion: "joinedcontext.com/v1alpha1",
+        kind: "Change",
+        metadata: { name, namespace: "helsinki" },
+        summary: { key, params: { kind: "Pipeline", name: target, fields: 1 } },
+        author: { name: "Marek Mráz" },
+        createdAt: "2026-11-10T08:00:00Z",
+        status: applied,
+        decision: { by: "jana.kovacova@banskabystrica.sk", at: "2026-11-10T09:30:00Z" },
+      });
+      await stubApi(page);
+      await page.route("**/permissions/me", (route) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ project: "helsinki", grants: [{ rule: { kinds: ["Pipeline"], verbs: ["propose"] } }] }) }),
+      );
+      await page.route("**/changes/history**", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            apiVersion: "joinedcontext.com/v1alpha1",
+            kind: "ChangeList",
+            items: [change("chg-00000007", "change.summary.delete", "air-ingest"), change("chg-00000008", "change.summary.update", "air-clean")],
+          }),
+        }),
+      );
+      await page.goto("/projects/helsinki/approvals?lang=en");
+      await page.getByRole("tab", { name: "History" }).click();
+      await expect(page.getByRole("button", { name: "Restore air-ingest" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Undo the change to air-clean" })).toBeVisible();
+      const sideways = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      expect(sideways).toBe(0);
+      if (process.env.JC_SHOTS_DIR) await page.screenshot({ path: `${process.env.JC_SHOTS_DIR}/history-applied-${width}.png`, fullPage: true });
+    });
+  }
+
   test("the approvals routes have no axe violations", async ({ page }) => {
     await stubApi(page);
 

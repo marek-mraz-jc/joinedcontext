@@ -51,7 +51,7 @@ fn ckan_ok(base: &str, action: &str, result: Value, cache_public: bool) -> Respo
 }
 
 fn ckan_err(base: &str, action: &str, err: DataroomError) -> Response {
-    let err = crate::client_safe(err);
+    let err = err.client_safe();
     let status = StatusCode::from_u16(err.status_code()).unwrap_or(StatusCode::BAD_REQUEST);
     let mut err_obj = Map::new();
     err_obj.insert("__type".into(), json!(err.ckan_error_type()));
@@ -691,6 +691,22 @@ async fn answer_ckan_action(
             let fallback_id = format!("res-{}-{pos}", ds.name);
             let dist =
                 distribution_from_ckan(&payload, &ds.id, &fallback_id, &cat.default_language);
+            // A create never takes over a stored resource id: its views and updates would
+            // resolve to this dataset, decided on its editors instead of the owner's.
+            match state.store.get_distribution(&ctx, &dist.id).await {
+                Ok(None) => {}
+                Ok(Some(_)) => {
+                    return ckan_err(
+                        &base,
+                        &action,
+                        DataroomError::Conflict(format!(
+                            "a resource with id '{}' exists: use resource_update",
+                            dist.id
+                        )),
+                    )
+                }
+                Err(e) => return ckan_err(&base, &action, e),
+            }
             ds.distributions.push(dist.clone());
             ds.modified = Utc::now();
             if let Err(e) = state.store.upsert_dataset(&ctx, ds.clone()).await {
@@ -1107,6 +1123,26 @@ async fn answer_ckan_action(
                 }
                 Err(e) => return ckan_err(&base, &action, e),
             }
+            let id = payload
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map_or_else(|| format!("org-{name}"), str::to_owned);
+            // Nor on an id that names a stored organization: datasets name their publisher by
+            // it, so that one's datasets would resolve to (and be decided on) this record.
+            match state.store.get_publisher(&ctx, &id).await {
+                Ok(None) => {}
+                Ok(Some(_)) => {
+                    return ckan_err(
+                        &base,
+                        &action,
+                        DataroomError::Conflict(format!(
+                            "an organization with id or name '{id}' exists"
+                        )),
+                    )
+                }
+                Err(e) => return ckan_err(&base, &action, e),
+            }
             let title_str = payload.get("title").and_then(Value::as_str).unwrap_or(name);
             let desc_str = payload
                 .get("description")
@@ -1123,11 +1159,7 @@ async fn answer_ckan_action(
             let pub_rec = Publisher {
                 org_id: ctx.org_id,
                 catalogue_id: ctx.catalogue_id,
-                id: payload
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| format!("org-{name}")),
+                id,
                 name: name.to_owned(),
                 title: BTreeMap::from([(cat.default_language.clone(), title_str.to_owned())]),
                 description: if desc_str.is_empty() {

@@ -606,16 +606,20 @@ function ProjectFrame({
   // The organization's tabs, every endpoint and `/` open on this project next (T-2753).
   // The organization's namespace frames Administration for a person who reads no project: no
   // project to open next (PF-61).
+  // Only a project the list names: an address the person typed is not remembered while the list loads, or after it failed.
+  const member = useProjects().data?.includes(project) ?? false;
   useEffect(() => {
-    if (project !== ORG_NAMESPACE) {
+    if (member && project !== ORG_NAMESPACE) {
       rememberProject(project);
     }
-  }, [project]);
+  }, [member, project]);
   // The page in hand, so switching away and back reopens it (T-5603).
   const href = useRouterState({ select: (state) => state.location.href });
   useEffect(() => {
-    rememberAddress(project, href);
-  }, [project, href]);
+    if (member) {
+      rememberAddress(project, href);
+    }
+  }, [member, project, href]);
   // Which page is in hand, so a panel left by a page that threw is cleared by walking away
   // from it (T-2426).
   const pathname = useRouterState({ select: (state) => state.location.pathname });

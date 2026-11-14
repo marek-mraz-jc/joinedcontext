@@ -41,7 +41,7 @@ fn set(names: &[&str]) -> BTreeSet<String> {
 #[test]
 fn an_account_with_no_roles_has_no_roles_here() {
     assert_eq!(
-        account(vec![]).roles_in("helsinki", "mobility"),
+        account(vec![]).roles_in("helsinki", "mobility", true),
         BTreeSet::new()
     );
 }
@@ -49,23 +49,23 @@ fn an_account_with_no_roles_has_no_roles_here() {
 #[test]
 fn an_organization_role_reaches_every_project_and_space() {
     let a = account(vec![role("reader", None, None, true)]);
-    assert_eq!(a.roles_in("helsinki", "mobility"), set(&["reader"]));
-    assert_eq!(a.roles_in("espoo", "waste"), set(&["reader"]));
+    assert_eq!(a.roles_in("helsinki", "mobility", true), set(&["reader"]));
+    assert_eq!(a.roles_in("espoo", "waste", true), set(&["reader"]));
     // Including the empty names, which is what an unnamespaced repository resolves to.
-    assert_eq!(a.roles_in("", ""), set(&["reader"]));
+    assert_eq!(a.roles_in("", "", true), set(&["reader"]));
 }
 
 #[test]
 fn a_role_scoped_to_another_space_is_not_a_role_here() {
     let a = account(vec![role("writer", Some("waste"), None, false)]);
-    assert_eq!(a.roles_in("helsinki", "mobility"), BTreeSet::new());
-    assert_eq!(a.roles_in("helsinki", "waste"), set(&["writer"]));
+    assert_eq!(a.roles_in("helsinki", "mobility", true), BTreeSet::new());
+    assert_eq!(a.roles_in("helsinki", "waste", true), set(&["writer"]));
 }
 
 #[test]
 fn a_role_scoped_to_another_project_is_not_a_role_here() {
     let a = account(vec![role("writer", None, Some("espoo"), false)]);
-    assert_eq!(a.roles_in("helsinki", "mobility"), BTreeSet::new());
+    assert_eq!(a.roles_in("helsinki", "mobility", true), BTreeSet::new());
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn names_are_compared_exactly_so_nothing_neighbouring_gets_in() {
     ] {
         let a = account(vec![role("writer", Some(near), None, false)]);
         assert_eq!(
-            a.roles_in("helsinki", "mobility"),
+            a.roles_in("helsinki", "mobility", true),
             BTreeSet::new(),
             "a role scoped to {near:?} must not reach the space `mobility`",
         );
@@ -101,7 +101,7 @@ fn names_are_compared_exactly_so_nothing_neighbouring_gets_in() {
     ] {
         let a = account(vec![role("writer", None, Some(near), false)]);
         assert_eq!(
-            a.roles_in("helsinki", "mobility"),
+            a.roles_in("helsinki", "mobility", true),
             BTreeSet::new(),
             "project {near:?}"
         );
@@ -111,12 +111,12 @@ fn names_are_compared_exactly_so_nothing_neighbouring_gets_in() {
 #[test]
 fn an_empty_scope_name_matches_only_an_empty_name() {
     let a = account(vec![role("writer", Some(""), None, false)]);
-    assert_eq!(a.roles_in("helsinki", "mobility"), BTreeSet::new());
-    assert_eq!(a.roles_in("helsinki", ""), set(&["writer"]));
+    assert_eq!(a.roles_in("helsinki", "mobility", true), BTreeSet::new());
+    assert_eq!(a.roles_in("helsinki", "", true), set(&["writer"]));
 
     let unnamespaced = account(vec![role("writer", None, Some(""), false)]);
     assert_eq!(
-        unnamespaced.roles_in("helsinki", "mobility"),
+        unnamespaced.roles_in("helsinki", "mobility", true),
         BTreeSet::new()
     );
     // A repository without namespaces resolves every project to "", and then a project-scoped role
@@ -125,7 +125,10 @@ fn an_empty_scope_name_matches_only_an_empty_name() {
         project: String::new(),
         ..unnamespaced
     };
-    assert_eq!(unnamespaced.roles_in("", "mobility"), set(&["writer"]));
+    assert_eq!(
+        unnamespaced.roles_in("", "mobility", true),
+        set(&["writer"])
+    );
 }
 
 #[test]
@@ -135,7 +138,7 @@ fn one_role_named_twice_is_one_role() {
         role("reader", None, Some("helsinki"), false),
         role("reader", None, None, true),
     ]);
-    assert_eq!(a.roles_in("helsinki", "mobility"), set(&["reader"]));
+    assert_eq!(a.roles_in("helsinki", "mobility", true), set(&["reader"]));
 }
 
 #[test]
@@ -145,7 +148,7 @@ fn a_role_out_of_scope_does_not_carry_one_in_scope_with_it() {
         role("owner", Some("waste"), None, false),
         role("admin", None, Some("espoo"), false),
     ]);
-    assert_eq!(a.roles_in("helsinki", "mobility"), set(&["reader"]));
+    assert_eq!(a.roles_in("helsinki", "mobility", true), set(&["reader"]));
 }
 
 #[test]
@@ -153,10 +156,10 @@ fn a_scope_naming_a_space_and_another_project_reaches_the_space() {
     // Either scope is enough, by the `||` of the filter: this pins the behaviour so a later reading
     // of the code cannot quietly turn it into "both must match" or "the wider one wins".
     let a = account(vec![role("reader", Some("mobility"), Some("espoo"), false)]);
-    assert_eq!(a.roles_in("helsinki", "mobility"), set(&["reader"]));
+    assert_eq!(a.roles_in("helsinki", "mobility", true), set(&["reader"]));
     // A helsinki manifest's scope naming espoo grants nothing on espoo's Endpoints (F-SEC1-001).
-    assert_eq!(a.roles_in("espoo", "waste"), BTreeSet::new());
-    assert_eq!(a.roles_in("helsinki", "waste"), BTreeSet::new());
+    assert_eq!(a.roles_in("espoo", "waste", true), BTreeSet::new());
+    assert_eq!(a.roles_in("helsinki", "waste", true), BTreeSet::new());
 }
 
 #[test]
@@ -165,7 +168,7 @@ fn a_role_name_is_returned_as_written_and_nothing_is_invented() {
     // trims, lower-cases nor expands anything, and it never adds a role nobody bound.
     let odd = "Reader-With Space\tand\ttabs";
     let a = account(vec![role(odd, None, None, true)]);
-    let answer = a.roles_in("helsinki", "mobility");
+    let answer = a.roles_in("helsinki", "mobility", true);
     assert_eq!(answer, set(&[odd]));
     assert!(
         !answer.contains("reader"),
@@ -187,7 +190,7 @@ fn a_hundred_bindings_answer_only_the_ones_in_scope() {
         .collect();
     roles.push(role("reader", Some("mobility"), None, false));
     let a = account(roles);
-    assert_eq!(a.roles_in("helsinki", "mobility"), set(&["reader"]));
+    assert_eq!(a.roles_in("helsinki", "mobility", true), set(&["reader"]));
 }
 
 /// A grant with a validity window is a role only inside it (AG-131): an expired grant stops at
@@ -204,17 +207,23 @@ fn a_grant_outside_its_validity_is_not_a_role() {
     });
     let a = account(vec![scoped, role("reader", Some("mobility"), None, false)]);
     assert_eq!(
-        a.roles_in_at("helsinki", "mobility", until),
+        a.roles_in_at("helsinki", "mobility", true, until),
         set(&["reader", "writer"])
     );
     assert_eq!(
-        a.roles_in_at("helsinki", "mobility", until + chrono::Duration::seconds(1)),
+        a.roles_in_at(
+            "helsinki",
+            "mobility",
+            true,
+            until + chrono::Duration::seconds(1)
+        ),
         set(&["reader"])
     );
     assert_eq!(
         a.roles_in_at(
             "helsinki",
             "mobility",
+            true,
             Utc.with_ymd_and_hms(2026, 9, 30, 23, 59, 59).unwrap()
         ),
         set(&["reader"])
@@ -228,8 +237,8 @@ fn a_grant_outside_its_validity_is_not_a_role() {
 #[test]
 fn a_project_scope_reaches_only_the_accounts_own_project() {
     let own = account(vec![role("writer", None, Some("helsinki"), false)]);
-    assert_eq!(own.roles_in("helsinki", "mobility"), set(&["writer"]));
-    assert_eq!(own.roles_in("espoo", "mobility"), BTreeSet::new());
+    assert_eq!(own.roles_in("helsinki", "mobility", true), set(&["writer"]));
+    assert_eq!(own.roles_in("espoo", "mobility", true), BTreeSet::new());
     let other = account(vec![role("writer", None, Some("espoo"), false)]);
-    assert_eq!(other.roles_in("espoo", "mobility"), BTreeSet::new());
+    assert_eq!(other.roles_in("espoo", "mobility", true), BTreeSet::new());
 }

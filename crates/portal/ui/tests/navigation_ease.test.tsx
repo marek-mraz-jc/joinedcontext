@@ -214,6 +214,15 @@ describe("the shortcuts (T-3242)", () => {
     expect(shortcut(key({ key: "j" }, document.getElementById("f") as HTMLElement))).toBe(false);
   });
 
+  it("takes no letter typed into a code editor, and presses no New the page marks unavailable", () => {
+    page(`<main><div class="monaco-editor"><div role="textbox" id="code"></div></div><a data-row-link href="/a">a</a><button data-shortcut="new" aria-disabled="true">New</button></main>`);
+    const code = document.getElementById("code") as HTMLElement;
+    expect(shortcut(key({ key: "j" }, code))).toBe(false);
+    expect(shortcut(key({ key: "?" }, code))).toBe(false);
+    expect(shortcut(key({ key: "n" }))).toBe(false);
+    expect(available()).not.toContain("new");
+  });
+
   it("presses the page's New and Test, saves the form with Ctrl+S even from a field, and lists only what works", () => {
     page(`<main><form><input id="name"/></form><button data-shortcut="new">New</button><button data-shortcut="test" disabled>Test</button></main>`);
     const pressed: string[] = [];

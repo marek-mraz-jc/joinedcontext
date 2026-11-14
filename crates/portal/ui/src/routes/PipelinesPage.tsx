@@ -420,6 +420,7 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
         actions={
           <PermissionGuard project={project} kind="Pipeline" verb="propose">
             <Button
+              data-shortcut="new"
               variant="primary"
               icon={<Icon name="plus" className="size-4" />}
               onClick={() => (formRoute ? formRoute.openNew() : openEditor(null))}

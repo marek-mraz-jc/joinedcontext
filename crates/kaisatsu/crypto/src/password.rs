@@ -337,7 +337,16 @@ pub fn first_policy_violation(
                 return Some(PolicyViolation::NotEmail);
             }
         } else if let Some(count) = arg(clause, "passwordHistory", 5) {
-            for old in history_records.iter().take(count) {
+            // The current password and the newest history first, whatever order the store
+            // lists them in (PostgreSQL lists the oldest first).
+            let mut newest_first: Vec<&CredentialRecord> = history_records.iter().collect();
+            newest_first.sort_by_key(|c| {
+                (
+                    c.credential_type != "password",
+                    std::cmp::Reverse(c.created_date),
+                )
+            });
+            for old in newest_first.into_iter().take(count) {
                 if let Ok(outcome) = verify_and_maybe_rehash(password, old)
                     && outcome.valid
                 {
@@ -413,6 +422,32 @@ mod tests {
         .to_string();
         assert!(verify_keycloak_credential(password, &pbkdf2_secret, &pbkdf2_cred).unwrap());
         assert!(!verify_keycloak_credential("wrong", &pbkdf2_secret, &pbkdf2_cred).unwrap());
+    }
+
+    /// `passwordHistory(N)` checks the current password and the N-1 newest before it, in the
+    /// order PostgreSQL lists them (oldest history first, the current password last).
+    #[test]
+    fn password_history_checks_the_current_and_newest_passwords() {
+        let record = |kind: &str, pw: &str, created: i64| CredentialRecord {
+            credential_type: kind.into(),
+            secret_data: hash_password(pw).unwrap(),
+            created_date: created,
+            ..Default::default()
+        };
+        let stored = vec![
+            record("password-history", "FirstValid1pass", 1),
+            record("password-history", "SecondValid1pass", 2),
+            record("password-history", "ThirdValid1pass", 3),
+            record("password", "CurrentValid1pass", 4),
+        ];
+        let policy = "passwordHistory(2)";
+        for reused in ["CurrentValid1pass", "ThirdValid1pass"] {
+            assert!(
+                check_password_policy(policy, reused, "alice", None, &stored).is_err(),
+                "{reused}"
+            );
+        }
+        assert!(check_password_policy(policy, "FirstValid1pass", "alice", None, &stored).is_ok());
     }
 
     #[test]

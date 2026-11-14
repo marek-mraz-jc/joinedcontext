@@ -246,7 +246,7 @@ spec:
     assert_eq!(account.project, "ovzdusie");
 
     // A role scoped to another space is not a role here (PF-35).
-    let here = account.roles_in("ovzdusie", "ovzdusie");
+    let here = account.roles_in("ovzdusie", "ovzdusie", true);
     assert!(here.contains("space-writer"));
     assert!(!here.contains("doprava-reader"));
 

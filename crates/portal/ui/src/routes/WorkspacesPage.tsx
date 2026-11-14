@@ -9,6 +9,7 @@ import { api, queryKeys, unwrap } from "../api/client";
 import { useAuth } from "../auth/AuthProvider";
 import { WorkOnCopyAction } from "../components/WorkOnCopyDialog";
 import {
+  Alert,
   Badge,
   Button,
   buttonClass,
@@ -20,6 +21,7 @@ import {
 import type { components } from "../api/schema";
 import { ProjectHidden, projectOutOfReach } from "../components/ProjectHidden";
 import { PageFailed } from "../components/ui/PageState";
+import { isWorkspaceOwner } from "../pages/workspaces/owner";
 
 type WorkspaceView = components["schemas"]["WorkspaceView"];
 
@@ -71,8 +73,7 @@ export function WorkspacesPage({
 
   const items = list.data?.items ?? [];
   // The owner is who opened it, by the address commits are signed with, or the username.
-  const isMine = (w: WorkspaceView) =>
-    !!identity && (w.owner === identity.email || w.owner === identity.username);
+  const isMine = (w: WorkspaceView) => isWorkspaceOwner(identity, w.owner);
   const mine = items.filter(isMine);
   const others = items.filter((w) => !isMine(w));
 
@@ -80,18 +81,28 @@ export function WorkspacesPage({
     <ConfirmDialog
       open
       onOpenChange={(next) => {
-        if (!next) setDiscarding(null);
+        if (!next) {
+          setDiscarding(null);
+          discard.reset();
+        }
       }}
       title={t("workspaces.discard")}
       description={t("workspaces.discardConfirm", { name: discarding })}
       confirmLabel={t("workspaces.discard")}
       pending={discard.isPending}
+      // Open until the copy is gone: a refusal is said here, in the server's words, and can be retried.
       onConfirm={() =>
         discard.mutate(discarding, {
-          onSettled: () => setDiscarding(null),
+          onSuccess: () => setDiscarding(null),
         })
       }
-    />
+    >
+      {discard.error ? (
+        <Alert tone="danger" role="alert">
+          {discard.error.message}
+        </Alert>
+      ) : null}
+    </ConfirmDialog>
   ) : null;
 
   return (

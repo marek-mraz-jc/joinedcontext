@@ -105,8 +105,8 @@ fn a_pipelines_own_client_resolves_to_its_derived_account() {
         ("pl-linked-events", "helsinki")
     );
     assert!(!account.delegates);
-    assert_eq!(account.roles_in("helsinki", "events").len(), 1);
-    assert!(account.roles_in("helsinki", "parking").is_empty());
+    assert_eq!(account.roles_in("helsinki", "events", true).len(), 1);
+    assert!(account.roles_in("helsinki", "parking", true).is_empty());
     assert!(accounts.resolve("helsinki-pl-something-else").is_none());
 }
 

@@ -35,6 +35,16 @@ describe("the actions of a row", () => {
     await i18n.changeLanguage("en");
   });
 
+  it("leaves out a link item whose address is not a web or same-origin address", async () => {
+    show([
+      { key: "source", label: "View the source", href: "javascript:alert(1)" },
+      { key: "docs", label: "Read the docs", href: "https://example.org/docs" },
+    ]);
+    await open();
+    expect(screen.queryByRole("menuitem", { name: "View the source" })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Read the docs" })).toHaveAttribute("href", "https://example.org/docs");
+  });
+
   it("shows the row's obvious action and hides the rest behind one menu", async () => {
     show([{ key: "delete", label: "Delete the endpoint", onSelect: vi.fn() }], <button>Open</button>);
     expect(screen.getByRole("button", { name: "Open" })).toBeInTheDocument();

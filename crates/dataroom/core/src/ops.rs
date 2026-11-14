@@ -1162,6 +1162,18 @@ pub async fn execute_operation(
                 existing.as_ref(),
                 &publisher,
             )?;
+            // A new record's id or name never names a stored publisher: datasets name their
+            // publisher by it, so that one's datasets would resolve to this record.
+            if existing.is_none() {
+                for key in [&publisher.id, &publisher.name] {
+                    if !key.is_empty() && op_ctx.store.get_publisher(req_ctx, key).await?.is_some()
+                    {
+                        return Err(DataroomError::Conflict(format!(
+                            "a publisher with id or name '{key}' exists"
+                        )));
+                    }
+                }
+            }
             let saved = op_ctx.store.upsert_publisher(req_ctx, publisher).await?;
             op_ctx
                 .store
