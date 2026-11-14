@@ -123,9 +123,10 @@ export function useGridKeys(
         setInspected({ attr: here.attr, label: here.label, row: rows[state.activeCell!.row] });
         return;
       }
-      // `h` on a cell wearing the history mark opens that value's history (T-6878), as its button does.
+      // `h` on a cell wearing the history mark opens that value's history (T-6878), as its button does;
+      // Ctrl/Cmd/Alt+H stays the browser's.
       const hereRow = state.activeCell ? rows[state.activeCell.row] : undefined;
-      if (onGrid && e.key === "h" && here && cellHistory(hereRow, here) && !editable(here)) {
+      if (onGrid && e.key === "h" && !e.ctrlKey && !e.metaKey && !e.altKey && here && cellHistory(hereRow, here) && !editable(here)) {
         e.preventDefault();
         openHistoryOf(here, hereRow);
         return;

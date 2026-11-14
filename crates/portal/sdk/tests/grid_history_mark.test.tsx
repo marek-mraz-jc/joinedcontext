@@ -119,6 +119,21 @@ describe("the history mark (T-6878)", () => {
     await screen.findByRole("region", { name: /PM10/ });
   });
 
+  it("ctrl_cmd_or_alt_h_on_a_marked_cell_stays_the_browsers", async () => {
+    const { paths, source } = endpoint({ name: true, pm10: true, stationName: true });
+    render(<EntityGrid config={configOf()} source={source} publicView />);
+    await screen.findByRole("button", { name: `${DEFAULT_LABELS.historyOfValue}: PM10` });
+    const grid = screen.getByRole("grid");
+    grid.focus();
+    fireEvent.keyDown(grid, { key: "ArrowRight" });
+    for (const modifier of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }]) {
+      // The grid leaves the event alone, so the browser's own Ctrl/Cmd+H (history) still runs.
+      expect(fireEvent.keyDown(grid, { key: "h", ...modifier })).toBe(true);
+    }
+    expect(screen.queryByRole("region", { name: /PM10/ })).toBeNull();
+    expect(temporal(paths)).toEqual([]);
+  });
+
   it("no_temporal_grant_no_icon_no_request", async () => {
     const { paths, source } = endpoint({ name: false, pm10: false, stationName: false });
     render(<EntityGrid config={configOf()} source={source} publicView />);
