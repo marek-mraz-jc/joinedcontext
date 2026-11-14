@@ -2,7 +2,7 @@
 scripted model on loopback, and production's widget as the reference.
 
    bins/jc/smoke/run assistant --base-url <url> --export <bundle> --out <dir>
-       [--model-stub-port <port>] [--log-file <jc.log>] [--prod-widget]
+       [--model-stub-port <port>] [--log-file <jc.log>] [--prod-widget] [--viz-origin <url>]
 
 1. prod: with --prod-widget one anonymous GET of production's widget page
    (https://assistant.smartcity.joinedcontext.com/d/data/widget, 200). Nothing else of prod is
@@ -16,6 +16,11 @@ scripted model on loopback, and production's widget as the reference.
    POST .../chat) of one public question the router sends to a granted Endpoint answers with a
    data table of the routed type and the stub's answer; the same question routed to a closed
    Endpoint of the deployment's project reads nothing of it; a chat from a foreign Origin is 403.
+4. charts (T-6884), with --viz-origin (the deployment's `https://viz.{domain}`): each anonymous
+   deployment's config names that renderer and its widget page frames that origin alone; with the
+   stub, a data question on a granted Endpoint whose table has a label and a number column answers
+   with exactly one `visualization` event (the stub asks for the chart as a model would). Without
+   --viz-origin, or without the stub (no valid model key is ever used here), the rows are named skips.
 
 The module is off without the embedding model and ONNX Runtime (JC_ASSISTANT_MODEL_DIR,
 ORT_DYLIB_PATH: scripts/ci/e5-small.sh and the onnxruntime library), [assistant.database] or the
@@ -144,6 +149,29 @@ class Targets:
         return None, "no closed Endpoint with exported rows in the project", None, None
 
 
+def frame_sources(csp: str) -> list[str]:
+    """The sources of a page policy's `frame-src`, empty when it has none."""
+    for d in csp.split(";"):
+        parts = d.split()
+        if parts and parts[0] == "frame-src":
+            return parts[1:]
+    return []
+
+
+def chart_columns(table: dict):
+    """(label, value) columns of a data table a bar chart can draw: text labels and numbers in
+    every row, at least three rows (the renderer's minimum); None when it has none."""
+    columns, rows = table.get("columns") or [], table.get("rows") or []
+    if len(rows) < 3:
+        return None
+    def every(i, kind):
+        return all(isinstance(r, list) and i < len(r) and isinstance(r[i], kind) and not isinstance(r[i], bool)
+                   for r in rows)
+    label = next((c for i, c in enumerate(columns) if every(i, str)), None)
+    value = next((c for i, c in enumerate(columns) if every(i, (int, float))), None)
+    return (label, value) if label and value else None
+
+
 def told(evs) -> str:
     """What the error and tool events said, for a failing row (the cause, not only the names)."""
     said = [f"{n}: {json.dumps(x, ensure_ascii=False)[:160]}" for n, x in evs if n in ("error", "tool")]
@@ -156,6 +184,7 @@ class Suite:
         self.http = Http(a.base_url, timeout=a.timeout)
         self.r = Results("assistant", a.base_url)
         self.off = None  # why the module is off, when it is
+        self.read = {}  # publicId -> (router name, Endpoint, type, first table) of the granted question
 
     # ------------------------------------------------------------ 1. prod
 
@@ -228,6 +257,23 @@ class Suite:
                     ok, want = st == 404, f"404 (channel {d['channel']} is not anonymous)"
                 self.r.check(f"page.{d['publicId']}.{rid}", t, f"GET {path}", want, f"{st} {short(body, 80)}", ok,
                              f"channel {d['channel']}")
+            if served:
+                self.viz_pages(d, pid, t)
+
+    def viz_pages(self, d: dict, pid: str, t: str):
+        """The renderer a deployment's widget frames: the one --viz-origin, nothing else."""
+        want = getattr(self.a, "viz_origin", None)
+        call = f"GET /api/v1/d/{pid}/config, /d/{pid}/widget"
+        if not want:
+            self.r.skip(f"page.{d['publicId']}.viz", t, call, "config viz and frame-src name the viz origin",
+                        "no --viz-origin: the deployment's https://viz.{domain} is not known to this run")
+            return
+        _, _, raw = self.http.call("GET", f"/api/v1/d/{pid}/config")
+        named = (as_json(raw) or {}).get("viz")
+        _, h, _ = self.http.call("GET", f"/d/{pid}/widget")
+        frames = frame_sources(h.get("content-security-policy", ""))
+        self.r.check(f"page.{d['publicId']}.viz", t, call, f"config viz {want}; frame-src {want} alone",
+                     f"config viz {named}; frame-src {frames}", named == want and frames == [want])
 
     # ------------------------------------------------------------ 3. chat
 
@@ -263,7 +309,7 @@ class Suite:
             why = f"assistant module off: {self.off}" if self.off else \
                 "no --model-stub-port: jc's JC_MODEL_BASE must name the suite's stub (never a real model key)"
             for d in anonymous:
-                for rid in ("granted", "closed-refused", "foreign-origin"):
+                for rid in ("granted", "closed-refused", "foreign-origin", "visualization"):
                     if self.off:
                         self.skip_or_fail(f"chat.{d['publicId']}.{rid}", f"{d['project']}/{d['name']}",
                                           f"POST /api/v1/d/{d['publicId']}/chat", rid)
@@ -291,6 +337,7 @@ class Suite:
                       and ex.short_type(str(x.get("type", ""))) == st and x.get("rows")]
             answer = next((x.get("text") for n, x in evs if n == "answer" and isinstance(x, dict)), None)
             ok = code == 200 and bool(tables) and answer == modelstub.ANSWER
+            self.read[d["publicId"]] = (name, e, st, tables[0] if tables else None)
             names = sorted({n for n, _ in evs})
             self.r.check(f"chat.{d['publicId']}.granted", t, f"{call}: {q} (routed to {', '.join(stub.routed) or name})",
                          f"200, a data table of {st}, the stub's answer",
@@ -312,6 +359,7 @@ class Suite:
                          "200 and done, the route and an answer asked of the model, no data table, the sample row never reaches it",
                          f"{code}; model asked: {asked}; {len(read)} table(s); sample in a model call: {leaked}"
                          + ("" if evs else f"; {raw}") + told(evs), ok, f"Endpoint {e.slug}")
+        self.chart(stub, d, pid, t, call)
         tok, why = self.visitor(pid)
         if not tok:
             self.r.check(f"chat.{d['publicId']}.foreign-origin", t, call, "403", why, False)
@@ -320,6 +368,32 @@ class Suite:
                                       headers={"X-JC-Visitor": tok, "Origin": FOREIGN_ORIGIN})
         self.r.check(f"chat.{d['publicId']}.foreign-origin", t, f"{call} Origin {FOREIGN_ORIGIN}", "403",
                      f"{code} {short(raw, 80)}", code == 403)
+
+    def chart(self, stub, d, pid, t, call):
+        """T-6884: a data question answers with one `visualization` event when the deployment has
+        a renderer; the stub asks for a bar chart of the granted table, as a model would."""
+        rid, want = f"chat.{d['publicId']}.visualization", "200, exactly one visualization event, the stub's answer"
+        if not getattr(self.a, "viz_origin", None):
+            self.r.skip(rid, t, call, want, "no --viz-origin: the deployment's https://viz.{domain} is not known to this run")
+            return
+        name, e, st, table = self.read.get(d["publicId"], (None, None, None, None))
+        cols = chart_columns(table) if table else None
+        if not name or not cols:
+            self.r.skip(rid, t, call, want, "no granted table with a text and a number column in three rows or more")
+            return
+        q = f"Show {st} {cols[1]} by {cols[0]} as a chart. (smoke {secrets.token_hex(3)})"
+        stub.chart({"kind": "bar", "label": cols[0], "value": cols[1], "title": f"{st} {cols[1]}"[:80]})
+        try:
+            code, evs, raw = self.ask(stub, pid, name, st, q, pick=True)
+        finally:
+            stub.chart(None)
+        shown = [x for n, x in evs if n == "visualization"]
+        answer = next((x.get("text") for n, x in evs if n == "answer" and isinstance(x, dict)), None)
+        ok = code == 200 and len(shown) == 1 and isinstance(shown[0], dict) and bool(shown[0].get("spec")) \
+            and answer == modelstub.ANSWER
+        self.r.check(rid, t, f"{call}: {q} (routed to {', '.join(stub.routed) or name})", want,
+                     f"{code}; {len(shown)} visualization event(s); answer {'ok' if answer == modelstub.ANSWER else answer!r}"
+                     + ("" if evs else f"; {raw}") + told(evs), ok, f"Endpoint {e.slug}; renderer {self.a.viz_origin}")
 
     def run(self):
         self.prod()
@@ -339,6 +413,7 @@ def main(argv=None):
     p.add_argument("--kept-component", action="store_true",
                    help="the assistant is a kept component here (the docker rehearsal): a check the module being off\n"
                         "prevents is a named skip 'kept component', never a failure")
+    p.add_argument("--viz-origin", help="the deployment's chart renderer, https://viz.{domain} (T-6884)")
     p.add_argument("--prod-widget", action="store_true", help=f"GET {PROD_WIDGET} once (anonymous)")
     p.add_argument("--timeout", type=float, default=120)
     p.add_argument("--cache", default=str(Path.home() / ".cache" / "jc-smoke"))

@@ -49,6 +49,7 @@ const DEFAULT_MODEL_PROVIDER: &str = "openai-compatible";
 /// | `JC_ASSISTANT_TOKEN_URL`, `_CLIENT_ID`, `_CLIENT_SECRET_FILE` | kaisatsu, client `jc-assistant` |
 /// | `JC_ASSISTANT_PORTAL_URL`, `_ORG_DOMAIN` | the Portal's mount |
 /// | `JC_ASSISTANT_PUBLIC_ORIGIN` | the assistant's own mount |
+/// | `JC_ASSISTANT_VIZ_URL` | viz's mount, when it is `https://viz.{domain}` (the charts, T-6884) |
 /// | `JC_ASSISTANT_REPO_DIR`, `_PROJECTS_DIR`, `_ASSEMBLY_DIR` | the gateway's shako checkout |
 /// | `JC_ASSISTANT_PROXY_URL` | the proxy's loopback listener, when `jc` runs it |
 /// | `JC_ASSISTANT_LLM` | [`DEFAULT_LLM`] |
@@ -107,6 +108,14 @@ pub fn vars(
             .map(|base| crate::provision::domain(Some(&base))),
     );
     put("JC_ASSISTANT_PUBLIC_ORIGIN", origin(Module::Assistant));
+    // The chart renderer the widget frames (T-6884): only an origin the assistant itself accepts
+    // and the widget frames (`https://viz.{domain}`, no port); viz under a path, on http or off
+    // leaves the charts off, as before.
+    put(
+        "JC_ASSISTANT_VIZ_URL",
+        origin(Module::Viz)
+            .filter(|url| assistant::service::viz_url(url).is_ok_and(|viz| viz.port().is_none())),
+    );
     if siblings.get(Module::Gateway).is_some() {
         let work = super::gateway::work_dir(setup);
         put(
@@ -592,6 +601,131 @@ mod tests {
         assert_eq!(
             read("JC_ASSISTANT_ORG_DOMAIN").as_deref(),
             Some("city.example")
+        );
+    }
+
+    /// T-6884: a host-mounted viz is the chart renderer the public assistant's data answers draw
+    /// in: the setting passes the assistant's own check, the chat gets it, and the widget page may
+    /// frame that one origin and nothing else.
+    #[test]
+    fn the_assistant_gets_the_viz_origin_from_the_viz_sibling() {
+        let siblings = Siblings::new(
+            &crate::siblings::tests::host_mode_plans(),
+            "127.0.0.1:8443".parse().unwrap(),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(dir.path(), &Module::ALL, &BTreeMap::new()).unwrap();
+        let filled = vars(
+            &siblings,
+            &setup,
+            Some("127.0.0.1:4100".parse().unwrap()),
+            None,
+        );
+        assert_eq!(filled["JC_ASSISTANT_VIZ_URL"], "https://viz.smartcity.test");
+        let none = |_: &str| None;
+        let config = assistant::host::chat_config(
+            &lookup(&none, &filled),
+            jc_core::ClientCredential::Secret(jc_core::Secret::new("not-a-secret".to_owned())),
+        )
+        .unwrap();
+        let viz = config.viz.expect("the chat gets the renderer");
+        assert_eq!(viz.as_str(), "https://viz.smartcity.test/");
+        assert_eq!(assistant::chat::viz::domain(&viz), Some("smartcity.test"));
+    }
+
+    /// T-6884: the widget page of a jc deployment frames the viz sibling's origin alone.
+    #[test]
+    fn the_widget_page_frames_only_the_viz_origin() {
+        let siblings = Siblings::new(
+            &crate::siblings::tests::host_mode_plans(),
+            "127.0.0.1:8443".parse().unwrap(),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(dir.path(), &Module::ALL, &BTreeMap::new()).unwrap();
+        let filled = vars(&siblings, &setup, None, None);
+        let viz = url::Url::parse(&filled["JC_ASSISTANT_VIZ_URL"]).unwrap();
+        let deployment = assistant::worker::Deployment {
+            project: "smartcity".into(),
+            name: "verejny".into(),
+            spec: serde_json::from_value(serde_json::json!({
+                "publicId": "data", "channel": "public", "sources": ["web"],
+                "allowedOrigins": ["https://smartcity.test"],
+            }))
+            .unwrap(),
+        };
+        let policy = assistant::chat::widget::policy(&deployment, Some(&viz));
+        let frames: Vec<&str> = policy
+            .split(';')
+            .map(str::trim)
+            .filter(|d| d.starts_with("frame-src"))
+            .collect();
+        assert_eq!(frames, ["frame-src https://viz.smartcity.test"], "{policy}");
+        assert!(policy.contains("default-src 'none'"), "{policy}");
+    }
+
+    /// T-6884: viz under a path (slug mode), on http or not mounted gives the assistant no
+    /// renderer, so its data answers stay text and tables, as before.
+    #[test]
+    fn no_viz_module_sets_no_viz_url() {
+        let (_cfg, slug, setup, _d) = fixture();
+        assert!(!vars(&slug, &setup, None, None).contains_key("JC_ASSISTANT_VIZ_URL"));
+        let without = crate::app::plan_mounts(
+            &Config::merge(
+                Cli {
+                    role: Some("kaisatsu,gateway,portal,assistant".into()),
+                    base_host: Some("smartcity.test".into()),
+                    mode: Some(crate::config::MountMode::Host),
+                    ..Cli::default()
+                },
+                FileConfig::default(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let siblings = Siblings::new(&without, "127.0.0.1:8443".parse().unwrap());
+        assert!(siblings.get(Module::Viz).is_none());
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(dir.path(), &Module::ALL, &BTreeMap::new()).unwrap();
+        assert!(!vars(&siblings, &setup, None, None).contains_key("JC_ASSISTANT_VIZ_URL"));
+        let http = crate::app::plan_mounts(
+            &Config::merge(
+                Cli {
+                    role: Some("all".into()),
+                    base_host: Some("smartcity.test".into()),
+                    mode: Some(crate::config::MountMode::Host),
+                    scheme: Some("http".into()),
+                    ..Cli::default()
+                },
+                FileConfig::default(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let siblings = Siblings::new(&http, "127.0.0.1:8443".parse().unwrap());
+        assert!(siblings.get(Module::Viz).is_some());
+        assert!(!vars(&siblings, &setup, None, None).contains_key("JC_ASSISTANT_VIZ_URL"));
+    }
+
+    /// T-6884: an operator's `JC_ASSISTANT_VIZ_URL` wins over the sibling's.
+    #[test]
+    fn the_environment_wins_over_the_sibling() {
+        let siblings = Siblings::new(
+            &crate::siblings::tests::host_mode_plans(),
+            "127.0.0.1:8443".parse().unwrap(),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(dir.path(), &Module::ALL, &BTreeMap::new()).unwrap();
+        let filled = vars(&siblings, &setup, None, None);
+        let env =
+            |k: &str| (k == "JC_ASSISTANT_VIZ_URL").then(|| "https://viz.other.test".to_owned());
+        assert_eq!(
+            lookup(&env, &filled)("JC_ASSISTANT_VIZ_URL").as_deref(),
+            Some("https://viz.other.test")
+        );
+        let blank = |k: &str| (k == "JC_ASSISTANT_VIZ_URL").then(|| " ".to_owned());
+        assert_eq!(
+            lookup(&blank, &filled)("JC_ASSISTANT_VIZ_URL").as_deref(),
+            Some("https://viz.smartcity.test")
         );
     }
 

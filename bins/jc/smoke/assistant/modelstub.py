@@ -7,7 +7,9 @@ POST /chat/completions (and /v1/chat/completions) answers by what the call is to
     `pick` each read names the Endpoint as the router's catalogue lists it (the hinted one when
     listed, else the first that lists the type), as a model reading the catalogue would,
   - the follow-up judge ("You check whether the passages"): the passages answer,
-  - any other call (the answer): ANSWER, streamed when the call asks for a stream.
+  - any other call (the answer): ANSWER, streamed when the call asks for a stream; with
+    `chart(args)` set and the chart tool offered, first one `show_visualization` call of those
+    arguments on the answer's first table (the number the tool's refusal names, when it is not 1).
 Every request body is kept in `calls` (the suite reads what reached the model). No key is
 checked: the key file the proxy holds is a dummy."""
 
@@ -21,6 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 ROUTER = "You prepare the searches"
 JUDGE = "You check whether the passages"
 ANSWER = "Smoke answer from the data read [1]."
+CHART_TOOL = "show_visualization"
 
 
 class Stub:
@@ -30,6 +33,7 @@ class Stub:
         self.route: dict = {"route": "direct", "lang": "en", "queries": [], "data": [], "followups": []}
         self.pick = False
         self.routed: list[str] = []
+        self.charted: dict | None = None
         stub = self
 
         class H(BaseHTTPRequestHandler):
@@ -60,6 +64,33 @@ class Stub:
         with self.lock:
             self.route, self.pick, self.routed = route, pick, []
             self.calls = []
+
+    def chart(self, args: dict | None) -> None:
+        """`show_visualization` arguments (kind, label, value, title) the next answers call once."""
+        with self.lock:
+            self.charted = args
+
+    def chart_call(self, body: dict) -> dict | None:
+        """The chart call this answer call makes, or None: only when the tool is offered, before
+        the call's own result; a refusal naming the tables retries once on the first it names."""
+        offered = any((t.get("function") or {}).get("name") == CHART_TOOL for t in body.get("tools") or [])
+        with self.lock:
+            args = dict(self.charted) if self.charted else None
+        if not offered or not args:
+            return None
+        results = [m for m in body.get("messages") or [] if m.get("role") == "tool"]
+        if not results:
+            n = 1
+        elif len(results) == 1 and "no table" in str(results[0].get("content")):
+            numbers = re.findall(r"\b\d+\b", str(results[0].get("content")).split("no table", 1)[1])[1:]
+            if not numbers:
+                return None
+            n = int(numbers[0])
+        else:
+            return None
+        args["data"] = n
+        return {"id": f"chart{len(results)}", "type": "function",
+                "function": {"name": CHART_TOOL, "arguments": json.dumps(args)}}
 
     @staticmethod
     def catalogue(told: str) -> list[tuple[str, list[str]]]:
@@ -100,20 +131,33 @@ class Stub:
             text = json.dumps({"answers": True, "missing": "", "queries": []})
         else:
             text = ANSWER
+            call = self.chart_call(body)
+            if call:
+                return self.send(h, body, None, call)
+        self.send(h, body, text, None)
+
+    @staticmethod
+    def send(h, body: dict, text: str | None, call: dict | None) -> None:
         usage = {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110}
         if body.get("stream"):
             h.send_response(200)
             h.send_header("content-type", "text/event-stream")
             h.end_headers()
-            for chunk in ({"choices": [{"index": 0, "delta": {"role": "assistant", "content": text}}]},
-                          {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+            delta = {"role": "assistant", "content": text} if call is None else \
+                {"role": "assistant", "tool_calls": [dict(call, index=0)]}
+            for chunk in ({"choices": [{"index": 0, "delta": delta}]},
+                          {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop" if call is None else "tool_calls"}]},
                           {"choices": [], "usage": usage}):
                 h.wfile.write(b"data: " + json.dumps(chunk).encode() + b"\n\n")
             h.wfile.write(b"data: [DONE]\n\n")
             return
+        message = {"role": "assistant", "content": text}
+        if call is not None:
+            message["tool_calls"] = [call]
         raw = json.dumps({"id": "smoke", "object": "chat.completion", "model": body.get("model", "stub"),
-                          "choices": [{"index": 0, "message": {"role": "assistant", "content": text},
-                                       "finish_reason": "stop"}], "usage": usage}).encode()
+                          "choices": [{"index": 0, "message": message,
+                                       "finish_reason": "stop" if call is None else "tool_calls"}],
+                          "usage": usage}).encode()
         h.send_response(200)
         h.send_header("content-type", "application/json")
         h.send_header("content-length", str(len(raw)))
