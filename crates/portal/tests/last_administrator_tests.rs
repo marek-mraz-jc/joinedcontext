@@ -120,8 +120,9 @@ fn the_last_administrator_is_not_demoted_or_emptied_by_an_edit() {
     assert!(keeps_an_administrator(&mirror, AccessChange::Write(&handed_over)).is_ok());
 }
 
-/// PF-03: the one administrator binding names a group; emptying the group, or removing the
-/// person binding beside a binding to an empty group, leaves nobody to run the organization.
+/// PF-03: the one administrator binding names a group; emptying or removing the group, or
+/// removing the person binding beside a binding to an empty group, leaves nobody to run the
+/// organization.
 #[test]
 fn the_administrators_group_is_not_emptied() {
     let group = |members: Value| {
@@ -151,6 +152,8 @@ fn the_administrators_group_is_not_emptied() {
     ));
     let handed_over = group(json!([{ "user": "bo@hel.fi" }]));
     assert!(keeps_an_administrator(&mirror, AccessChange::Write(&handed_over)).is_ok());
+    // Removing the group itself leaves its bindings naming nobody, as emptying it does.
+    refused(keeps_an_administrator(&mirror, remove("Group", "admins")));
 
     let emptied = organization(&[("admin", "org-admin")]);
     emptied.upsert(envelope(

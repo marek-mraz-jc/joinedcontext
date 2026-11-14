@@ -1757,6 +1757,11 @@ pub fn keeps_an_administrator_after(
         };
         match written {
             Some(spec) => table.insert(name.to_owned(), spec),
+            // A removed Group stays known as one with no members: the bindings naming it then
+            // match nobody, while a group that never had a manifest still counts (legacy).
+            None if kind == "Group" => {
+                table.insert(name.to_owned(), Value::Object(Default::default()))
+            }
             None => table.remove(name),
         };
     }
