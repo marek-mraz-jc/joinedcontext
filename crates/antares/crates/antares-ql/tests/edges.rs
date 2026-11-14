@@ -32,7 +32,10 @@ fn a_quote_inside_a_pattern_stays_in_the_one_term() {
     let ngsild_ql::QNode::Cmp { value, .. } = &node else {
         panic!("one term, got {node:?}");
     };
-    assert_eq!(value, &ngsild_ql::QValue::Str(r"x\x22;secret>50;a~=\x22y".into()));
+    assert_eq!(
+        value,
+        &ngsild_ql::QValue::Str(r"x\x22;secret>50;a~=\x22y".into())
+    );
     let re = ngsild_ql::regex::compile(r"x\x22;secret>50;a~=\x22y").unwrap();
     assert!(re.is_match(r#"x";secret>50;a~="y"#));
     assert_eq!(parse_q(&node.to_string()).unwrap(), node);
