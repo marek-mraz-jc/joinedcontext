@@ -760,7 +760,7 @@ fn read_entities(body: &[u8]) -> Vec<String> {
 }
 
 /// Collects the id of `entity` and of every Entity inlined in its attributes.
-fn inlined(entity: &Value, ids: &mut Vec<String>) {
+pub(crate) fn inlined(entity: &Value, ids: &mut Vec<String>) {
     let Some(members) = entity.as_object() else {
         return;
     };

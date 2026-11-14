@@ -463,5 +463,2944 @@
   },
   "compare": "failure",
   "note": "this workspace's Part::as_structured reports serde_json's parse error, not Go encoding/json's (chyby.md)"
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 0",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - -\n\t\t<2>1 - - - - - -",
+  "expected": {
+   "text": "ERROR: parsing error [col 16]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 1",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - \nhostname - - - -",
+  "expected": {
+   "text": "ERROR: expecting an hostname (from 1 to max 255 US-ASCII characters) or a nil value [col 7]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 2",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - host\nname - - - -",
+  "expected": {
+   "text": "ERROR: expecting an hostname (from 1 to max 255 US-ASCII characters) or a nil value [col 11]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 3",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - \nan - - -",
+  "expected": {
+   "text": "ERROR: expecting an app-name (from 1 to max 48 US-ASCII characters) or a nil value [col 9]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 4",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - a\nn - - -",
+  "expected": {
+   "text": "ERROR: expecting an app-name (from 1 to max 48 US-ASCII characters) or a nil value [col 10]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 5",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - \npid - -",
+  "expected": {
+   "text": "ERROR: expecting a procid (from 1 to max 128 US-ASCII characters) or a nil value [col 11]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 6",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - p\nid - -",
+  "expected": {
+   "text": "ERROR: expecting a procid (from 1 to max 128 US-ASCII characters) or a nil value [col 12]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 7",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - \nmid -",
+  "expected": {
+   "text": "ERROR: expecting a msgid (from 1 to max 32 US-ASCII characters) or a nil value [col 13]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 8",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - m\nid -",
+  "expected": {
+   "text": "ERROR: expecting a msgid (from 1 to max 32 US-ASCII characters) or a nil value [col 14]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 9",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "(190>122 2018-11-22",
+  "expected": {
+   "text": "ERROR: expecting a priority value within angle brackets [col 0]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 10",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<87]123 -",
+  "expected": {
+   "text": "ERROR: expecting a priority value in the range 1-191 or equal to 0 [col 3]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 11",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "122 - - - - - -",
+  "expected": {
+   "text": "ERROR: expecting a priority value within angle brackets [col 0]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 12",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<>122 2018-11-22",
+  "expected": {
+   "text": "ERROR: expecting a priority value in the range 1-191 or equal to 0 [col 1]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 13",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<19000021>122 2018-11-22",
+  "expected": {
+   "text": "ERROR: expecting a priority value in the range 1-191 or equal to 0 [col 4]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 14",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<192>122 2018-11-22",
+  "expected": {
+   "text": "ERROR: expecting a priority value in the range 1-191 or equal to 0 [col 3]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 15",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<002>122 2018-11-22",
+  "expected": {
+   "text": "ERROR: expecting a priority value in the range 1-191 or equal to 0 [col 2]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 16",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<aaa>122 2018-11-22",
+  "expected": {
+   "text": "ERROR: expecting a priority value in the range 1-191 or equal to 0 [col 1]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 17",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<100> 2018-11-22",
+  "expected": {
+   "text": "ERROR: expecting a version value in the range 1-999 [col 5]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 18",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<103>0 2018-11-22",
+  "expected": {
+   "text": "ERROR: expecting a version value in the range 1-999 [col 5]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 19",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>1000 2018-11-22",
+  "expected": {
+   "text": "ERROR: expecting a version value in the range 1-999 [col 8]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 20",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>2 ",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 5]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 21",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1",
+  "expected": {
+   "text": "ERROR: parsing error [col 4]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 22",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<3>22",
+  "expected": {
+   "text": "ERROR: expecting a version value in the range 1-999 [col 5]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 23",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>3a",
+  "expected": {
+   "text": "ERROR: parsing error [col 4]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 24",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>4a ",
+  "expected": {
+   "text": "ERROR: parsing error [col 4]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 25",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<102>abc 2018-11-22",
+  "expected": {
+   "text": "ERROR: expecting a version value in the range 1-999 [col 5]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 26",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>5 A",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 5]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 27",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>1 2006-01-02t15:04:05Z - - - - -",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 16]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 28",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>2 2006-01-02T15:04:05z - - - - -",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 25]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 29",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>123 2",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 10]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 30",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>124 20",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 11]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 31",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>125 201",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 12]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 32",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>125 2013",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 13]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 33",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>126 2013-",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 14]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 34",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>122 201-11-22",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 12]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 35",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>189 0-11-22",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 10]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 36",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>121 2018-112-22",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 16]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 37",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>123 2018-02-32",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 18]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 38",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>124 2018-02-01:25:15Z",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 19]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 39",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>125 2003-09-29T22:99:16Z",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 23]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 40",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>126 2003-09-29T22:09:99Z",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 26]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 41",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>127 2003-09-29T22:09:01.000000000009Z",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 35]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 42",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>128 2003-09-29T22:09:01.Z",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 29]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 43",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>28 2003-09-29T22:09:01.",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 28]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 44",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>129 2003-09-29T22:09:01A",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 28]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 45",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>130 2003-08-24T05:14:15.000003-24:00",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 37]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 46",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>131 2003-08-24T05:14:15.000003-60:00",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 36]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 47",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>132 2003-08-24T05:14:15.000003-07:61",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 39]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 48",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>1 2006-01-02T15:04:05Z+07:00 - - - - -",
+  "expected": {
+   "text": "ERROR: parsing error [col 26]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 49",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>11 2003-09-31T22:14:15.003Z",
+  "expected": {
+   "text": "ERROR: parsing time \"2003-09-31T22:14:15.003Z\": day out of range [col 32]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 50",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>12 2003-09-31T22:14:16Z",
+  "expected": {
+   "text": "ERROR: parsing time \"2003-09-31T22:14:16Z\": day out of range [col 28]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 51",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<101>12 2018-02-29T22:14:16+01:00",
+  "expected": {
+   "text": "ERROR: parsing time \"2018-02-29T22:14:16+01:00\": day out of range [col 33]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 52",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - abcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcX - - - -",
+  "expected": {
+   "text": "ERROR: expecting an hostname (from 1 to max 255 US-ASCII characters) or a nil value [col 262]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 53",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 2003-09-29T22:14:16Z abcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcX - - - -",
+  "expected": {
+   "text": "ERROR: expecting an hostname (from 1 to max 255 US-ASCII characters) or a nil value [col 281]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 54",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - abcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefX - - -",
+  "expected": {
+   "text": "ERROR: expecting an app-name (from 1 to max 48 US-ASCII characters) or a nil value [col 57]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 55",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 2003-09-29T22:14:16Z - abcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefX - - -",
+  "expected": {
+   "text": "ERROR: expecting an app-name (from 1 to max 48 US-ASCII characters) or a nil value [col 76]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 56",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - host abcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefX - - -",
+  "expected": {
+   "text": "ERROR: expecting an app-name (from 1 to max 48 US-ASCII characters) or a nil value [col 60]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 57",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 2004-09-29T22:14:16Z host abcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefX - - -",
+  "expected": {
+   "text": "ERROR: expecting an app-name (from 1 to max 48 US-ASCII characters) or a nil value [col 79]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 58",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - abcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabX - -",
+  "expected": {
+   "text": "ERROR: expecting a procid (from 1 to max 128 US-ASCII characters) or a nil value [col 139]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 59",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - abcdefghilmnopqrstuvzabcdefghilmX -",
+  "expected": {
+   "text": "ERROR: expecting a msgid (from 1 to max 32 US-ASCII characters) or a nil value [col 45]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 60",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 -   - - - -",
+  "expected": {
+   "text": "ERROR: expecting an hostname (from 1 to max 255 US-ASCII characters) or a nil value [col 7]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 61",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - -   - - -",
+  "expected": {
+   "text": "ERROR: expecting an app-name (from 1 to max 48 US-ASCII characters) or a nil value [col 9]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 62",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - -   - -",
+  "expected": {
+   "text": "ERROR: expecting a procid (from 1 to max 128 US-ASCII characters) or a nil value [col 11]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 63",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - -   -",
+  "expected": {
+   "text": "ERROR: expecting a msgid (from 1 to max 32 US-ASCII characters) or a nil value [col 13]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 64",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - X",
+  "expected": {
+   "text": "ERROR: expecting a structured data section containing one or more elements (`[id( key=\"value\")*]+`) or a nil value [col 15]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 65",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - []",
+  "expected": {
+   "text": "ERROR: expecting a structured data element id (from 1 to max 32 US-ASCII characters; except `=`, ` `, `]`, and `\"` [col 16]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 66",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [ ]",
+  "expected": {
+   "text": "ERROR: expecting a structured data element id (from 1 to max 32 US-ASCII characters; except `=`, ` `, `]`, and `\"` [col 16]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 67",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [=]",
+  "expected": {
+   "text": "ERROR: expecting a structured data element id (from 1 to max 32 US-ASCII characters; except `=`, ` `, `]`, and `\"` [col 16]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 68",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - []]",
+  "expected": {
+   "text": "ERROR: expecting a structured data element id (from 1 to max 32 US-ASCII characters; except `=`, ` `, `]`, and `\"` [col 16]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 69",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<6>1 - - - - - [\"]",
+  "expected": {
+   "text": "ERROR: expecting a structured data element id (from 1 to max 32 US-ASCII characters; except `=`, ` `, `]`, and `\"` [col 16]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 70",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [abcdefghilmnopqrstuvzabcdefghilmX]",
+  "expected": {
+   "text": "ERROR: expecting a structured data element id (from 1 to max 32 US-ASCII characters; except `=`, ` `, `]`, and `\"` [col 48]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 71",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [id abcdefghilmnopqrstuvzabcdefghilmX=\"val\"]",
+  "expected": {
+   "text": "ERROR: expecting a structured data parameter (`key=\"value\"`, both part from 1 to max 32 US-ASCII characters; key cannot contain `=`, ` `, `]`, and `\"`, while value cannot contain `]`, backslash, and `\"` unless escaped) [col 51]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 72",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<10>1 - - - - - -",
+  "expected": {
+   "text": "{\"facility\":1,\"priority\":10,\"severity\":2,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 73",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<0>1 - - - - - -",
+  "expected": {
+   "text": "{\"facility\":0,\"priority\":0,\"severity\":0,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 74",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>1 2016-02-21T04:32:57+00:00 web1 someservice - - [origin x-service=\"someservice\"][meta sequenceId=\"14125553\"] 127.0.0.1 - - 1456029177 \"GET /v1/ok HTTP/1.1\" 200 145 \"-\" \"hacheck 0.9.0\" 24306 127.0.0.1:40124 575",
+  "expected": {
+   "text": "{\"appname\":\"someservice\",\"facility\":3,\"hostname\":\"web1\",\"message\":\"127.0.0.1 - - 1456029177 \\\"GET /v1/ok HTTP/1.1\\\" 200 145 \\\"-\\\" \\\"hacheck 0.9.0\\\" 24306 127.0.0.1:40124 575\",\"priority\":29,\"severity\":5,\"structureddata\":{\"meta\":{\"sequenceId\":\"14125553\"},\"origin\":{\"x-service\":\"someservice\"}},\"timestamp\":\"2016-02-21T04:32:57Z\",\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 75",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>100 - host-name - - - -",
+  "expected": {
+   "text": "{\"facility\":0,\"hostname\":\"host-name\",\"priority\":1,\"severity\":1,\"version\":100}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 76",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>101 - host-name app-name - - -",
+  "expected": {
+   "text": "{\"appname\":\"app-name\",\"facility\":0,\"hostname\":\"host-name\",\"priority\":1,\"severity\":1,\"version\":101}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 77",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>102 - host-name app-name proc-id - -",
+  "expected": {
+   "text": "{\"appname\":\"app-name\",\"facility\":0,\"hostname\":\"host-name\",\"priority\":1,\"procid\":\"proc-id\",\"severity\":1,\"version\":102}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 78",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>103 - host-name app-name proc-id msg-id -",
+  "expected": {
+   "text": "{\"appname\":\"app-name\",\"facility\":0,\"hostname\":\"host-name\",\"msgid\":\"msg-id\",\"priority\":1,\"procid\":\"proc-id\",\"severity\":1,\"version\":103}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 79",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<191>999 2018-12-31T23:59:59.999999-23:59 abcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabc abcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdef abcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzab abcdefghilmnopqrstuvzabcdefghilm -",
+  "expected": {
+   "text": "{\"appname\":\"abcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdef\",\"facility\":23,\"hostname\":\"abcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabc\",\"msgid\":\"abcdefghilmnopqrstuvzabcdefghilm\",\"priority\":191,\"procid\":\"abcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzab\",\"severity\":7,\"timestamp\":\"2018-12-31T23:59:59.999999-23:59\",\"version\":999}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 80",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<191>999 2018-12-31T23:59:59.999999-23:59 abcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabc abcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdef abcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzab abcdefghilmnopqrstuvzabcdefghilm [an@id key1=\"val1\" key2=\"val2\"][another@id key1=\"val1\"] Some message \"GET\"",
+  "expected": {
+   "text": "{\"appname\":\"abcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdef\",\"facility\":23,\"hostname\":\"abcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabc\",\"message\":\"Some message \\\"GET\\\"\",\"msgid\":\"abcdefghilmnopqrstuvzabcdefghilm\",\"priority\":191,\"procid\":\"abcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzabcdefghilmnopqrstuvzab\",\"severity\":7,\"structureddata\":{\"an@id\":{\"key1\":\"val1\",\"key2\":\"val2\"},\"another@id\":{\"key1\":\"val1\"}},\"timestamp\":\"2018-12-31T23:59:59.999999-23:59\",\"version\":999}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 81",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<34>1 2003-10-11T22:14:15.003Z mymachine.example.com su - ID47 - BOM'su root' failed for lonvick on /dev/pts/8",
+  "expected": {
+   "text": "{\"appname\":\"su\",\"facility\":4,\"hostname\":\"mymachine.example.com\",\"message\":\"BOM'su root' failed for lonvick on /dev/pts/8\",\"msgid\":\"ID47\",\"priority\":34,\"severity\":2,\"timestamp\":\"2003-10-11T22:14:15.003Z\",\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 82",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<187>222 - mymachine.example.com su - ID47 - 'su root' failed for lonvick on /dev/pts/8",
+  "expected": {
+   "text": "{\"appname\":\"su\",\"facility\":23,\"hostname\":\"mymachine.example.com\",\"message\":\"'su root' failed for lonvick on /dev/pts/8\",\"msgid\":\"ID47\",\"priority\":187,\"severity\":3,\"version\":222}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 83",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<165>1 2003-08-24T05:14:15.000003-07:00 192.0.2.1 myproc 8710 - - %% Time to make the do-nuts.",
+  "expected": {
+   "text": "{\"appname\":\"myproc\",\"facility\":20,\"hostname\":\"192.0.2.1\",\"message\":\"%% Time to make the do-nuts.\",\"priority\":165,\"procid\":\"8710\",\"severity\":5,\"timestamp\":\"2003-08-24T05:14:15.000003-07:00\",\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 84",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<165>2 2003-08-24T05:14:15.000003-07:00 - - - - -",
+  "expected": {
+   "text": "{\"facility\":20,\"priority\":165,\"severity\":5,\"timestamp\":\"2003-08-24T05:14:15.000003-07:00\",\"version\":2}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 85",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<165>222 2003-08-24T05:14:15.000002-01:00 - - - - - ",
+  "expected": {
+   "text": "{\"facility\":20,\"priority\":165,\"severity\":5,\"timestamp\":\"2003-08-24T05:14:15.000002-01:00\",\"version\":222}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 86",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<78>5 2016-01-15T00:04:01+00:00 host1 CROND 10391 - [sdid] some_message",
+  "expected": {
+   "text": "{\"appname\":\"CROND\",\"facility\":9,\"hostname\":\"host1\",\"message\":\"some_message\",\"priority\":78,\"procid\":\"10391\",\"severity\":6,\"structureddata\":{\"sdid\":{}},\"timestamp\":\"2016-01-15T00:04:01Z\",\"version\":5}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 87",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<78>1 2016-01-15T00:04:01+00:00 host1 CROND 10391 - [sdid x=\"⌘\"] some_message",
+  "expected": {
+   "text": "{\"appname\":\"CROND\",\"facility\":9,\"hostname\":\"host1\",\"message\":\"some_message\",\"priority\":78,\"procid\":\"10391\",\"severity\":6,\"structureddata\":{\"sdid\":{\"x\":\"⌘\"}},\"timestamp\":\"2016-01-15T00:04:01Z\",\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 88",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<78>2 2016-01-15T00:04:01+00:00 host1 CROND 10391 - [sdid x=\"hey \\\\u2318 hey\"] some_message",
+  "expected": {
+   "text": "{\"appname\":\"CROND\",\"facility\":9,\"hostname\":\"host1\",\"message\":\"some_message\",\"priority\":78,\"procid\":\"10391\",\"severity\":6,\"structureddata\":{\"sdid\":{\"x\":\"hey \\\\u2318 hey\"}},\"timestamp\":\"2016-01-15T00:04:01Z\",\"version\":2}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 89",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>50 2016-01-15T01:00:43Z hn S - - [meta es=\"\\\\valid\"] 127.0.0.1 - - 1452819643 \"GET\"",
+  "expected": {
+   "text": "{\"appname\":\"S\",\"facility\":3,\"hostname\":\"hn\",\"message\":\"127.0.0.1 - - 1452819643 \\\"GET\\\"\",\"priority\":29,\"severity\":5,\"structureddata\":{\"meta\":{\"es\":\"\\\\valid\"}},\"timestamp\":\"2016-01-15T01:00:43Z\",\"version\":50}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 90",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>52 2016-01-15T01:00:43Z hn S - - [meta one=\"\\\\one\" two=\"\\\\two\"] 127.0.0.1 - - 1452819643 \"GET\"",
+  "expected": {
+   "text": "{\"appname\":\"S\",\"facility\":3,\"hostname\":\"hn\",\"message\":\"127.0.0.1 - - 1452819643 \\\"GET\\\"\",\"priority\":29,\"severity\":5,\"structureddata\":{\"meta\":{\"one\":\"\\\\one\",\"two\":\"\\\\two\"}},\"timestamp\":\"2016-01-15T01:00:43Z\",\"version\":52}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 91",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>53 2016-01-15T01:00:43Z hn S - - [meta one=\"\\\\one\"][other two=\"\\\\two\" double=\"\\\\a\\\\b\"] 127.0.0.1 - - 1452819643 \"GET\"",
+  "expected": {
+   "text": "{\"appname\":\"S\",\"facility\":3,\"hostname\":\"hn\",\"message\":\"127.0.0.1 - - 1452819643 \\\"GET\\\"\",\"priority\":29,\"severity\":5,\"structureddata\":{\"meta\":{\"one\":\"\\\\one\"},\"other\":{\"double\":\"\\\\a\\\\b\",\"two\":\"\\\\two\"}},\"timestamp\":\"2016-01-15T01:00:43Z\",\"version\":53}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 92",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>51 2016-01-15T01:00:43Z hn S - - [meta es=\"\\\\double\\\\slash\"] 127.0.0.1 - - 1452819643 \"GET\"",
+  "expected": {
+   "text": "{\"appname\":\"S\",\"facility\":3,\"hostname\":\"hn\",\"message\":\"127.0.0.1 - - 1452819643 \\\"GET\\\"\",\"priority\":29,\"severity\":5,\"structureddata\":{\"meta\":{\"es\":\"\\\\double\\\\slash\"}},\"timestamp\":\"2016-01-15T01:00:43Z\",\"version\":51}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 93",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>54 2016-01-15T01:00:43Z hn S - - [meta es=\"in \\\\middle of the string\"] 127.0.0.1 - - 1452819643 \"GET\"",
+  "expected": {
+   "text": "{\"appname\":\"S\",\"facility\":3,\"hostname\":\"hn\",\"message\":\"127.0.0.1 - - 1452819643 \\\"GET\\\"\",\"priority\":29,\"severity\":5,\"structureddata\":{\"meta\":{\"es\":\"in \\\\middle of the string\"}},\"timestamp\":\"2016-01-15T01:00:43Z\",\"version\":54}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 94",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>55 2016-01-15T01:00:43Z hn S - - [meta es=\"at the \\\\end\"] 127.0.0.1 - - 1452819643 \"GET\"",
+  "expected": {
+   "text": "{\"appname\":\"S\",\"facility\":3,\"hostname\":\"hn\",\"message\":\"127.0.0.1 - - 1452819643 \\\"GET\\\"\",\"priority\":29,\"severity\":5,\"structureddata\":{\"meta\":{\"es\":\"at the \\\\end\"}},\"timestamp\":\"2016-01-15T01:00:43Z\",\"version\":55}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 95",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>50 2016-01-15T01:00:43Z hn S - - [meta es=\"\t5Ὂg̀9!℃ᾭGa b\"] 127.0.0.1 - - 1452819643 \"GET\"",
+  "expected": {
+   "text": "{\"appname\":\"S\",\"facility\":3,\"hostname\":\"hn\",\"message\":\"127.0.0.1 - - 1452819643 \\\"GET\\\"\",\"priority\":29,\"severity\":5,\"structureddata\":{\"meta\":{\"es\":\"\\t5Ὂg̀9!℃ᾭGa b\"}},\"timestamp\":\"2016-01-15T01:00:43Z\",\"version\":50}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 96",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>50 2016-01-15T01:00:43Z hn S - - [meta gr=\"κόσμε\" es=\"ñ\"][beta pr=\"₡\"] 𐌼 \"GET\"",
+  "expected": {
+   "text": "{\"appname\":\"S\",\"facility\":3,\"hostname\":\"hn\",\"message\":\"𐌼 \\\"GET\\\"\",\"priority\":29,\"severity\":5,\"structureddata\":{\"beta\":{\"pr\":\"₡\"},\"meta\":{\"es\":\"ñ\",\"gr\":\"κόσμε\"}},\"timestamp\":\"2016-01-15T01:00:43Z\",\"version\":50}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 97",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<165>3 2003-10-11T22:14:15.003Z example.com evnts - ID27 [exampleSDID@32473 iut=\"3\" eventSource=\"Application\" eventID=\"1011\"][examplePriority@32473 class=\"high\"]",
+  "expected": {
+   "text": "{\"appname\":\"evnts\",\"facility\":20,\"hostname\":\"example.com\",\"msgid\":\"ID27\",\"priority\":165,\"severity\":5,\"structureddata\":{\"examplePriority@32473\":{\"class\":\"high\"},\"exampleSDID@32473\":{\"eventID\":\"1011\",\"eventSource\":\"Application\",\"iut\":\"3\"}},\"timestamp\":\"2003-10-11T22:14:15.003Z\",\"version\":3}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 98",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<165>3 2003-10-11T22:14:15.003Z example.com evnts - ID27 [id1][id1]",
+  "expected": {
+   "text": "ERROR: duplicate structured data element id [col 66]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 99",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<165>3 2003-10-12T22:14:15.003Z example.com evnts - ID27 [dupe e=\"1\"][id1][dupe class=\"l\"]",
+  "expected": {
+   "text": "ERROR: duplicate structured data element id [col 79]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 100",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<165>4 2003-10-11T22:14:15.003Z mymachine.it e - 1 [ex@32473 iut=\"3\" eventSource=\"A\"] An application event log entry...",
+  "expected": {
+   "text": "{\"appname\":\"e\",\"facility\":20,\"hostname\":\"mymachine.it\",\"message\":\"An application event log entry...\",\"msgid\":\"1\",\"priority\":165,\"severity\":5,\"structureddata\":{\"ex@32473\":{\"eventSource\":\"A\",\"iut\":\"3\"}},\"timestamp\":\"2003-10-11T22:14:15.003Z\",\"version\":4}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 101",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>1 2016-01-15T01:00:43Z some-host-name SEKRETPROGRAM prg - [origin x-service=\"svcname\"][meta sequenceId=\"1\"] 127.0.0.1 - - 1452819643 \"GET\"",
+  "expected": {
+   "text": "{\"appname\":\"SEKRETPROGRAM\",\"facility\":3,\"hostname\":\"some-host-name\",\"message\":\"127.0.0.1 - - 1452819643 \\\"GET\\\"\",\"priority\":29,\"procid\":\"prg\",\"severity\":5,\"structureddata\":{\"meta\":{\"sequenceId\":\"1\"},\"origin\":{\"x-service\":\"svcname\"}},\"timestamp\":\"2016-01-15T01:00:43Z\",\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 102",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [id pk=\"\"]",
+  "expected": {
+   "text": "{\"facility\":0,\"priority\":1,\"severity\":1,\"structureddata\":{\"id\":{\"pk\":\"\"}},\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 103",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>2 2016-01-15T01:00:44Z some-host-name SEKRETPROGRAM prg - [meta escape=\"\\]\"] some \"mex\"",
+  "expected": {
+   "text": "{\"appname\":\"SEKRETPROGRAM\",\"facility\":3,\"hostname\":\"some-host-name\",\"message\":\"some \\\"mex\\\"\",\"priority\":29,\"procid\":\"prg\",\"severity\":5,\"structureddata\":{\"meta\":{\"escape\":\"]\"}},\"timestamp\":\"2016-01-15T01:00:44Z\",\"version\":2}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 104",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>2 2016-01-15T01:00:43Z some-host-name SEKRETPROGRAM prg - [meta escape=\"\\\\\"]",
+  "expected": {
+   "text": "{\"appname\":\"SEKRETPROGRAM\",\"facility\":3,\"hostname\":\"some-host-name\",\"priority\":29,\"procid\":\"prg\",\"severity\":5,\"structureddata\":{\"meta\":{\"escape\":\"\\\\\"}},\"timestamp\":\"2016-01-15T01:00:43Z\",\"version\":2}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 105",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>2 2016-01-15T01:00:43Z some-host-name SEKRETPROGRAM prg - [meta escape=\"\\\"\"]",
+  "expected": {
+   "text": "{\"appname\":\"SEKRETPROGRAM\",\"facility\":3,\"hostname\":\"some-host-name\",\"priority\":29,\"procid\":\"prg\",\"severity\":5,\"structureddata\":{\"meta\":{\"escape\":\"\\\"\"}},\"timestamp\":\"2016-01-15T01:00:43Z\",\"version\":2}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 106",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>2 2016-01-15T01:00:43Z some-host-name SEKRETPROGRAM prg - [meta escape=\"\\]\\\"\\\\\\\\\\]\\\"\"]",
+  "expected": {
+   "text": "{\"appname\":\"SEKRETPROGRAM\",\"facility\":3,\"hostname\":\"some-host-name\",\"priority\":29,\"procid\":\"prg\",\"severity\":5,\"structureddata\":{\"meta\":{\"escape\":\"]\\\"\\\\\\\\]\\\"\"}},\"timestamp\":\"2016-01-15T01:00:43Z\",\"version\":2}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 107",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>3 2016-01-15T01:00:43Z hn S - - [meta escape=\"]\"] 127.0.0.1 - - 1452819643 \"GET\"",
+  "expected": {
+   "text": "ERROR: expecting chars `]`, `\"`, and `\\` to be escaped within param value [col 50]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 108",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>5 2016-01-15T01:00:43Z hn S - - [meta escape=\"]q\"] 127.0.0.1 - - 1452819643 \"GET\"",
+  "expected": {
+   "text": "ERROR: expecting chars `]`, `\"`, and `\\` to be escaped within param value [col 50]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 109",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>4 2016-01-15T01:00:43Z hn S - - [meta escape=\"p]\"] 127.0.0.1 - - 1452819643 \"GET\"",
+  "expected": {
+   "text": "ERROR: expecting chars `]`, `\"`, and `\\` to be escaped within param value [col 51]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 110",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>4 2017-01-15T01:00:43Z hn S - - [meta escape=\"\"\"] 127.0.0.1 - - 1452819643 \"GET\"",
+  "expected": {
+   "text": "ERROR: expecting a structured data parameter (`key=\"value\"`, both part from 1 to max 32 US-ASCII characters; key cannot contain `=`, ` `, `]`, and `\"`, while value cannot contain `]`, backslash, and `\"` unless escaped) [col 51]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 111",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>6 2016-01-15T01:00:43Z hn S - - [meta escape=\"a\"\"] 127.0.0.1 - - 1452819643 \"GET\"",
+  "expected": {
+   "text": "ERROR: expecting a structured data parameter (`key=\"value\"`, both part from 1 to max 32 US-ASCII characters; key cannot contain `=`, ` `, `]`, and `\"`, while value cannot contain `]`, backslash, and `\"` unless escaped) [col 52]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 112",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>4 2018-01-15T01:00:43Z hn S - - [meta escape=\"\"b\"] 127.0.0.1 - - 1452819643 \"GET\"",
+  "expected": {
+   "text": "ERROR: expecting a structured data parameter (`key=\"value\"`, both part from 1 to max 32 US-ASCII characters; key cannot contain `=`, ` `, `]`, and `\"`, while value cannot contain `]`, backslash, and `\"` unless escaped) [col 51]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 113",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>5 2019-01-15T01:00:43Z hn S - - [meta escape=\"\\\"] 127.0.0.1 - - 1452819643 \"GET\"",
+  "expected": {
+   "text": "ERROR: expecting chars `]`, `\"`, and `\\` to be escaped within param value [col 52]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 114",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>7 2019-01-15T01:00:43Z hn S - - [meta escape=\"a\\\"] 127.0.0.1 - - 1452819643 \"GET\"",
+  "expected": {
+   "text": "ERROR: expecting chars `]`, `\"`, and `\\` to be escaped within param value [col 53]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 115",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<29>8 2016-01-15T01:00:43Z hn S - - [meta escape=\"\\n\"] 127.0.0.1 - - 1452819643 \"GET\"",
+  "expected": {
+   "text": "ERROR: expecting chars `]`, `\"`, and `\\` to be escaped within param value [col 51]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 116",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>8 - - - - - - ﻿",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"﻿\",\"priority\":1,\"severity\":1,\"version\":8}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 117",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - κόσμε",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"κόσμε\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 118",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - ",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 119",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - ñ",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"ñ\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 120",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - ₡",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"₡\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 121",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<3>1 - - - - - - ﻿ 𐌼",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"﻿ 𐌼\",\"priority\":3,\"severity\":3,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 122",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - Ȁ000",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"Ȁ000\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 123",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - 䀀000",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"䀀000\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 124",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - Đ000",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"Đ000\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 125",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - \r7FF",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"\\r7FF\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 126",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - யாமறிந்த மொழிகளிலே தமிழ்மொழி போல் இனிதாவது எங்கும் காணோம், பாமரராய் விலங்குகளாய், உலகனைத்தும் இகழ்ச்சிசொலப் பான்மை கெட்டு, நாமமது தமிழரெனக் கொண்டு இங்கு வாழ்ந்திடுதல் நன்றோ? சொல்லீர்! தேமதுரத் தமிழோசை உலகமெலாம் பரவும்வகை செய்தல் வேண்டும்.",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"யாமறிந்த மொழிகளிலே தமிழ்மொழி போல் இனிதாவது எங்கும் காணோம், பாமரராய் விலங்குகளாய், உலகனைத்தும் இகழ்ச்சிசொலப் பான்மை கெட்டு, நாமமது தமிழரெனக் கொண்டு இங்கு வாழ்ந்திடுதல் நன்றோ? சொல்லீர்! தேமதுரத் தமிழோசை உலகமெலாம் பரவும்வகை செய்தல் வேண்டும்.\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 127",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - Sôn bôn de magnà el véder, el me fa minga mal.",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"Sôn bôn de magnà el véder, el me fa minga mal.\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 128",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - Me posso magna' er vetro, e nun me fa male.",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"Me posso magna' er vetro, e nun me fa male.\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 129",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - ⠊⠀⠉⠁⠝⠀⠑⠁⠞⠀⠛⠇⠁⠎⠎⠀⠁⠝⠙⠀⠊⠞⠀⠙⠕⠑⠎⠝⠞⠀⠓⠥⠗⠞⠀⠍⠑",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"⠊⠀⠉⠁⠝⠀⠑⠁⠞⠀⠛⠇⠁⠎⠎⠀⠁⠝⠙⠀⠊⠞⠀⠙⠕⠑⠎⠝⠞⠀⠓⠥⠗⠞⠀⠍⠑\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 130",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - काचं शक्नोम्यत्तुम् । नोपहिनस्ति माम् ॥",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"काचं शक्नोम्यत्तुम् । नोपहिनस्ति माम् ॥\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 131",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - میں کانچ کھا سکتا ہوں اور مجھے تکلیف نہیں ہوتی ۔",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"میں کانچ کھا سکتا ہوں اور مجھے تکلیف نہیں ہوتی ۔\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 132",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - איך קען עסן גלאָז און עס טוט מיר נישט װײ.",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"איך קען עסן גלאָז און עס טוט מיר נישט װײ.\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 133",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - Mogę jeść szkło, i mi nie szkodzi.",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"Mogę jeść szkło, i mi nie szkodzi.\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 134",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - 私はガラスを食べられます。それは私を傷つけません。",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"私はガラスを食べられます。それは私を傷つけません。\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 135",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - أنا قادر على أكل الزجاج و هذا لا يؤلمني.",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"أنا قادر على أكل الزجاج و هذا لا يؤلمني.\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 136",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - абвгдеёжзийклмнопрстуфхцчшщъыьэюя",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"абвгдеёжзийклмнопрстуфхцчшщъыьэюя\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 137",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - ԰ԱԲԳԴԵԶԷԸԹԺԻԼԽԾԿՀՁՂՃՄՅՆՇՈՉՊՋՌՍՎՏՐՑՒՓՔՕՖ՗՘ՙ՚՛՜՝՞՟աբգդեզէըթիլխծկհձղճմյնշոչպջռսվտրցւփքօֆևֈ։֊֋֌֍֎֏",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"԰ԱԲԳԴԵԶԷԸԹԺԻԼԽԾԿՀՁՂՃՄՅՆՇՈՉՊՋՌՍՎՏՐՑՒՓՔՕՖ՗՘ՙ՚՛՜՝՞՟աբգդեզէըթիլխծկհձղճմյնշոչպջռսվտրցւփքօֆևֈ։֊֋֌֍֎֏\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 138",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - - x\ny",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"x\\ny\",\"priority\":1,\"severity\":1,\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 139",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>3 - - - - - - x\ny",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"x\\ny\",\"priority\":1,\"severity\":1,\"version\":3}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 140",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20efbbbfc1",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 20]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 141",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e32202d202d202d202d202d202d20c1",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 17]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 142",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e34202d202d202d202d202d202d20efbbbfc328",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 21]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 143",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20c328",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 18]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 144",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c373e31202d202d202d202d202d202d20efbbbfa0a1",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 20]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 145",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20a0a1",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 17]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 146",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20efbbbfe228a1",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 21]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 147",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c353e31202d202d202d202d202d202d20e228a1",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 18]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 148",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c363e31202d202d202d202d202d202d20efbbbfe28228",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 22]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 149",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e39202d202d202d202d202d202d20e28228",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 19]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 150",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20efbbbff0288cbc",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 21]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 151",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e3130202d202d202d202d202d202d20f0288cbc",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 19]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 152",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20efbbbff09028bc",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 22]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 153",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20f09028bc",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 19]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 154",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20efbbbff0288c28",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 21]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 155",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20f0288c28",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 18]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 156",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20fefeffff",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 17]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 157",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20fe",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 17]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 158",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20ff",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 17]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 159",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20fc80808080af",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 17]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 160",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20f8808080af",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 17]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 161",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e33202d202d202d202d202d202d20f08080af",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 18]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 162",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e33202d202d202d202d202d202d20e080af",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 18]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 163",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20c0af",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 17]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 164",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20fc83bfbfbfbf",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 17]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 165",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20f887bfbfbf",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 17]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 166",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20f08fbfbf",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 18]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 167",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20e09fbf",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 18]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 168",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20c1bf",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 17]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 169",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20eda080",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 18]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 170",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20edadbf",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 18]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 171",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20edae80",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 18]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 172",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c32323e3233202d202d202d202d202d202d20edafbf",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 20]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 173",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20edb080",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 18]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 174",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20edbe80",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 18]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 175",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20edbfbf",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 18]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 176",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d20eda080edb080",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 18]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 177",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d2076616c6964efbbbfc1",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 25]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 178",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>10 -- - - - -",
+  "expected": {
+   "text": "ERROR: parsing error [col 7]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 179",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "2003-11-02T23:12:46.012345",
+  "expected": {
+   "text": "ERROR: expecting a priority value within angle brackets [col 0]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 go-syslog machine_test 180",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 ",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 5]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 0",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<34>Jan 12 06:30:00 xxx apache: 1.2.3.4 - - [12/Jan/2011:06:29:59 +0100] \"GET /foo/bar.html HTTP/1.1\" 301 96 \"-\" \"Mozilla/5.0 (Windows; U; Windows NT 5.1; fr; rv:1.9.2.12) Gecko/20101026 Firefox/3.6.12 ( .NET CLR 3.5.30729)\" PID 18904 Time Taken 0",
+  "expected": {
+   "text": "{\"appname\":\"apache\",\"facility\":4,\"hostname\":\"xxx\",\"message\":\"1.2.3.4 - - [12/Jan/2011:06:29:59 +0100] \\\"GET /foo/bar.html HTTP/1.1\\\" 301 96 \\\"-\\\" \\\"Mozilla/5.0 (Windows; U; Windows NT 5.1; fr; rv:1.9.2.12) Gecko/20101026 Firefox/3.6.12 ( .NET CLR 3.5.30729)\\\" PID 18904 Time Taken 0\",\"priority\":34,\"severity\":2,\"timestamp\":\"2025-01-12T06:30:00Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 1",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<34>Aug  7 06:30:00 xxx aaa: message from 1.2.3.4",
+  "expected": {
+   "text": "{\"appname\":\"aaa\",\"facility\":4,\"hostname\":\"xxx\",\"message\":\"message from 1.2.3.4\",\"priority\":34,\"severity\":2,\"timestamp\":\"2025-08-07T06:30:00Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 2",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<85>Jan 24 15:50:41 ip-172-31-30-110 sudo[6040]: ec2-user : TTY=pts/0 ; PWD=/var/log ; USER=root ; COMMAND=/bin/tail secure",
+  "expected": {
+   "text": "{\"appname\":\"sudo\",\"facility\":10,\"hostname\":\"ip-172-31-30-110\",\"message\":\"ec2-user : TTY=pts/0 ; PWD=/var/log ; USER=root ; COMMAND=/bin/tail secure\",\"priority\":85,\"procid\":\"6040\",\"severity\":5,\"timestamp\":\"2025-01-24T15:50:41Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 3",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<166>Jul  6 20:33:28 ABC-1-234567 Some message here",
+  "expected": {
+   "text": "{\"facility\":20,\"hostname\":\"ABC-1-234567\",\"message\":\"Some message here\",\"priority\":166,\"severity\":6,\"timestamp\":\"2025-07-06T20:33:28Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 4",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<34>Oct 11 22:14:15 mymachine su: 'su root' failed for lonvick on /dev/pts/8",
+  "expected": {
+   "text": "{\"appname\":\"su\",\"facility\":4,\"hostname\":\"mymachine\",\"message\":\"'su root' failed for lonvick on /dev/pts/8\",\"priority\":34,\"severity\":2,\"timestamp\":\"2025-10-11T22:14:15Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 5",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<13>Feb  5 17:32:18 10.0.0.99 Use the BFG!",
+  "expected": {
+   "text": "{\"facility\":1,\"hostname\":\"10.0.0.99\",\"message\":\"Use the BFG!\",\"priority\":13,\"severity\":5,\"timestamp\":\"2025-02-05T17:32:18Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 6",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<165>Aug 24 05:34:00 mymachine myproc[10]: %% It's time to make the do-nuts.  %%  Ingredients: Mix=OK, Jelly=OK # Devices: Mixer=OK, Jelly_Injector=OK, Frier=OK # Transport: Conveyer1=OK, Conveyer2=OK # %%",
+  "expected": {
+   "text": "{\"appname\":\"myproc\",\"facility\":20,\"hostname\":\"mymachine\",\"message\":\"%% It's time to make the do-nuts.  %%  Ingredients: Mix=OK, Jelly=OK # Devices: Mixer=OK, Jelly_Injector=OK, Frier=OK # Transport: Conveyer1=OK, Conveyer2=OK # %%\",\"priority\":165,\"procid\":\"10\",\"severity\":5,\"timestamp\":\"2025-08-24T05:34:00Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 7",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<0>Oct 22 10:52:01 10.1.2.3 sched[0]: That's All Folks!",
+  "expected": {
+   "text": "{\"appname\":\"sched\",\"facility\":0,\"hostname\":\"10.1.2.3\",\"message\":\"That's All Folks!\",\"priority\":0,\"procid\":\"0\",\"severity\":0,\"timestamp\":\"2025-10-22T10:52:01Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 8",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<13>Dec  2 16:31:03 host app: Test",
+  "expected": {
+   "text": "{\"appname\":\"app\",\"facility\":1,\"hostname\":\"host\",\"message\":\"Test\",\"priority\":13,\"severity\":5,\"timestamp\":\"2025-12-02T16:31:03Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 9",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<13>Jan 30 02:08:03 host app: Test",
+  "expected": {
+   "text": "{\"appname\":\"app\",\"facility\":1,\"hostname\":\"host\",\"message\":\"Test\",\"priority\":13,\"severity\":5,\"timestamp\":\"2025-01-30T02:08:03Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 10",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<13>Dec  2 16:31:03 -",
+  "expected": {
+   "text": "ERROR: expecting an hostname (from 1 to max 255 US-ASCII characters) [col 21]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 11",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>2019-12-02T16:49:23+02:00 host app[23410]: Test",
+  "expected": {
+   "text": "{\"appname\":\"app\",\"facility\":3,\"hostname\":\"host\",\"message\":\"Test\",\"priority\":28,\"procid\":\"23410\",\"severity\":4,\"timestamp\":\"2019-12-02T16:49:23+02:00\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 12",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>2019-12-02T16:49:23Z host app[23410]: Test",
+  "expected": {
+   "text": "{\"appname\":\"app\",\"facility\":3,\"hostname\":\"host\",\"message\":\"Test\",\"priority\":28,\"procid\":\"23410\",\"severity\":4,\"timestamp\":\"2019-12-02T16:49:23Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 13",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>2019-02-29T16:49:23Z host app: Test",
+  "expected": {
+   "text": "ERROR: parsing time \"2019-02-29T16:49:23Z\": day out of range [col 24]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 14",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>Feb 29 16:49:23 host app: Test",
+  "expected": {
+   "text": "{\"appname\":\"app\",\"facility\":3,\"hostname\":\"host\",\"message\":\"Test\",\"priority\":28,\"severity\":4,\"timestamp\":\"2025-03-01T16:49:23Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 15",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>Feb 30 16:49:23 host app: Test",
+  "expected": {
+   "text": "ERROR: parsing time \"Feb 30 16:49:23\": day out of range [col 19]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 16",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>Apr 31 16:49:23 host app: Test",
+  "expected": {
+   "text": "ERROR: parsing time \"Apr 31 16:49:23\": day out of range [col 19]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 17",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>Dec  2 16:49:23 host app[23410] Test",
+  "expected": {
+   "text": "{\"appname\":\"app\",\"facility\":3,\"hostname\":\"host\",\"message\":\"23410] Test\",\"priority\":28,\"procid\":\"23410\",\"severity\":4,\"timestamp\":\"2025-12-02T16:49:23Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 18",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>Dec  2 16:49:23 host app[]: Test",
+  "expected": {
+   "text": "{\"appname\":\"app\",\"facility\":3,\"hostname\":\"host\",\"message\":\"Test\",\"priority\":28,\"severity\":4,\"timestamp\":\"2025-12-02T16:49:23Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 19",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>Dec  2 16:49:23 host app[abc: Test",
+  "expected": {
+   "text": "{\"appname\":\"app\",\"facility\":3,\"hostname\":\"host\",\"message\":\"abc: Test\",\"priority\":28,\"severity\":4,\"timestamp\":\"2025-12-02T16:49:23Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 20",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>Dec  2 16:49:23 host a-very-long-tag-name-that-goes-beyond-thirty-two: Test",
+  "expected": {
+   "text": "{\"facility\":3,\"hostname\":\"host\",\"message\":\"a-very-long-tag-name-that-goes-beyond-thirty-two: Test\",\"priority\":28,\"severity\":4,\"timestamp\":\"2025-12-02T16:49:23Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 21",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>Dec  2 16:49:23 host :Test",
+  "expected": {
+   "text": "{\"facility\":3,\"hostname\":\"host\",\"message\":\":Test\",\"priority\":28,\"severity\":4,\"timestamp\":\"2025-12-02T16:49:23Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 22",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>Dec  2 16:49:23 host - - Test",
+  "expected": {
+   "text": "{\"facility\":3,\"hostname\":\"host\",\"message\":\"- - Test\",\"priority\":28,\"severity\":4,\"timestamp\":\"2025-12-02T16:49:23Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 23",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<191>Dec 31 23:59:59 h t: x",
+  "expected": {
+   "text": "{\"appname\":\"t\",\"facility\":23,\"hostname\":\"h\",\"message\":\"x\",\"priority\":191,\"severity\":7,\"timestamp\":\"2025-12-31T23:59:59Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 24",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<192>Dec 31 23:59:59 h t: x",
+  "expected": {
+   "text": "ERROR: expecting a priority value in the range 1-191 or equal to 0 [col 3]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 25",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<0>Dec 31 23:59:59 h t: x",
+  "expected": {
+   "text": "{\"appname\":\"t\",\"facility\":0,\"hostname\":\"h\",\"message\":\"x\",\"priority\":0,\"severity\":0,\"timestamp\":\"2025-12-31T23:59:59Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 26",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<028>Dec 31 23:59:59 h t: x",
+  "expected": {
+   "text": "ERROR: expecting a priority value in the range 1-191 or equal to 0 [col 2]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 27",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>Dec 31 23:59:59  h t: x",
+  "expected": {
+   "text": "ERROR: expecting an hostname (from 1 to max 255 US-ASCII characters) [col 20]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 28",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>Dec 31 24:59:59 h t: x",
+  "expected": {
+   "text": "ERROR: expecting a Stamp timestamp [col 12]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 29",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>Dez 31 23:59:59 h t: x",
+  "expected": {
+   "text": "ERROR: expecting a Stamp timestamp [col 6]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 30",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>Dec 1 23:59:59 h t: x",
+  "expected": {
+   "text": "ERROR: expecting a Stamp timestamp [col 9]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 31",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>Dec 01 23:59:59 h t: x",
+  "expected": {
+   "text": "ERROR: expecting a Stamp timestamp [col 8]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 32",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>Dec 31 23:59:59 host",
+  "expected": {
+   "text": "ERROR: expecting an hostname (from 1 to max 255 US-ASCII characters) [col 24]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 33",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>Dec 31 23:59:59 host ",
+  "expected": {
+   "text": "ERROR: expecting an alphanumeric tag (max 32 characters) [col 25]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 34",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>Dec 31 23:59:59 host app[1]:",
+  "expected": {
+   "text": "{\"appname\":\"app\",\"facility\":3,\"hostname\":\"host\",\"message\":\"1]:\",\"priority\":28,\"procid\":\"1\",\"severity\":4,\"timestamp\":\"2025-12-31T23:59:59Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 35",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>Dec 31 23:59:59 host app[1]: ",
+  "expected": {
+   "text": "{\"appname\":\"app\",\"facility\":3,\"hostname\":\"host\",\"message\":\"1]: \",\"priority\":28,\"procid\":\"1\",\"severity\":4,\"timestamp\":\"2025-12-31T23:59:59Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 36",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>2019-12-02T16:49:23.123Z host app: Test",
+  "expected": {
+   "text": "ERROR: expecting a Stamp or a RFC3339 timestamp [col 23]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 37",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2025"
+   }
+  },
+  "input": "<28>2019-12-02T16:49:23+24:00 host app: Test",
+  "expected": {
+   "text": "ERROR: expecting a Stamp or a RFC3339 timestamp [col 25]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 no rfc3339, year 1987, EST 0",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "1987",
+    "allow_rfc3339": false,
+    "default_timezone": "EST",
+    "best_effort": false
+   }
+  },
+  "input": "<34>Jan 12 06:30:00 xxx apache: 1.2.3.4 - - [12/Jan/2011:06:29:59 +0100] \"GET /foo/bar.html HTTP/1.1\" 301 96 \"-\" \"Mozilla/5.0 (Windows; U; Windows NT 5.1; fr; rv:1.9.2.12) Gecko/20101026 Firefox/3.6.12 ( .NET CLR 3.5.30729)\" PID 18904 Time Taken 0",
+  "expected": {
+   "text": "{\"appname\":\"apache\",\"facility\":4,\"hostname\":\"xxx\",\"message\":\"1.2.3.4 - - [12/Jan/2011:06:29:59 +0100] \\\"GET /foo/bar.html HTTP/1.1\\\" 301 96 \\\"-\\\" \\\"Mozilla/5.0 (Windows; U; Windows NT 5.1; fr; rv:1.9.2.12) Gecko/20101026 Firefox/3.6.12 ( .NET CLR 3.5.30729)\\\" PID 18904 Time Taken 0\",\"priority\":34,\"severity\":2,\"timestamp\":\"1987-01-12T01:30:00-05:00\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 no rfc3339, year 1987, EST 1",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "1987",
+    "allow_rfc3339": false,
+    "default_timezone": "EST",
+    "best_effort": false
+   }
+  },
+  "input": "<34>Aug  7 06:30:00 xxx aaa: message from 1.2.3.4",
+  "expected": {
+   "text": "{\"appname\":\"aaa\",\"facility\":4,\"hostname\":\"xxx\",\"message\":\"message from 1.2.3.4\",\"priority\":34,\"severity\":2,\"timestamp\":\"1987-08-07T01:30:00-05:00\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 no rfc3339, year 1987, EST 2",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "1987",
+    "allow_rfc3339": false,
+    "default_timezone": "EST",
+    "best_effort": false
+   }
+  },
+  "input": "<85>Jan 24 15:50:41 ip-172-31-30-110 sudo[6040]: ec2-user : TTY=pts/0 ; PWD=/var/log ; USER=root ; COMMAND=/bin/tail secure",
+  "expected": {
+   "text": "{\"appname\":\"sudo\",\"facility\":10,\"hostname\":\"ip-172-31-30-110\",\"message\":\"ec2-user : TTY=pts/0 ; PWD=/var/log ; USER=root ; COMMAND=/bin/tail secure\",\"priority\":85,\"procid\":\"6040\",\"severity\":5,\"timestamp\":\"1987-01-24T10:50:41-05:00\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 no rfc3339, year 1987, EST 3",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "1987",
+    "allow_rfc3339": false,
+    "default_timezone": "EST",
+    "best_effort": false
+   }
+  },
+  "input": "<166>Jul  6 20:33:28 ABC-1-234567 Some message here",
+  "expected": {
+   "text": "{\"facility\":20,\"hostname\":\"ABC-1-234567\",\"message\":\"Some message here\",\"priority\":166,\"severity\":6,\"timestamp\":\"1987-07-06T15:33:28-05:00\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 no rfc3339, year 1987, EST 4",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "1987",
+    "allow_rfc3339": false,
+    "default_timezone": "EST",
+    "best_effort": false
+   }
+  },
+  "input": "<34>Oct 11 22:14:15 mymachine su: 'su root' failed for lonvick on /dev/pts/8",
+  "expected": {
+   "text": "{\"appname\":\"su\",\"facility\":4,\"hostname\":\"mymachine\",\"message\":\"'su root' failed for lonvick on /dev/pts/8\",\"priority\":34,\"severity\":2,\"timestamp\":\"1987-10-11T17:14:15-05:00\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 no rfc3339, year 1987, EST 5",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "1987",
+    "allow_rfc3339": false,
+    "default_timezone": "EST",
+    "best_effort": false
+   }
+  },
+  "input": "<13>Feb  5 17:32:18 10.0.0.99 Use the BFG!",
+  "expected": {
+   "text": "{\"facility\":1,\"hostname\":\"10.0.0.99\",\"message\":\"Use the BFG!\",\"priority\":13,\"severity\":5,\"timestamp\":\"1987-02-05T12:32:18-05:00\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 no rfc3339, year 1987, EST 6",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "1987",
+    "allow_rfc3339": false,
+    "default_timezone": "EST",
+    "best_effort": false
+   }
+  },
+  "input": "<165>Aug 24 05:34:00 mymachine myproc[10]: %% It's time to make the do-nuts.  %%  Ingredients: Mix=OK, Jelly=OK # Devices: Mixer=OK, Jelly_Injector=OK, Frier=OK # Transport: Conveyer1=OK, Conveyer2=OK # %%",
+  "expected": {
+   "text": "{\"appname\":\"myproc\",\"facility\":20,\"hostname\":\"mymachine\",\"message\":\"%% It's time to make the do-nuts.  %%  Ingredients: Mix=OK, Jelly=OK # Devices: Mixer=OK, Jelly_Injector=OK, Frier=OK # Transport: Conveyer1=OK, Conveyer2=OK # %%\",\"priority\":165,\"procid\":\"10\",\"severity\":5,\"timestamp\":\"1987-08-24T00:34:00-05:00\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 no rfc3339, year 1987, EST 7",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "1987",
+    "allow_rfc3339": false,
+    "default_timezone": "EST",
+    "best_effort": false
+   }
+  },
+  "input": "<0>Oct 22 10:52:01 10.1.2.3 sched[0]: That's All Folks!",
+  "expected": {
+   "text": "{\"appname\":\"sched\",\"facility\":0,\"hostname\":\"10.1.2.3\",\"message\":\"That's All Folks!\",\"priority\":0,\"procid\":\"0\",\"severity\":0,\"timestamp\":\"1987-10-22T05:52:01-05:00\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 no rfc3339, year 1987, EST 8",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "1987",
+    "allow_rfc3339": false,
+    "default_timezone": "EST",
+    "best_effort": false
+   }
+  },
+  "input": "<13>Dec  2 16:31:03 host app: Test",
+  "expected": {
+   "text": "{\"appname\":\"app\",\"facility\":1,\"hostname\":\"host\",\"message\":\"Test\",\"priority\":13,\"severity\":5,\"timestamp\":\"1987-12-02T11:31:03-05:00\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 no rfc3339, year 1987, EST 9",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "1987",
+    "allow_rfc3339": false,
+    "default_timezone": "EST",
+    "best_effort": false
+   }
+  },
+  "input": "<13>Jan 30 02:08:03 host app: Test",
+  "expected": {
+   "text": "{\"appname\":\"app\",\"facility\":1,\"hostname\":\"host\",\"message\":\"Test\",\"priority\":13,\"severity\":5,\"timestamp\":\"1987-01-29T21:08:03-05:00\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 no rfc3339, year 1987, EST 10",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "1987",
+    "allow_rfc3339": false,
+    "default_timezone": "EST",
+    "best_effort": false
+   }
+  },
+  "input": "<13>Dec  2 16:31:03 -",
+  "expected": {
+   "text": "ERROR: expecting an hostname (from 1 to max 255 US-ASCII characters) [col 21]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 no rfc3339, year 1987, EST 11",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "1987",
+    "allow_rfc3339": false,
+    "default_timezone": "EST",
+    "best_effort": false
+   }
+  },
+  "input": "<28>2019-12-02T16:49:23+02:00 host app[23410]: Test",
+  "expected": {
+   "text": "ERROR: expecting a Stamp timestamp [col 4]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 no default year, no timezone",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "",
+    "default_timezone": ""
+   }
+  },
+  "input": "<13>Jan 30 02:08:03 host app: Test",
+  "expected": {
+   "text": "{\"appname\":\"app\",\"facility\":1,\"hostname\":\"host\",\"message\":\"Test\",\"priority\":13,\"severity\":5,\"timestamp\":\"0000-01-30T02:08:03Z\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 CET",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2020",
+    "default_timezone": "CET"
+   }
+  },
+  "input": "<13>Jan 30 02:08:03 host app: Test",
+  "expected": {
+   "text": "{\"appname\":\"app\",\"facility\":1,\"hostname\":\"host\",\"message\":\"Test\",\"priority\":13,\"severity\":5,\"timestamp\":\"2020-01-30T03:08:03+01:00\"}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 best_effort false",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424",
+    "best_effort": false,
+    "codec": "json"
+   }
+  },
+  "input_hex": "3c313e31202d202d202d202d202d202d207061727469616c20ff",
+  "expected": {
+   "text": "ERROR: expecting a free-form optional message in UTF-8 (starting with or without BOM) [col 25]\n"
+  }
+ },
+ {
+  "name": "parse_log refused: default_year not an integer",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "twenty"
+   }
+  },
+  "input": "<12>1 - - - - - -",
+  "expected": {
+   "config_error": "failed to convert year twenty into integer:  strconv.Atoi: parsing \"twenty\": invalid syntax"
+  }
+ },
+ {
+  "name": "parse_log refused: unknown default_timezone",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_timezone": "Mars/Base"
+   }
+  },
+  "input": "<12>1 - - - - - -",
+  "expected": {
+   "config_error": "failed to lookup timezone UTC - unknown time zone Mars/Base"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 ignores an unknown default_timezone",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424",
+    "default_timezone": "Nowhere/Town"
+   }
+  },
+  "input": "<12>1 - - - - - -",
+  "expected": {
+   "text": "{\"facility\":1,\"priority\":12,\"severity\":4,\"version\":1}\n"
+  }
  }
 ]
