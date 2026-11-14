@@ -1227,6 +1227,28 @@ curl -sS -X POST "https://api.{domain}/api/mcp" \
       "timerel":"between","timeAt":"2026-11-01T00:00:00Z","endTimeAt":"2026-11-08T00:00:00Z"}}}}}'
 ```
 
+#### The chart view (MCP Apps, T-6882)
+
+A host that speaks MCP Apps (SEP-1865) also draws the chart live. Every hub and named-server
+`initialize` declares `resources`; `resources/list` names `ui://joinedcontext/chart-view.html`
+(`text/html;profile=mcp-app`), and `render_chart` names it in `tools/list` under
+`_meta.ui.resourceUri` and the flat `_meta["ui/resourceUri"]`. `resources/read` of that exact
+URI answers the page, the same bytes for every caller, anonymous included: it holds no data.
+Any other `ui://` URI is `-32002` resource not found.
+
+The page is the Portal's chart view (API/14 §4.7), served from one copy. On this door it draws
+no link: no origin is written into it, neither from configuration nor from the request's
+`Host`. Its resource `_meta.ui.csp` names no `connectDomains` and no `resourceDomains`, so the
+host's frame connects nowhere and loads nothing; the page reads the tool result the host posts
+to it from its parent frame, JSON-RPC 2.0 only, draws inline SVG and sets every text, category
+values included, as text.
+
+A drawn answer's `_meta` carries `joinedcontext.com/chartSpec` (the checked spec: mark, title,
+size, each channel's scale and title), `joinedcontext.com/chartPoints` (at most 1,000 points,
+each only `x`, `y`, `color`, `size`, `theta` and `observedAt`) and
+`joinedcontext.com/pointsTruncated`. None of them is in the text or `structuredContent`, and a
+refusal carries none. The PNG stays in the answer for hosts without MCP Apps.
+
 ### OAuth for an assistant that needs it
 
 A public MCP server, the hub or any server an anonymous caller may read, needs no token. An assistant that connects only through OAuth 2.1 (Gemini's custom apps) runs the flow against the gateway's own authorization server on `api.{domain}`, which stores nothing and identifies nobody ([EP-129](../Requirements/endpoints.md), [ADR-N-052](../Decisions/adr-n-052-anonymous-oauth-public-mcp.md)):
