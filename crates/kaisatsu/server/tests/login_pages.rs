@@ -676,6 +676,32 @@ async fn an_organization_requiring_it_covers_its_member() {
 }
 
 #[tokio::test]
+async fn a_portal_organization_group_requiring_it_covers_its_member() {
+    let (app, store) = app().await;
+    // The Portal's reconciler marks the groups that carry the Organization's `jc_org`.
+    let analyst = user(&store, ANALYST).await;
+    let mut group = store
+        .list_user_groups("dev", &analyst.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|g| g.name == "traffic-analysts")
+        .expect("the analyst's group");
+    group
+        .attributes
+        .insert("jc.secondFactor".into(), vec!["required".into()]);
+    store.upsert_group(group).await.unwrap();
+    let a = start(&app, "").await;
+    let (st, _, html) = a.password(&app, ANALYST, ANALYST_PW).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(page_id(&html), "config-totp", "{html}");
+    // The member, outside that group, signs in as before.
+    let a = start(&app, "").await;
+    let (st, h, _) = a.password(&app, MEMBER, MEMBER_PW).await;
+    assert!(is_code(st, &h));
+}
+
+#[tokio::test]
 async fn strictest_of_two_organizations_wins() {
     let (app, store) = app().await;
     // `optional` alone asks nothing: past the password comes the Organization choice.

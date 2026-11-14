@@ -17,13 +17,15 @@ pub enum SecondFactor {
     Required,
 }
 
-/// The Organization attribute the Portal's reconciler writes: `required` asks every member.
+/// The attribute that asks a second factor of every member when `required`: on a kaisatsu
+/// Organization, or on a group of the person (the Portal's reconciler writes it on the groups
+/// that carry an Organization's `jc_org`).
 pub const ORG_SECOND_FACTOR_ATTRIBUTE: &str = "jc.secondFactor";
 
 /// True when `user` must pass a second factor: the deployment floor ([`OidcState::second_factor`]) is `required`, the realm is
 /// `master`, the person holds the effective realm role `mfa-required` (direct, composite or by
-/// group), or any Organization the person belongs to (membership or group `jc_org`) has
-/// [`ORG_SECOND_FACTOR_ATTRIBUTE`] `required`. Strictest wins: nothing here can lower another rule.
+/// group), or [`ORG_SECOND_FACTOR_ATTRIBUTE`] is `required` on one of the person's groups or on
+/// any Organization the person belongs to (membership or group `jc_org`). Strictest wins: nothing here can lower another rule.
 pub async fn second_factor_required(
     state: &OidcState,
     realm: &RealmConfig,
@@ -44,7 +46,14 @@ pub async fn second_factor_required(
         &group_roles,
         &all_roles,
     );
-    if eff_roles.iter().any(|r| r == "mfa-required") {
+    let says_required =
+        |values: Option<&Vec<String>>| values.is_some_and(|v| v.iter().any(|s| s == "required"));
+    // The Portal's reconciler writes the attribute on the groups that carry `jc_org`.
+    if eff_roles.iter().any(|r| r == "mfa-required")
+        || user_groups
+            .iter()
+            .any(|g| says_required(g.attributes.get(ORG_SECOND_FACTOR_ATTRIBUTE)))
+    {
         return Ok(true);
     }
     let mut org_ids: Vec<String> = store
@@ -60,10 +69,7 @@ pub async fn second_factor_required(
     org_ids.dedup();
     for org_id in &org_ids {
         if let Some(org) = store.get_organization(&realm.id, org_id).await?
-            && org
-                .attributes
-                .get(ORG_SECOND_FACTOR_ATTRIBUTE)
-                .is_some_and(|v| v.iter().any(|s| s == "required"))
+            && says_required(org.attributes.get(ORG_SECOND_FACTOR_ATTRIBUTE))
         {
             return Ok(true);
         }
