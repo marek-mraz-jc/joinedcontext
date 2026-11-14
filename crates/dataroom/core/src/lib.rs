@@ -13,7 +13,8 @@ pub mod store;
 pub mod vocab;
 
 pub use auth::{
-    Action, Authorizer, Decision, GrantRule, ObjectTarget, PolicyAuthorizer, RequestCtx, Subject,
+    Action, Authorizer, Decision, GrantRule, LiveAuthorizer, ObjectTarget, PolicyAuthorizer,
+    RequestCtx, Subject,
 };
 pub use branding::{
     is_safe_logo_filename, is_valid_hex_colour, localized_text, parse_rgb,

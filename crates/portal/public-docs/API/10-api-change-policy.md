@@ -10,7 +10,7 @@ A public Endpoint (`spec.audience: public`) has consumers the platform does not 
 
 ## 1. What stays
 
-- **The address.** `https://api.{domain}/api/endpoint/{endpointSlug}/` does not move while the Endpoint exists (EP-01, EP-75). Each surface keeps its versioned path: `ngsi-ld/v1`, `ogc/features`, `sta/v1.1`, `odata/v4`, `ical/v1`, `schema/v{major}`. A new major of a standard is served beside the old path, never in its place.
+- **The address.** `https://{host}/{org}/api/endpoint/{endpointSlug}/` is the address of version 1 ([Addresses v1](15-addresses-v1.md), EP-180); the address published before it, `https://api.{domain}/api/endpoint/{endpointSlug}/`, stays served in place (EP-181). Neither moves while the Endpoint exists (EP-01, EP-75). Each surface keeps its versioned path: `ngsi-ld/v1`, `ogc/features`, `sta/v1.1`, `odata/v4`, `ical/v1`, `schema/v{major}`. A new major of a standard is served beside the old path, never in its place.
 - **The model major.** A model's major names its schema path (`schema/v{major}/`, EP-46); a breaking model change is a new major, served beside the old one for the notice period (DM-26).
 - **The fields.** An attribute a public Endpoint answers with is not renamed, retyped or hidden without the notice of §2.
 

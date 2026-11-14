@@ -65,6 +65,15 @@ pub trait Store: Send + Sync {
     /// Creates or updates a catalogue.
     fn upsert_catalogue<'a>(&'a self, catalogue: Catalogue) -> BoxFuture<'a, Result<Catalogue>>;
 
+    /// Deletes every row of the catalogue (datasets, publishers, sources, runs, pages, ...)
+    /// and keeps the catalogue row as a tombstone with [`Catalogue::deleted`] set (ODP-09).
+    /// `false` when there is no such catalogue.
+    fn delete_catalogue<'a>(
+        &'a self,
+        org_id: OrgId,
+        catalogue_id: CatalogueId,
+    ) -> BoxFuture<'a, Result<bool>>;
+
     /// Lists publishers in `ctx`'s catalogue.
     fn list_publishers<'a>(&'a self, ctx: &'a RequestCtx) -> BoxFuture<'a, Result<Vec<Publisher>>>;
 
@@ -182,6 +191,14 @@ pub trait Store: Send + Sync {
         ctx: &'a RequestCtx,
         source: HarvestSource,
     ) -> BoxFuture<'a, Result<HarvestSource>>;
+
+    /// Deletes the harvest source `id_or_name` of `ctx`'s catalogue and its runs; `false` when
+    /// there is none. The datasets it harvested stay until the catalogue's next run decides.
+    fn delete_harvest_source<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        id_or_name: &'a str,
+    ) -> BoxFuture<'a, Result<bool>>;
 
     /// Lists harvest runs in `ctx`'s catalogue.
     fn list_harvest_runs<'a>(

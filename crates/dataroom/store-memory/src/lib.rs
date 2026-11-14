@@ -101,6 +101,31 @@ impl Store for MemoryStore {
         Box::pin(std::future::ready(Ok(found)))
     }
 
+    fn delete_catalogue<'a>(
+        &'a self,
+        org_id: OrgId,
+        catalogue_id: CatalogueId,
+    ) -> BoxFuture<'a, Result<bool>> {
+        let mut inner = self.write_inner();
+        let Some(cat) = inner.catalogues.get_mut(&(org_id, catalogue_id)) else {
+            return Box::pin(std::future::ready(Ok(false)));
+        };
+        cat.deleted = Some(chrono::Utc::now());
+        cat.modified = chrono::Utc::now();
+        let mine = |o: &OrgId, c: &CatalogueId| *o == org_id && *c == catalogue_id;
+        inner.publishers.retain(|(o, c, _), _| !mine(o, c));
+        inner.datasets.retain(|(o, c, _), _| !mine(o, c));
+        inner.views.retain(|(o, c, _), _| !mine(o, c));
+        inner.harvest_sources.retain(|(o, c, _), _| !mine(o, c));
+        inner.harvest_runs.retain(|(o, c, _), _| !mine(o, c));
+        inner.activity.retain(|a| !mine(&a.org_id, &a.catalogue_id));
+        inner.shacl_reports.retain(|(o, c, _), _| !mine(o, c));
+        inner.profiles.retain(|(o, c, _, _), _| !mine(o, c));
+        inner.pages.retain(|(o, c, _, _), _| !mine(o, c));
+        inner.plugins.retain(|(o, c, _), _| !mine(o, c));
+        Box::pin(std::future::ready(Ok(true)))
+    }
+
     fn upsert_catalogue<'a>(&'a self, catalogue: Catalogue) -> BoxFuture<'a, Result<Catalogue>> {
         let mut guard = self.write_inner();
         let host_conflict = guard.catalogues.values().any(|c| {
@@ -530,6 +555,30 @@ impl Store for MemoryStore {
             source.clone(),
         );
         Box::pin(std::future::ready(Ok(source)))
+    }
+
+    fn delete_harvest_source<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        id_or_name: &'a str,
+    ) -> BoxFuture<'a, Result<bool>> {
+        let mut inner = self.write_inner();
+        let (org, cat) = (ctx.org_id, ctx.catalogue_id);
+        let found = inner
+            .harvest_sources
+            .iter()
+            .find(|((o, c, _), s)| {
+                *o == org && *c == cat && (s.id == id_or_name || s.name == id_or_name)
+            })
+            .map(|(k, s)| (k.clone(), s.id.clone()));
+        let Some((key, id)) = found else {
+            return Box::pin(std::future::ready(Ok(false)));
+        };
+        inner.harvest_sources.remove(&key);
+        inner
+            .harvest_runs
+            .retain(|(o, c, _), r| !(*o == org && *c == cat && r.source_id == id));
+        Box::pin(std::future::ready(Ok(true)))
     }
 
     fn list_harvest_runs<'a>(

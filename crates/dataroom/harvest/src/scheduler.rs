@@ -91,7 +91,9 @@ pub struct HarvestScheduler {
     engine: Arc<HarvestEngine>,
     store: Arc<dyn Store>,
     authorizer: Arc<dyn Authorizer>,
-    catalogues: Vec<(OrgId, CatalogueId)>,
+    /// The catalogues whose sources run; the catalogue writer adds and removes one while the
+    /// scheduler runs (ODP-11).
+    catalogues: Arc<std::sync::RwLock<Vec<(OrgId, CatalogueId)>>>,
     retry_delay: Duration,
 }
 
@@ -106,9 +108,15 @@ impl HarvestScheduler {
             engine,
             store,
             authorizer,
-            catalogues,
+            catalogues: Arc::new(std::sync::RwLock::new(catalogues)),
             retry_delay: Duration::from_secs(10),
         }
+    }
+
+    /// The list of catalogues the scheduler reads on every check, shared with its writer.
+    #[must_use]
+    pub fn catalogues(&self) -> Arc<std::sync::RwLock<Vec<(OrgId, CatalogueId)>>> {
+        self.catalogues.clone()
     }
 
     /// First wait before a retry; it doubles each time (Kubernetes Job back-off).
@@ -135,7 +143,12 @@ impl HarvestScheduler {
     /// The enabled sources whose schedule fires in the minute of `at`, all of them for `None`.
     async fn run_sources(&self, at: Option<DateTime<Utc>>) -> Vec<(String, Result<HarvestRun>)> {
         let mut runs = tokio::task::JoinSet::new();
-        for &(org_id, catalogue_id) in &self.catalogues {
+        let catalogues = self
+            .catalogues
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        for (org_id, catalogue_id) in catalogues {
             let (subject, _) = harvest_principal(org_id, catalogue_id);
             let ctx = RequestCtx::new(org_id, catalogue_id, subject);
             let sources = match self.store.list_harvest_sources(&ctx).await {
