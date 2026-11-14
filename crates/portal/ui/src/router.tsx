@@ -90,6 +90,9 @@ const AppOpenPage = lazy(() => import("./pages/apps/AppOpenPage").then((module) 
 const GroupPage = lazy(() => import("./pages/access/GroupPage").then((module) => ({ default: module.GroupPage })));
 const AgentPage = lazy(() => import("./pages/organization/Agents").then((module) => ({ default: module.AgentPage })));
 const OrganizationPage = lazy(() => import("./pages/organization/OrganizationPage").then((module) => ({ default: module.OrganizationPage })));
+const PortalsList = lazy(() => import("./pages/portals/PortalsArea").then((module) => ({ default: module.PortalsList })));
+const PortalEditor = lazy(() => import("./pages/portals/PortalsArea").then((module) => ({ default: module.PortalEditor })));
+const PortalsNav = lazy(() => import("./pages/portals/PortalsArea").then((module) => ({ default: module.PortalsNav })));
 const PersonPage = lazy(() => import("./pages/organization/People").then((module) => ({ default: module.PersonPage })));
 const EndpointPage = lazy(() => import("./pages/endpoints/EndpointPage").then((module) => ({ default: module.EndpointPage })));
 const RegistrationPage = lazy(() => import("./routes/RegistrationPage").then((module) => ({ default: module.RegistrationPage })));
@@ -942,6 +945,52 @@ const organizationFormRoute = createRoute({
   },
 });
 
+/**
+ * The Portals area (ODP-15, T-6875): an Organization's open data portals, with its own route tree
+ * and navigation, apart from the project pages and Administration. The server decides who sees
+ * which portal; the frame only lends the shell.
+ */
+function PortalsFrame({ active, children }: { active?: "list" | "new"; children: React.ReactNode }): React.JSX.Element {
+  const projects = useProjects();
+  const first = usePreferredProject();
+  const anchor = first ?? (projects.isSuccess ? ORG_NAMESPACE : undefined);
+  if (!anchor) {
+    return <NoProject projects={projects} />;
+  }
+  return (
+    <Shell project={anchor} sidebar={(close) => <PortalsNav active={active} onNavigate={close} />}>
+      {children}
+    </Shell>
+  );
+}
+
+/** `/portals`: the portal list. */
+const portalsRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "/portals",
+  component: function PortalsRoute() {
+    return (
+      <PortalsFrame active="list">
+        <PortalsList />
+      </PortalsFrame>
+    );
+  },
+});
+
+/** `/portals/new` and `/portals/{name}`: the portal editor. */
+const portalRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "/portals/$name",
+  component: function PortalRoute() {
+    const { name } = portalRoute.useParams();
+    return (
+      <PortalsFrame active={name === "new" ? "new" : undefined}>
+        <PortalEditor name={name} />
+      </PortalsFrame>
+    );
+  },
+});
+
 /** `groups/{name}`: one group's page (PF-95); `new` stays the new-group form. */
 function groupOfRest(rest: string): string | null {
   const [first, second] = rest.split("/");
@@ -1641,6 +1690,8 @@ export const routeTree = rootRoute.addChildren([
     organizationRoute,
     organizationTabRoute,
     organizationFormRoute,
+    portalsRoute,
+    portalRoute,
     accessRedirectRoute,
     projectIndexRoute,
     projectSettingsRoute,
