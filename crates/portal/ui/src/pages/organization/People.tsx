@@ -117,7 +117,7 @@ export function OneTimePassword({
             variant="secondary"
             size="sm"
             onClick={() => {
-              void navigator.clipboard?.writeText(secret.password).then(() => setCopied(true));
+              void navigator.clipboard?.writeText(secret.password).then(() => setCopied(true), () => setCopied(false));
             }}
           >
             {t("organization.people.password.copy")}

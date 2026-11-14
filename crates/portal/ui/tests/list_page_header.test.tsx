@@ -40,7 +40,10 @@ describe("PageHeader compact", () => {
 
     await userEvent.hover(hint);
     expect(tooltip).not.toHaveClass("sr-only");
-    await userEvent.unhover(hint);
+    // WCAG 1.4.13: the pointer may move onto the text without it closing.
+    await userEvent.hover(tooltip);
+    expect(tooltip).not.toHaveClass("sr-only");
+    await userEvent.unhover(tooltip);
     expect(tooltip).toHaveClass("sr-only");
 
     await userEvent.tab();
