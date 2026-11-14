@@ -9685,6 +9685,9 @@
     "chat": {
       "ask": "Fragen",
       "askOf": "{name} fragen",
+      "chart": "Diagramm von {value} nach {by}; die Tabelle darüber enthält dieselben Werte",
+      "chartUnavailable": "Das Diagramm ist hier nicht verfügbar. Die Tabelle darüber enthält dieselben Werte.",
+      "visual": "Das Diagramm des Assistenten; die Tabelle darüber enthält dieselben Werte",
       "asYou": "Der Assistent antwortet Ihnen als Sie selbst: Er liest die internen Quellen und die Endpoints, die Sie lesen dürfen.",
       "asVisitor": "Der Assistent antwortet Ihnen genau wie einem Besucher der Website: nur öffentliche Quellen und öffentliche Endpoints. Jede Frage zählt gegen sein Budget.",
       "connectors": "Live-Daten, die der Assistent lesen darf",

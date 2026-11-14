@@ -573,6 +573,9 @@
         if (!ourOrigin(event.origin, h.domain) || data.type !== "jc-viz-show") return;
         parent = event.origin;
         var lang = /^[a-z]{2}$/.test(data.lang) ? data.lang : "en";
+        // The host page's scheme for the chart theme (T-6886): light unless it says dark.
+        var theme = data.theme === "dark" ? "dark" : "light";
+        document.documentElement.dataset.theme = theme;
         document.documentElement.lang = lang;
         map = !!data.spec && data.spec.$schema === "urn:joinedcontext:map:v1";
         var errors = map ? root.jcRefuseMap(data.spec, h.domain) : root.jcRefuse(data.spec, h.domain);
@@ -580,8 +583,8 @@
         var title = map ? data.spec.title : null;
         document.getElementById("title").textContent = typeof title === "string" ? title : "";
         pending = map
-          ? { type: "jc-viz-render", spec: data.spec, lang: lang }
-          : { type: "jc-viz-render", spec: data.spec, data: { format: "json", rows: Array.isArray(data.rows) ? data.rows.slice(0, LIMIT_ROWS) : [] }, lang: lang };
+          ? { type: "jc-viz-render", spec: data.spec, lang: lang, theme: theme }
+          : { type: "jc-viz-render", spec: data.spec, data: { format: "json", rows: Array.isArray(data.rows) ? data.rows.slice(0, LIMIT_ROWS) : [] }, lang: lang, theme: theme };
         if (map) {
           // The renderer frame stays empty; the map page takes its place.
           mapFrame = document.createElement("iframe");

@@ -1,4 +1,4 @@
-// The chart MCP App view (T-6866, crates/portal/src/mcp/chart_view.html): its draw over the six
+// The chart MCP App view (T-6866, crates/shared/jc-chart/src/chart_view.html): its draw over the six
 // marks and a hostile point. Only the allowed SVG elements appear, no attribute value comes from
 // the data but a number, and a category value is text, never markup.
 import { readFileSync } from "node:fs";
@@ -6,15 +6,20 @@ import { resolve } from "node:path";
 import { JSDOM } from "jsdom";
 import { describe, expect, it, vi } from "vitest";
 
-const PAGE = readFileSync(resolve(__dirname, "../../src/mcp/chart_view.html"), "utf8").replace(
+// The theme as jc_chart::view_page writes it in (T-6886).
+const THEME = readFileSync(resolve(__dirname, "../../../shared/jc-chart/src/theme.json"), "utf8").trimEnd();
+const RAW = readFileSync(resolve(__dirname, "../../../shared/jc-chart/src/chart_view.html"), "utf8").replace("__JC_THEME__", THEME);
+const PAGE = RAW.replace(
   "__PORTAL_ORIGIN__",
   JSON.stringify("https://portal.example.org"),
 );
 const HOSTILE = "</script><img src=x onerror=alert(1)>";
 const ELEMENTS = new Set(["svg", "g", "path", "rect", "circle", "line", "text", "title"]);
+const THEMED = JSON.parse(THEME) as Record<string, { arc: { stroke: string }; range: { category: string[] } }>;
+// The theme's colours are the only ones an attribute may carry.
 const CONSTANTS = new Set([
-  "grid", "axis", "tick", "axis-title", "focus", "none", "middle", "end", "img", "chart-title", "#ffffff",
-  "#2563eb", "#ea580c", "#16a34a", "#dc2626", "#9333ea", "#0d9488", "#ca8a04", "#db2777",
+  "grid", "axis", "tick", "axis-title", "focus", "none", "middle", "end", "img", "chart-title",
+  ...Object.values(THEMED).flatMap((mode) => [mode.arc.stroke, ...mode.range.category]),
 ]);
 const NUMERIC = /^[-0-9.eE ,MLAZ]+$/;
 const ROTATE = /^rotate\(-?[0-9. ]+\)$/;
@@ -22,8 +27,8 @@ const LABEL = /^chart-title-[0-9]+$/;
 
 type Result = Record<string, unknown>;
 
-function open() {
-  const dom = new JSDOM(PAGE, { runScripts: "dangerously" });
+function open(page: string = PAGE) {
+  const dom = new JSDOM(page, { runScripts: "dangerously" });
   const win = dom.window;
   const alert = vi.fn();
   win.alert = alert;
@@ -100,6 +105,18 @@ const TIMED = [
 const NOMINAL = [{ x: 0, y: 21, color: 0 }, { x: 1, y: 34, color: 0 }];
 
 describe("chart view", () => {
+  it("draws in the chart theme's palette and colours, light and dark by the host (T-6886)", () => {
+    const theme = JSON.parse(THEME) as Record<"light" | "dark", { background: string; range: { category: string[] } }>;
+    const { doc, post } = open();
+    post({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: result("bar", NOMINAL) });
+    expect(doc.querySelector("svg rect[fill]")?.getAttribute("fill")).toBe(theme.light.range.category[0]);
+    expect(doc.documentElement.style.getPropertyValue("--bg")).toBe(theme.light.background);
+    post({ jsonrpc: "2.0", method: "ui/notifications/host-context-changed", params: { theme: "dark" } });
+    expect(doc.documentElement.dataset.theme).toBe("dark");
+    expect(doc.documentElement.style.getPropertyValue("--bg")).toBe(theme.dark.background);
+    expect(doc.querySelector("svg rect[fill]")?.getAttribute("fill")).toBe(theme.dark.range.category[0]);
+  });
+
   it.each([
     ["line", TIMED, "path"],
     ["area", TIMED, "path"],
@@ -212,5 +229,28 @@ describe("chart view", () => {
     expect(doc.querySelector("a")).toBeNull();
     post({ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: { project: "bratislava" } } });
     expect(doc.querySelector("a")?.getAttribute("href")).toBe("https://portal.example.org/projects/bratislava/endpoints/air");
+  });
+
+  it("draws no link when the server wrote no origin (the gateway's door, T-6882)", () => {
+    const { doc, post } = open(RAW.replace("__PORTAL_ORIGIN__", "null"));
+    post({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: result("line", TIMED) });
+    post({ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: { project: "bratislava" } } });
+    expect(doc.querySelector("svg")).not.toBeNull();
+    expect(doc.querySelector("a")).toBeNull();
+  });
+
+  it("keeps the Portal's truncation line on its door and says Not complete on the gateway's", () => {
+    const cut = (page?: string) => {
+      const { doc, post } = open(page);
+      const answer = result("line", TIMED, { rows: 9000 });
+      (answer._meta as Result)["joinedcontext.com/pointsTruncated"] = true;
+      post({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: answer });
+      return Array.from(doc.querySelectorAll("p"), (p) => p.textContent).join("\n");
+    };
+    expect(cut()).toContain("Shows the first 3 points of 9,000 rows; the picture in the chat draws up to 20,000.");
+    const raw = RAW;
+    const gateway = cut(raw.replace("__PORTAL_ORIGIN__", "null"));
+    expect(gateway).toContain("Not complete: the read has more rows than this chart draws (3 points shown).");
+    expect(gateway).not.toContain("Shows the first");
   });
 });

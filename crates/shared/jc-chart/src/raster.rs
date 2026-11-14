@@ -79,26 +79,39 @@ pub struct Chart {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Limited;
 
-const PALETTE: [[u8; 3]; 8] = [
-    [0x25, 0x63, 0xeb],
-    [0xea, 0x58, 0x0c],
-    [0x16, 0xa3, 0x4a],
-    [0xdc, 0x26, 0x26],
-    [0x93, 0x33, 0xea],
-    [0x0d, 0x94, 0x88],
-    [0xca, 0x8a, 0x04],
-    [0xdb, 0x27, 0x77],
-];
-const INK: [u8; 3] = [0x1f, 0x29, 0x37];
-const GRID: [u8; 3] = [0xe5, 0xe7, 0xeb];
-const WHITE: [u8; 3] = [0xff, 0xff, 0xff];
+/// The theme's colours (T-6886): text, tick labels, grid, axis lines and the background.
+fn ink() -> [u8; 3] {
+    crate::theme::light().text
+}
+fn muted() -> [u8; 3] {
+    crate::theme::light().muted
+}
+fn grid() -> [u8; 3] {
+    crate::theme::light().grid
+}
+fn axis() -> [u8; 3] {
+    crate::theme::light().domain
+}
+fn paper() -> [u8; 3] {
+    crate::theme::light().background
+}
+
+/// The series colours: the theme's `range.category`.
+pub fn palette() -> &'static [[u8; 3]] {
+    &crate::theme::light().category
+}
+
 /// Glyph scale: 5x7 glyphs drawn at 2x, one blank column between them.
 const SCALE: i64 = 2;
 const ADVANCE: i64 = 6 * SCALE;
 const LINE: i64 = 9 * SCALE;
 
 fn color_of(group: Option<usize>) -> [u8; 3] {
-    PALETTE[group.unwrap_or(0) % PALETTE.len()]
+    let palette = palette();
+    palette
+        .get(group.unwrap_or(0) % palette.len().max(1))
+        .copied()
+        .unwrap_or_else(ink)
 }
 
 struct Canvas {
@@ -114,7 +127,7 @@ impl Canvas {
         Self {
             width,
             height,
-            pixels: vec![0xff; len],
+            pixels: paper().repeat(len / 3),
         }
     }
 
@@ -465,7 +478,7 @@ pub fn montage(tiles: &[Tile], deadline: Instant) -> Result<Vec<u8>, Limited> {
     }
     if tiles.is_empty() {
         let mut c = Canvas::new(480, 64);
-        c.text(16, 24, "This Dashboard has no widgets", INK);
+        c.text(16, 24, "This Dashboard has no widgets", ink());
         return Ok(c.png());
     }
     let mut drawn = Vec::with_capacity(tiles.len());
@@ -478,7 +491,7 @@ pub fn montage(tiles: &[Tile], deadline: Instant) -> Result<Vec<u8>, Limited> {
                 text,
             } => {
                 let mut c = Canvas::new(*width, *height);
-                c.text(16, c.height / 2 - LINE / 2, text, INK);
+                c.text(16, c.height / 2 - LINE / 2, text, ink());
                 c
             }
         });
@@ -497,7 +510,7 @@ pub fn montage(tiles: &[Tile], deadline: Instant) -> Result<Vec<u8>, Limited> {
         check(deadline)?;
         let x = GAP + widths[..i % columns].iter().map(|s| s + GAP).sum::<i64>();
         let y = GAP + heights[..i / columns].iter().map(|s| s + GAP).sum::<i64>();
-        out.frame(x - 1, y - 1, x + c.width, y + c.height, GRID);
+        out.frame(x - 1, y - 1, x + c.width, y + c.height, grid());
         out.blit(c, x, y);
     }
     check(deadline)?;
@@ -517,7 +530,7 @@ fn canvas(chart: &Chart, deadline: Instant) -> Result<Canvas, Limited> {
     } + LINE
         + 8;
     if !chart.title.is_empty() {
-        c.text(16, 12, &chart.title, INK);
+        c.text(16, 12, &chart.title, ink());
     }
     let legend = if chart.colors > 1 { 8 * ADVANCE } else { 0 };
     if chart.mark == Mark::Arc {
@@ -536,7 +549,7 @@ fn canvas(chart: &Chart, deadline: Instant) -> Result<Canvas, Limited> {
                 y + 7 * SCALE,
                 color_of(Some(group)),
             );
-            c.text(left + 6 * SCALE * 2, y, &format!("#{}", group + 1), INK);
+            c.text(left + 6 * SCALE * 2, y, &format!("#{}", group + 1), ink());
         }
     }
     check(deadline)?;
@@ -651,24 +664,29 @@ fn draw_xy(
     // Grid, axes and tick labels.
     for (t, text) in &y_marks {
         let y = py(*t);
-        c.line((left, y), (right, y), 1, GRID);
-        c.text(left - 8 - text.len() as i64 * ADVANCE, y - 7, text, INK);
+        c.line((left, y), (right, y), 1, grid());
+        c.text(left - 8 - text.len() as i64 * ADVANCE, y - 7, text, muted());
     }
     if let (Some(ch), Some((lo, hi))) = (xs, xd) {
         // As many labels as fit side by side, each about ten glyphs wide.
         let room = ((right - left) / (11 * ADVANCE)).max(2);
         for (t, text) in axis_marks(ch, lo, hi, room) {
             let x = px(t);
-            c.line((x, bottom), (x, bottom + 6), 1, INK);
-            c.text(x - text.len() as i64 * ADVANCE / 2, bottom + 10, &text, INK);
+            c.line((x, bottom), (x, bottom + 6), 1, axis());
+            c.text(
+                x - text.len() as i64 * ADVANCE / 2,
+                bottom + 10,
+                &text,
+                muted(),
+            );
         }
-        c.text(left, bottom + 10 + LINE + 4, &ch.title, INK);
+        c.text(left, bottom + 10 + LINE + 4, &ch.title, ink());
     }
     if let Some(ch) = ys {
-        c.text(16, top - LINE - 4, &ch.title, INK);
+        c.text(16, top - LINE - 4, &ch.title, ink());
     }
-    c.line((left, top), (left, bottom), 2, INK);
-    c.line((left, bottom), (right, bottom), 2, INK);
+    c.line((left, top), (left, bottom), 2, axis());
+    c.line((left, bottom), (right, bottom), 2, axis());
 
     let zero = py(yd.map_or(0.0, |(lo, hi)| 0f64.clamp(lo, hi)));
     let groups = chart.colors.max(1);
@@ -758,8 +776,10 @@ fn draw_xy(
             // Every fill first, so no group's line hides under another's area.
             if chart.mark == Mark::Area {
                 for (group, line) in lines.iter().enumerate() {
-                    let light = color_of(Some(group))
-                        .map(|v| ((u16::from(v) + 2 * u16::from(WHITE[0])) / 3) as u8);
+                    let (rgb, back) = (color_of(Some(group)), paper());
+                    let light: [u8; 3] = std::array::from_fn(|i| {
+                        ((u16::from(rgb[i]) + 2 * u16::from(back[i])) / 3) as u8
+                    });
                     for pair in line.windows(2) {
                         check(deadline)?;
                         let ((x0, y0), (x1, y1)) = (pair[0], pair[1]);

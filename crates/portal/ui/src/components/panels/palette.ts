@@ -1,9 +1,21 @@
 /**
  * The colours a saved dashboard names (Grafana's named colours, a hex or an rgb() text) and the
- * series palette, as concrete values: Vega draws on a canvas, which reads no CSS variable. They
- * are data the dashboard carries, so they read the same in both themes.
+ * series palette, as concrete values: Vega draws on a canvas, which reads no CSS variable. The
+ * named colours are data the dashboard carries, so they read the same in both schemes; the series
+ * palette is the chart theme's.
  */
-import { rechartsPalette } from "@joinedcontext/sdk";
+import theme from "../../../../../shared/jc-chart/src/theme.json";
+
+/** The chart theme's two configs (T-6886): crates/shared/jc-chart/src/theme.json, the one file every chart surface reads. */
+export type ChartMode = "light" | "dark";
+export const THEME: Record<ChartMode, typeof theme.light> = theme;
+
+/** The page's scheme as the Portal's tokens follow it (tokens.css: `prefers-color-scheme`). */
+export function chartMode(): ChartMode {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+}
 
 /** Grafana's named colours, as the Portal's palette draws them. */
 const NAMED: Record<string, string> = {
@@ -49,11 +61,13 @@ export function colorOf(name: string | undefined): string {
   return /^#[0-9a-f]{3,8}$/i.test(name) || /^rgba?\([\d\s.,%]+\)$/i.test(name) ? name : NAMED.text;
 }
 
-/** What a chart's text and grid lines are drawn in where no stylesheet is (jsdom, a worker). */
-export const FALLBACK = { text: "#111827", muted: "#4b5563", grid: "#e5e7eb", surface: "#ffffff" };
+/** On a phone a band axis's name takes at most a third of the width, as in the viz frame (T-6865); nothing elsewhere. */
+export function narrowConfig(): Record<string, unknown> {
+  return typeof window !== "undefined" && window.innerWidth < 480 ? { axisY: { labelLimit: Math.round(window.innerWidth / 3) } } : {};
+}
 
-/** The colour of the `index`-th series: the installation's chart palette, round. */
-export function seriesColor(index: number): string {
-  const palette = rechartsPalette();
-  return palette[index % palette.length] ?? NAMED.blue;
+/** The colour of the `index`-th series: the theme's `range.category` for the page's scheme, round. */
+export function seriesColor(index: number, mode: ChartMode = chartMode()): string {
+  const palette = THEME[mode].range.category;
+  return palette[index % palette.length] ?? THEME[mode].mark.color;
 }

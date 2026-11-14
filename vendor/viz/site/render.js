@@ -24,13 +24,17 @@
   var loader = { load: refused, sanitize: refused, http: refused, file: refused };
 
   function draw(message) {
+    // The chart theme (theme.js, T-6886) of the host page's scheme: light unless it says dark.
+    var mode = message.theme === "dark" ? "dark" : "light";
+    document.documentElement.dataset.theme = mode;
+    document.body.style.backgroundColor = self.jcTheme[mode].background;
     var errors = self.jcRefuse(message.spec, domain);
     if (errors.length) throw new Error("The chart was refused: " + errors[0].pointer + " — " + errors[0].rule + ".");
     var data = message.data || {};
     // A CSV is read by csv.js and typed from its records: vega's own CSV reader runs `new
     // Function`, which this page's CSP refuses (T-6865).
     var rows = data.format === "csv" ? vega.read(self.jcCsv(String(data.text || "")), { type: "json", parse: "auto" }) : data.rows || [];
-    return vegaEmbed(chart, withRows(message.spec, rows), {
+    return vegaEmbed(chart, withRows(message.spec, rows, self.jcTheme[mode]), {
       ast: true,
       expr: vega.expressionInterpreter,
       loader: loader,
@@ -44,14 +48,26 @@
 
   // The rows go in as the named data set `source` before the first draw, so the chart never
   // draws empty first: Vega-Lite's top-level `datasets`, Vega's data entry of that name.
-  function withRows(spec, rows) {
+  // A Vega-Lite spec draws in the chart theme, under what its own config says, member by member.
+  function themed(theme, own) {
+    var config = Object.assign({}, theme);
+    Object.keys(own || {}).forEach(function (key) {
+      var mine = own[key];
+      config[key] = mine && typeof mine === "object" && !Array.isArray(mine) && theme[key] && typeof theme[key] === "object"
+        ? Object.assign({}, theme[key], mine) : mine;
+    });
+    return config;
+  }
+
+  function withRows(spec, rows, theme) {
     var copy = Object.assign({}, spec);
     if (/vega-lite/.test(spec.$schema)) {
       copy.datasets = Object.assign({}, spec.datasets, { source: rows });
+      copy.config = themed(theme, spec.config);
       // T-5415: on a phone the legend goes under the chart in two columns with whole labels; at
       // the right it took half the width and cut "Praha 2-Legerova" to "Praha 2-Legero".
       if (window.innerWidth < 480) {
-        var config = spec.config || {};
+        var config = copy.config;
         // T-6865: a title wider than the plot, centred on it, ran out of the frame ("PM10 podľa
         // stanice (µg/m"), and long y labels took 60 % of the width: the title starts at the
         // chart's left edge and ends in an ellipsis, a y label gets at most a third of the width.
