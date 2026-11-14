@@ -215,6 +215,10 @@ pub async fn dispatch_pending_outbox(
     state: &ShakoState,
     org_id: shako_core::OrgId,
 ) -> ShakoResult<usize> {
+    let _one_dispatch = state
+        .outbox_locks
+        .lock(RepoId::from(org_id.as_uuid()))
+        .await;
     let pending = state
         .store()
         .list_undispatched_outbox(state.default_instance_id, org_id)

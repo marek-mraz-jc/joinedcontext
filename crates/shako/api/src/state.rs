@@ -38,6 +38,9 @@ pub struct ShakoState {
     pub outbound_guard: OutboundGuard,
     pub memory_budget: MemoryBudget,
     pub repo_locks: RepoLocks,
+    /// One outbox dispatch at a time per Organization (keyed by the OrgId's UUID), so two writes
+    /// never both deliver the same pending event.
+    pub outbox_locks: RepoLocks,
     pub registry: Arc<OperationRegistry>,
     pub owner_to_org: Arc<RwLock<BTreeMap<String, OrgId>>>,
     pub event_bus: broadcast::Sender<shako_core::OutboxEvent>,
@@ -68,6 +71,7 @@ impl ShakoState {
             outbound_guard,
             memory_budget: MemoryBudget::default(),
             repo_locks: RepoLocks::new(),
+            outbox_locks: RepoLocks::new(),
             registry: Arc::new(OperationRegistry::new()),
             owner_to_org: Arc::new(RwLock::new(BTreeMap::new())),
             event_bus: tx,

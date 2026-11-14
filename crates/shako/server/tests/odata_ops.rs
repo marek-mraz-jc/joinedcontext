@@ -24,6 +24,8 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 const HOOK_URL: &str = "https://portal.city.example/api/v1/webhooks/shako";
+/// A hook that answers after 200 ms, so two dispatches overlap.
+const SLOW_HOOK_URL: &str = "https://portal.city.example/api/v1/webhooks/slow";
 const HOOK_SECRET: &str = "odata-hook-secret-value";
 const R: &str = "/odata/Repositories(Owner='joinedcontext',Name='helsinki')";
 
@@ -84,7 +86,10 @@ fn world() -> World {
         allowed_hosts: Some(vec!["github.com".into(), "portal.city.example".into()]),
         allow_loopback_for_tests: false,
         mock_handler: Some(Arc::new(move |_method, url, headers, body| {
-            if url == HOOK_URL {
+            if url == SLOW_HOOK_URL {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            if url == HOOK_URL || url == SLOW_HOOK_URL {
                 sink.lock().push((headers.to_vec(), body.to_vec()));
                 return Some((202, Vec::new()));
             }
@@ -933,6 +938,55 @@ async fn a_hook_of_another_repository_is_not_redelivered() {
     .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(w.delivered.lock().len(), before + 1);
+}
+
+/// Writes of one Organization at once deliver each event once, even when a hook is slow.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_commits_deliver_each_event_once() {
+    let w = world();
+    create_repo(&w, "helsinki").await;
+    let (st, hook, _) = call(
+        &w.app,
+        "POST",
+        &format!("{R}/Shako.AddWebhook"),
+        Some("portal-token"),
+        Some(json!({"Url": SLOW_HOOK_URL, "Secret": HOOK_SECRET})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{hook}");
+    let before = w.delivered.lock().len();
+    // Each write on a runtime of its own: the slow hook blocks only its own thread.
+    let writes: Vec<_> = (0..3)
+        .map(|i| {
+            let app = w.app.clone();
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                rt.block_on(async move {
+                let files = json!([{"operation": "create", "path": format!("f{i}.txt"), "content": b64("x\n")}]);
+                call(
+                    &app,
+                    "POST",
+                    &format!("{R}/Shako.CommitFiles"),
+                    Some("portal-token"),
+                    Some(json!({"Branch": "main", "Message": "one file", "Files": files})),
+                )
+                .await
+                .0
+                })
+            })
+        })
+        .collect();
+    for write in writes {
+        assert_eq!(write.join().unwrap(), StatusCode::OK);
+    }
+    assert_eq!(
+        w.delivered.lock().len() - before,
+        3,
+        "one delivery per commit"
+    );
 }
 
 /// A hook's target address can carry its own credential, so hooks and their deliveries are
