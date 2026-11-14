@@ -332,7 +332,11 @@ async fn an_organization_endpoint_of_a_project_without_organization_admits_nobod
             let (status, body) = read(&fixture, SLUG, token).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{case}: {body}");
         }
-        assert_eq!(fixture.broker.hops().len(), 0, "{case}: the broker was never asked");
+        assert_eq!(
+            fixture.broker.hops().len(),
+            0,
+            "{case}: the broker was never asked"
+        );
     }
     // The same Endpoint once its project names `hel` admits hel's member again.
     let fixture = fixture_serving("i4-hel", endpoint(), Some(two_organizations(Some("hel")))).await;

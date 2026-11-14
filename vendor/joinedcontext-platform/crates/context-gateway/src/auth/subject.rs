@@ -1012,7 +1012,15 @@ mod tests {
         let list = Audience::ProjectList;
         let allowed = ["parks".to_owned()];
         assert_eq!(
-            admission("city", org, &[], &groups(&["city-readers"]), false, orgs, known),
+            admission(
+                "city",
+                org,
+                &[],
+                &groups(&["city-readers"]),
+                false,
+                orgs,
+                known
+            ),
             Ok("city".to_owned())
         );
         assert_eq!(
@@ -1048,7 +1056,15 @@ mod tests {
             Err(Outside::Audience)
         );
         assert_eq!(
-            admission("city", Audience::Public, &[], &groups(&[]), false, orgs, known),
+            admission(
+                "city",
+                Audience::Public,
+                &[],
+                &groups(&[]),
+                false,
+                orgs,
+                known
+            ),
             Ok(String::new())
         );
     }
