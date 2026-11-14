@@ -503,44 +503,23 @@ async fn judge(
                 _ => None,
             };
             let arguments = resolved.as_ref().unwrap_or(&params["arguments"]);
-            let args = target_args(name, arguments);
-            let target = match (crate::ops::find(name), project.as_deref()) {
-                (Some(op), Some(project)) => connector
-                    .admits(op, project, args, &|kind, name| {
-                        crate::connectors::space_now(&state.mirror, project, kind, name)
-                    })
-                    .and_then(|()| {
-                        if honoured {
-                            Ok(())
-                        } else {
-                            ceiling.admits(connector, op, project, args)
-                        }
-                    })
-                    .err(),
-                _ => None,
-            };
-            if let Some(why) = target {
-                let answer = refused_call(id, &why);
-                return (
-                    json_response(StatusCode::OK, &answer),
-                    "refused: target".to_owned(),
-                );
-            }
             let client = caller.identity.client.clone();
-            let shows = project
-                .as_deref()
-                .is_some_and(|p| connector.shows_personal(p, args));
-            if !shows {
-                if let Err(why) =
-                    indicator_stays_open(state, project.as_deref(), name, arguments).await
-                {
+            let shows = match checks(
+                state,
+                connector,
+                &ceiling,
+                project.as_deref(),
+                name,
+                arguments,
+            )
+            .await
+            {
+                Ok(shows) => shows,
+                Err((verdict, why)) => {
                     let answer = refused_call(id, &why);
-                    return (
-                        json_response(StatusCode::OK, &answer),
-                        "refused: personal data".to_owned(),
-                    );
+                    return (json_response(StatusCode::OK, &answer), verdict.to_owned());
                 }
-            }
+            };
             let response = dispatch(state.clone(), caller, body).await;
             let response = if shows {
                 response
@@ -823,6 +802,66 @@ fn caller(
 
 /// The arguments the door's scope, ceiling and personal-data checks read: `jc_render` names its
 /// Endpoint read in `data.query` (T-6860), every other tool at the top of its arguments.
+/// The door's scope, ceiling and personal-data checks of one call's `arguments`: whether its
+/// answer may show personal attributes, or the refusal and its audit verdict.
+async fn checks(
+    state: &AppState,
+    connector: &Connector,
+    ceiling: &connectors::Ceiling,
+    project: Option<&str>,
+    name: &str,
+    arguments: &Value,
+) -> Result<bool, (&'static str, String)> {
+    let args = target_args(name, arguments);
+    if let (Some(op), Some(project)) = (crate::ops::find(name), project) {
+        connector
+            .admits(op, project, args, &|kind, name| {
+                connectors::space_now(&state.mirror, project, kind, name)
+            })
+            .and_then(|()| {
+                if ceiling.honours(connector) {
+                    Ok(())
+                } else {
+                    ceiling.admits(connector, op, project, args)
+                }
+            })
+            .map_err(|why| ("refused: target", why))?;
+    }
+    let shows = project.is_some_and(|p| connector.shows_personal(p, args));
+    if !shows {
+        indicator_stays_open(state, project, name, arguments)
+            .await
+            .map_err(|why| ("refused: personal data", why))?;
+    }
+    Ok(shows)
+}
+
+/// The door's checks again on a read a `jc_render` call makes past the door (T-6867): a whole
+/// Dashboard's widget names its Endpoint, channels and source in the saved manifest, which the
+/// door never saw. `Ok` for a call that comes through no connector.
+pub(crate) async fn admits_read(
+    state: &AppState,
+    caller: &crate::ops::Caller,
+    project: &str,
+    args: &Value,
+) -> Result<(), String> {
+    let Some(connector) = caller.access.as_ref().and_then(|a| a.connector()) else {
+        return Ok(());
+    };
+    let ceiling = connectors::Ceiling::of(&state.mirror, &caller.identity);
+    checks(
+        state,
+        connector,
+        &ceiling,
+        Some(project),
+        crate::ops::render::NAME,
+        args,
+    )
+    .await
+    .map(|_| ())
+    .map_err(|(_, why)| why)
+}
+
 fn target_args<'a>(tool: &str, args: &'a Value) -> &'a Value {
     match tool {
         crate::ops::render::NAME => args.pointer("/data/query").unwrap_or(args),

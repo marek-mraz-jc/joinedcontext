@@ -1072,7 +1072,13 @@ impl HarvestEngine {
                         .or_else(|| ds.extras.get("source_id").cloned())
                         .or_else(|| ds.extras.get("source_uri").cloned())
                         .unwrap_or_else(|| ds.name.clone());
-                    existing_by_item.insert(item_id, ds);
+                    // An active record of an item wins over a withdrawn copy of it.
+                    if existing_by_item
+                        .get(&item_id)
+                        .is_none_or(|held| held.state != RecordState::Active)
+                    {
+                        existing_by_item.insert(item_id, ds);
+                    }
                 } else {
                     foreign.insert(ds.id.clone(), ds.name.clone());
                     foreign.insert(ds.name.clone(), ds.name.clone());
@@ -1123,7 +1129,9 @@ impl HarvestEngine {
                     .as_ref()
                     .and_then(|i| held_identifiers.get(i))
                 {
-                    if *at <= source.position {
+                    // Sources at one position (the seeds all are) are told apart by name.
+                    let holder = held.harvest_source_id.as_deref().unwrap_or_default();
+                    if (*at, holder) <= (source.position, source.name.as_str()) {
                         skipped.push(HarvestSkippedItem {
                             item_id,
                             title,
@@ -1134,11 +1142,20 @@ impl HarvestEngine {
                         });
                         continue;
                     }
-                    // This source is listed first: it takes the record over, address and all.
+                    // This source is listed first: it takes the record over under the held
+                    // name and IRI (ODP-11), with its own content and publisher. A copy this
+                    // source held under another name stays in `existing_by_item` and is
+                    // withdrawn below.
                     incoming.id = held.id.clone();
                     incoming.name = held.name.clone();
+                    incoming.uri = held.uri.clone();
+                    match held.extras.get("uri") {
+                        Some(uri) => incoming.extras.insert("uri".into(), uri.clone()),
+                        None => incoming.extras.remove("uri"),
+                    };
                     incoming.state = RecordState::Active;
-                    existing_by_item.remove(&item_id);
+                    incoming.harvest_source_id = Some(source.name.clone());
+                    incoming.harvest_source_item_id = Some(item_id.clone());
                     store.upsert_dataset(ctx, incoming).await?;
                     updated_count += 1;
                     continue;
@@ -1438,6 +1455,8 @@ mod tests {
                 modified: Utc::now(),
                 deleted: None,
                 public_base: None,
+                portal_base: None,
+                left_hosts: Vec::new(),
             })
             .await
             .unwrap();
@@ -1649,6 +1668,8 @@ mod tests {
             modified: Utc::now(),
             deleted: None,
             public_base: None,
+            portal_base: None,
+            left_hosts: Vec::new(),
         };
         cat.allowed_outbound_hosts = sources.iter().map(|(_, h, _)| (*h).to_owned()).collect();
         store.upsert_catalogue(cat).await.unwrap();
@@ -1882,6 +1903,68 @@ mod tests {
             .collect();
         assert_eq!(active.len(), 1, "one record per identifier");
         assert_eq!(active[0].harvest_source_id.as_deref(), Some("first"));
+    }
+
+    #[tokio::test]
+    async fn a_takeover_keeps_the_iri_and_ties_go_by_source_name() {
+        let (_, _, ctx, store) = test_setup();
+        let fetcher = MapFetcher::new();
+        let items = json!({ "numberMatched": 1, "features": [
+            hub_item("item1", "Cesty", "https://hub.bbsk.sk/a"),
+        ] });
+        let sources = hub_world(
+            &store,
+            &ctx,
+            &[("b", "hub.bbsk.sk", 0), ("a", "mirror.bbsk.sk", 0)],
+            &fetcher,
+            items,
+        )
+        .await;
+        let engine = HarvestEngine::new(Arc::new(fetcher)).with_dns_resolution(false);
+        assert_eq!(
+            engine
+                .run_source(&ctx, &store, &sources[0])
+                .await
+                .unwrap()
+                .created_count,
+            1
+        );
+        // The address the record was published under, pinned as an address change pins it.
+        let mut held = store.list_datasets(&ctx).await.unwrap().remove(0);
+        held.uri = Some("https://opendata.bbsk.sk/dataset/pinned".into());
+        store.upsert_dataset(&ctx, held.clone()).await.unwrap();
+
+        let a = engine.run_source(&ctx, &store, &sources[1]).await.unwrap();
+        assert_eq!(
+            a.updated_count, 1,
+            "a before b at one position: {:?}",
+            a.skipped
+        );
+        let b = engine.run_source(&ctx, &store, &sources[0]).await.unwrap();
+        assert!(
+            b.skipped
+                .iter()
+                .any(|s| s.reason.contains("of an earlier source")),
+            "{:?}",
+            b.skipped
+        );
+        let again = engine.run_source(&ctx, &store, &sources[1]).await.unwrap();
+        assert_eq!(
+            again.created_count + again.withdrawn_count,
+            0,
+            "a owns it now"
+        );
+        let active: Vec<Dataset> = store
+            .list_datasets(&ctx)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|d| d.state == RecordState::Active)
+            .collect();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].harvest_source_id.as_deref(), Some("a"));
+        assert_eq!((&active[0].id, &active[0].name), (&held.id, &held.name));
+        assert_eq!(active[0].uri, held.uri, "the IRI does not move");
     }
 
     #[test]

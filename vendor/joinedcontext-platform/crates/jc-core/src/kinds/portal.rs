@@ -82,7 +82,7 @@ pub struct PortalSource {
     /// `endpoints`: only these Endpoints by name.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub names: Vec<String>,
-    /// A harvested catalogue's address, `https://` or `http://`.
+    /// A harvested catalogue's address, `https://` only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     /// Five-field cron, UTC, e.g. `23 3 * * *`.
@@ -304,12 +304,20 @@ impl PortalSource {
                 "a harvested source names its catalogue, e.g. https://data.kosice.sk/catalog.ttl",
             )
         })?;
-        let host = http_url_host(url).ok_or_else(|| {
-            invalid(
-                field("url"),
-                "only an https:// or http:// address without user info is harvested",
-            )
-        })?;
+        // The harvest guard fetches https only: an http:// source would never run.
+        let host = http_url_host(url)
+            .filter(|_| {
+                url.trim()
+                    .get(..8)
+                    .is_some_and(|s| s.eq_ignore_ascii_case("https://"))
+            })
+            .ok_or_else(|| {
+                invalid(
+                    field("url"),
+                    "only an https:// address without user info is harvested, e.g. \
+                     https://data.kosice.sk/catalog.ttl",
+                )
+            })?;
         if !self
             .allowed_hosts
             .iter()
@@ -387,6 +395,11 @@ mod tests {
             (
                 "organizationRef: ba\n  path: x\n  sources:\n    - {name: a, type: dcat-ap, url: \
                  'javascript:alert(1)', allowedHosts: [a.sk]}",
+                "spec.sources[0].url",
+            ),
+            (
+                "organizationRef: ba\n  path: x\n  sources:\n    - {name: a, type: dcat-ap, url: \
+                 'http://a.sk/c.ttl', allowedHosts: [a.sk]}",
                 "spec.sources[0].url",
             ),
             (

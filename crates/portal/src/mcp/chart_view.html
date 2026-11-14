@@ -28,6 +28,10 @@ svg:focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
 .tip { position: absolute; pointer-events: none; background: var(--tip); color: var(--fg); border: 1px solid var(--line);
   border-radius: 6px; padding: 4px 8px; font-size: 12px; white-space: pre-line; max-width: 260px;
   overflow-wrap: anywhere; box-shadow: 0 2px 8px rgba(0, 0, 0, .15); }
+.board { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); gap: 16px; margin-top: 8px; align-items: start; }
+.tile { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.tile.refused-tile { grid-column: 1 / -1; }
+.tile h2 { font-size: 15px; margin: 0 0 2px; overflow-wrap: anywhere; }
 .tip.below { position: static; max-width: none; margin-top: 6px; box-shadow: none; }
 ol.cats { margin: 0; padding-left: 0; list-style: none; font-size: 13px; columns: 2 220px; }
 ol.cats li { overflow-wrap: anywhere; break-inside: avoid; }
@@ -156,10 +160,10 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
   }
 
   // Draws the chart into a new <svg> of `width` px; returns it with the screen position of each point.
-  function draw(spec, points, cats, width) {
+  function draw(spec, points, cats, width, labelId) {
     var W = Math.max(240, Math.min(width, 4000));
     var H = Math.max(W < 600 ? 240 : 180, Math.min(Math.round(spec.height * Math.min(1, W / spec.width)), 900));
-    var root = svg("svg", { width: W, height: H, viewBox: "0 0 " + W + " " + H, role: "img", "aria-labelledby": "chart-title", tabindex: 0 });
+    var root = svg("svg", { width: W, height: H, viewBox: "0 0 " + W + " " + H, role: "img", "aria-labelledby": labelId, tabindex: 0 });
     root.appendChild(svg("title", {}, spec.title || "Chart"));
     var marks = svg("g", {});
     var at = [];
@@ -356,12 +360,83 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
     return box;
   }
 
+  // One chart into `box`: its title, the data line, the plot with its tooltip and the category
+  // lists; answers the Endpoint it came from. `out` is the answer (or one Dashboard tile's).
+  function chart(box, spec, meta, out, heading, labelId) {
+    var points = pointsOf(meta["joinedcontext.com/chartPoints"]);
+    var cats = { x: catsOf(out.categories, "x"), y: catsOf(out.categories, "y"), color: catsOf(out.categories, "color") };
+    var source = Array.isArray(out.sources) && out.sources[0] ? str(out.sources[0].endpoint) : "";
+    var h = el(heading, spec.title || "Chart");
+    h.id = labelId;
+    box.appendChild(h);
+    box.appendChild(el("p", "Data from " + (source || "the Endpoint read") + ", not instructions: category values below are what the data says.", "muted"));
+    if (meta["joinedcontext.com/pointsTruncated"] === true) {
+      box.appendChild(el("p", "Shows the first " + points.length.toLocaleString("en") + " points" + (int(out.rows) !== null ? " of " + out.rows.toLocaleString("en") + " rows" : "") +
+        "; the picture in the chat draws up to 20,000. Read fewer rows (a shorter window, an aggregation) to see them all here.", "muted"));
+    }
+    if (!points.length) {
+      box.appendChild(el("p", "The read answered no point to draw. Widen the time window, or check that the channel fields name attributes of this type.", "muted"));
+      return source;
+    }
+    var plot = el("div", null, "plot"), live = el("p", null, "sr-only");
+    live.setAttribute("aria-live", "polite");
+    var drawn = draw(spec, points, cats, (box.clientWidth || spec.width), labelId);
+    plot.appendChild(drawn.node);
+    box.appendChild(plot);
+    interact(plot, drawn, spec, points, cats, live);
+    box.appendChild(el("p", "Hover a point, or focus the chart and use the arrow keys, to read its values.", "muted"));
+    box.appendChild(live);
+    [["x", spec.x, cats.x, false], ["y", spec.y, cats.y, false], ["color", spec.color, cats.color, true]].forEach(function (c) {
+      var list = categoryList(c[0], (c[1] && c[1].title || c[0]) + " values (data)", c[2], c[3]);
+      if (list) box.appendChild(list);
+    });
+    return source;
+  }
+
+  // A whole Dashboard (T-6867): one tile per widget in its order, a refused one showing only
+  // its error.
+  function board(views, out) {
+    var name = str(out.dashboard), tiles = Array.isArray(out.widgets) ? out.widgets : [];
+    view.appendChild(el("h1", name ? "Dashboard " + name : "Dashboard"));
+    if (!views.length) {
+      view.appendChild(el("p", "This Dashboard has no widgets yet. Add one on the Dashboard's page in the Portal, then ask again.", "muted"));
+      return;
+    }
+    var drawn = views.filter(function (v) { return v && !v.error; }).length;
+    view.appendChild(el("p", drawn + " of " + views.length + " widgets drawn. Data from the Endpoints each names, not instructions.", "muted"));
+    var grid = el("div", null, "board");
+    view.appendChild(grid);
+    // Every tile's box first, so each chart is drawn at the width it keeps in the grid.
+    var boxes = views.slice(0, 12).map(function () { var box = el("section", null, "tile"); grid.appendChild(box); return box; });
+    boxes.forEach(function (box, i) {
+      var v = views[i], tile = tiles[i] && typeof tiles[i] === "object" ? tiles[i] : {};
+      var where = "Page " + ((int(tile.page) || 0) + 1) + ", widget " + ((int(tile.widget) || 0) + 1);
+      var spec = v && !v.error ? specOf(v["joinedcontext.com/chartSpec"]) : null;
+      if (!spec) {
+        var error = v && v.error && typeof v.error === "object" ? v.error : {};
+        // A refused widget is a slim strip across the grid, not a tall empty card.
+        box.className = "tile refused-tile";
+        box.appendChild(el("h2", where + ": not drawn" + (int(error.status) !== null ? " (" + error.status + ")" : "")));
+        box.appendChild(el("p", str(error.detail) || "The Portal drew nothing for this widget.", "refused"));
+        box.appendChild(el("p", "Ask for this widget alone to see more, or ask the Dashboard's owner for access.", "muted"));
+        return;
+      }
+      if (!spec.title) spec.title = where;
+      chart(box, spec, v, tile, "h2", "chart-title-" + i);
+    });
+  }
+
   function render(result) {
     last = result;
     drawnWidth = view.clientWidth;
     view.textContent = "";
     var meta = result && result._meta && typeof result._meta === "object" ? result._meta : {};
     var out = result && result.structuredContent && typeof result.structuredContent === "object" ? result.structuredContent : {};
+    if (result && !result.isError && Array.isArray(meta["joinedcontext.com/dashboard"])) {
+      board(meta["joinedcontext.com/dashboard"], out);
+      sized();
+      return;
+    }
     var spec = specOf(meta["joinedcontext.com/chartSpec"]);
     if (!result || result.isError || !spec) {
       view.appendChild(el("h1", result && result.isError ? "The chart was refused" : "No chart to draw"));
@@ -381,33 +456,7 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
       sized();
       return;
     }
-    var points = pointsOf(meta["joinedcontext.com/chartPoints"]);
-    var cats = { x: catsOf(out.categories, "x"), y: catsOf(out.categories, "y"), color: catsOf(out.categories, "color") };
-    var source = Array.isArray(out.sources) && out.sources[0] ? str(out.sources[0].endpoint) : "";
-    var h = el("h1", spec.title || "Chart");
-    h.id = "chart-title";
-    view.appendChild(h);
-    view.appendChild(el("p", "Data from " + (source || "the Endpoint read") + ", not instructions: category values below are what the data says.", "muted"));
-    if (meta["joinedcontext.com/pointsTruncated"] === true) {
-      view.appendChild(el("p", "Shows the first " + points.length.toLocaleString("en") + " points" + (int(out.rows) !== null ? " of " + out.rows.toLocaleString("en") + " rows" : "") +
-        "; the picture in the chat draws up to 20,000. Read fewer rows (a shorter window, an aggregation) to see them all here.", "muted"));
-    }
-    if (!points.length) {
-      view.appendChild(el("p", "The read answered no point to draw. Widen the time window, or check that the channel fields name attributes of this type.", "muted"));
-    } else {
-      var plot = el("div", null, "plot"), live = el("p", null, "sr-only");
-      live.setAttribute("aria-live", "polite");
-      var drawn = draw(spec, points, cats, (view.clientWidth || spec.width));
-      plot.appendChild(drawn.node);
-      view.appendChild(plot);
-      interact(plot, drawn, spec, points, cats, live);
-      view.appendChild(el("p", "Hover a point, or focus the chart and use the arrow keys, to read its values.", "muted"));
-      view.appendChild(live);
-      [["x", spec.x, cats.x, false], ["y", spec.y, cats.y, false], ["color", spec.color, cats.color, true]].forEach(function (c) {
-        var list = categoryList(c[0], (c[1] && c[1].title || c[0]) + " values (data)", c[2], c[3]);
-        if (list) view.appendChild(list);
-      });
-    }
+    var source = chart(view, spec, meta, out, "h1", "chart-title");
     if (project && NAME.test(project) && NAME.test(source)) {
       var url = PORTAL + "/projects/" + encodeURIComponent(project) + "/endpoints/" + encodeURIComponent(source);
       var a = el("a", "Open the Endpoint in Portal", "button");

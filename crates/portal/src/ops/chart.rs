@@ -138,6 +138,30 @@ impl Canvas {
         }
     }
 
+    /// The outline of a rectangle, one pixel wide.
+    fn frame(&mut self, x0: i64, y0: i64, x1: i64, y1: i64, rgb: [u8; 3]) {
+        for (a, b) in [
+            ((x0, y0), (x1, y0)),
+            ((x1, y0), (x1, y1)),
+            ((x0, y1), (x1, y1)),
+            ((x0, y0), (x0, y1)),
+        ] {
+            self.line(a, b, 1, rgb);
+        }
+    }
+
+    /// `other` copied in with its top left corner at `x`, `y`; what falls outside is cut.
+    fn blit(&mut self, other: &Canvas, x: i64, y: i64) {
+        for row in 0..other.height {
+            for col in 0..other.width {
+                let at = usize::try_from((row * other.width + col) * 3).unwrap_or(usize::MAX);
+                if let Some(px) = other.pixels.get(at..at + 3) {
+                    self.set(x + col, y + row, [px[0], px[1], px[2]]);
+                }
+            }
+        }
+    }
+
     /// A line `thick` pixels wide (Bresenham, a square stamped at each step).
     fn line(&mut self, from: (i64, i64), to: (i64, i64), thick: i64, rgb: [u8; 3]) {
         let (mut x, mut y) = from;
@@ -414,6 +438,74 @@ fn check(deadline: Instant) -> Result<(), Limited> {
 
 /// Draws `chart` and answers its PNG, or [`Limited`] once `deadline` has passed.
 pub fn render(chart: &Chart, deadline: Instant) -> Result<Vec<u8>, Limited> {
+    Ok(canvas(chart, deadline)?.png())
+}
+
+/// One tile of a montage (T-6867): a chart, or a widget that was not drawn, a box with the
+/// platform's own words.
+#[derive(Debug, Clone)]
+pub enum Tile {
+    Chart(Chart),
+    Error {
+        width: u32,
+        height: u32,
+        text: String,
+    },
+}
+
+/// Tiles of a montage side by side; below them the next row.
+const COLUMNS: usize = 2;
+const GAP: i64 = 16;
+
+/// `tiles` in rows of [`COLUMNS`], in order, each in a light frame; one chart alone is its own
+/// picture, none is a note saying so. [`Limited`] once `deadline` has passed.
+pub fn montage(tiles: &[Tile], deadline: Instant) -> Result<Vec<u8>, Limited> {
+    if let [Tile::Chart(chart)] = tiles {
+        return render(chart, deadline);
+    }
+    if tiles.is_empty() {
+        let mut c = Canvas::new(480, 64);
+        c.text(16, 24, "This Dashboard has no widgets", INK);
+        return Ok(c.png());
+    }
+    let mut drawn = Vec::with_capacity(tiles.len());
+    for tile in tiles {
+        drawn.push(match tile {
+            Tile::Chart(chart) => canvas(chart, deadline)?,
+            Tile::Error {
+                width,
+                height,
+                text,
+            } => {
+                let mut c = Canvas::new(*width, *height);
+                c.text(16, c.height / 2 - LINE / 2, text, INK);
+                c
+            }
+        });
+    }
+    let columns = COLUMNS.min(drawn.len());
+    let mut widths = vec![0; columns];
+    let mut heights = vec![0; drawn.len().div_ceil(columns)];
+    for (i, c) in drawn.iter().enumerate() {
+        widths[i % columns] = widths[i % columns].max(c.width);
+        heights[i / columns] = heights[i / columns].max(c.height);
+    }
+    let side = |sizes: &[i64]| sizes.iter().map(|s| s + GAP).sum::<i64>() + GAP;
+    let (w, h) = (side(&widths), side(&heights));
+    let mut out = Canvas::new(u32::try_from(w).unwrap_or(0), u32::try_from(h).unwrap_or(0));
+    for (i, c) in drawn.iter().enumerate() {
+        check(deadline)?;
+        let x = GAP + widths[..i % columns].iter().map(|s| s + GAP).sum::<i64>();
+        let y = GAP + heights[..i / columns].iter().map(|s| s + GAP).sum::<i64>();
+        out.frame(x - 1, y - 1, x + c.width, y + c.height, GRID);
+        out.blit(c, x, y);
+    }
+    check(deadline)?;
+    Ok(out.png())
+}
+
+/// `chart` drawn on a canvas of its own.
+fn canvas(chart: &Chart, deadline: Instant) -> Result<Canvas, Limited> {
     check(deadline)?;
     let mut c = Canvas::new(chart.width, chart.height);
     let w = c.width;
@@ -448,7 +540,7 @@ pub fn render(chart: &Chart, deadline: Instant) -> Result<Vec<u8>, Limited> {
         }
     }
     check(deadline)?;
-    Ok(c.png())
+    Ok(c)
 }
 
 fn draw_arc(

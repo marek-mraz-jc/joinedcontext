@@ -111,11 +111,34 @@ impl CatalogueWriter {
             }
         }
         let store = self.state.store.as_ref();
+        let held = store.get_catalogue(org, id).await?;
         let mut cat = crate::ensure_catalogue(store, org, id, &spec.name, &spec.host).await?;
-        if cat.deleted.is_some() {
-            cat.deleted = None;
-            cat.modified = chrono::Utc::now();
-            cat = store.upsert_catalogue(cat).await?;
+        // A further portal's last base and the own hosts it left live in its row, so a restart
+        // keeps them (ODP-08).
+        let mut row = cat.clone();
+        row.deleted = None;
+        if spec.portal.is_some() {
+            if let Some(left) = held
+                .as_ref()
+                .map(|h| h.host.as_str())
+                .filter(|h| *h != spec.host && !h.ends_with(".portal.invalid"))
+            {
+                if !row.left_hosts.iter().any(|l| l == left) {
+                    row.left_hosts.push(left.to_owned());
+                }
+            }
+            row.left_hosts.retain(|l| *l != spec.host);
+            row.portal_base = spec.base.clone();
+        }
+        let before = held
+            .and_then(|h| h.portal_base)
+            .or_else(|| read(&self.state.catalogue_bases).get(&id).cloned());
+        if row.deleted != cat.deleted
+            || row.left_hosts != cat.left_hosts
+            || row.portal_base != cat.portal_base
+        {
+            row.modified = chrono::Utc::now();
+            cat = store.upsert_catalogue(row).await?;
         }
         let ctx = RequestCtx::new(org, id, Subject::anonymous());
         if store
@@ -126,7 +149,6 @@ impl CatalogueWriter {
             store.upsert_publisher(&ctx, spec.publisher.clone()).await?;
         }
 
-        let before = read(&self.state.catalogue_bases).get(&id).cloned();
         if let Some(old) = before
             .as_deref()
             .filter(|old| spec.base.as_deref() != Some(*old))
@@ -156,6 +178,7 @@ impl CatalogueWriter {
                 &route.organization,
                 &route.path,
                 route.host.as_deref(),
+                &cat.left_hosts,
                 PortalAddress {
                     org_id: org,
                     id,
@@ -336,4 +359,108 @@ fn read<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
 
 fn write<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
     lock.write().unwrap_or_else(PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dataroom_core::Store;
+    use dataroom_store_memory::MemoryStore;
+    use serde_json::json;
+
+    fn id<T>(parse: fn(&str) -> std::result::Result<T, DataroomError>, n: u128) -> T {
+        parse(&format!("00000000-0000-7000-8000-{n:012x}")).expect("an id")
+    }
+
+    /// jc's writer on `store` as it starts: the tables empty, nothing routed yet.
+    fn started(store: Arc<dyn Store>) -> (DataroomState, CatalogueWriter) {
+        let (org, cat) = (
+            id(OrgId::parse_verified, 0xA1),
+            id(CatalogueId::parse_verified, 0xC0),
+        );
+        let authorizer = Arc::new(LiveAuthorizer::new(Vec::new()));
+        let state = DataroomState::new(store, authorizer.clone(), org, cat);
+        let writer = CatalogueWriter::new(state.clone(), authorizer, Arc::default());
+        (state, writer)
+    }
+
+    /// Portal `mobility` of Organization `city` on `host`, or at its slug address without one.
+    fn mobility(host: Option<&str>) -> CatalogueSpec {
+        let (org_id, id) = (
+            id(OrgId::parse_verified, 0xA1),
+            id(CatalogueId::parse_verified, 0xC1),
+        );
+        CatalogueSpec {
+            org_id,
+            id,
+            name: "mobility".into(),
+            host: host.map_or_else(
+                || dataroom_api::synthetic_host("city", "mobility"),
+                str::to_owned,
+            ),
+            base: Some(host.map_or_else(
+                || "https://data.city.test/-/mobility".into(),
+                |h| format!("https://{h}"),
+            )),
+            organization: None,
+            publisher: serde_json::from_value(json!({
+                "orgId": org_id, "catalogueId": id, "id": "", "name": "city",
+                "title": {"sk": "Mesto"}, "description": {}, "uri": "https://data.city.test/publisher/city",
+                "state": "active", "editorGrants": [],
+                "created": "2026-11-14T10:00:00Z", "modified": "2026-11-14T10:00:00Z"
+            }))
+            .expect("a publisher"),
+            publish_token: None,
+            portal: Some(PortalRoute {
+                organization: "city".into(),
+                path: "mobility".into(),
+                host: host.map(str::to_owned),
+                redirect: false,
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn iri_pins_and_left_hosts_survive_a_restart() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let spec = mobility(Some("mobility.city.test"));
+        let (_, writer) = started(store.clone());
+        writer.upsert(spec.clone()).await.expect("on its own host");
+        let ctx = RequestCtx::new(spec.org_id, spec.id, Subject::anonymous());
+        let air: dataroom_core::Dataset = serde_json::from_value(json!({
+            "orgId": spec.org_id, "catalogueId": spec.id, "id": "", "name": "air",
+            "title": {"sk": "Ovzdušie"}, "description": {}, "publisherId": "city",
+            "visibility": "public", "state": "active", "tags": [], "distributions": [],
+            "issued": "2026-11-14T10:00:00Z", "modified": "2026-11-14T10:00:00Z"
+        }))
+        .expect("a dataset");
+        store.upsert_dataset(&ctx, air).await.expect("stored");
+
+        // jc restarts and the manifest now names the slug address: the first write after the
+        // restart still pins the IRI to the host the portal leaves, and that host still routes.
+        let (state, writer) = started(store.clone());
+        writer
+            .upsert(mobility(None))
+            .await
+            .expect("to its slug address");
+        let pinned = store.list_datasets(&ctx).await.expect("listed");
+        assert_eq!(
+            pinned[0].uri.as_deref(),
+            Some("https://mobility.city.test/dataset/air"),
+            "the dataset keeps its IRI"
+        );
+        assert_eq!(
+            state.portals.host("mobility.city.test"),
+            Some((spec.org_id, spec.id))
+        );
+
+        // Another restart: the left host is read back from the catalogue row.
+        let (state, writer) = started(store);
+        writer.upsert(mobility(None)).await.expect("unchanged");
+        assert_eq!(
+            state.portals.host("mobility.city.test"),
+            Some((spec.org_id, spec.id)),
+            "the left host still answers after a restart"
+        );
+    }
 }

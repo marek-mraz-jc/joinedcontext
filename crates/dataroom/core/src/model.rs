@@ -289,6 +289,15 @@ pub struct Catalogue {
     /// http install or a catalogue under a path prefix answers links that reach it.
     #[serde(skip)]
     pub public_base: Option<String>,
+    /// The base a further portal's catalogue was last written with (ODP-08): the catalogue
+    /// writer reads it back, so an address change made while jc was down still pins every
+    /// dataset IRI to the address it leaves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portal_base: Option<String>,
+    /// The own hosts a further portal left (ODP-08): each keeps answering for it after a
+    /// restart, so an IRI pinned there still reaches its dataset.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub left_hosts: Vec<String>,
 }
 
 fn default_true() -> bool {
