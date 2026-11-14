@@ -1739,6 +1739,14 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
             err["message"].as_str().unwrap().contains("failed"),
             "{action}: {err}"
         );
+        // The store's own text (tables, constraints, values) stays in the server log.
+        for m in methods {
+            assert!(
+                !a.body.contains(&format!("{m} failed")),
+                "{action}: {}",
+                a.body
+            );
+        }
     }
     // Nothing was written by the refused calls.
     let ctx = w.admin_ctx();

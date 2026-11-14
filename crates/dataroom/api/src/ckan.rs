@@ -51,6 +51,7 @@ fn ckan_ok(base: &str, action: &str, result: Value, cache_public: bool) -> Respo
 }
 
 fn ckan_err(base: &str, action: &str, err: DataroomError) -> Response {
+    let err = crate::client_safe(err);
     let status = StatusCode::from_u16(err.status_code()).unwrap_or(StatusCode::BAD_REQUEST);
     let mut err_obj = Map::new();
     err_obj.insert("__type".into(), json!(err.ckan_error_type()));

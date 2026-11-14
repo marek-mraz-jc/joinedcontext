@@ -528,7 +528,20 @@ pub fn operations() -> Vec<OperationDef> {
 }
 
 /// Converts a [`DataroomError`] into an RFC 9457 Problem Details JSON response with a slug (A5).
+/// What a client may read of `err`: a storage error's text names tables, constraints and
+/// values, so it goes to the server log and the client reads that it failed.
+pub(crate) fn client_safe(err: DataroomError) -> DataroomError {
+    match err {
+        DataroomError::Storage(detail) => {
+            tracing::error!(error = %detail, "dataroom storage error");
+            DataroomError::Storage("storage failed: the server log has the cause".into())
+        }
+        other => other,
+    }
+}
+
 pub fn problem_response(err: DataroomError) -> Response {
+    let err = client_safe(err);
     let status =
         StatusCode::from_u16(err.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let body = json!({
