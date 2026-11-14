@@ -159,9 +159,9 @@ async fn respond(ops: &Ops, req: Request) -> Response {
     );
     let served = if names_the_model {
         let visible = model_visible(&view, &caller).await;
-        assembled(&id, view, Some(&visible), version, service_root).map(Arc::new)
+        assembled(&id, view.clone(), Some(&visible), version, service_root.clone()).map(Arc::new)
     } else {
-        kept(&id, view, version, service_root)
+        kept(&id, view.clone(), version, service_root.clone())
     };
     let Some(served) = served else {
         return not_found();
@@ -177,7 +177,14 @@ async fn respond(ops: &Ops, req: Request) -> Response {
     if req.method() == Method::POST && req.uri().path() == format!("{inner_root}$batch") {
         let path_root = format!("{PREFIX}{inner_root}");
         let roots = (path_root.as_str(), inner_root.as_str());
-        return batch::serve(routed, ops, roots, req, state.url_limits.max_query_len).await;
+        // A member reading a model document is shown the narrowed one, as alone; built only
+        // when a member asks for one.
+        let narrowed = async {
+            let visible = model_visible(&view, &caller).await;
+            assembled(&id, view, Some(&visible), version, service_root).map(|s| s.routed)
+        };
+        let routers = (routed, narrowed);
+        return batch::serve(routers, ops, roots, req, state.url_limits.max_query_len).await;
     }
     let Ok(resp) = routed.clone().oneshot(req).await;
     resp

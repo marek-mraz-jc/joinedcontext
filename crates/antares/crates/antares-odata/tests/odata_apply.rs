@@ -699,3 +699,27 @@ async fn the_metadata_hides_what_the_engine_hides() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// A `$batch` member reading `$metadata` or the service document is shown the
+/// same narrowed model as the request alone.
+#[tokio::test]
+async fn a_batch_member_reads_the_metadata_the_engine_narrows() -> Result<(), String> {
+    for (hiding, named) in [(true, false), (false, true)] {
+        let (_b, app) = broker(hiding).await?;
+        let members = json!({"requests": [
+            {"id": "1", "method": "get", "url": "$metadata"},
+        ]});
+        let (status, body) = send(
+            &app,
+            Method::POST,
+            &format!("{ROOT}/$batch"),
+            Some(members.to_string()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let text = body.to_string();
+        assert!(text.contains("brand"), "{text}");
+        assert_eq!(text.contains("owner"), named, "hiding {hiding}: {text}");
+    }
+    Ok(())
+}
