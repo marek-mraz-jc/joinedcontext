@@ -422,10 +422,15 @@ class Suite:
                           f"          endpointRef: {endpoint}\n")],
                         f"multiorg smoke: a Dashboard of {org}", repo=("joinedcontext", project))
         # One further Portal per Organization listing its published Endpoints (ODP-10), read by
-        # check_portals: a forge commit as the RoleBindings, as an approved Change would be.
-        self.commit([(f"portals/multiorg-{org}.yaml", portal_manifest(f"multiorg-{org}", org, [
-            {"name": "published", "type": "endpoints"}])) for org in self.exp],
-            "multiorg smoke: a further Portal of each Organization")
+        # check_portals: a forge commit as the RoleBindings, as an approved Change would be. The
+        # bundle's org-admin Role predates the kind: it gains Portal, as a deployment's does.
+        portals = [(f"portals/multiorg-{org}.yaml", portal_manifest(f"multiorg-{org}", org, [
+            {"name": "published", "type": "endpoints"}])) for org in self.exp]
+        role = self.read_file("users/roles/org-admin.yaml")
+        if role and not re.search(r"^\s*- Portal\s*$", role, re.M):
+            role = re.sub(r"^(\s*)- Organization\s*$", r"\g<0>\n\1- Portal", role, count=1, flags=re.M)
+            portals.append(("users/roles/org-admin.yaml", role))
+        self.commit(portals, "multiorg smoke: a further Portal of each Organization")
         self.synced()
 
     def synced(self):
@@ -470,6 +475,12 @@ class Suite:
             return set()
         st, members = h.json("GET", f"/id/admin/realms/{self.realm}/groups/{g['id']}/members", headers=auth)
         return {m["username"] for m in members} if st == 200 and isinstance(members, list) else set()
+
+    def read_file(self, path, repo=CONFIG) -> str | None:
+        """A file of `main` in the forge, or None."""
+        auth = {"Authorization": f"token {R.read_secret(self.state, 'shako-token')}"}
+        st, cur = self.client().json("GET", f"/git/api/v1/repos/{repo[0]}/{repo[1]}/contents/{path}?ref=main", headers=auth)
+        return base64.b64decode(cur.get("content", "")).decode() if st == 200 and isinstance(cur, dict) else None
 
     def commit(self, files, message, repo=CONFIG):
         h = self.client()
@@ -1403,7 +1414,7 @@ class Suite:
                 st, _, raw = h.call("GET", base + path)
                 text = raw.decode(errors="replace")
                 if kind in ("search", "list"):
-                    result = (json.loads(text or "{}") if st == 200 else {}).get("result", [])
+                    result = (json.loads(text or "{}") if st == 200 else {}).get("result") or {}
                     names = {r.get("name") for r in result.get("results", [])} if kind == "search" else set(result)
                     leaked = sorted(n for n in others if n in names)
                 else:
