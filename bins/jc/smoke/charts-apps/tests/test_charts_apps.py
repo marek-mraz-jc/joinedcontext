@@ -77,6 +77,16 @@ def test_a_closed_endpoints_panel_without_a_person_passes_only_on_the_gateways_r
     assert suite.judge_closed(200, [], "")[0] == suite.FAIL
 
 
+def test_an_admin_render_for_nobody_passes_only_on_daiyas_401():
+    frame = [{"data": {"values": [[1], [2]]}}]
+    refused = "the server administrator reads data only for a person (x-daiya-person-token) or as the public"
+    assert suite.judge_no_person(401, [], refused)[0] == suite.PASS
+    assert suite.judge_no_person(200, frame, "")[0] == suite.FAIL  # the old admin fallback
+    assert suite.judge_no_person(200, [], "")[0] == suite.FAIL
+    assert suite.judge_no_person(401, frame, "")[0] == suite.FAIL
+    assert suite.READ_AS_PUBLIC == {"x-daiya-read-as": "public"}
+
+
 def test_a_closed_panel_read_as_the_granted_reader_passes_only_on_rows():
     frames = [{"fields": [{"name": "name", "values": ["a", "b"]}]}]
     assert suite.judge_reader(200, frames, "") == (suite.PASS, "200, 1 frames, 2 rows", "")

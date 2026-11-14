@@ -1629,7 +1629,7 @@ fn input_schema() -> Value {
     query["description"] = json!("The jc_data_query arguments, e.g. {\"endpoint\": \"air\", \"type\": \"AirQualityObserved\", \"attrs\": [\"pm10\"], \"temporal\": {\"timerel\": \"after\", \"timeAt\": \"2026-11-13T00:00:00Z\"}}");
     json!({
         "type": "object",
-        "description": "A Vega-Lite 5 subset. data.query is a jc_data_query read; no url, no transform, no expression",
+        "description": "A Vega-Lite 5 subset. data.query is a jc_data_query read, data.widget a saved Dashboard widget; no url, no transform, no expression",
         "properties": {
             "$schema": { "type": "string", "description": "https://vega.github.io/schema/vega-lite/v5.json, never fetched", "pattern": "^https://vega\\.github\\.io/schema/vega-lite/v5", "maxLength": URL },
             "title": text("Drawn above the chart, e.g. PM10 at Kallio", MAX_TITLE as u64),
@@ -1655,14 +1655,14 @@ fn input_schema() -> Value {
                         "type": "object",
                         "description": "A saved Dashboard's vega-lite widget, e.g. {\"dashboard\": \"air-quality\", \"page\": 0, \"widget\": 1}",
                         "properties": {
-                            "dashboard": text("The Dashboard's name in this project, e.g. air-quality", 63),
+                            "dashboard": text("The Dashboard's name in this project, e.g. air-quality", NAME),
                             "page": { "type": "integer", "minimum": 0, "maximum": 99, "description": "The page, counting from 0" },
                             "widget": { "type": "integer", "minimum": 0, "maximum": 99, "description": "The widget on the page, counting from 0" }
                         },
                         "required": ["dashboard", "page", "widget"],
                         "additionalProperties": false
                     },
-                    "dashboard": text("A saved Dashboard drawn whole, at most 12 widgets, each read as you, e.g. air-quality", 63)
+                    "dashboard": text("A saved Dashboard drawn whole, at most 12 widgets, each read as you, e.g. air-quality", NAME)
                 },
                 "additionalProperties": false
             }

@@ -538,10 +538,18 @@ impl JcRouter {
             *req.uri_mut() = new_uri;
         }
 
+        // Without a host table an entry with no host answers any Host, and a module builds its
+        // issuer and links from the Mount (I-7): a Host the edge did not vouch for names the base
+        // host there, so a forged one never reaches an issuer, a token or a link.
+        let host = if self.hosts.is_none() && entry.host.is_none() && !from_edge {
+            self.default_host.clone()
+        } else {
+            host_with_port
+        };
         let mount = Mount {
             module: entry.module.clone(),
             scheme,
-            host: host_with_port,
+            host,
             path_prefix: via.public_prefix(&entry.prefix),
         };
         req.extensions_mut().insert(mount);
@@ -876,6 +884,67 @@ mod tests {
                 format!("{peer} ")
             );
         }
+    }
+
+    /// I-7: one domain, no host table: a forged Host (or X-Forwarded-Host from a peer that is not
+    /// the edge) still routes, and the Mount names the base host; the edge's forwarded host counts.
+    #[tokio::test]
+    async fn a_forged_host_never_reaches_the_mount_without_a_host_table() {
+        let jc = JcRouterBuilder::new("https", "city.example")
+            .trust_proxy("10.0.0.0/8".parse().unwrap())
+            .mount(
+                MountSpec {
+                    module: "kaisatsu".into(),
+                    host: None,
+                    path_prefix: Some("/id".into()),
+                },
+                Router::new().route("/realms/dev", get(echo_mount)),
+            )
+            .build()
+            .unwrap();
+        let issuer = |host: &str, forwarded: Option<&str>, peer: &str| {
+            let mut req = Request::builder()
+                .uri("/id/realms/dev")
+                .header("host", host);
+            if let Some(f) = forwarded {
+                req = req.header("x-forwarded-host", f);
+            }
+            let req = req.body(Body::empty()).unwrap();
+            let jc = jc.clone();
+            let peer = peer.parse().unwrap();
+            async move {
+                let resp = jc.dispatch(req, Some(peer)).await;
+                assert_eq!(resp.status(), StatusCode::OK);
+                let body = resp.into_body().collect().await.unwrap().to_bytes();
+                String::from_utf8(body.to_vec()).unwrap()
+            }
+        };
+        let base = "issuer=https://city.example/id/realms/dev";
+        assert!(
+            issuer("city.example", None, "127.0.0.1")
+                .await
+                .contains(base)
+        );
+        assert!(
+            issuer("evil.example", None, "127.0.0.1")
+                .await
+                .contains(base)
+        );
+        assert!(
+            issuer("192.168.7.9:8080", None, "192.168.7.9")
+                .await
+                .contains(base)
+        );
+        assert!(
+            issuer("city.example", Some("evil.example"), "127.0.0.1")
+                .await
+                .contains(base)
+        );
+        assert!(
+            issuer("city.example", Some("jc.city.example"), "10.0.0.5")
+                .await
+                .contains("issuer=https://jc.city.example/id/realms/dev")
+        );
     }
 
     #[tokio::test]
