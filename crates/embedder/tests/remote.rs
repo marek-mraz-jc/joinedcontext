@@ -64,11 +64,15 @@ async fn a_service_that_is_down_or_failing_is_a_refusal() {
         matches!(&got, Err(Error::Refused(why)) if why.contains("503")),
         "{got:?}"
     );
-    // A port nothing listens on.
-    let free = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-    let url = format!("http://{}", free.local_addr().expect("addr"));
-    drop(free);
+    // A port nothing listens on: the socket stays bound (without SO_REUSEADDR) and never
+    // listens, so no parallel test's server can take the port and a connect is refused.
+    let closed = tokio::net::TcpSocket::new_v4().expect("socket");
+    closed
+        .bind("127.0.0.1:0".parse().expect("addr"))
+        .expect("bind");
+    let url = format!("http://{}", closed.local_addr().expect("addr"));
     let got = remote(url).await.embed(Kind::Passage, &["p".into()]).await;
+    drop(closed);
     assert!(matches!(got, Err(Error::Unreachable(_))), "{got:?}");
 }
 
