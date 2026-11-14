@@ -3,7 +3,7 @@
 //! through `OutboundGuard` (Contract S15, R§2.1, Threat T3).
 
 use crate::pktline::{parse_all_pkt_lines, write_flush, write_text_line};
-use crate::repo::open_isolated;
+use crate::repo::{is_ancestor, open_isolated};
 use crate::upload_pack::{build_pack_bytes, collect_advertised_refs};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -16,6 +16,10 @@ use std::path::Path;
 /// Smart HTTP (`GET .../info/refs?service=git-receive-pack` + `POST .../git-receive-pack`)
 /// through `guard`, authenticating with HTTP Basic `username:password`.
 /// Never includes credentials in returned errors or logs (Contract S15).
+///
+/// `branch` scopes the mirror (T-6892): only `refs/heads/{branch}` and new tags go, and only
+/// as a fast-forward. A remote ref that moved elsewhere is named in the error, never
+/// overwritten; the refs that can go still go.
 pub async fn push_mirror_over_https(
     repo_path: &Path,
     remote_address: &str,
@@ -23,6 +27,7 @@ pub async fn push_mirror_over_https(
     password: &str,
     guard: &OutboundGuard,
     allowed_hosts: Option<&[String]>,
+    branch: Option<&str>,
 ) -> ShakoResult<()> {
     let base = remote_address.trim_end_matches('/');
     let info_url = format!("{base}/info/refs?service=git-receive-pack");
@@ -50,9 +55,10 @@ pub async fn push_mirror_over_https(
     }
 
     let remote_refs = parse_remote_receive_pack_advertisement(&adv_bytes)?;
-    let (commands, pack_bytes) = build_send_pack_payload(repo_path, &remote_refs)?;
+    let (commands, pack_bytes, diverged) =
+        build_send_pack_payload(repo_path, &remote_refs, branch)?;
     if commands.is_empty() {
-        return Ok(());
+        return diverged_error(&diverged);
     }
 
     let mut body = Vec::new();
@@ -94,7 +100,20 @@ pub async fn push_mirror_over_https(
         )));
     }
 
-    verify_remote_report_status(&resp_bytes)
+    verify_remote_report_status(&resp_bytes)?;
+    diverged_error(&diverged)
+}
+
+fn diverged_error(diverged: &[String]) -> ShakoResult<()> {
+    if diverged.is_empty() {
+        return Ok(());
+    }
+    // A conflict, so the mirror's LastError says it: a Git error answers only that it failed.
+    Err(ShakoError::Conflict(format!(
+        "the remote's {} moved to commits that are not here; it was not overwritten: \
+         reconcile the remote by hand",
+        diverged.join(", ")
+    )))
 }
 
 fn scrub_secret(err: &ShakoError, secret: &str) -> ShakoError {
@@ -138,22 +157,41 @@ fn parse_remote_receive_pack_advertisement(
 /// One ref command of a push: `(old id, new id, ref name)`.
 type SendPackCommand = (ObjectId, ObjectId, String);
 
+/// The ref commands and the pack for `remote_refs`, and the refs a scoped mirror left alone
+/// because the remote's tip is not behind ours.
 fn build_send_pack_payload(
     repo_path: &Path,
     remote_refs: &BTreeMap<String, ObjectId>,
-) -> ShakoResult<(Vec<SendPackCommand>, Vec<u8>)> {
+    branch: Option<&str>,
+) -> ShakoResult<(Vec<SendPackCommand>, Vec<u8>, Vec<String>)> {
     let repo = open_isolated(repo_path)?;
     let (_, local_refs) = collect_advertised_refs(&repo, false)?;
     let zero = ObjectId::null(gix_hash::Kind::Sha1);
 
     let mut commands = Vec::new();
     let mut new_tips = Vec::new();
+    let mut diverged = Vec::new();
+    let only = branch.map(|b| format!("refs/heads/{b}"));
 
     for r in &local_refs {
         if r.name == "HEAD" {
             continue;
         }
         let old_oid = remote_refs.get(&r.name).copied().unwrap_or(zero);
+        if let Some(only) = &only {
+            if r.name != *only && !r.name.starts_with("refs/tags/") {
+                continue;
+            }
+            // A tag is created, never moved; a branch only moves forward.
+            let forward = old_oid == zero
+                || (r.name == *only
+                    && repo.has_object(old_oid)
+                    && is_ancestor(&repo, old_oid, r.oid));
+            if old_oid != r.oid && !forward {
+                diverged.push(r.name.clone());
+                continue;
+            }
+        }
         if old_oid != r.oid {
             commands.push((old_oid, r.oid, r.name.clone()));
             if let Some(p) = r.peeled {
@@ -165,7 +203,7 @@ fn build_send_pack_payload(
     }
 
     if commands.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
+        return Ok((Vec::new(), Vec::new(), diverged));
     }
 
     let mut objects: BTreeSet<ObjectId> =
@@ -180,7 +218,7 @@ fn build_send_pack_payload(
 
     let oid_vec: Vec<ObjectId> = objects.into_iter().collect();
     let pack = build_pack_bytes(&repo, &oid_vec, false)?;
-    Ok((commands, pack))
+    Ok((commands, pack, diverged))
 }
 
 fn verify_remote_report_status(resp: &[u8]) -> ShakoResult<()> {
@@ -199,4 +237,120 @@ fn verify_remote_report_status(resp: &[u8]) -> ShakoResult<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::repo::{
+        CommitAuthor, FileChangeOp, FileOpKind, commit_file_changes, init_bare_repo, set_ref_direct,
+    };
+    use shako_core::{InstanceId, RepoId};
+    use std::path::PathBuf;
+
+    fn oid(hex: &str) -> ObjectId {
+        ObjectId::from_hex(hex.as_bytes()).expect("an object id")
+    }
+
+    /// `main` with two commits and a tag, `change/1` beside it: what a configuration
+    /// repository holds while a Change is open.
+    fn repository(dir: &Path) -> (PathBuf, String, String, String) {
+        let repo = init_bare_repo(
+            dir,
+            InstanceId::from_u128(1),
+            RepoId::from_u128(7),
+            "main",
+            false,
+            "t",
+        )
+        .expect("init");
+        let author = CommitAuthor {
+            name: "t".into(),
+            email: "t@example.invalid".into(),
+        };
+        let commit = |branch: &str, path: &str| {
+            commit_file_changes(
+                &repo,
+                branch,
+                path,
+                &author,
+                &author,
+                &[FileChangeOp {
+                    operation: FileOpKind::Create,
+                    path: path.into(),
+                    content: Some(b"kind: Endpoint\n".to_vec()),
+                    sha: None,
+                }],
+            )
+            .expect("commit")
+        };
+        let first = commit("main", "one.yaml");
+        let second = commit("main", "two.yaml");
+        set_ref_direct(&repo, "refs/tags/v1", &second).expect("tag");
+        set_ref_direct(&repo, "refs/heads/change/1", &first).expect("branch");
+        let change = commit("change/1", "open.yaml");
+        (repo, first, second, change)
+    }
+
+    fn names(commands: &[SendPackCommand]) -> Vec<&str> {
+        commands.iter().map(|(_, _, name)| name.as_str()).collect()
+    }
+
+    #[test]
+    fn nothing_but_main_is_pushed() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (repo, ..) = repository(tmp.path());
+        let (commands, pack, diverged) =
+            build_send_pack_payload(&repo, &BTreeMap::new(), Some("main")).expect("payload");
+        assert_eq!(names(&commands), ["refs/heads/main", "refs/tags/v1"]);
+        assert!(!pack.is_empty());
+        assert!(diverged.is_empty());
+
+        // The App mirror keeps every branch.
+        let (all, _, _) = build_send_pack_payload(&repo, &BTreeMap::new(), None).expect("payload");
+        assert!(
+            names(&all).contains(&"refs/heads/change/1"),
+            "{:?}",
+            names(&all)
+        );
+    }
+
+    #[test]
+    fn no_force_push_ever() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (repo, first, second, change) = repository(tmp.path());
+
+        // Behind: a fast-forward goes.
+        let behind = BTreeMap::from([("refs/heads/main".to_owned(), oid(&first))]);
+        let (commands, _, diverged) =
+            build_send_pack_payload(&repo, &behind, Some("main")).expect("payload");
+        assert_eq!(
+            commands[0],
+            (oid(&first), oid(&second), "refs/heads/main".to_owned())
+        );
+        assert!(diverged.is_empty());
+
+        // On a sibling commit, on a commit this repository never saw, or a moved tag: reported,
+        // never overwritten.
+        let unknown = "1111111111111111111111111111111111111111";
+        for remote in [
+            BTreeMap::from([("refs/heads/main".to_owned(), oid(&change))]),
+            BTreeMap::from([("refs/heads/main".to_owned(), oid(unknown))]),
+        ] {
+            let (commands, _, diverged) =
+                build_send_pack_payload(&repo, &remote, Some("main")).expect("payload");
+            assert_eq!(names(&commands), ["refs/tags/v1"]);
+            assert_eq!(diverged, ["refs/heads/main"]);
+        }
+        let moved_tag = BTreeMap::from([
+            ("refs/heads/main".to_owned(), oid(&second)),
+            ("refs/tags/v1".to_owned(), oid(&first)),
+        ]);
+        let (commands, _, diverged) =
+            build_send_pack_payload(&repo, &moved_tag, Some("main")).expect("payload");
+        assert!(commands.is_empty());
+        assert_eq!(diverged, ["refs/tags/v1"]);
+        let err = diverged_error(&diverged).expect_err("reported");
+        assert!(err.to_string().contains("not overwritten"), "{err}");
+    }
 }

@@ -104,7 +104,7 @@ client sets `same_repository` from that.
 | # | `ShakoClient` method | Request | Answer the client reads |
 |---|---|---|---|
 | 32 | `push_mirrors` | `GET R/PushMirrors` | `value[].{Name, RemoteAddress, LastError}` |
-| 32 | `add_push_mirror` | `POST R/Shako.AddPushMirror` `{RemoteAddress, RemoteUsername, Credential, SyncOnCommit: true, Interval: "8h0m0s"}` | `Name`; the credential goes into shako's secret store and is never answered |
+| 32 | `add_push_mirror` | `POST R/Shako.AddPushMirror` `{RemoteAddress, RemoteUsername, Credential, SyncOnCommit: true, Interval: "8h0m0s", Branch?}` (`Branch`: push only that branch and new tags, fast-forward only, T-6892) | `Name`; the credential goes into shako's secret store and is never answered |
 | 32 | `delete_push_mirror` | `POST R/Shako.RemovePushMirror` `{Name}` | status |
 | 32 | `sync_push_mirrors` | `POST R/Shako.SyncPushMirrors` | status |
 | 33 | `put_generic_file` | `POST PublishPackage` `{Owner, Package, Version, File, ContentBase64}`; overwrite is 409 | status |

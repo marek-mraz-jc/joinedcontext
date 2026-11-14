@@ -343,6 +343,20 @@ impl Owned {
         self.field("Name")
     }
 
+    /// The address a person clones from: the forge's public one (`JC_SHAKO_PUBLIC_URL`), never
+    /// the address the Portal dials, which the forge's own `CloneUrl` names (T-6893).
+    fn clone_url(&self) -> String {
+        let owner = match self.field("Owner") {
+            "" => self.client.owner.as_str(),
+            owner => owner,
+        };
+        format!(
+            "{}/{owner}/{}.git",
+            self.client.public_base.as_str().trim_end_matches('/'),
+            self.name()
+        )
+    }
+
     fn default_branch(&self) -> &str {
         match self.field("DefaultBranch") {
             "" => "main",
@@ -711,7 +725,7 @@ async fn get(state: &AppState, project: &str, name: &str) -> Result<Value, ApiEr
     let repo = repository(state, project, name).await?;
     let branch = repo.default_branch().to_owned();
     let mut answer = repo.summary();
-    answer["cloneUrl"] = json!(repo.field("CloneUrl"));
+    answer["cloneUrl"] = json!(repo.clone_url());
     // An empty repository has no branch yet: no commit and no README, not an error.
     let root = match folder(&repo, &branch, &[]).await {
         Ok(root) => root,

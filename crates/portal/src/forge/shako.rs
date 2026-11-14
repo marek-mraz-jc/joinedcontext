@@ -509,6 +509,9 @@ pub struct PushMirror {
     pub remote_name: String,
     #[serde(rename = "RemoteAddress")]
     pub remote_address: String,
+    /// The one branch the mirror pushes, fast-forward only; empty: every branch (T-6892).
+    #[serde(rename = "Branch", default, deserialize_with = "null_is_empty")]
+    pub branch: String,
     /// What the last sync failed with; empty when it succeeded or has not run yet.
     #[serde(rename = "LastError", default, deserialize_with = "null_is_empty")]
     pub last_error: String,
@@ -1030,20 +1033,25 @@ impl ShakoClient {
     ///
     /// The credential travels in its own member and never inside `remote_address`: the forge
     /// shows the address in `PushMirrors`, keeps the credential in its secret store and never
-    /// answers it.
+    /// answers it. `branch` scopes the mirror to that branch and new tags, fast-forward only
+    /// (T-6892); `None` pushes every branch.
     pub async fn add_push_mirror(
         &self,
         remote_address: &str,
         username: &str,
         password: &str,
+        branch: Option<&str>,
     ) -> Result<(), GitError> {
-        let params = json!({
+        let mut params = json!({
             "RemoteAddress": remote_address,
             "RemoteUsername": username,
             "Credential": password,
             "Interval": "8h0m0s",
             "SyncOnCommit": true,
         });
+        if let Some(branch) = branch {
+            params["Branch"] = json!(branch);
+        }
         self.act(self.repo_url(&["Shako.AddPushMirror"])?, &params)
             .await?;
         Ok(())

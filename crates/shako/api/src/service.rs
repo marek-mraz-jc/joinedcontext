@@ -1113,6 +1113,8 @@ pub struct NewPushMirror {
     pub secret_ref: Option<String>,
     pub interval: Option<String>,
     pub sync_on_commit: bool,
+    /// Push only this branch and new tags, fast-forward only (T-6892).
+    pub branch: Option<String>,
 }
 
 /// The push mirrors of a repository (Admin).
@@ -1144,6 +1146,9 @@ pub async fn add_push_mirror(
         .validate_url(&req.remote_address, None)?;
     if let Some(r) = &req.secret_ref {
         shako_core::check_secret_ref("secretRef", r)?;
+    }
+    if let Some(b) = &req.branch {
+        shako_core::validate_branch_name(b)?;
     }
     let remote_name = format!(
         "mirror-{}",
@@ -1182,6 +1187,7 @@ pub async fn add_push_mirror(
             credential_secret_ref: secret_ref,
             interval: req.interval.unwrap_or_else(|| "8h0m0s".into()),
             sync_on_commit: req.sync_on_commit,
+            branch: req.branch.unwrap_or_default(),
             last_sync: None,
             last_error: String::new(),
             created_at: Utc::now(),

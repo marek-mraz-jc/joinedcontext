@@ -369,6 +369,10 @@ pub struct PushMirrorRecord {
     pub credential_secret_ref: String,
     pub interval: String,
     pub sync_on_commit: bool,
+    /// The one branch a scoped mirror pushes, with new tags, fast-forward only (T-6892);
+    /// empty: every branch and tag, as the remote is told.
+    #[serde(default)]
+    pub branch: String,
     pub last_sync: Option<DateTime<Utc>>,
     pub last_error: String,
     pub created_at: DateTime<Utc>,
