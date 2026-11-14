@@ -125,8 +125,10 @@ rustls-pki-types = "1"
 rusqlite = { version = "0.41.1", default-features = false, features = ["bundled", "column_decltype", "hooks", "limits"] }
 # The driver crates without the sqlx umbrella: its optional sqlx-sqlite links sqlite3 too (cargo #7880).
 sqlx-core = { version = "=0.9.0", default-features = false, features = ["_rt-tokio", "_tls-rustls-ring-native-roots", "json"] }
-sqlx-postgres = { version = "=0.9.0", default-features = false, features = ["chrono", "json"] }
-sqlx-mysql = { version = "=0.9.0", default-features = false, features = ["chrono", "json"] }
+# `offline`: the jc root builds sqlx-core with it (the Portal's macros), and a driver without it
+# then lacks `Executor::describe`.
+sqlx-postgres = { version = "=0.9.0", default-features = false, features = ["chrono", "json", "offline"] }
+sqlx-mysql = { version = "=0.9.0", default-features = false, features = ["chrono", "json", "offline"] }
 
 # jaq-core 3.1.2 and jaq-json 2.0.3 with an evaluation budget (steps, deadline, stack, bytes) for
 # the jq processor (vendor/SOURCES.md at the jc root).

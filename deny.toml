@@ -30,6 +30,9 @@ allow = [
   # allowance, owner decision (a) on T-3209 (vendor/joinedcontext-platform, T-3191, T-3202).
   "Unicode-DFS-2016",
 ]
+# libbz2-rs-sys 0.2.6 (ekiben-io-file's bzip2 scanner, T-6843): the bzip2 licence, BSD-style; as
+# crates/ekiben/deny.toml allows it for that crate alone.
+exceptions = [{ allow = ["bzip2-1.0.6"], crate = "libbz2-rs-sys" }]
 
 [bans]
 multiple-versions = "warn"
