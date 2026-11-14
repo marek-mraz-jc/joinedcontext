@@ -31,6 +31,7 @@ pub mod names;
 pub mod ngsi_catalog;
 #[cfg(feature = "outbound")]
 pub mod outbound;
+pub mod personal;
 pub mod project;
 pub mod qb;
 pub mod quality;

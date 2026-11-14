@@ -520,6 +520,7 @@ async fn call_of(ask: &Ask<'_>, c: &Checked<'_>, left: Duration) -> Sent {
     )
     .await
     .unwrap_or_else(|_| Err("the source did not answer within the question's time".into()));
+    let answered = super::routed::without_personal(ask, connector, answered).await;
     ask.trace.tool(
         &tool.name,
         Some(&connector.endpoint),
@@ -541,6 +542,7 @@ async fn call_of(ask: &Ask<'_>, c: &Checked<'_>, left: Duration) -> Sent {
             )
             .await
             .unwrap_or_else(|_| Err("the source did not answer within the question's time".into()));
+            let read = super::routed::without_personal(ask, connector, read).await;
             ask.trace
                 .tool(&tool.name, Some(&connector.endpoint), &wider, more, &read);
             if let Ok(text) = read {
