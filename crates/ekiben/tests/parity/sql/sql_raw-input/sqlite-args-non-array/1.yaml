@@ -1,0 +1,9 @@
+logger: {level: OFF}
+input:
+  sql_raw:
+    driver: sqlite
+    dsn: ${LITE_DSN}
+    query: "SELECT 1 AS one"
+    args_mapping: 'root = "x"'
+output:
+  stdout: {}

@@ -9,7 +9,7 @@ import { useChangesFeed } from "./EntityChanges";
 import type { FilterColumn } from "./filters";
 import { useGridDetail } from "./GridDetail";
 import { useGridMap } from "./GridMapPanel";
-import { cellText } from "./model";
+import { cellText, valueHasHistory } from "./model";
 import type { RichRow } from "./model";
 import { useEntitySelection } from "../sdk/panel";
 import { useCellContent } from "./useCellContent";
@@ -103,6 +103,7 @@ export function useGridView(props: EntityGridProps & { onDrill?: (urn: string, t
     access: hostAccess,
     explainAccess,
     accessRequestHref,
+    publicView,
     ...options
   } = props;
 
@@ -218,6 +219,7 @@ export function useGridView(props: EntityGridProps & { onDrill?: (urn: string, t
   // A host that translated only the grid's labels still gets its own word for closing.
   const inspectorLabels = { ...DEFAULT_INSPECTOR_LABELS, close: labels.close, ...options.labels?.inspectorLabels };
   const inspects = (column: VisibleColumn): column is VisibleColumn & { attr: string } =>
+    !publicView &&
     asked && column.attr !== null && column.meta === null && column.key !== "id";
   // In edit mode a column the person cannot change once their decisions are read wears a lock with
   // the reason (T-5530), so a value without an editor is never a puzzle; a read-only grid wears none.
@@ -226,6 +228,31 @@ export function useGridView(props: EntityGridProps & { onDrill?: (urn: string, t
   // Once per column per render, not per cell: ten thousand rows scroll through the same few reasons.
   const locks = new Map(columns.map((column) => [column.key, lockOf(column)]));
   const [history, setHistory] = useState<{ attr: string; id: string; heading: string } | null>(null);
+  const historyOn = Boolean(options.source.history) && options.config.history.enabled !== false;
+  // One capability read per grid (T-6878): the access table says per attribute whether the caller
+  // reads its history. Marked only where it says yes; offered in the menu unless it says no.
+  const historyMarked = useCallback(
+    (column: VisibleColumn): column is VisibleColumn & { attr: string } =>
+      historyOn && column.attr !== null && column.meta === null && accessOf(column.attr)?.history === true,
+    [historyOn, accessOf],
+  );
+  const historyOffered = (column: VisibleColumn): boolean =>
+    historyOn && (column.attr === null || accessOf(column.attr)?.history !== false);
+  /** One attribute's history for one row, under the grid, named as a person reads it (T-2991). */
+  const openHistoryOf = useCallback(
+    (column: VisibleColumn & { attr: string }, row: RichRow | undefined) => {
+      const name = cellText(row?.cells.name);
+      const title = options.labels?.historyLabels?.title ?? labels.history;
+      setHistory({ attr: column.attr, id: row?.id ?? "", heading: `${title}: ${column.label}${name ? ` — ${name}` : ""}` });
+    },
+    [options.labels?.historyLabels?.title, labels.history],
+  );
+  /** Whether a cell wears the history mark: the column's history is read and the row shows a change. */
+  const cellHistory = useCallback(
+    (row: RichRow | undefined, column: VisibleColumn): column is VisibleColumn & { attr: string } =>
+      historyMarked(column) && valueHasHistory(row?.cells[column.attr!]),
+    [historyMarked],
+  );
   // A history opened from a cell shows under the grid: bring it into sight (owner 2026-11-01).
   const historyBox = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -274,8 +301,7 @@ export function useGridView(props: EntityGridProps & { onDrill?: (urn: string, t
   const changesFeed = useChangesFeed(options.source, detailRow?.id, where, options.labels?.changesLabels, (cell) => (
     <CellView cell={cell} locale={where} labels={cellLabels} targets={targets} />
   ));
-  const historyOn = Boolean(options.source.history) && options.config.history.enabled !== false;
-  const keys = useGridKeys(options, grid, { editing, editable, inspects, locks, rules, accessRows, accessOf, setInspected, setPasteNote: edits.setPasteNote });
+  const keys = useGridKeys(options, grid, { editing, editable, inspects, locks, rules, accessRows, accessOf, setInspected, setPasteNote: edits.setPasteNote, cellHistory, openHistoryOf });
   return {
     props,
     options,
@@ -317,6 +343,10 @@ export function useGridView(props: EntityGridProps & { onDrill?: (urn: string, t
     cellLabels,
     changesFeed,
     historyOn,
+    historyMarked,
+    historyOffered,
+    openHistoryOf,
+    cellHistory,
     ...detail,
     ...rowWindow,
     ...edits,

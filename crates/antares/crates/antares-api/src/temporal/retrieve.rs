@@ -212,6 +212,9 @@ pub(super) async fn retrieve_temporal_inner(
             if let Some(only) = only {
                 chains.retain(|attr, _| only.contains(attr));
             }
+            if !crate::provenance::names_writers(headers, st.provenance_from.as_deref()) {
+                crate::provenance::without_writers(&mut chains);
+            }
             with_versions(&mut w, &chains);
         }
     }

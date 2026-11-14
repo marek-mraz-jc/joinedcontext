@@ -1,0 +1,20 @@
+input:
+  stdin: {}
+pipeline:
+  threads: 1
+  processors:
+    - cached:
+        key: '${! this.k }'
+        cache: c
+        skip_on: errored()
+        processors:
+          - mapping: |
+              root = if this.k == "bad" { throw("no") } else { "%s seen %d".format(this.k, counter()) }
+    - catch: []
+    - mapping: 'root = {"b": content().string(), "m": @, "i": batch_index(), "n": batch_size()}'
+cache_resources:
+  - label: c
+    memory:
+      compaction_interval: ""
+output:
+  stdout: {}

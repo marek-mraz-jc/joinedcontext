@@ -1,0 +1,11 @@
+logger: {level: OFF}
+input:
+  sql_select:
+    driver: postgres
+    dsn: ${PG_DSN}
+    table: footable
+    columns: [ foo, "bar * 2 AS dbl" ]
+    prefix: WITH x AS (SELECT 1)
+    suffix: ORDER BY foo DESC LIMIT 2
+output:
+  stdout: {}

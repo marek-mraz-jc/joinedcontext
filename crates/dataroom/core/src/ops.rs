@@ -546,6 +546,7 @@ pub async fn execute_operation(
             let cats = op_ctx.store.list_catalogues(req_ctx.org_id).await?;
             let visible: Vec<Catalogue> = cats
                 .into_iter()
+                .filter(|c| c.deleted.is_none())
                 .filter(|c| {
                     let target = ObjectTarget::Catalogue {
                         org_id: c.org_id,

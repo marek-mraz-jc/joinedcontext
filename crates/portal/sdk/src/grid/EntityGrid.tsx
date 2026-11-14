@@ -162,6 +162,12 @@ export interface EntityGridProps extends UseEntityGridOptions {
   explainAccess?: (attribute: string, action: AccessAction) => Promise<AccessExplanation>;
   /** Where the inspector sends a person to ask for access. */
   accessRequestHref?: string;
+  /**
+   * The grid reads an open dataset without a session (T-6869): it says nothing about the reader's
+   * access. No "Your access" button, panel or lock, no count of fields left out, no "hidden: no
+   * access" in a row's detail. The columns still follow the server's decisions.
+   */
+  publicView?: boolean;
 }
 
 /** One target opened from a relationship cell: the step of the breadcrumb back (G-R2GRID2-017). */

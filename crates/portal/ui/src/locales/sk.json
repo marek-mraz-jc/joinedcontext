@@ -5882,6 +5882,8 @@
     "rowsShown": "Riadky {first}–{last}",
     "moreNext": "ďalšie môžu nasledovať",
     "history": "História",
+    "historyAvailable": "História je dostupná",
+    "historyOfValue": "Zobraziť históriu tejto hodnoty (kláves H)",
     "areaPick": "Vybrať oblasť na mape",
     "signedOutTitle": "Prihláste sa, aby ste videli tento súbor údajov",
     "signedOutBody": "Tento súbor údajov nie je verejný. Prihláste sa účtom, ktorý k nemu má prístup.",
@@ -5986,6 +5988,9 @@
     "historySuperseded": "Nahradené",
     "historyChangedBy": "Zmenil",
     "historyReason": "Dôvod",
+    "historyVersionsPublic": "Každá verzia každej hodnoty",
+    "historyUnavailable": "Pre túto hodnotu nie je možné zobraziť históriu.",
+    "historyDataset": "Dátová sada",
     "changes": {
       "tab": "Zmeny",
       "attribute": "Atribút",

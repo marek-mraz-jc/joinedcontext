@@ -1,0 +1,9 @@
+input:
+  generate:
+    mapping: 'root = {}'
+output:
+  sql_insert:
+    driver: sqlite
+    dsn: ${LITE_DSN}
+    table: foo
+    args_mapping: 'root = []'

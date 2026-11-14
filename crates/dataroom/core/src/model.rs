@@ -58,6 +58,15 @@ impl OrgId {
     pub const fn as_uuid(self) -> Uuid {
         self.0
     }
+
+    /// The `OrgId` of the JC Organization `name` in the installation `installation` (ODP-12):
+    /// a UUID v5 under the installation's id, so it is the same on every start and differs for
+    /// every Organization and every installation, with nothing stored. Renaming an Organization
+    /// changes its `OrgId`: its catalogue then needs a move (`PgStore::move_catalogue`) from the
+    /// old name's id to the new one, or it is served to nobody.
+    pub fn of_organization(installation: OrgId, name: &str) -> Self {
+        Self(Uuid::new_v5(&installation.0, name.as_bytes()))
+    }
 }
 
 impl fmt::Display for OrgId {
@@ -263,6 +272,11 @@ pub struct Catalogue {
     #[serde(default)]
     pub applicable_legislation: Vec<String>,
     pub modified: DateTime<Utc>,
+    /// When the catalogue was deleted (ODP-09): its datasets, publishers and sources are gone,
+    /// and the row stays as a tombstone so every address of it answers 410 and its host is
+    /// not handed to another catalogue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<DateTime<Utc>>,
     /// The public URL this catalogue is served at (scheme, host and mount prefix), when the
     /// installation configures one; never stored. [`Catalogue::base_url`] prefers it, so an
     /// http install or a catalogue under a path prefix answers links that reach it.

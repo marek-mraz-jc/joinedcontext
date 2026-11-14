@@ -301,6 +301,186 @@ async fn rls_refuses_writes_into_another_tenant() {
         .is_none());
 }
 
+/// Two JC Organizations' catalogues as they sat before ODP-12, both under the installation's
+/// one `OrgId`, moved to each Organization's own `OrgId` by the owner.
+async fn split_two_organizations(
+    pg: &Pg,
+    store: &PgStore,
+) -> [(dataroom_core::OrgId, dataroom_core::CatalogueId); 2] {
+    let (installation, _) = tenant();
+    let mut out = Vec::new();
+    for name in ["city-a", "city-b"] {
+        let (_, cat) = tenant();
+        let ctx = member_ctx(installation, cat);
+        store
+            .upsert_catalogue(catalogue(installation, cat, name, &unique_host(name)))
+            .await
+            .unwrap();
+        store
+            .upsert_publisher(&ctx, publisher("city"))
+            .await
+            .unwrap();
+        store
+            .upsert_dataset(&ctx, dataset("air", "city", "public"))
+            .await
+            .unwrap();
+        store
+            .upsert_harvest_source(&ctx, harvest_source("nkod"))
+            .await
+            .unwrap();
+        let org = dataroom_core::OrgId::of_organization(installation, name);
+        let owner = PgStore::from_pool_unchecked(pg.admin.clone());
+        assert!(owner.move_catalogue(installation, org, cat).await.unwrap() >= 4);
+        assert_eq!(
+            owner.move_catalogue(installation, org, cat).await.unwrap(),
+            0,
+            "a second start moves nothing"
+        );
+        out.push((org, cat));
+    }
+    [out.remove(0), out.remove(0)]
+}
+
+#[tokio::test]
+async fn a_catalogue_of_one_organization_is_invisible_to_another() {
+    let Some(pg) = pg("a_catalogue_of_one_organization_is_invisible_to_another").await else {
+        return;
+    };
+    let store = pg.app_store().await;
+    let [(org_a, cat_a), (org_b, cat_b)] = split_two_organizations(&pg, &store).await;
+    assert_ne!(org_a, org_b);
+
+    // Each Organization reads its own catalogue whole after the move: nothing was lost.
+    for (org, cat) in [(org_a, cat_a), (org_b, cat_b)] {
+        let ctx = member_ctx(org, cat);
+        let air = store.get_dataset(&ctx, "air").await.unwrap().expect("kept");
+        assert_eq!(
+            air.org_id, org,
+            "the stored record names its new tenant too"
+        );
+        assert_eq!(store.list_harvest_sources(&ctx).await.unwrap().len(), 1);
+        let listed = store.list_catalogues(org).await.unwrap();
+        assert_eq!(
+            listed.iter().map(|c| (c.org_id, c.id)).collect::<Vec<_>>(),
+            [(org, cat)]
+        );
+    }
+
+    // Organization A, naming B's catalogue, sees none of B's rows in any table (the request
+    // role is NOSUPERUSER NOBYPASSRLS, so this is the database's row level security).
+    let mut conn = pg.app.acquire().await.unwrap();
+    let mut tx = sqlx::Connection::begin(&mut *conn).await.unwrap();
+    set_tenant_config(&mut tx, org_a, Some(cat_b))
+        .await
+        .unwrap();
+    for table in REQUIRED_RLS_TABLES {
+        assert_eq!(org_rows(&mut tx, table, org_b).await, 0, "{table}");
+    }
+    tx.rollback().await.unwrap();
+    assert!(store
+        .get_dataset(&member_ctx(org_a, cat_b), "air")
+        .await
+        .unwrap()
+        .is_none());
+    assert!(store.get_catalogue(org_a, cat_b).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn a_deleted_catalogue_keeps_only_its_tombstone_and_spares_the_other() {
+    let Some(pg) = pg("a_deleted_catalogue_keeps_only_its_tombstone_and_spares_the_other").await
+    else {
+        return;
+    };
+    let store = pg.app_store().await;
+    let [(org_a, cat_a, host_a), (org_b, cat_b, _)] = seed_two_tenants(&store).await;
+    assert!(store.delete_catalogue(org_a, cat_a).await.unwrap());
+    let mut conn = pg.app.acquire().await.unwrap();
+    let mut tx = sqlx::Connection::begin(&mut *conn).await.unwrap();
+    set_tenant_config(&mut tx, org_a, Some(cat_a))
+        .await
+        .unwrap();
+    for table in REQUIRED_RLS_TABLES {
+        let left = if table == "cat_catalogue" { 1 } else { 0 };
+        assert_eq!(visible(&mut tx, table).await, left, "{table}");
+    }
+    tx.rollback().await.unwrap();
+    let tomb = store
+        .resolve_host(&host_a)
+        .await
+        .unwrap()
+        .expect("the host stays held");
+    assert!(tomb.deleted.is_some());
+    let ctx_b = member_ctx(org_b, cat_b);
+    assert!(store.get_dataset(&ctx_b, "air").await.unwrap().is_some());
+    assert!(store.delete_harvest_source(&ctx_b, "nkod").await.unwrap());
+    assert!(!store.delete_harvest_source(&ctx_b, "nkod").await.unwrap());
+    assert!(store
+        .list_harvest_runs(&ctx_b, None)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(!store
+        .delete_catalogue(
+            org_b,
+            dataroom_core::CatalogueId::from_uuid(uuid::Uuid::now_v7())
+        )
+        .await
+        .unwrap());
+}
+
+#[tokio::test]
+async fn a_harvest_run_cannot_write_into_another_organizations_catalogue() {
+    let Some(pg) = pg("a_harvest_run_cannot_write_into_another_organizations_catalogue").await
+    else {
+        return;
+    };
+    let store = pg.app_store().await;
+    let [(org_a, cat_a), (org_b, cat_b)] = split_two_organizations(&pg, &store).await;
+
+    // A run of A's harvest that names B's tenant is refused by WITH CHECK.
+    let mut tx = pg.app.begin().await.unwrap();
+    set_tenant_config(&mut tx, org_a, Some(cat_a))
+        .await
+        .unwrap();
+    let err = sqlx::query(
+        "INSERT INTO dataroom.cat_dataset (org_id, catalogue_id, id, name, title, publisher_id,
+                                           visibility, doc)
+         VALUES ($1, $2, 'evil', 'evil', 'evil', 'city', 'public', '{}'::jsonb)",
+    )
+    .bind(org_b.as_uuid())
+    .bind(cat_b.as_uuid())
+    .execute(&mut *tx)
+    .await
+    .expect_err("WITH CHECK refuses a row of another Organization");
+    assert_eq!(
+        err.as_database_error().and_then(|d| d.code()).as_deref(),
+        Some("42501"),
+        "{err}"
+    );
+    tx.rollback().await.unwrap();
+
+    // Through the store, A's principal aimed at B's catalogue id writes, at most, under A's own
+    // OrgId (the store may also refuse it): B's catalogue gains neither a dataset nor a run.
+    let stray = member_ctx(org_a, cat_b);
+    let _written_or_refused = store
+        .upsert_dataset(&stray, dataset("evil", "city", "public"))
+        .await;
+    let _written_or_refused = store
+        .upsert_harvest_run(
+            &stray,
+            harvest_run("run-x", "hs-nkod", "2026-11-14T10:00:00Z"),
+        )
+        .await;
+    let ctx_b = member_ctx(org_b, cat_b);
+    assert!(store.get_dataset(&ctx_b, "evil").await.unwrap().is_none());
+    assert!(store.get_dataset(&ctx_b, "air").await.unwrap().is_some());
+    assert!(store
+        .list_harvest_runs(&ctx_b, None)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
 #[tokio::test]
 async fn boot_check_refuses_superuser_and_bypassrls_roles() {
     let Some(pg) = pg("boot_check_refuses_superuser_and_bypassrls_roles").await else {

@@ -165,6 +165,8 @@ export function gridLabels(t: (key: string, values?: Record<string, string>) => 
     rowsShown: t("entityGrid.rowsShown", { first: "{first}", last: "{last}" }),
     moreNext: t("entityGrid.moreNext"),
     history: t("entityGrid.history"),
+    historyAvailable: t("entityGrid.historyAvailable"),
+    historyOfValue: t("entityGrid.historyOfValue"),
     areaPick: t("entityGrid.areaPick"),
     signedOutTitle: t("entityGrid.signedOutTitle"),
     signedOutBody: t("entityGrid.signedOutBody"),
@@ -199,6 +201,9 @@ export function gridLabels(t: (key: string, values?: Record<string, string>) => 
       supersededAt: t("entityGrid.historySuperseded"),
       changedBy: t("entityGrid.historyChangedBy"),
       reason: t("entityGrid.historyReason"),
+      versionsPublic: t("entityGrid.historyVersionsPublic"),
+      unavailable: t("entityGrid.historyUnavailable"),
+      datasetId: t("entityGrid.historyDataset"),
     },
     changesLabels: {
       ...Object.fromEntries(CHANGES_KEYS.map((key) => [key, t(`entityGrid.changes.${key}`)])),

@@ -85,6 +85,80 @@ impl PgStore {
         Ok(())
     }
 
+    /// Moves every row of `catalogue` from tenant `from` to tenant `to` in one transaction, as
+    /// the schema owner (ODP-12: each JC Organization's catalogue gets the Organization's own
+    /// `OrgId`). Forced row level security binds the owner too, so the transaction lifts it per
+    /// table around its one `UPDATE` and forces it again before the commit; a failure rolls back
+    /// both, rows and settings. Deletes nothing; returns the number of rows moved (0, with no
+    /// table lock taken, when the catalogue row is not under `from`, so a second start moves
+    /// nothing).
+    pub async fn move_catalogue(
+        &self,
+        from: OrgId,
+        to: OrgId,
+        catalogue: CatalogueId,
+    ) -> Result<u64> {
+        let fail =
+            |e: sqlx::Error| DataroomError::Storage(format!("move catalogue {catalogue}: {e}"));
+        let mut tx = self.pool.begin().await.map_err(fail)?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('jc-migrate-dataroom'))")
+            .execute(&mut *tx)
+            .await
+            .map_err(fail)?;
+        // Nothing to move on every start after the first: look under the tenant's own row level
+        // security first, so a start takes no table lock (ALTER TABLE) for an empty move.
+        set_tenant_config(&mut tx, from, Some(catalogue)).await?;
+        let (pending,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS (SELECT 1 FROM dataroom.cat_catalogue WHERE org_id = $1 AND id = $2)",
+        )
+        .bind(from.as_uuid())
+        .bind(catalogue.as_uuid())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(fail)?;
+        if !pending {
+            tx.commit().await.map_err(fail)?;
+            return Ok(0);
+        }
+        let mut moved = 0;
+        for table in REQUIRED_RLS_TABLES {
+            let column = if table == "cat_catalogue" {
+                "id"
+            } else {
+                "catalogue_id"
+            };
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "ALTER TABLE dataroom.{table} NO FORCE ROW LEVEL SECURITY"
+            )))
+            .execute(&mut *tx)
+            .await
+            .map_err(fail)?;
+            moved += sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE dataroom.{table}
+                 SET org_id = $1,
+                     doc = CASE WHEN doc ? 'orgId'
+                                THEN jsonb_set(doc, '{{orgId}}', to_jsonb($1::text))
+                                ELSE doc END
+                 WHERE org_id = $2 AND {column} = $3"
+            )))
+            .bind(to.as_uuid())
+            .bind(from.as_uuid())
+            .bind(catalogue.as_uuid())
+            .execute(&mut *tx)
+            .await
+            .map_err(fail)?
+            .rows_affected();
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "ALTER TABLE dataroom.{table} FORCE ROW LEVEL SECURITY"
+            )))
+            .execute(&mut *tx)
+            .await
+            .map_err(fail)?;
+        }
+        tx.commit().await.map_err(fail)?;
+        Ok(moved)
+    }
+
     /// Opens a transaction with `jc.org` and `jc.catalogue` set locally via `set_config(..., true)`.
     async fn begin_tenant(
         &self,
@@ -115,6 +189,9 @@ fn db_err(e: sqlx::Error) -> DataroomError {
                 ),
                 Some("cat_catalogue_host_key" | "uq_cat_catalogue_host_lower") => {
                     DataroomError::Conflict("host is already claimed by another catalogue".into())
+                }
+                Some("uq_cat_catalogue_id") => {
+                    DataroomError::Conflict("catalogue id belongs to another organisation".into())
                 }
                 Some(other) => DataroomError::Conflict(format!("duplicate record ({other})")),
                 None => DataroomError::Conflict("duplicate record".into()),
@@ -200,9 +277,32 @@ fn normalise_dataset(ctx: &RequestCtx, mut dataset: Dataset) -> Dataset {
     dataset
 }
 
+/// Refuses a write into a deleted catalogue, so a harvest run still going when its catalogue
+/// was deleted cannot write rows back. `FOR SHARE` waits for a delete in flight to commit and
+/// then reads its tombstone. A catalogue with no row at all is the caller's business.
+async fn refuse_deleted(conn: &mut PgConnection, ctx: &RequestCtx) -> Result<()> {
+    let deleted: Option<(bool,)> = sqlx::query_as(
+        "SELECT doc->>'deleted' IS NOT NULL FROM dataroom.cat_catalogue
+         WHERE org_id = $1 AND id = $2 FOR SHARE",
+    )
+    .bind(ctx.org_id.as_uuid())
+    .bind(ctx.catalogue_id.as_uuid())
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    if let Some((true,)) = deleted {
+        return Err(DataroomError::Gone(format!(
+            "catalogue {} was deleted",
+            ctx.catalogue_id
+        )));
+    }
+    Ok(())
+}
+
 /// Writes a dataset row and replaces its distribution rows inside the caller's tenant
 /// transaction.
 async fn write_dataset(conn: &mut PgConnection, ctx: &RequestCtx, dataset: &Dataset) -> Result<()> {
+    refuse_deleted(conn, ctx).await?;
     let title = text_in_lang(&dataset.title, None)
         .unwrap_or(&dataset.name)
         .to_owned();
@@ -468,6 +568,48 @@ impl Store for PgStore {
             .map_err(db_err)?;
             tx.commit().await.map_err(db_err)?;
             Ok(row.map(|(Json(c),)| c))
+        })
+    }
+
+    fn delete_catalogue<'a>(
+        &'a self,
+        org_id: OrgId,
+        catalogue_id: CatalogueId,
+    ) -> BoxFuture<'a, Result<bool>> {
+        Box::pin(async move {
+            let mut tx = self.begin_tenant(org_id, Some(catalogue_id)).await?;
+            let marked = sqlx::query(
+                "UPDATE dataroom.cat_catalogue
+                 SET doc = jsonb_set(doc, '{deleted}', to_jsonb(now())), modified = now()
+                 WHERE org_id = $1 AND id = $2",
+            )
+            .bind(org_id.as_uuid())
+            .bind(catalogue_id.as_uuid())
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?
+            .rows_affected();
+            if marked == 0 {
+                tx.rollback().await.map_err(db_err)?;
+                return Ok(false);
+            }
+            // Children first, in reverse migration order; the catalogue row stays (tombstone).
+            for table in REQUIRED_RLS_TABLES
+                .iter()
+                .rev()
+                .filter(|t| **t != "cat_catalogue")
+            {
+                sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "DELETE FROM dataroom.{table} WHERE org_id = $1 AND catalogue_id = $2"
+                )))
+                .bind(org_id.as_uuid())
+                .bind(catalogue_id.as_uuid())
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+            }
+            tx.commit().await.map_err(db_err)?;
+            Ok(true)
         })
     }
 
@@ -986,6 +1128,43 @@ impl Store for PgStore {
         })
     }
 
+    fn delete_harvest_source<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        id_or_name: &'a str,
+    ) -> BoxFuture<'a, Result<bool>> {
+        Box::pin(async move {
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            let gone: Option<(String,)> = sqlx::query_as(
+                "DELETE FROM dataroom.cat_harvest_source
+                 WHERE org_id = $1 AND catalogue_id = $2 AND (id = $3 OR name = $3)
+                 RETURNING id",
+            )
+            .bind(ctx.org_id.as_uuid())
+            .bind(ctx.catalogue_id.as_uuid())
+            .bind(id_or_name)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            if let Some((id,)) = &gone {
+                sqlx::query(
+                    "DELETE FROM dataroom.cat_harvest_run
+                     WHERE org_id = $1 AND catalogue_id = $2 AND source_id = $3",
+                )
+                .bind(ctx.org_id.as_uuid())
+                .bind(ctx.catalogue_id.as_uuid())
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+            }
+            tx.commit().await.map_err(db_err)?;
+            Ok(gone.is_some())
+        })
+    }
+
     fn upsert_harvest_source<'a>(
         &'a self,
         ctx: &'a RequestCtx,
@@ -1000,6 +1179,7 @@ impl Store for PgStore {
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
+            refuse_deleted(&mut tx, ctx).await?;
             sqlx::query(
                 "INSERT INTO dataroom.cat_harvest_source
                  (org_id, catalogue_id, id, name, kind, url, publisher_id, enabled, modified, doc)
@@ -1106,6 +1286,7 @@ impl Store for PgStore {
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
+            refuse_deleted(&mut tx, ctx).await?;
             sqlx::query(
                 "INSERT INTO dataroom.cat_harvest_run
                  (org_id, catalogue_id, id, source_id, state, started_at, finished_at,
@@ -1152,6 +1333,7 @@ impl Store for PgStore {
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
+            refuse_deleted(&mut tx, ctx).await?;
             let stale: Vec<(Json<HarvestRun>,)> = sqlx::query_as(
                 "SELECT doc FROM dataroom.cat_harvest_run
                  WHERE org_id = $1 AND catalogue_id = $2 AND source_id COLLATE \"C\" = $3
@@ -1543,6 +1725,7 @@ impl Store for PgStore {
                     .list_catalogues(ctx.org_id)
                     .await?
                     .iter()
+                    .filter(|c| c.deleted.is_none())
                     .map(catalogue_to_row)
                     .collect(),
                 "Datasets" => self
@@ -1735,6 +1918,7 @@ mod tests {
                     allowed_outbound_hosts: Vec::new(),
                     applicable_legislation: Vec::new(),
                     modified: Utc::now(),
+                    deleted: None,
                     public_base: None,
                 })
                 .await

@@ -1,0 +1,8 @@
+logger: {level: OFF}
+input:
+  sql_raw:
+    driver: mysql
+    dsn: ${MY_DSN}?parseTime=true
+    query: "SELECT id, h, i FROM t ORDER BY id"
+output:
+  stdout: {}

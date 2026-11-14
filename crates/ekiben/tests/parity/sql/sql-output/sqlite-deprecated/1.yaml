@@ -1,0 +1,11 @@
+logger: {level: OFF}
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+output:
+  sql_raw:
+    driver: sqlite
+    dsn: ${LITE_DSN}
+    query: "CREATE TABLE t (v integer)"

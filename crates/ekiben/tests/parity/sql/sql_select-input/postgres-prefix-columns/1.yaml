@@ -1,0 +1,11 @@
+logger: {level: OFF}
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {"i": counter()}'
+output:
+  sql_raw:
+    driver: postgres
+    dsn: ${PG_DSN}
+    query: "CREATE TABLE footable (foo varchar(20), bar integer, created_at bigint)"

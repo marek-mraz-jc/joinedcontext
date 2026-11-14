@@ -147,6 +147,40 @@ Server-Timing: pdp;dur=0.000, broker;dur=11.420, total;dur=12.910
 
 Anonymous answers carry the header too. It tells a caller how long the gateway and the broker took, which the caller already measures from outside within a few milliseconds; it names no Policy and no rule.
 
+## 6a. Request cost
+
+A broker run with `ANTARES_REQUEST_COST=on` measures each request it answers and says so in two headers: `Server-Timing` with `app`, `db`, `pool` and `total` in milliseconds, and `JC-Request-Cost`, an RFC 8941 dictionary of `cpu-ms`, `db-ms`, `statements` and `rows`. The broker knows the Tenant; the gateway knows the caller, so the gateway totals the figures per Organization and decides who sees them. The deployment chooses with `JC_GATEWAY_REQUEST_COST` ([Deployment/13](../Deployment/13-configuration-reference.md)) (T-6616):
+
+| Setting | Counted | The caller receives |
+|---|---|---|
+| `off` (default) | nothing | neither header |
+| `metrics` | per Organization and Endpoint | neither header |
+| `header` | per Organization and Endpoint | both headers, and `gw;dur=<ms>` in the gateway's own `Server-Timing`, when the caller is a verified member of the Endpoint's own Organization; nobody else receives them |
+
+The answer carries the broker's two headers:
+
+```http
+Server-Timing: app;dur=2.5, db;dur=1.3, pool;dur=0.4, total;dur=3.2
+JC-Request-Cost: cpu-ms=2.463, db-ms=1.291, statements=3, rows=5
+```
+
+and, as a second `Server-Timing` field line, the gateway's own ([section 6](#6-server-timing)):
+
+```http
+Server-Timing: pdp;dur=0.000, broker;dur=4.100, total;dur=4.800, gw;dur=0.700
+```
+
+`gw` is the gateway's time outside the broker round trips. The broker counts the rows it read before a Policy narrowed them, so a caller of another Organization or an anonymous one never receives the figures: the count would tell them how many entities they cannot see.
+
+The counters sit on the gateway's `/metrics` port, which no route outside the cluster reaches: `jc_gateway_request_cost_requests_total`, `_app_microseconds_total`, `_db_microseconds_total`, `_pool_microseconds_total`, `_statements_total` and `_rows_total`, each labelled `organization` and `endpoint` (the slug or space name). Microseconds, as the broker's own `antares_request_cost_*` counters, because a Prometheus counter holds whole numbers. The `organization` label comes from the caller the gateway verified on the Endpoint and from nothing a request says (ADR-N-041, ADR-N-067):
+
+- a ServiceAccount: the Organization of its project;
+- a person whose verified `jc_org` names the Endpoint's Organization: that Organization; any other person: the first, by name, of the Organizations of the projects their groups name;
+- an anonymous caller: `public`;
+- anyone else (a data space participant, a preview reader, a person of no project with an Organization): `unattributed`.
+
+An answer without `JC-Request-Cost` adds nothing. The gateway counts only what reaches the answer: the broker calls inside one MCP tool call or one fan-out are not summed yet.
+
 ## 7. Response compression
 
 Send `Accept-Encoding: gzip` or `Accept-Encoding: br` and the gateway answers with that `Content-Encoding`; `Vary` names `Accept-Encoding` on every answer ([API/02](02-endpoint-representations.md)) (EP-166, T-5847). When the request accepts both, the answer is `br`, whatever their `q` values. An NGSI-LD page repeats its attribute names in every entity, so it packs well: a page of 100 `KeyPerformanceIndicator` entities of 75 427 bytes is 1 224 bytes in br and 2 612 bytes in gzip.

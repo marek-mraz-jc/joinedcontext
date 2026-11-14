@@ -52,7 +52,7 @@ const BATCH_WIDE: [&str; 4] = ["batch_index", "batch_size", "from_all", "from("]
 /// Processors that read and write each message on its own (Bento runs them per message), so a
 /// batch and its pages give the same messages. Each is still refused when its config names a
 /// [`BATCH_WIDE`] function, in a mapping or an interpolation.
-const PER_MESSAGE: [&str; 20] = [
+const PER_MESSAGE: [&str; 21] = [
     "bloblang",
     "bounds_check",
     "cache",
@@ -66,6 +66,7 @@ const PER_MESSAGE: [&str; 20] = [
     "log",
     "mapping",
     "metric",
+    "msgpack",
     "mutation",
     "noop",
     "parquet_decode",

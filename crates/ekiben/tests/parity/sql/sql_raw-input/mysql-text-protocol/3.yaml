@@ -1,0 +1,8 @@
+logger: {level: OFF}
+input:
+  sql_raw:
+    driver: mysql
+    dsn: ${MY_DSN}
+    query: "SELECT * FROM t ORDER BY id"
+output:
+  stdout: {}

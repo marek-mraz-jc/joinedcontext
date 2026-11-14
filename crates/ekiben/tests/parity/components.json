@@ -1,0 +1,365 @@
+{
+ "bento": "1.22.0",
+ "cases": [
+  {
+   "bento": {
+    "code": 0,
+    "stdout": "442fe51e0244f3f2cf42"
+   },
+   "config": "fd592ac96a47324f2cb2",
+   "ekiben": "identical",
+   "env": {},
+   "id": "cached/bad_ttl",
+   "mode": "run",
+   "stdin": "0dddad0a311a9f108dc0",
+   "tests": [
+    "tests/parity/components/cached/bad_ttl.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 0,
+    "stdout": "059f5798493a70d22da3"
+   },
+   "config": "6f17c787efdb04ef0306",
+   "ekiben": "identical",
+   "env": {},
+   "id": "cached/key_skip_on",
+   "mode": "run",
+   "stdin": "52690d834c63d92521ec",
+   "tests": [
+    "tests/parity/components/cached/key_skip_on.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 0,
+    "stdout": "1b1746517d3ea7a991ad"
+   },
+   "config": "263f3ce6d523f2a4fa23",
+   "ekiben": "identical",
+   "env": {},
+   "id": "cached/periodic_global_enrichment",
+   "mode": "run",
+   "stdin": "c83135caa2c4f32882c3",
+   "tests": [
+    "tests/parity/components/cached/periodic_global_enrichment.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 1,
+    "stdout": "e3b0c44298fc1c149afb"
+   },
+   "config": "7d6152772d4b680db1c0",
+   "ekiben": "identical",
+   "env": {},
+   "id": "cached/unknown_cache",
+   "mode": "run",
+   "stdin": "e3b0c44298fc1c149afb",
+   "tests": [
+    "tests/parity/components/cached/unknown_cache.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 0,
+    "stdout": "8c9523cc4ac9b55a2224"
+   },
+   "config": "93e7c397651122db36c4",
+   "ekiben": "identical",
+   "env": {},
+   "id": "group_by/docs_grouping_meta",
+   "mode": "run",
+   "stdin": "07a92a54f45af55c56cc",
+   "tests": [
+    "tests/parity/components/group_by/docs_grouping_meta.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 0,
+    "stdout": "2c4050a933e23ff4cc8a"
+   },
+   "config": "2882f1424b44a1084070",
+   "ekiben": "identical",
+   "env": {},
+   "id": "group_by/go_test_groups",
+   "mode": "run",
+   "stdin": "103846cc7c566a5e28ae",
+   "tests": [
+    "tests/parity/components/group_by/go_test_groups.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 1,
+    "stdout": "e3b0c44298fc1c149afb"
+   },
+   "config": "68f0c7d386940dd31595",
+   "ekiben": "identical",
+   "env": {},
+   "id": "group_by/missing_check",
+   "mode": "run",
+   "stdin": "e3b0c44298fc1c149afb",
+   "tests": [
+    "tests/parity/components/group_by/missing_check.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 0,
+    "stdout": "5e4159dffd6c6c17bfcd"
+   },
+   "config": "33395b53dc90e809ea5f",
+   "ekiben": "identical",
+   "env": {},
+   "id": "group_by_value/go_test_basic",
+   "mode": "run",
+   "stdin": "e1078f650ebde3a5ff3c",
+   "tests": [
+    "tests/parity/components/group_by_value/go_test_basic.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 0,
+    "stdout": "bb55e8266b5d61fda4a8"
+   },
+   "config": "f224ad46ffa065e334b2",
+   "ekiben": "identical",
+   "env": {},
+   "id": "group_by_value/interpolation_error",
+   "mode": "run",
+   "stdin": "fd71d2e5366a1ce4b02c",
+   "tests": [
+    "tests/parity/components/group_by_value/interpolation_error.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 0,
+    "stdout": "4f3269f80d7e5a405bd9"
+   },
+   "config": "e6a9195196e857b92ad5",
+   "ekiben": "identical",
+   "env": {},
+   "id": "scanner_decompress/bzip2_into_lines",
+   "mode": "run",
+   "stdin": "7757bd89afee54b1ce07",
+   "tests": [
+    "tests/parity/components/scanner_decompress/bzip2_into_lines.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 0,
+    "stdout": "abac6757590ec13415c7"
+   },
+   "config": "3bad854c89569643d5f8",
+   "ekiben": "identical",
+   "env": {},
+   "id": "scanner_decompress/gzip_into_lines",
+   "mode": "run",
+   "stdin": "9d986607f0296983d87a",
+   "tests": [
+    "tests/parity/components/scanner_decompress/gzip_into_lines.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 1,
+    "stdout": "e3b0c44298fc1c149afb"
+   },
+   "config": "18aa6613478b921a95de",
+   "ekiben": "identical",
+   "env": {},
+   "id": "scanner_decompress/unknown_algorithm",
+   "mode": "run",
+   "stdin": "e3b0c44298fc1c149afb",
+   "tests": [
+    "tests/parity/components/scanner_decompress/unknown_algorithm.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 0,
+    "stdout": "e0a2917189a62cb1f34f"
+   },
+   "config": "b52dc98b9d6a27028c93",
+   "ekiben": "identical",
+   "env": {},
+   "id": "scanner_decompress/zstd_default_into",
+   "mode": "run",
+   "stdin": "d64e525a530b20f860e1",
+   "tests": [
+    "tests/parity/components/scanner_decompress/zstd_default_into.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 0,
+    "stdout": "3f09f8e71b3b98415a5b"
+   },
+   "config": "34aca0342586ec826027",
+   "ekiben": "identical",
+   "env": {},
+   "id": "scanner_re_match/docs_pattern",
+   "mode": "run",
+   "stdin": "3a11a4b81da3b7889c00",
+   "tests": [
+    "tests/parity/components/scanner_re_match/docs_pattern.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 0,
+    "stdout": "cdfaa3ffb4659f8be251"
+   },
+   "config": "36a7ecebd58d214c7491",
+   "ekiben": "identical",
+   "env": {},
+   "id": "scanner_re_match/max_buffer_size",
+   "mode": "run",
+   "stdin": "4e94f357e2a760532fc2",
+   "tests": [
+    "tests/parity/components/scanner_re_match/max_buffer_size.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 0,
+    "stdout": "fe8272404909ee7ad7ac"
+   },
+   "config": "6a6e539459e60170956c",
+   "ekiben": "identical",
+   "env": {},
+   "id": "scanner_skip_bom/default_into",
+   "mode": "run",
+   "stdin": "fe9642580862efac1e95",
+   "tests": [
+    "tests/parity/components/scanner_skip_bom/default_into.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 0,
+    "stdout": "99a87cdc6ca31fe7428e"
+   },
+   "config": "f759595736653c20f2e9",
+   "ekiben": "identical",
+   "env": {},
+   "id": "scanner_skip_bom/utf8_into_lines",
+   "mode": "run",
+   "stdin": "5552e54357613984196e",
+   "tests": [
+    "tests/parity/components/scanner_skip_bom/utf8_into_lines.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 0,
+    "stdout": "34bf0788c9c35c30a97d"
+   },
+   "config": "774e5c8a00d54479de77",
+   "ekiben": "identical",
+   "env": {},
+   "id": "scanner_xml/cast",
+   "mode": "run",
+   "stdin": "52e54362769d1a34dc39",
+   "tests": [
+    "tests/parity/components/scanner_xml/cast.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 0,
+    "stdout": "7492f718aeed3c999a54"
+   },
+   "config": "5d95708c121b2aa587b2",
+   "ekiben": "identical",
+   "env": {},
+   "id": "scanner_xml/to_json",
+   "mode": "run",
+   "stdin": "5897271fc57678256738",
+   "tests": [
+    "tests/parity/components/scanner_xml/to_json.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 0,
+    "stdout": "ec43050d874d195a37ca"
+   },
+   "config": "decadde1ce4df2ac3573",
+   "ekiben": "identical",
+   "env": {},
+   "id": "system_window/docs_counting_passengers",
+   "mode": "run",
+   "stdin": "5490f54472e462dd9714",
+   "tests": [
+    "tests/parity/components/system_window/docs_counting_passengers.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 1,
+    "stdout": "e3b0c44298fc1c149afb"
+   },
+   "config": "58773879986a314bb733",
+   "ekiben": "identical",
+   "env": {},
+   "id": "system_window/invalid_lateness",
+   "mode": "run",
+   "stdin": "e3b0c44298fc1c149afb",
+   "tests": [
+    "tests/parity/components/system_window/invalid_lateness.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 1,
+    "stdout": "e3b0c44298fc1c149afb"
+   },
+   "config": "e633b5969819ac635745",
+   "ekiben": "identical",
+   "env": {},
+   "id": "system_window/invalid_offset",
+   "mode": "run",
+   "stdin": "e3b0c44298fc1c149afb",
+   "tests": [
+    "tests/parity/components/system_window/invalid_offset.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 1,
+    "stdout": "e3b0c44298fc1c149afb"
+   },
+   "config": "6a8008e5ae032c6787cb",
+   "ekiben": "identical",
+   "env": {},
+   "id": "system_window/invalid_slide",
+   "mode": "run",
+   "stdin": "e3b0c44298fc1c149afb",
+   "tests": [
+    "tests/parity/components/system_window/invalid_slide.yaml"
+   ]
+  },
+  {
+   "bento": {
+    "code": 0,
+    "stdout": "e3b0c44298fc1c149afb"
+   },
+   "config": "15095e4bd4b5e248baad",
+   "ekiben": "identical",
+   "env": {},
+   "id": "system_window/old_events_dropped",
+   "mode": "run",
+   "stdin": "39c8b7608d722d379559",
+   "tests": [
+    "tests/parity/components/system_window/old_events_dropped.yaml"
+   ]
+  }
+ ]
+}

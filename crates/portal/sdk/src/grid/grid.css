@@ -1816,6 +1816,32 @@ a.jc-cell--link:focus-visible {
   .jc-grid-info { opacity: 1; }
 }
 
+/* T-6878: a value with history the person may read. The header's mark says the column has it; a
+   cell's mark says this value changed. The glyph is drawn, so a copied cell stays the value alone. */
+.jc-grid-history-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-inline-start: 0.25rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--jc-color-accent, #0066cc);
+  font: 600 0.875rem/1 system-ui, sans-serif;
+  vertical-align: middle;
+  cursor: pointer;
+}
+.jc-grid-history-mark::before { content: "\21BA"; }
+.jc-grid-history-mark:hover { border-color: var(--jc-color-line, #d0d7de); }
+.jc-grid-history-mark:focus-visible {
+  outline: 2px solid var(--jc-color-accent, #0066cc);
+  outline-offset: 2px;
+}
+.jc-grid-history-mark--cell { float: right; margin-inline-start: 0.25rem; }
+
 /* T-5530: a column the person cannot change wears a lock in its header (the reason is its name and
    tooltip), and its cells a muted ground, so a value without an editor reads as read-only. */
 .jc-grid-lock {

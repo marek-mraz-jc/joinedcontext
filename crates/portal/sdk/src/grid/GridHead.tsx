@@ -2,9 +2,9 @@ import React, { useLayoutEffect, useRef, useState } from "react";
 import { HeaderFilter } from "./AutoFilter";
 import { ColumnMenu, WIDTH_STEP } from "./ColumnMenu";
 import { complete } from "./filters";
+import { cellText } from "./model";
 import { GridFilterRow } from "./GridFilterRow";
 import { KIND_ICON, KIND_LABEL } from "./gridKinds";
-import { cellText } from "./model";
 import { MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH, NAME_COLUMN } from "./useEntityGrid";
 import type { VisibleColumn } from "./useEntityGrid";
 import type { GridView } from "./useGridView";
@@ -56,7 +56,7 @@ export function GridHead({ view }: { view: GridView }): React.JSX.Element {
 }
 
 function ColumnHeader({ view, col, index: i }: { view: GridView; col: VisibleColumn; index: number }): React.JSX.Element {
-  const { grid, labels, kindOf, order, asText, filterable, dragOver, setDragOver, layout, setLayout, sortLabel, where, openFilter, closeFilter, focusFilter, loadValues, locks, openMenu, toggleMenu, menuRef, closeMenu, hideColumn, widen, startResize, historyOn, inspects, setInspected, inspectorLabels } = view;
+  const { grid, labels, kindOf, order, asText, filterable, dragOver, setDragOver, layout, setLayout, sortLabel, where, openFilter, closeFilter, focusFilter, loadValues, locks, openMenu, toggleMenu, menuRef, closeMenu, hideColumn, widen, startResize, inspects, setInspected, inspectorLabels } = view;
   const { state, setFilter, setSort, getHeaderProps } = grid;
   const kind = kindOf.get(col.key) ?? "text";
   const kindLabel = labels[KIND_LABEL[kind]] as string;
@@ -122,6 +122,16 @@ function ColumnHeader({ view, col, index: i }: { view: GridView; col: VisibleCol
         }}
       />
     )}
+    {view.historyMarked(col) ? (
+      // A button, so a keyboard and a screen reader reach the history the label promises (T-6878).
+      <button
+        type="button"
+        className="jc-grid-history-mark"
+        aria-label={`${labels.historyAvailable}: ${col.label} — ${historyRowName(view)}`}
+        title={labels.historyAvailable}
+        onClick={() => openHistory(view, col)}
+      />
+    ) : null}
     {locks.get(col.key) !== undefined ? (
       <span className="jc-grid-lock" role="img" aria-label={`${labels.locked}: ${locks.get(col.key)}`} title={locks.get(col.key)} />
     ) : null}
@@ -147,7 +157,7 @@ function ColumnHeader({ view, col, index: i }: { view: GridView; col: VisibleCol
         onSort={(dir) => { setSort(own, dir); closeMenu(); }}
         onFilter={headerFilter ? () => focusFilter(col.key) : undefined}
         onHide={col.pinned || fixed ? undefined : () => hideColumn(own)}
-        onHistory={historyOn ? () => openHistory(view, col) : undefined}
+        onHistory={view.historyOffered(col) ? () => openHistory(view, { ...col, attr: own }) : undefined}
         // A phone's way to the access panel its cells no longer carry (T-6781).
         onInspect={view.props.compact && inspects(col) ? { label: inspectorLabels.title, open: () => { closeMenu(); setInspected({ attr: own, label: col.label }); } } : undefined}
         onClose={closeMenu}
@@ -181,14 +191,19 @@ function ColumnHeader({ view, col, index: i }: { view: GridView; col: VisibleCol
 }
 
 /** A column's history for the row the person is on, under the grid. */
-function openHistory(view: GridView, col: VisibleColumn): void {
-  const { grid, labels, options, setHistory, setOpenMenu } = view;
-  const { rows, state } = grid;
-  // The row the person is on, else the first: history belongs to one entity, and the panel names which.
-  const row = rows[state.activeCell?.row ?? 0] ?? rows[0];
-  // Named as a person reads it: the column's label and the row's name, never the id (T-2991).
-  const name = cellText(row?.cells.name);
-  const title = options.labels?.historyLabels?.title ?? labels.history;
-  setHistory({ attr: col.attr!, id: row?.id ?? "", heading: `${title}: ${col.label}${name ? ` — ${name}` : ""}` });
-  setOpenMenu(null);
+/** The row the person is on, else the first: history belongs to one entity, and the panel names which. */
+function historyRow(view: GridView) {
+  const { rows, state } = view.grid;
+  return rows[state.activeCell?.row ?? 0] ?? rows[0];
+}
+
+/** The name of the row the header mark opens, so its label says whose history it is. */
+function historyRowName(view: GridView): string {
+  const row = historyRow(view);
+  return cellText(row?.cells.name) || (row?.id ?? "");
+}
+
+function openHistory(view: GridView, col: VisibleColumn & { attr: string }): void {
+  view.openHistoryOf(col, historyRow(view));
+  view.setOpenMenu(null);
 }

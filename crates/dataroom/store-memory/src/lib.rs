@@ -51,6 +51,18 @@ impl MemoryStore {
     }
 }
 
+/// A deleted catalogue's rows stay gone: a harvest run still going when its catalogue was
+/// deleted cannot write them back (the tombstone outlives a re-create only until it clears).
+fn refuse_deleted(inner: &Inner, ctx: &RequestCtx) -> Result<()> {
+    match inner.catalogues.get(&(ctx.org_id, ctx.catalogue_id)) {
+        Some(c) if c.deleted.is_some() => Err(DataroomError::Gone(format!(
+            "catalogue {} was deleted",
+            ctx.catalogue_id
+        ))),
+        _ => Ok(()),
+    }
+}
+
 impl Store for MemoryStore {
     fn resolve_host<'a>(&'a self, host: &'a str) -> BoxFuture<'a, Result<Option<Catalogue>>> {
         let clean = host
@@ -101,6 +113,31 @@ impl Store for MemoryStore {
         Box::pin(std::future::ready(Ok(found)))
     }
 
+    fn delete_catalogue<'a>(
+        &'a self,
+        org_id: OrgId,
+        catalogue_id: CatalogueId,
+    ) -> BoxFuture<'a, Result<bool>> {
+        let mut inner = self.write_inner();
+        let Some(cat) = inner.catalogues.get_mut(&(org_id, catalogue_id)) else {
+            return Box::pin(std::future::ready(Ok(false)));
+        };
+        cat.deleted = Some(chrono::Utc::now());
+        cat.modified = chrono::Utc::now();
+        let mine = |o: &OrgId, c: &CatalogueId| *o == org_id && *c == catalogue_id;
+        inner.publishers.retain(|(o, c, _), _| !mine(o, c));
+        inner.datasets.retain(|(o, c, _), _| !mine(o, c));
+        inner.views.retain(|(o, c, _), _| !mine(o, c));
+        inner.harvest_sources.retain(|(o, c, _), _| !mine(o, c));
+        inner.harvest_runs.retain(|(o, c, _), _| !mine(o, c));
+        inner.activity.retain(|a| !mine(&a.org_id, &a.catalogue_id));
+        inner.shacl_reports.retain(|(o, c, _), _| !mine(o, c));
+        inner.profiles.retain(|(o, c, _, _), _| !mine(o, c));
+        inner.pages.retain(|(o, c, _, _), _| !mine(o, c));
+        inner.plugins.retain(|(o, c, _), _| !mine(o, c));
+        Box::pin(std::future::ready(Ok(true)))
+    }
+
     fn upsert_catalogue<'a>(&'a self, catalogue: Catalogue) -> BoxFuture<'a, Result<Catalogue>> {
         let mut guard = self.write_inner();
         let host_conflict = guard.catalogues.values().any(|c| {
@@ -111,6 +148,16 @@ impl Store for MemoryStore {
             return Box::pin(std::future::ready(Err(DataroomError::Conflict(format!(
                 "host '{}' is already claimed by another catalogue",
                 catalogue.host
+            )))));
+        }
+        if guard
+            .catalogues
+            .keys()
+            .any(|&(o, c)| c == catalogue.id && o != catalogue.org_id)
+        {
+            return Box::pin(std::future::ready(Err(DataroomError::Conflict(format!(
+                "catalogue {} belongs to another organisation",
+                catalogue.id
             )))));
         }
         guard
@@ -331,6 +378,9 @@ impl Store for MemoryStore {
             }
         }
         let mut guard = self.write_inner();
+        if let Err(e) = refuse_deleted(&guard, ctx) {
+            return Box::pin(std::future::ready(Err(e)));
+        }
         let name_conflict = guard.datasets.iter().any(|((oid, cid, _), d)| {
             *oid == ctx.org_id
                 && *cid == ctx.catalogue_id
@@ -525,11 +575,39 @@ impl Store for MemoryStore {
         if source.id.is_empty() {
             source.id = format!("hs-{}", source.name);
         }
-        self.write_inner().harvest_sources.insert(
+        let mut inner = self.write_inner();
+        if let Err(e) = refuse_deleted(&inner, ctx) {
+            return Box::pin(std::future::ready(Err(e)));
+        }
+        inner.harvest_sources.insert(
             (ctx.org_id, ctx.catalogue_id, source.id.clone()),
             source.clone(),
         );
         Box::pin(std::future::ready(Ok(source)))
+    }
+
+    fn delete_harvest_source<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        id_or_name: &'a str,
+    ) -> BoxFuture<'a, Result<bool>> {
+        let mut inner = self.write_inner();
+        let (org, cat) = (ctx.org_id, ctx.catalogue_id);
+        let found = inner
+            .harvest_sources
+            .iter()
+            .find(|((o, c, _), s)| {
+                *o == org && *c == cat && (s.id == id_or_name || s.name == id_or_name)
+            })
+            .map(|(k, s)| (k.clone(), s.id.clone()));
+        let Some((key, id)) = found else {
+            return Box::pin(std::future::ready(Ok(false)));
+        };
+        inner.harvest_sources.remove(&key);
+        inner
+            .harvest_runs
+            .retain(|(o, c, _), r| !(*o == org && *c == cat && r.source_id == id));
+        Box::pin(std::future::ready(Ok(true)))
     }
 
     fn list_harvest_runs<'a>(
@@ -573,7 +651,11 @@ impl Store for MemoryStore {
     ) -> BoxFuture<'a, Result<HarvestRun>> {
         run.org_id = ctx.org_id;
         run.catalogue_id = ctx.catalogue_id;
-        self.write_inner()
+        let mut inner = self.write_inner();
+        if let Err(e) = refuse_deleted(&inner, ctx) {
+            return Box::pin(std::future::ready(Err(e)));
+        }
+        inner
             .harvest_runs
             .insert((ctx.org_id, ctx.catalogue_id, run.id.clone()), run.clone());
         Box::pin(std::future::ready(Ok(run)))
@@ -588,6 +670,9 @@ impl Store for MemoryStore {
         run.org_id = ctx.org_id;
         run.catalogue_id = ctx.catalogue_id;
         let mut inner = self.write_inner();
+        if let Err(e) = refuse_deleted(&inner, ctx) {
+            return Box::pin(std::future::ready(Err(e)));
+        }
         let mut held = false;
         for ((oid, cid, _), r) in inner.harvest_runs.iter_mut() {
             if *oid != ctx.org_id

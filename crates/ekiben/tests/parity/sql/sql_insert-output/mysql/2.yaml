@@ -1,0 +1,15 @@
+logger: {level: OFF}
+input:
+  generate:
+    count: 6
+    interval: ""
+    mapping: 'root = {"cat": {"meow": "c" + counter().string()}, "doc": {"woofs": [counter()]}}'
+output:
+  sql_insert:
+    driver: mysql
+    dsn: ${MY_DSN}
+    table: footable
+    columns: [ foo, bar, baz ]
+    args_mapping: 'root = [ this.cat.meow, this.doc.woofs[0], "x" ]'
+    batching:
+      count: 2

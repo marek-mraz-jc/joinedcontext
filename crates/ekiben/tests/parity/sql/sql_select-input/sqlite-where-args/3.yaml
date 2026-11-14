@@ -1,0 +1,16 @@
+logger: {level: OFF}
+input:
+  sql_select:
+    driver: sqlite
+    dsn: ${LITE_DSN}
+    table: footable
+    columns: [ '*' ]
+    where: created_at >= ? and foo != ?
+    args_mapping: |
+      root = [
+        200,
+        "doc-3"
+      ]
+    suffix: ORDER BY bar ASC
+output:
+  stdout: {}

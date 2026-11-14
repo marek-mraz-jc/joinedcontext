@@ -1,0 +1,12 @@
+logger: {level: OFF}
+input:
+  generate:
+    count: 3
+    interval: ""
+    mapping: 'root = {"i": counter()}'
+output:
+  sql_raw:
+    driver: postgres
+    dsn: ${PG_DSN}
+    query: "INSERT INTO t VALUES ($1, $2, $3, $4)"
+    args_mapping: 'root = [ this.i, "n" + this.i.string(), "2024-01-0" + this.i.string() + "T00:00:00Z", "1.50" ]'

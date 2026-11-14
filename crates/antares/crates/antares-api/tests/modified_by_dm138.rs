@@ -119,6 +119,19 @@ async fn sys_attrs_answers_the_writer_only_to_a_caller_granted_read_versions() {
     assert!(!plain.to_string().contains("modifiedBy"), "{plain}");
     let ungranted = read(&st, "?options=sysAttrs", &[("l5d-client-id", GATEWAY)]).await;
     assert!(!ungranted.to_string().contains("modifiedBy"), "{ungranted}");
+    // GDPR (T-6878): an anonymous caller granted the versions is never told who wrote a value
+    let anonymous = read(
+        &st,
+        "?options=sysAttrs",
+        &[
+            ("l5d-client-id", GATEWAY),
+            ("jc-read-versions", "true"),
+            ("jc-provenance-actor", "anonymous"),
+        ],
+    )
+    .await;
+    assert!(!anonymous.to_string().contains("modifiedBy"), "{anonymous}");
+    assert!(!anonymous.to_string().contains("u-steward"), "{anonymous}");
     // the grant is believed from the gateway alone
     let forged = read(&st, "?options=sysAttrs", &[("jc-read-versions", "true")]).await;
     assert!(!forged.to_string().contains("modifiedBy"), "{forged}");

@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -62,10 +61,6 @@ pub fn register(registry: &Registry) {
 
     registry.register_processor("bounds_check", |conf, _ctx| {
         Ok(Arc::new(BoundsCheckProcessor::from_config(conf)))
-    });
-
-    registry.register_processor("group_by_value", |conf, ctx| {
-        Ok(Arc::new(GroupByValueProcessor::from_config(conf, ctx)?))
     });
 
     registry.register_processor("insert_part", |conf, ctx| {
@@ -629,58 +624,6 @@ impl Processor for BoundsCheckProcessor {
             len >= self.min_part_size && len <= self.max_part_size
         });
         Ok(if fits { vec![batch] } else { Vec::new() })
-    }
-}
-
-/// Implements `group_by_value` (used by `joinedcontext-portal` `render.rs` `routes()`!).
-pub struct GroupByValueProcessor {
-    value: FieldExpression,
-}
-
-impl GroupByValueProcessor {
-    pub fn from_config(conf: &ComponentConfig, ctx: &ProcContext) -> Result<Self, CoreError> {
-        let val_str = conf
-            .config
-            .get("value")
-            .and_then(JsonValue::as_str)
-            .ok_or_else(|| CoreError::config("group_by_value requires a value field"))?;
-        let value = ctx.blobl_env.compile_field(val_str)?;
-        Ok(Self { value })
-    }
-}
-
-#[async_trait]
-impl Processor for GroupByValueProcessor {
-    fn processor_type(&self) -> &'static str {
-        "group_by_value"
-    }
-
-    async fn process_batch(
-        &self,
-        _ctx: &ProcContext,
-        batch: Batch,
-    ) -> Result<Vec<Batch>, CoreError> {
-        if batch.is_empty() {
-            return Ok(Vec::new());
-        }
-        let view = PartsView(&batch);
-        let mut order: Vec<String> = Vec::new();
-        let mut groups: BTreeMap<String, Batch> = BTreeMap::new();
-
-        for (i, part) in batch.iter().enumerate() {
-            let k = self.value.resolve_string(i, &view).unwrap_or_default();
-            if !groups.contains_key(&k) {
-                order.push(k.clone());
-                groups.insert(k.clone(), Vec::new());
-            }
-            groups.get_mut(&k).unwrap().push(part.clone());
-        }
-
-        let out: Vec<Batch> = order
-            .into_iter()
-            .filter_map(|k| groups.remove(&k))
-            .collect();
-        Ok(out)
     }
 }
 

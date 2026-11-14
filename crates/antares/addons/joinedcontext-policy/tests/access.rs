@@ -554,8 +554,8 @@ async fn the_check_and_the_attribute_table_answer_per_attribute() -> Res {
     assert_eq!(
         parse(&body)?,
         json!({"type": "InternalIncident", "attributes": [
-            {"name": "severity", "read": false, "write": true, "delete": false, "reason": "grant"},
-            {"name": "notes", "read": false, "write": false, "delete": false, "reason": "not_in_grant"}
+            {"name": "severity", "read": false, "write": true, "delete": false, "history": false, "reason": "grant"},
+            {"name": "notes", "read": false, "write": false, "delete": false, "history": false, "reason": "not_in_grant"}
         ]})
     );
     assert!(!body.contains("ovzdusie"), "a policy id in {body}");

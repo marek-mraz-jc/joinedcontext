@@ -1,0 +1,8 @@
+input:
+  stdin: {}
+buffer:
+  system_window:
+    size: 1h
+    allowed_lateness: 3h
+output:
+  stdout: {}

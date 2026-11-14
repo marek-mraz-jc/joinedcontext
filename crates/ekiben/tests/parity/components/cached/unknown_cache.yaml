@@ -1,0 +1,12 @@
+input:
+  stdin: {}
+pipeline:
+  threads: 1
+  processors:
+    - cached:
+        key: k
+        cache: nope
+        processors:
+          - noop: {}
+output:
+  stdout: {}

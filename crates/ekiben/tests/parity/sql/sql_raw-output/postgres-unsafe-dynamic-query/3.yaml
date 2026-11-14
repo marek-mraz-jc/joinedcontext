@@ -1,0 +1,13 @@
+logger: {level: OFF}
+input:
+  generate:
+    count: 4
+    interval: ""
+    mapping: 'root = {"i": counter()}'
+output:
+  sql_raw:
+    driver: postgres
+    dsn: ${PG_DSN}
+    query: "INSERT INTO ${! if this.i % 2 == 0 { \"t1\" } else { \"t2\" } } (v) VALUES ($1)"
+    args_mapping: 'root = [ this.i ]'
+    unsafe_dynamic_query: true

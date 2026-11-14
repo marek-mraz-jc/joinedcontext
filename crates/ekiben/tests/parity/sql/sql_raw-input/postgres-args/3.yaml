@@ -1,0 +1,9 @@
+logger: {level: OFF}
+input:
+  sql_raw:
+    driver: postgres
+    dsn: ${PG_DSN}
+    query: "SELECT id, name, at, amount FROM t WHERE id >= $1 AND at < $2 ORDER BY id"
+    args_mapping: 'root = [ "2", "2024-01-03T12:00:00Z" ]'
+output:
+  stdout: {}
