@@ -802,6 +802,7 @@ describe("asking an assistant in the Portal (T-3058, AG-115)", () => {
       { ...good, mark: { type: "image" }, encoding: { url: { field: "u" } } },
       { ...good, $schema: "urn:joinedcontext:map:v1" },
       { ...good, $schema: "https://evil.example/vega-lite/v5.json" },
+      { ...good, encoding: { ...good.encoding, y: { field: "value", type: "quantitative", config: { url: "x" } } } },
     ]) {
       expect(visualOf({ spec, rows }), JSON.stringify(spec)).toBeNull();
     }
