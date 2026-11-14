@@ -850,6 +850,23 @@ async fn s5_s7_s10_s11_s14_s15_portal_change_lane_webhooks_mirrors_and_backup() 
     );
 }
 
+/// The standalone binary's store starts empty: `fsck` and `compact` say they found nothing to
+/// check and fail, so a cron job never reads a check that did not run as green.
+#[test]
+fn standalone_fsck_and_compact_fail_when_they_find_no_repository() {
+    let root = tempfile::tempdir().unwrap();
+    for cmd in ["fsck", "compact"] {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_shako"))
+            .args([cmd, "--repo-root"])
+            .arg(root.path())
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "{cmd}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("found no repository"), "{cmd}: {err}");
+    }
+}
+
 /// Contract S8, S9, S13, S18, S19, S21: OData 4.01 service, OCI registry + cosign signing,
 /// generic packages, MCP tools, read-only web views, and security threats T1, T4, T6, T13, T14.
 #[tokio::test]

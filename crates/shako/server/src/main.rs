@@ -73,6 +73,11 @@ enum Commands {
     },
 }
 
+/// Why `compact` and `fsck` of the standalone binary refuse: its store starts empty, so a
+/// success would claim a check that never ran.
+const NO_REPOSITORIES: &str = "found no repository to work on: the standalone store starts \
+empty and lists none; run the check in jc, where the store lists the repositories";
+
 fn build_standalone_state(
     repo_root: Option<PathBuf>,
     token_file: Option<PathBuf>,
@@ -239,6 +244,10 @@ async fn main() -> ExitCode {
                 }
             };
             match compact_all_repositories(&state, org_id).await {
+                Ok(0) => {
+                    eprintln!("shako compact: {NO_REPOSITORIES}");
+                    ExitCode::FAILURE
+                }
                 Ok(_) => ExitCode::SUCCESS,
                 Err(e) => {
                     eprintln!("shako compact failed: {e}");
@@ -255,6 +264,10 @@ async fn main() -> ExitCode {
                 }
             };
             match fsck_all_repositories(&state, org_id).await {
+                Ok(0) => {
+                    eprintln!("shako fsck: {NO_REPOSITORIES}");
+                    ExitCode::FAILURE
+                }
                 Ok(_) => ExitCode::SUCCESS,
                 Err(e) => {
                     eprintln!("shako fsck failed: {e}");
