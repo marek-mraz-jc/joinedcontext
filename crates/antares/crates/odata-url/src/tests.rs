@@ -751,6 +751,33 @@ fn expand_errors() {
     );
 }
 
+/// A date its month does not hold is no `Edm.Date`, in a URL or a body.
+#[test]
+fn a_date_past_its_month_is_no_date() {
+    for (text, valid) in [
+        ("2024-02-29", true),
+        ("2023-02-29", false),
+        ("2000-02-29", true),
+        ("1900-02-29", false),
+        ("2026-02-31", false),
+        ("2026-04-31", false),
+        ("2026-12-31", true),
+    ] {
+        assert_eq!(crate::is_primitive_text("Edm.Date", text), valid, "{text}");
+        assert_eq!(
+            crate::is_primitive_text("Edm.DateTimeOffset", &format!("{text}T00:00:00Z")),
+            valid,
+            "{text}"
+        );
+    }
+    assert!(parse(
+        "Buildings?$filter=built eq 2026-02-31",
+        &Service,
+        &Limits::strict()
+    )
+    .is_err());
+}
+
 #[test]
 fn literals_in_keys_and_filters() {
     for (text, literal) in [
