@@ -19,21 +19,21 @@ A `Portal` is an Organization-scoped manifest kind (ODP-08): one open data porta
 
 A request without a session answers `401`. A person who is not an administrator of the portal's Organization answers `403` on every write, and a read of another Organization's portal answers `404`, as if it did not exist (ODP-12). An Organization administrator's Change touches only that Organization's portals.
 
-The reconciler is the only writer of the catalogue rows behind a portal (ODP-11). It applies an approved Change in-process: it creates, updates or deletes the portal's catalogue and its harvest sources without a restart. The `[[dataroom.harvest]]` seeds of the deployment configuration migrate once, with every field, into sources of each Organization's `default` portal; after that the config block and the direct `harvest_source.propose` operation are refused naming ODP-11. No route of the open data surface gains a write verb for it, and each portal's catalogue has its own publish principal, so the principal of one portal cannot write another.
+The reconciler is the only writer of the catalogue rows behind a portal (ODP-11). It applies an approved Change in-process: it creates, updates or deletes the portal's catalogue and its harvest sources without a restart. The `[[dataroom.harvest]]` seeds of the deployment configuration migrate once, with every field, into sources of each Organization's `default` portal; after that the config block is refused naming ODP-11. The direct `harvest_source.propose` operation is refused, naming ODP-11. No route of the open data surface gains a write verb for it, and each portal's catalogue has its own publish principal, so the principal of one portal cannot write another.
 
 ## 2. Addresses
 
 | Portal | Address |
 |---|---|
 | `default` | `/{org}/opendata/` on the shared host, or the Organization's open data host |
-| any other, no `spec.host` | `/{org}/opendata/-/{name}/` on the shared host |
-| any other, with `spec.host` | `https://{host}/`, a host the operator listed for the Organization |
+| any other, no `spec.host` | `/{org}/opendata/-/{path}/` on the shared host, `/-/{path}/` on the Organization's open data host |
+| any other, with `spec.host` | `https://{host}/`, a host the operator listed for the Organization; its path address answers `308` there (`spec.slug: redirect`, the default) or serves too (`keep`) |
 
-A portal with `spec.host` sets `spec.slug`: `redirect` (the default) answers the path address `/{org}/opendata/[-/{name}/]...` with `308` to the same path and query on the host; `keep` serves both, and every page and feed names the host as canonical. Changing a portal's address never changes a dataset IRI: the IRI keeps the address the dataset was first published under, and that address redirects (ODP-08).
+A portal with `spec.host` sets `spec.slug`: `redirect` (the default) answers the path address `/{org}/opendata/[-/{path}/]...` with `308` to the same path and query on the host; `keep` serves both, and every page and feed names the host as canonical. Changing a portal's address never changes a dataset IRI: every dataset without an identifier of its own is pinned to the address it was first published under, and that address keeps answering (ODP-08).
 
-When one Endpoint is listed in several portals of an Organization, the `default` portal's IRI is canonical and the other portals point their record at it; two sources harvesting one dataset are deduplicated by `dct:identifier` in source order (ODP-14).
+When one Endpoint is listed in several portals of an Organization, the `default` portal's IRI is canonical and the other portals point their record at it; two sources harvesting one dataset are deduplicated by `dct:identifier` in source order: the earlier source keeps the record (ODP-14).
 
-The catalogue row of a path-mode portal stores the synthetic host `{name}.{org}.portal.invalid`: the `.invalid` top-level domain never resolves, so no request can reach a portal through it. The deployment-wide catalogue at `/opendata/` is the `default` portal of the installation Organization (`ops`).
+The catalogue row of a path-mode portal stores the synthetic host `{path}.{org}.portal.invalid`: the `.invalid` top-level domain never resolves, so no request can reach a portal through it. The deployment-wide catalogue at `/opendata/` is the `default` portal of the installation Organization (`ops`).
 
 ## 3. Validation
 
@@ -41,12 +41,15 @@ The catalogue row of a path-mode portal stores the synthetic host `{name}.{org}.
 
 | Field | Rule | Refusal |
 |---|---|---|
-| `metadata.name` | a DNS label (1 to 63 lower-case letters, digits and hyphens, a letter or digit at each end), unique in the Organization | `422`, field `metadata.name` |
-| `spec.host` | one of the hosts the deployment configuration lists for this Organization, checked against every mount host | `422`, field `spec.host`, "host is not listed for this Organization" |
+| `metadata.name` | a DNS label (1 to 63 lower-case letters, digits and hyphens, a letter or digit at each end), unique in namespace `org` | `422`, field `metadata.name` |
+| `spec.organizationRef` | an Organization of the deployment, never changed on an existing portal | `422`, field `spec.organizationRef` |
+| `spec.path` | a DNS label, unique in the Organization, never changed on an existing portal (a new path is a new catalogue and would move every dataset IRI); `default` is the Organization's own portal | `422`, field `spec.path` |
+| `spec.host` | one of the hosts the deployment configuration lists for this Organization, checked against every mount host, and no other portal's | `422`, field `spec.host`, "host is not listed for this Organization" or "another portal answers on" |
 | `spec.slug` | `redirect` or `keep`, only with `spec.host` | `422`, field `spec.slug` |
 | total count | at most `portals.max` across every Organization of the deployment | `422`, "portals.max (N) reached" |
-| delete of `default` | never | `422`, "the default portal cannot be deleted" |
-| `spec.sources[].url` | `https://` or `http://`, its host inside `allowedHosts` and the deployment's harvest allow-list | `422`, field `spec.sources[i].url` |
+| delete of the portal at path `default` | never | `422`, "the default portal cannot be deleted" |
+| `spec.sources[].url` | `https://` (the harvest guard fetches nothing else), its host inside `allowedHosts` and the deployment's harvest allow-list | `422`, field `spec.sources[i].url` |
+| `spec.sources[].projects` | an `endpoints` source names only projects of the portal's Organization | `422`, field `spec.sources[i].projects` |
 | unknown field | `deny_unknown_fields` | `422`, the field named |
 
 Sources carry no credentials in this version: a source field that would hold a secret does not exist, and a `secretRef` in a source is refused as an unknown field.

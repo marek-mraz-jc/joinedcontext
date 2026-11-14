@@ -13,11 +13,13 @@
 //! ponytail: polled every [`super::appearance::FOLLOW_EVERY`] from the one Portal of this
 //! process, as the appearance is; upgrade path: the Portal's reconciler calls the writer.
 
-use dataroom_core::{CatalogueId, HarvestBudget, HarvestSource, OrgId, Publisher, RecordState};
+use dataroom_core::{
+    CatalogueId, Dataset, HarvestBudget, HarvestSource, OrgId, Publisher, RecordState,
+};
 use dataroom_server::{CatalogueSpec, CatalogueWriter, PortalRoute};
 use jc_core::kinds::{PortalSource, PortalSourceType, PortalSpec};
 use joinedcontext_portal::store::{ListOptions, Mirror};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -335,9 +337,12 @@ pub(crate) fn follow(
     let shutdown = shutdown.clone();
     tasks.spawn(async move {
         let mut served: BTreeMap<String, PortalSpec> = BTreeMap::new();
+        let mut listing = BTreeSet::new();
         loop {
             if let Some(state) = super::PORTAL_STATE.get() {
                 apply(&writer, &orgs, &mut served, in_mirror(&state.mirror)).await;
+                let endpoints = endpoints_in(&state.mirror);
+                list_endpoints(&writer, &orgs, &served, &endpoints, &mut listing).await;
             }
             tokio::select! {
                 () = shutdown.cancelled() => return,
@@ -345,6 +350,121 @@ pub(crate) fn follow(
             }
         }
     });
+}
+
+/// The `generated_by` of a dataset the Portal published from an Endpoint's `publish` block
+/// (jcctl's CKAN publisher): only such a dataset opted in to being listed (ODP-02, ODP-10).
+const PUBLISHED_BY: &str = "jcctl/ckan-publisher";
+
+/// The `generated_by` of a further portal's copy of a published dataset (ODP-10 `endpoints`).
+const LISTED_BY: &str = "jc/portal-endpoints";
+
+/// One Endpoint manifest of the mirror, as an `endpoints` source narrows by it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EndpointRow {
+    pub project: String,
+    pub space: String,
+    pub name: String,
+    pub slug: String,
+}
+
+/// Every Endpoint manifest of the mirror's projects.
+pub(crate) fn endpoints_in(mirror: &Mirror) -> Vec<EndpointRow> {
+    let mut out = Vec::new();
+    for project in mirror.namespaces() {
+        for envelope in mirror
+            .list(&project, "Endpoint", &ListOptions::default())
+            .items
+        {
+            let spec = &envelope.spec;
+            let space = spec
+                .get("contextSpaceRef")
+                .and_then(joinedcontext_portal::resource::reference_name);
+            if let (Some(space), Some(slug)) = (space, spec["slug"].as_str()) {
+                out.push(EndpointRow {
+                    project: project.clone(),
+                    space: space.to_owned(),
+                    name: envelope.metadata.name.clone(),
+                    slug: slug.to_owned(),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Whether the `endpoints` source `source` lists `dataset` of its Organization's `default`
+/// catalogue: a dataset the Portal published from an Endpoint (never a harvested or hand-made
+/// one, never an Endpoint without `publish`), of an Endpoint of `endpoints`, inside every
+/// narrowing the source names (each list one of its values; an empty list narrows nothing).
+pub(crate) fn selects(source: &PortalSource, dataset: &Dataset, endpoints: &[EndpointRow]) -> bool {
+    if source.kind != PortalSourceType::Endpoints
+        || dataset.generated_by.as_deref() != Some(PUBLISHED_BY)
+    {
+        return false;
+    }
+    let slug = dataset
+        .endpoint_url
+        .as_deref()
+        .and_then(|url| url.trim_end_matches('/').rsplit('/').next());
+    let Some(endpoint) = endpoints.iter().find(|e| Some(e.slug.as_str()) == slug) else {
+        return false;
+    };
+    let within = |list: &[String], value: &str| list.is_empty() || list.iter().any(|v| v == value);
+    within(&source.projects, &endpoint.project)
+        && within(&source.spaces, &endpoint.space)
+        && within(&source.names, &endpoint.name)
+        && (source.tags.is_empty()
+            || dataset.tags.iter().any(|t| source.tags.contains(t))
+            || dataset
+                .keywords
+                .values()
+                .flatten()
+                .any(|t| source.tags.contains(t)))
+}
+
+/// Lists in each served further portal what its `endpoints` sources select of its
+/// Organization's `default` catalogue (ODP-10); a portal that had such a source last round
+/// (in `listing`) and has none now withdraws its copies.
+pub(crate) async fn list_endpoints(
+    writer: &CatalogueWriter,
+    orgs: &[OrganizationPortals],
+    served: &BTreeMap<String, PortalSpec>,
+    endpoints: &[EndpointRow],
+    listing: &mut BTreeSet<String>,
+) {
+    let mut now = BTreeSet::new();
+    for (name, portal) in served {
+        let lists = portal
+            .sources
+            .iter()
+            .any(|s| s.kind == PortalSourceType::Endpoints);
+        let (Some(org), Some((org_id, to))) = (
+            orgs.iter().find(|o| o.name == portal.organization_ref),
+            further_catalogue(portal, orgs),
+        ) else {
+            continue;
+        };
+        if !lists && !listing.contains(name) {
+            continue;
+        }
+        let from_base = format!("{}://{}", org.scheme, org.opendata);
+        let keep = |ds: &Dataset| portal.sources.iter().any(|s| selects(s, ds, endpoints));
+        match writer
+            .list_from(org_id, (org.catalogue_id, &from_base), to, LISTED_BY, keep)
+            .await
+        {
+            Ok(_) if !lists => {}
+            Ok(_) => {
+                now.insert(name.clone());
+            }
+            Err(e) => {
+                tracing::warn!(portal = %name, error = %e, "published Endpoints not listed; next round");
+                now.insert(name.clone());
+            }
+        }
+    }
+    *listing = now;
 }
 
 /// One round of [`follow`]: `served` is what the last round wrote.

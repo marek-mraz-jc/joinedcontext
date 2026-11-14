@@ -241,7 +241,7 @@ Headers:
 | `X-Request-Id` | response | the id the row's `provenance.requestId` holds |
 | `JC-Provenance-*` | never | dropped at the edge; the gateway sets them for the broker (DM-112, DM-136) |
 
-`lastN` counts measurements, not versions. Provenance is `channel`, `actor`, `organization`, `actorKind`, `operation`, `reason`, `requestId` and `writtenAt` ([ADR-N-054 §2.3](../Decisions/adr-n-054-history-versions-provenance-gdpr.md#23-provenance-on-every-write)). An anonymous caller reads no `actor`, `client`, `reason` or `requestId`, and no `modifiedBy` (GDPR, T-6878).
+`lastN` counts measurements, not versions. Provenance is `channel`, `actor`, `organization`, `actorKind`, `operation`, `reason`, `requestId` and `writtenAt` ([ADR-N-054 §2.3](../Decisions/adr-n-054-history-versions-provenance-gdpr.md#23-provenance-on-every-write)).
 
 ## 3. GeoJSON for maps
 
@@ -875,16 +875,14 @@ all of them; each row is the decision `access/check` gives with `resource.proper
 
 ```json
 {"type": "AirQualityObserved",
- "attributes": [{"name": "pm10", "read": true, "write": true, "delete": false, "history": true, "reason": "grant"},
-                {"name": "pm25", "read": true, "write": false, "delete": false, "history": false, "reason": "formula"},
-                {"name": "stationName", "read": false, "write": false, "delete": false, "history": false, "reason": "not_in_grant"}]}
+ "attributes": [{"name": "pm10", "read": true, "write": true, "delete": false, "reason": "grant"},
+                {"name": "pm25", "read": true, "write": false, "delete": false, "reason": "formula"},
+                {"name": "stationName", "read": false, "write": false, "delete": false, "reason": "not_in_grant"}]}
 ```
 
 `read` is `retrieveEntity` (a `GET` with `attrs=`), `write` is `updateAttrs` (a `PATCH` of the
-Attribute), `delete` is `deleteAttrs`, each through the Endpoint's view. `history` is
-`retrieveTemporal` of the Attribute: whether the caller reads its temporal values, so a grid shows a
-history mark and opens the history only where the read is granted (T-6878); it does not count in
-`reason`. `reason` is the strongest of the three verdicts of the current value: `prohibited` (a prohibition covers the type for one of them), `formula` (a
+Attribute), `delete` is `deleteAttrs`, each through the Endpoint's view. `reason` is the strongest
+of the three verdicts: `prohibited` (a prohibition covers the type for one of them), `formula` (a
 grant with a condition on the stored Entity, `q`, `scopeQ`, `geoQ` or a window, so the cell holds
 only for the entities that meet it), `grant`, `not_in_grant` (a permission covers the type but
 lists other Attributes) or `no_grant`. Deny is the default: with no grant every cell is `false`.
@@ -894,7 +892,7 @@ Endpoint serves (an Endpoint without a model, or whose view serves another model
 `400`, and so is a class of more than 200 served Attributes. A class with no served Attribute (a
 draft model that names classes and no slot, so it has no generated schema yet, or a projection
 that keeps none) answers `200` with an empty `attributes` list, and the view is not asked (T-6137). The answer pays the Endpoint's `rateLimits` as `evaluations` does: one request per 100
-decisions (three per Attribute; `history` is not charged), and a quota that cannot pay it is a `429`.
+decisions (three per Attribute), and a quota that cannot pay it is a `429`.
 
 `POST …/access/simulate` answers the same question for someone else (EP-103, T-3311): the decision
 `access/check` would give a named subject on this Endpoint, from the same admission and the same

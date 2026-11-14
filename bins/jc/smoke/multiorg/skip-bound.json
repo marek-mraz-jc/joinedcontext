@@ -1,5 +1,5 @@
 {
- "source": "skips per row template of a local gate.sh run (worker-t6850, 2026-11-14, jc-portal-1 f715ca86 + T-6850), the six-Organization bundle (ops the installation's with no data, hel, zilina, barcelona, ctl-a and ctl-b empty); a template may not skip more on any bundle, and may only shrink (T-6850). people.{o}-admin.own is the per-Organization people list gap of every Organization but the installation's; dashboards.{o} the three Organizations with no project; catalogue.{o}.{n}.* the CKAN organisation hel-fi with no dataset.",
+ "source": "skips per row template of a local gate.sh run (worker-t6850, 2026-11-14, jc-portal-1 f715ca86 + T-6850), the six-Organization bundle (ops the installation's with no data, hel, zilina, barcelona, ctl-a and ctl-b empty); a template may not skip more on any bundle, and may only shrink (T-6850). people.{o}-admin.own is the per-Organization people list gap of every Organization but the installation's; dashboards.{o} the three Organizations with no project; catalogue.{o}.{n}.* the CKAN organisation hel-fi with no dataset. portals.{o}-admin.source.*: the pairs whose other Organization has no project (ops, ctl-a, ctl-b) or no private Endpoint; portals.{o}.address: path mode serves no Organization catalogue (T-6877).",
  "hosts": {
   "dashboards.{o}": 3,
   "data.{o}-admin.readable.own-organization": 1,
@@ -9,7 +9,9 @@
   "global.{o}-admin./api/v1/organization/data-access": 1,
   "global.{o}-admin./api/v1/organization/health-checks": 1,
   "people.{o}-admin.no-foreign": 1,
-  "people.{o}-admin.own": 5
+  "people.{o}-admin.own": 5,
+  "portals.{o}-admin.source.foreign-endpoint.{o}": 20,
+  "portals.{o}-admin.source.foreign-project.{o}": 15
  },
  "path": {
   "catalogue.{o}.{n}.dcat": 1,
@@ -23,6 +25,9 @@
   "global.{o}-admin./api/v1/organization/data-access": 1,
   "global.{o}-admin./api/v1/organization/health-checks": 1,
   "people.{o}-admin.no-foreign": 1,
-  "people.{o}-admin.own": 5
+  "people.{o}-admin.own": 5,
+  "portals.{o}-admin.source.foreign-endpoint.{o}": 20,
+  "portals.{o}-admin.source.foreign-project.{o}": 15,
+  "portals.{o}.address": 6
  }
 }
