@@ -41,6 +41,17 @@ pub async fn send(
     uri: &str,
     body: Option<&str>,
 ) -> (StatusCode, Value) {
+    let (status, _, value) = exchange(app, method, uri, body).await;
+    (status, value)
+}
+
+/// [`send`] that keeps the answer's headers.
+pub async fn exchange(
+    app: &Router,
+    method: Method,
+    uri: &str,
+    body: Option<&str>,
+) -> (StatusCode, axum::http::HeaderMap, Value) {
     let mut req = Request::builder()
         .method(method)
         .uri(uri)
@@ -60,6 +71,7 @@ pub async fn send(
         )
         .await;
     let status = resp.status();
+    let headers = resp.headers().clone();
     let bytes = resp
         .into_body()
         .collect()
@@ -69,6 +81,7 @@ pub async fn send(
     let text = String::from_utf8_lossy(&bytes).into_owned();
     (
         status,
+        headers,
         serde_json::from_str(&text).unwrap_or(Value::String(text)),
     )
 }

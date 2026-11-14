@@ -16,7 +16,7 @@ use axum::http::{Method, Request, StatusCode};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex, PoisonError};
 use tower::ServiceExt;
-use writes::{city, city_on, odata, send, stored, CITY, ROOT};
+use writes::{city, city_on, exchange, odata, send, stored, CITY, ROOT};
 
 /// The base a request without `Host` is answered under (no
 /// `ANTARES_PUBLIC_URL` in tests): the entity id is absolute.
@@ -444,12 +444,33 @@ async fn odata_a_write_the_view_does_not_offer_is_405_and_the_capabilities_say_s
         ),
         (Method::DELETE, "Car('urn:ngsi-ld:Car:1')", None),
     ] {
-        let (status, answer) = send(&app, method.clone(), &format!("{reads}/{path}"), body).await;
+        let (status, headers, answer) =
+            exchange(&app, method.clone(), &format!("{reads}/{path}"), body).await;
         assert_eq!(
             status,
             StatusCode::METHOD_NOT_ALLOWED,
             "{method} {path}: {answer}"
         );
+        // RFC 9110 15.5.6: the 405 names what the view does take here.
+        assert_eq!(headers["allow"], "GET", "{method} {path}");
+    }
+    // The view that offers the writes names them where a method has none.
+    for (method, path, allow) in [
+        (
+            Method::POST,
+            "Car('urn:ngsi-ld:Car:1')",
+            "GET, PUT, PATCH, DELETE",
+        ),
+        (Method::DELETE, "Car", "GET, POST"),
+    ] {
+        let (status, headers, answer) =
+            exchange(&app, method.clone(), &format!("{ROOT}/{path}"), Some("{}")).await;
+        assert_eq!(
+            status,
+            StatusCode::METHOD_NOT_ALLOWED,
+            "{method} {path}: {answer}"
+        );
+        assert_eq!(headers["allow"], allow, "{method} {path}");
     }
     assert_eq!(
         stored(&app, "urn:ngsi-ld:Car:30").await.0,

@@ -617,7 +617,7 @@ fn aggregated(
         let key: Vec<Value> = (0..properties.len())
             .map(|k| at(values, i, k).cloned().unwrap_or(Value::Null))
             .collect();
-        let text = Value::Array(key.clone()).to_string();
+        let text = key.iter().map(distinct).collect::<Vec<_>>().join(",");
         let group = *index.entry(text).or_insert(groups.len());
         match groups.get_mut(group) {
             Some((_, members)) => members.push(i),
@@ -659,6 +659,19 @@ fn entities(
     Ok(json_response(ctx.version, ctx.level, body))
 }
 
+/// The text that tells `v` apart from another value in a `groupby` key or a
+/// `countdistinct`: one number written `1` or `1.0` is one value.
+fn distinct(v: &Value) -> String {
+    match v.as_number() {
+        Some(n) if n.as_i64().is_none() && n.as_u64().is_none() => n
+            .as_f64()
+            .filter(|f| f.fract() == 0.0 && f.abs() < 9_007_199_254_740_992.0)
+            // `+ 0.0` reads -0.0 as 0
+            .map_or_else(|| v.to_string(), |f| format!("{:.0}", f + 0.0)),
+        _ => v.to_string(),
+    }
+}
+
 /// One aggregate over the non-null `values` of a group of `instances`.
 fn folded<'v>(a: &Aggregate, values: impl Iterator<Item = &'v Value>, instances: usize) -> Value {
     let with = match a {
@@ -668,7 +681,7 @@ fn folded<'v>(a: &Aggregate, values: impl Iterator<Item = &'v Value>, instances:
     let values: Vec<&Value> = values.collect();
     match with {
         AggregateWith::CountDistinct => {
-            let distinct: BTreeSet<String> = values.iter().map(ToString::to_string).collect();
+            let distinct: BTreeSet<String> = values.iter().copied().map(distinct).collect();
             Value::from(distinct.len())
         }
         AggregateWith::Min | AggregateWith::Max => {
@@ -832,4 +845,20 @@ fn written(
 /// The OData error of a `$apply` the surface does not take.
 fn refused(refused: Refused, version: ODataVersion) -> ODataErrorResponse {
     refusal(refused, "$apply", version)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn one_number_in_two_spellings_is_one_group_and_one_distinct_value() {
+        assert_eq!(distinct(&json!(1.0)), distinct(&json!(1)));
+        assert_eq!(distinct(&json!(-3.0)), distinct(&json!(-3)));
+        assert_ne!(distinct(&json!(1.5)), distinct(&json!(1)));
+        assert_ne!(distinct(&json!("1")), distinct(&json!(1)));
+        assert_eq!(distinct(&json!(-0.0)), distinct(&json!(0)));
+        assert_ne!(distinct(&json!(1e300)), distinct(&json!(1)));
+    }
 }

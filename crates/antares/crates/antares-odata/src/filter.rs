@@ -782,14 +782,16 @@ impl<'a> Terms<'a> {
             },
             MemberPath { .. } => return Err(Refused::Later),
         };
-        if !matches!(
-            member.shape,
-            Shape::Value {
-                collection: true,
-                ..
-            }
-        ) {
+        let Shape::Value {
+            edm,
+            collection: true,
+        } = member.shape
+        else {
             return Err(Refused::Later);
+        };
+        // URL 5.1.1.1: each item is of the member's type, as for `eq` (`term`).
+        if !values.iter().all(|l| fits(edm, l)) {
+            return Err(Refused::Bad);
         }
         let values = values
             .into_iter()
@@ -2699,6 +2701,19 @@ mod tests {
                 Ok((None, 1)),
                 "{evaluated:?}"
             );
+        }
+        // URL 5.1.1.1: an item compares with a literal of its own type, as `eq` does
+        for mistyped in [
+            any(&["tags"], cmp(x(), CompareOp::Eq, lit(Literal::Int(123)))),
+            any(
+                &["tags"],
+                Expr::In(
+                    Box::new(x()),
+                    vec![Literal::String("a".into()), Literal::Bool(true)],
+                ),
+            ),
+        ] {
+            assert_eq!(q(&mistyped), Err(Refused::Bad), "{mistyped:?}");
         }
         let scalar = any(&["name"], cmp(x(), CompareOp::Eq, a()));
         assert_eq!(q(&scalar), Err(Refused::Bad), "no list to range over");
