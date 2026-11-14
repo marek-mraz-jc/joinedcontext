@@ -1578,6 +1578,17 @@ async fn mint_tokens_for_principal(
         sso_session_id,
     )
     .await?;
+    // An `organization:<alias>` the person is not a member of leaves the granted scope
+    // (DESIGN-K): the token, its `scope` answer and its refresh family name only the verified one.
+    let verified_scope = granted_scope_str
+        .split_whitespace()
+        .filter(|s| {
+            s.strip_prefix("organization:")
+                .is_none_or(|alias| resolved_active_org.as_deref() == Some(alias))
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let granted_scope_str = verified_scope.as_str();
 
     let mapper_ctx = MapperContext {
         realm,
