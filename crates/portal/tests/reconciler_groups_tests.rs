@@ -663,7 +663,11 @@ fn an_organization_whose_policies_do_not_parse_keeps_the_second_factor() {
             "turku",
             json!({ "policies": policies }),
         )]);
-        let generated = derived_groups(&mirror, &std::collections::BTreeMap::new(), chrono::Utc::now());
+        let generated = derived_groups(
+            &mirror,
+            &std::collections::BTreeMap::new(),
+            chrono::Utc::now(),
+        );
         assert!(
             generated
                 .iter()

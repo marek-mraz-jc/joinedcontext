@@ -444,6 +444,10 @@ fn only_the_organizations_administrators_set_its_second_factor() {
     };
     assert!(propose(&bbsk_admin()).is_ok());
     for who in [someone("prahaadmin"), bbsk_steward()] {
-        assert!(propose(&who).is_err(), "{} set bbsk's second factor", who.username);
+        assert!(
+            propose(&who).is_err(),
+            "{} set bbsk's second factor",
+            who.username
+        );
     }
 }
