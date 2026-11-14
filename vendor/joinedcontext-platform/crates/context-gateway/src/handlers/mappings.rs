@@ -145,9 +145,9 @@ fn names_secret_ref(value: &Value) -> bool {
 /// `class_derivations` (a map by target name, or a list of derivations with a `name`).
 ///
 /// A class derivation reads `populated_from`, or the class of its own name; a slot derivation
-/// reads the first segment of `populated_from`, every slot its `expr` names (`expr_reads`), or
-/// the slot of its own name. Anything else in the specification names no source term; an `expr`
-/// that cannot be read makes the whole transformation unreadable.
+/// reads the first segment of `populated_from` and every slot its `expr` names (`expr_reads`), or
+/// the slot of its own name when it names neither. Anything else in the specification names no
+/// source term; an `expr` that cannot be read makes the whole transformation unreadable.
 pub fn reads(transformation: &Value) -> Option<BTreeMap<String, BTreeSet<String>>> {
     let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (target, derivation) in named(transformation.get("class_derivations"))? {
@@ -161,14 +161,15 @@ pub fn reads(transformation: &Value) -> Option<BTreeMap<String, BTreeSet<String>
                 .get("populated_from")
                 .and_then(Value::as_str);
             let expr = slot_derivation.get("expr").and_then(Value::as_str);
-            match (from, expr) {
-                (Some(path), _) => {
-                    slots.insert(path.split('.').next().unwrap_or(path).to_owned());
-                }
-                (None, Some(expr)) => slots.extend(expr_reads(expr)?),
-                (None, None) => {
-                    slots.insert(slot);
-                }
+            // Both read when both are written: the filter cannot know which one runs.
+            if let Some(path) = from {
+                slots.insert(path.split('.').next().unwrap_or(path).to_owned());
+            }
+            if let Some(expr) = expr {
+                slots.extend(expr_reads(expr)?);
+            }
+            if from.is_none() && expr.is_none() {
+                slots.insert(slot);
             }
         }
     }
@@ -430,4 +431,31 @@ pub(crate) fn routes() -> Router<Arc<Gateway>> {
             "/api/endpoint/{slug}/schema/{version}/mappings/{file}",
             get(mapping_file),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reads;
+    use serde_json::json;
+
+    #[test]
+    fn a_slot_with_a_source_and_an_expression_reads_both() {
+        let transformation = json!({
+            "class_derivations": {
+                "Station": {
+                    "populated_from": "AirQualityObserved",
+                    "slot_derivations": {
+                        "label": { "populated_from": "name", "expr": "{owner}" },
+                        "pm10": {},
+                    },
+                },
+            },
+        });
+        let read = reads(&transformation).expect("readable");
+        let slots: Vec<&str> = read["AirQualityObserved"]
+            .iter()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(slots, ["name", "owner", "pm10"]);
+    }
 }
