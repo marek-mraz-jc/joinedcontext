@@ -51,6 +51,9 @@ pub struct CatalogueWriter {
     state: DataroomState,
     authorizer: Arc<LiveAuthorizer>,
     harvested: Arc<RwLock<Vec<(OrgId, CatalogueId)>>>,
+    /// One write at a time: a write reads the tables, awaits the store, then changes the
+    /// tables, and two interleaved writes would act on what the other just replaced.
+    serial: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl CatalogueWriter {
@@ -65,21 +68,16 @@ impl CatalogueWriter {
             state,
             authorizer,
             harvested,
+            serial: Arc::default(),
         }
     }
 
     /// Creates or updates the catalogue of `spec`, its publisher, its grants and its routes.
-    /// Refused: a catalogue id another Organization holds, a token another catalogue holds.
+    /// Refused: a catalogue id another Organization holds in the store (a deleted one's
+    /// tombstone too), a token another catalogue holds.
     pub async fn upsert(&self, spec: CatalogueSpec) -> Result<Catalogue> {
+        let _serial = self.serial.lock().await;
         let (org, id) = (spec.org_id, spec.id);
-        if read(&self.harvested)
-            .iter()
-            .any(|&(o, c)| c == id && o != org)
-        {
-            return Err(DataroomError::Conflict(format!(
-                "catalogue {id} belongs to another Organization"
-            )));
-        }
         let publish = spec
             .publish_token
             .as_deref()
@@ -141,6 +139,7 @@ impl CatalogueWriter {
     /// Deletes the catalogue's datasets, publishers and sources (its addresses answer 410
     /// from now on) and takes its principal, grants and routes away. `false`: no such catalogue.
     pub async fn delete(&self, org: OrgId, id: CatalogueId) -> Result<bool> {
+        let _serial = self.serial.lock().await;
         let deleted = self.state.store.delete_catalogue(org, id).await?;
         let principal = principal_of(id);
         write(&self.state.tokens)
@@ -160,6 +159,7 @@ impl CatalogueWriter {
         id: CatalogueId,
         source: HarvestSource,
     ) -> Result<HarvestSource> {
+        let _serial = self.serial.lock().await;
         let ctx = self.live(org, id)?;
         self.state.store.upsert_harvest_source(&ctx, source).await
     }
@@ -171,6 +171,7 @@ impl CatalogueWriter {
         id: CatalogueId,
         id_or_name: &str,
     ) -> Result<bool> {
+        let _serial = self.serial.lock().await;
         let ctx = self.live(org, id)?;
         self.state
             .store

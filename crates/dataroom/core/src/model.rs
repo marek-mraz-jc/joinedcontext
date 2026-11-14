@@ -61,7 +61,9 @@ impl OrgId {
 
     /// The `OrgId` of the JC Organization `name` in the installation `installation` (ODP-12):
     /// a UUID v5 under the installation's id, so it is the same on every start and differs for
-    /// every Organization and every installation, with nothing stored.
+    /// every Organization and every installation, with nothing stored. Renaming an Organization
+    /// changes its `OrgId`: its catalogue then needs a move (`PgStore::move_catalogue`) from the
+    /// old name's id to the new one, or it is served to nobody.
     pub fn of_organization(installation: OrgId, name: &str) -> Self {
         Self(Uuid::new_v5(&installation.0, name.as_bytes()))
     }
