@@ -45,11 +45,9 @@ const SPEC = {
 // What the CSP does to a page without 'unsafe-eval': every Function construction throws.
 const realFunction = globalThis.Function;
 function forbidFunction() {
-  const trap = function () {
+  globalThis.Function = function () {
     throw new EvalError("Function() is refused (no 'unsafe-eval')");
   } as unknown as FunctionConstructor;
-  trap.prototype = realFunction.prototype;
-  globalThis.Function = trap;
 }
 afterEach(() => {
   globalThis.Function = realFunction;
@@ -93,7 +91,8 @@ describe("render.js under a CSP without 'unsafe-eval'", () => {
 
     const compiled = vegaLite.compile({ ...SPEC, datasets: { source: [] } } as vegaLite.TopLevelSpec).spec;
     forbidFunction();
-    const rows = vega.read(csvRecords(CSV), { type: "json", parse: "auto" }) as Record<string, unknown>[];
+    // vega.read takes the records as render.js passes them; its types name only a string.
+    const rows = vega.read(csvRecords(CSV) as unknown as string, { type: "json", parse: "auto" }) as Record<string, unknown>[];
     expect(rows[1]["pm10.value"]).toBe(21.4);
     expect(rows[1]["pm10.observedAt"]).toBe(Date.parse("2026-11-14T07:00:00Z"));
     compiled.data = (compiled.data ?? []).map((d) => (d.name === "source" ? { ...d, values: rows } : d));
@@ -102,7 +101,9 @@ describe("render.js under a CSP without 'unsafe-eval'", () => {
       renderer: "none",
     });
     await view.runAsync();
-    const marks = view.scenegraph().root.items[0].items.find((i: { marktype?: string }) => i.marktype === "rect");
+    type Node = { marktype?: string; items?: Node[] };
+    const root = (view.scenegraph() as unknown as { root: Node }).root;
+    const marks = root.items?.[0].items?.find((i) => i.marktype === "rect");
     expect(marks?.items).toHaveLength(3);
     view.finalize();
   });

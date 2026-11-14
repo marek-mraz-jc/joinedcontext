@@ -52,7 +52,15 @@
       // the right it took half the width and cut "Praha 2-Legerova" to "Praha 2-Legero".
       if (window.innerWidth < 480) {
         var config = spec.config || {};
-        copy.config = Object.assign({}, config, { legend: Object.assign({}, config.legend, { orient: "bottom", columns: 2, labelLimit: 0 }) });
+        // T-6865: a title wider than the plot, centred on it, ran out of the frame ("PM10 podľa
+        // stanice (µg/m"), and long y labels took 60 % of the width: the title starts at the
+        // chart's left edge and ends in an ellipsis, a y label gets at most a third of the width.
+        var width = window.innerWidth;
+        copy.config = Object.assign({}, config, {
+          legend: Object.assign({}, config.legend, { orient: "bottom", columns: 2, labelLimit: 0 }),
+          title: Object.assign({}, config.title, { anchor: "start", frame: "bounds", limit: width - 48 }),
+          axisY: Object.assign({}, config.axisY, { labelLimit: Math.round(width / 3) })
+        });
       }
     } else if (Array.isArray(spec.data)) {
       copy.data = spec.data.map(function (entry) {
