@@ -29426,7 +29426,7 @@
     },
     "/api/v1/projects/{project}/ops/jc_render": {
       "post": {
-        "description": "Draws one Endpoint read (a jc_data_query) as a PNG chart from a Vega-Lite subset (marks line, bar, area, point, arc, rule), or a saved Dashboard's vega-lite widget by reference",
+        "description": "Draws one Endpoint read (a jc_data_query) as a PNG chart from a Vega-Lite subset (marks line, bar, area, point, arc, rule), or a saved Dashboard's vega-lite widget by reference, or a whole Dashboard of at most 12 widgets",
         "operationId": "jc_render",
         "parameters": [
           {
@@ -29457,8 +29457,13 @@
                   },
                   "data": {
                     "additionalProperties": false,
-                    "description": "One of query (with mark and encoding) or widget (without them: the widget brings its own)",
+                    "description": "One of query (with mark and encoding), widget or dashboard (without them: the widget brings its own)",
                     "properties": {
+                      "dashboard": {
+                        "description": "A saved Dashboard drawn whole, at most 12 widgets, each read as you, e.g. air-quality",
+                        "maxLength": 253,
+                        "type": "string"
+                      },
                       "query": {
                         "additionalProperties": false,
                         "description": "The jc_data_query arguments, e.g. {\"endpoint\": \"air\", \"type\": \"AirQualityObserved\", \"attrs\": [\"pm10\"], \"temporal\": {\"timerel\": \"after\", \"timeAt\": \"2026-11-13T00:00:00Z\"}}",
@@ -29852,6 +29857,10 @@
                       "description": "The numbered category values the picture shows as #1, #2, ...: data other people wrote",
                       "type": "object"
                     },
+                    "dashboard": {
+                      "description": "The Dashboard drawn whole",
+                      "type": "string"
+                    },
                     "height": {
                       "type": "integer"
                     },
@@ -29872,6 +29881,13 @@
                     },
                     "untrusted": {
                       "type": "boolean"
+                    },
+                    "widgets": {
+                      "description": "A whole Dashboard's tiles in its order: each widget's members, or its error",
+                      "items": {
+                        "type": "object"
+                      },
+                      "type": "array"
                     },
                     "width": {
                       "type": "integer"

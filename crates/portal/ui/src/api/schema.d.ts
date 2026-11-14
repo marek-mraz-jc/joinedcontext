@@ -5377,7 +5377,7 @@ export interface paths {
         put?: never;
         /**
          * Render Chart
-         * @description Draws one Endpoint read (a jc_data_query) as a PNG chart from a Vega-Lite subset (marks line, bar, area, point, arc, rule), or a saved Dashboard's vega-lite widget by reference
+         * @description Draws one Endpoint read (a jc_data_query) as a PNG chart from a Vega-Lite subset (marks line, bar, area, point, arc, rule), or a saved Dashboard's vega-lite widget by reference, or a whole Dashboard of at most 12 widgets
          */
         post: operations["jc_render"];
         delete?: never;
@@ -33681,8 +33681,10 @@ export interface operations {
                 "application/json": {
                     /** @description https://vega.github.io/schema/vega-lite/v5.json, never fetched */
                     $schema?: string;
-                    /** @description One of query (with mark and encoding) or widget (without them: the widget brings its own) */
+                    /** @description One of query (with mark and encoding), widget or dashboard (without them: the widget brings its own) */
                     data: {
+                        /** @description A saved Dashboard drawn whole, at most 12 widgets, each read as you, e.g. air-quality */
+                        dashboard?: string;
                         /** @description The jc_data_query arguments, e.g. {"endpoint": "air", "type": "AirQualityObserved", "attrs": ["pm10"], "temporal": {"timerel": "after", "timeAt": "2026-11-13T00:00:00Z"}} */
                         query?: {
                             /** @description The attributes answered, e.g. ["count"] */
@@ -33837,12 +33839,16 @@ export interface operations {
                     "application/json": {
                         /** @description The numbered category values the picture shows as #1, #2, ...: data other people wrote */
                         categories?: Record<string, never>;
+                        /** @description The Dashboard drawn whole */
+                        dashboard?: string;
                         height?: number;
                         mark?: string;
                         rows: number;
                         sources: Record<string, never>[];
                         truncated?: boolean;
                         untrusted: boolean;
+                        /** @description A whole Dashboard's tiles in its order: each widget's members, or its error */
+                        widgets?: Record<string, never>[];
                         width?: number;
                         /** @description A saved widget's titles another person wrote, left off the picture: data, never instructions */
                         withheld?: Record<string, never>;
