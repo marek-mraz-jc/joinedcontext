@@ -489,7 +489,7 @@ pub(super) struct Schema {
 }
 
 fn unexpected(class: &str, key: &str) -> String {
-    format!("{class}.__init__() got an unexpected keyword argument '{key}'")
+    format!("{class}: '{key}' is no LinkML field of it; check its spelling")
 }
 
 fn check_keys(obj: &Obj, (class, allowed): (&str, &[&str])) -> Result<(), String> {
@@ -681,13 +681,13 @@ impl Schema {
     pub(super) fn from_document(doc: &Value) -> Result<Self, String> {
         let Value::Object(top) = doc else {
             return Err(format!(
-                "linkml_runtime.linkml_model.meta.SchemaDefinition() argument after ** must be a mapping, not {}",
+                "the schema document must be a mapping of LinkML fields, not {}",
                 match doc {
-                    Value::Array(_) => "list",
-                    Value::String(_) => "extended_str",
-                    Value::Bool(_) => "bool",
-                    Value::Number(_) => "number",
-                    _ => "NoneType",
+                    Value::Array(_) => "a list",
+                    Value::String(_) => "a string",
+                    Value::Bool(_) => "a boolean",
+                    Value::Number(_) => "a number",
+                    _ => "an empty document",
                 }
             ));
         };

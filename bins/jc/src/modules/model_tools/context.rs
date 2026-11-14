@@ -74,7 +74,9 @@ impl Generator {
         match parts.as_slice() {
             [p] => Ok((Some((*p).to_owned()), Some(String::new()))),
             [p, s] => Ok((Some((*p).to_owned()), Some((*s).to_owned()))),
-            _ => Err(format!("too many values to unpack (expected 2): {text}")),
+            _ => Err(format!(
+                "'{text}' is neither a CURIE (prefix:name, one colon) nor a URI"
+            )),
         }
     }
 
@@ -152,7 +154,8 @@ impl Generator {
 
     /// The `@type` a LinkML type range coerces to: none for a string, `@id` for an IRI type.
     fn type_coercion(&self, view: &View, range: &str) -> Result<Option<String>, String> {
-        let uri = type_uri(view, range).ok_or_else(|| format!("KeyError: '{range}'"))?;
+        let uri = type_uri(view, range)
+            .ok_or_else(|| format!("range '{range}' names no type of the schema or its imports"))?;
         let full = self.uri_for(&uri)?;
         Ok(if full == XSD_STRING {
             None
@@ -220,7 +223,7 @@ pub(super) fn context(view: &View, generator_version: &str) -> Result<Value, Str
         Some(p) => {
             let ns = generator
                 .ns(&p)
-                .ok_or_else(|| format!("KeyError: '{p}'"))?
+                .ok_or_else(|| format!("default_prefix '{p}' is not declared under prefixes"))?
                 .to_owned();
             generator.emit.insert(p);
             ns
@@ -394,7 +397,7 @@ pub(super) fn context(view: &View, generator_version: &str) -> Result<Value, Str
     for prefix in &generator.emit {
         let url = generator
             .ns(prefix)
-            .ok_or_else(|| format!("KeyError: '{prefix}'"))?
+            .ok_or_else(|| format!("prefix '{prefix}' is used but not declared under prefixes"))?
             .to_owned();
         let value = if url.ends_with([':', '/', '?', '#', '[', ']', '@']) {
             Value::String(url)

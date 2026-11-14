@@ -208,6 +208,41 @@ async fn a_model_without_an_entity_class_names_the_example_in_errors() {
     );
 }
 
+/// A model author reads which field, prefix or name is wrong, in words, never a Python exception.
+#[tokio::test]
+async fn a_bad_field_prefix_or_curie_is_named_in_plain_words() {
+    let cases = [
+        (
+            MODEL.replacen(
+                "    is_a: Entity\n",
+                "    is_a: Entity\n    colour: red\n",
+                1,
+            ),
+            "'colour'",
+        ),
+        (
+            MODEL.replacen("default_prefix: city", "default_prefix: nope", 1),
+            "'nope'",
+        ),
+        (
+            MODEL.replacen(
+                "    is_a: Entity\n",
+                "    is_a: Entity\n    class_uri: a:b:c\n",
+                1,
+            ),
+            "a:b:c",
+        ),
+    ];
+    for (source, named) in cases {
+        let (_, out) = call("POST", "/generate", json!({"source": source}).to_string()).await;
+        let errors = errors_of(&out).join("; ");
+        assert!(errors.contains(named), "{named}: {out}");
+        for python in ["KeyError", "__init__", "values to unpack"] {
+            assert!(!errors.contains(python), "{named}: {out}");
+        }
+    }
+}
+
 /// T-6831: the catalogue is the Portal's mirror; Model Tools on jc fetches nothing, so its
 /// catalogue is empty and stale, and an import names the model it does not hold.
 #[tokio::test]
