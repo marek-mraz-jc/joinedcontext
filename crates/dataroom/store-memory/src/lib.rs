@@ -452,6 +452,9 @@ impl Store for MemoryStore {
                     && *cid == ctx.catalogue_id
                     && res_ids.contains(&v.resource_id))
             });
+            guard.shacl_reports.retain(|(oid, cid, _), r| {
+                !(*oid == ctx.org_id && *cid == ctx.catalogue_id && r.dataset_id == removed.id)
+            });
         }
         Box::pin(std::future::ready(Ok(())))
     }

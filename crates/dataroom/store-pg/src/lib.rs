@@ -791,7 +791,13 @@ impl Store for PgStore {
         id_or_name: &'a str,
     ) -> BoxFuture<'a, Result<Publisher>> {
         Box::pin(async move {
-            let Some(mut pub_rec) = self.get_publisher(ctx, id_or_name).await? else {
+            // The record named, never the one a merge points it to (as MemoryStore).
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            let found = find_publisher(&mut tx, ctx, id_or_name).await?;
+            tx.commit().await.map_err(db_err)?;
+            let Some(mut pub_rec) = found else {
                 return Err(DataroomError::NotFound(format!(
                     "publisher '{id_or_name}' not found"
                 )));
@@ -926,6 +932,17 @@ impl Store for PgStore {
             .bind(ctx.org_id.as_uuid())
             .bind(ctx.catalogue_id.as_uuid())
             .bind(&resource_ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            // A purge leaves no copy of the record's values in its SHACL findings either.
+            sqlx::query(
+                "DELETE FROM dataroom.cat_shacl_result
+                 WHERE org_id = $1 AND catalogue_id = $2 AND dataset_id COLLATE \"C\" = $3",
+            )
+            .bind(ctx.org_id.as_uuid())
+            .bind(ctx.catalogue_id.as_uuid())
+            .bind(&ds.id)
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
