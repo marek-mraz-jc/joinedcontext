@@ -105,8 +105,11 @@ fn mapper_applies_to(mapper: &ProtocolMapperRepresentation, kind: TokenKind) -> 
 }
 
 /// Inserts a value at a dotted claim path (`realm_access.roles` -> `{"realm_access":{"roles":...}}`).
-/// Claims no protocol mapper writes: the token's identity, validity and binding.
-const PROTECTED_CLAIMS: [&str; 17] = [
+/// Claims no protocol mapper writes: the token's identity, validity and binding, the
+/// verified-email flag, the Organization claim the `organization:` scope sets, a data space
+/// transfer token's agreement and participant (the gateway serves them as a DID), and a logout
+/// token's `events`.
+const PROTECTED_CLAIMS: [&str; 22] = [
     "iss",
     "sub",
     "aud",
@@ -124,10 +127,23 @@ const PROTECTED_CLAIMS: [&str; 17] = [
     "nonce",
     "acr",
     "amr",
+    "email_verified",
+    "organization",
+    "agreementId",
+    "participant",
+    "events",
 ];
-/// Claims that carry authority (roles, organization membership): only the mapper that reads
-/// that authority from the store writes them, at its own path.
-const AUTHORITY_CLAIMS: [&str; 4] = ["realm_access", "resource_access", "jc_org", "jc_groups"];
+/// Claims that carry authority (roles, organization membership, the identity a relying party
+/// names the person by): only the mapper that reads that authority from the store writes them,
+/// at its own path.
+const AUTHORITY_CLAIMS: [&str; 6] = [
+    "realm_access",
+    "resource_access",
+    "jc_org",
+    "jc_groups",
+    "email",
+    "preferred_username",
+];
 
 /// Whether a mapper may write `claim_name`, given the path its kind fills from the store
 /// (`native`; empty for a mapper whose value comes from its configuration). The admin API and
@@ -575,8 +591,14 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                     "lastName" => ctx.user.last_name.clone(),
                     _ => None,
                 };
+                // The store's username and e-mail fill their standard claims; nothing else does.
+                let native = match prop {
+                    "username" => "preferred_username",
+                    "email" => "email",
+                    _ => "",
+                };
                 if let Some(v) = val {
-                    insert_mapped(&mut claims, claim_name, "", Value::String(v));
+                    insert_mapped(&mut claims, claim_name, native, Value::String(v));
                 }
             }
             "oidc-hardcoded-claim-mapper" => {
@@ -777,6 +799,11 @@ mod tests {
             (".iss", "", false),
             ("azp", "", false),
             ("department", "", true),
+            ("email", "", false),
+            ("email", "email", true),
+            ("preferred_username", "preferred_username", true),
+            ("email_verified", "", false),
+            ("agreementId", "", false),
             ("custom.nested", "", true),
         ] {
             assert_eq!(
@@ -815,6 +842,13 @@ mod tests {
                 hard("org", "jc_org", r#"["other-city"]"#),
                 hard("who", "sub", r#""someone-else""#),
                 hard("dept", "department", r#""roads""#),
+                hard("verified", "email_verified", "true"),
+                hard("mail", "email", r#""admin@city.example""#),
+                hard("name", "preferred_username", r#""admin""#),
+                hard("agreement", "agreementId", r#""urn:uuid:1""#),
+                hard("participant", "participant", r#""did:web:other.example""#),
+                hard("organization", "organization", r#"{"other-city":{}}"#),
+                hard("events", "events", r#"{"x":{}}"#),
                 ProtocolMapperRepresentation {
                     name: "attr".into(),
                     protocol_mapper: "oidc-usermodel-attribute-mapper".into(),
@@ -862,6 +896,17 @@ mod tests {
         assert_eq!(claims.get("jc_org"), None, "{claims:?}");
         assert_eq!(claims.get("sub"), Some(&json!("u1")));
         assert_eq!(claims.get("department"), Some(&json!("roads")));
+        for claim in [
+            "email_verified",
+            "email",
+            "preferred_username",
+            "agreementId",
+            "participant",
+            "organization",
+            "events",
+        ] {
+            assert_eq!(claims.get(claim), None, "{claim}: {claims:?}");
+        }
     }
 
     #[test]

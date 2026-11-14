@@ -38,6 +38,41 @@ pub(crate) struct OrganizationPortals {
     pub listed: Vec<String>,
     /// The deployment's harvest allow-list: every host a source may read (ODP-10).
     pub harvest_hosts: Vec<String>,
+    /// jc.toml's directory, where a source's `convertedFile` is read.
+    pub config_dir: Option<std::path::PathBuf>,
+    /// This instance's gateway origin: a converted source naming no `gateway` reads it.
+    pub own_gateway: Option<String>,
+}
+
+impl OrganizationPortals {
+    /// The entry of an installation without `[[organizations]]`: its one Organization, named
+    /// in the mirror at each round ([`named`]), whose `default` portal is the `[dataroom]`
+    /// catalogue (ODP-09).
+    pub(crate) fn installation(template: Self) -> Self {
+        Self {
+            name: String::new(),
+            ..template
+        }
+    }
+}
+
+/// `orgs` with the installation's entry named after the mirror's installation Organization;
+/// unnamed while the mirror names none (two claim it, or none is loaded yet).
+pub(crate) fn named(
+    orgs: &[OrganizationPortals],
+    installation: Option<String>,
+) -> Vec<OrganizationPortals> {
+    orgs.iter()
+        .filter_map(|org| {
+            if !org.name.is_empty() {
+                return Some(org.clone());
+            }
+            installation.clone().map(|name| OrganizationPortals {
+                name,
+                ..org.clone()
+            })
+        })
+        .collect()
 }
 
 /// Each Portal manifest of `mirror` that passes jc-core's check, by `metadata.name`.
@@ -63,6 +98,73 @@ pub(crate) fn in_mirror(mirror: &Mirror) -> BTreeMap<String, PortalSpec> {
         }
     }
     out
+}
+
+/// The `default` Portal manifest of Organization `organization` holding `seeds`, the
+/// `[[dataroom.harvest]]` entries of its catalogue, every field carried over (ODP-11): what
+/// jc's provisioning writes at `portals/{organization}-default.yaml` when it is absent. A seed
+/// whose converted file sits outside `config_dir` cannot move into a manifest and is refused.
+pub(crate) fn default_portal_of(
+    organization: &str,
+    seeds: &[&crate::config::HarvestSeed],
+    config_dir: Option<&std::path::Path>,
+) -> Result<PortalSpec, String> {
+    let mut sources = Vec::new();
+    for seed in seeds {
+        let refused = |what: String| format!("[[dataroom.harvest]] {}: {what}", seed.name);
+        let converted_file = match &seed.converted_file {
+            None => None,
+            Some(path) => {
+                let beside = config_dir.is_some_and(|dir| path.parent() == Some(dir));
+                let name = path.file_name().and_then(|n| n.to_str()).filter(|_| beside);
+                Some(name.map(str::to_owned).ok_or_else(|| {
+                    refused(format!(
+                        "converted_file {} is not beside jc.toml",
+                        path.display()
+                    ))
+                })?)
+            }
+        };
+        let kind = serde_json::from_value(serde_json::Value::from(seed.kind.as_str()))
+            .map_err(|_| refused(format!("unknown kind '{}'", seed.kind)))?;
+        sources.push(PortalSource {
+            name: seed.name.clone(),
+            kind,
+            projects: Vec::new(),
+            spaces: Vec::new(),
+            tags: Vec::new(),
+            names: Vec::new(),
+            url: Some(seed.url.clone()),
+            schedule: Some(seed.schedule.clone()),
+            allowed_hosts: seed.allowed_hosts.clone(),
+            budget: None,
+            publisher: Some(seed.publisher.clone()),
+            publisher_title: Some(seed.publisher_title.clone()),
+            publisher_uri: Some(seed.publisher_uri.clone()),
+            publisher_description: seed.publisher_description.clone(),
+            spatial_uri: seed.spatial_uri.clone(),
+            name_prefix: Some(seed.name_prefix.clone()).filter(|p| !p.is_empty()),
+            rewrite_hosts: seed.rewrite_hosts.clone(),
+            skip: seed.skip.clone(),
+            titles: seed.titles.clone(),
+            spelling: seed.spelling.clone(),
+            require_column: seed.require_column.clone(),
+            gateway: seed.gateway.clone(),
+            converted_file,
+            datasets_base: seed.datasets_base.clone(),
+            enabled: seed.enabled,
+        });
+    }
+    let spec: PortalSpec = serde_json::from_value(serde_json::json!({
+        "organizationRef": organization,
+        "path": jc_core::kinds::DEFAULT_PORTAL,
+        // The seeds wrote their publisher texts in Slovak; the manifest keeps that language.
+        "languages": ["sk"],
+    }))
+    .map_err(|e| e.to_string())?;
+    let spec = PortalSpec { sources, ..spec };
+    spec.validate().map_err(|e| e.to_string())?;
+    Ok(spec)
 }
 
 /// The catalogue `portal` asks for, or why it is not served: an Organization this jc does not
@@ -197,8 +299,33 @@ pub(crate) fn harvest_sources_of(
         let kind = serde_json::to_value(source.kind)
             .and_then(serde_json::from_value)
             .map_err(|e| format!("source {}: {e}", source.name))?;
+        let gateway = match (&source.gateway, &org.own_gateway) {
+            (Some(gateway), _) => Some(gateway.clone()),
+            (None, Some(own)) if source.converted_file.is_some() => Some(own.clone()),
+            (None, _) => None,
+        };
+        let converted = match &source.converted_file {
+            None => BTreeMap::new(),
+            Some(file) => {
+                let dir = org.config_dir.as_deref().ok_or_else(|| {
+                    format!(
+                        "source {}: convertedFile, but jc.toml has no [dataroom]",
+                        source.name
+                    )
+                })?;
+                let site = catalogue_of(portal, orgs)?.base.unwrap_or_default();
+                super::dataroom::converted_datasets(
+                    &dir.join(file),
+                    source.datasets_base.as_deref(),
+                    &site,
+                )
+                .map_err(|e| format!("source {}: {e}", source.name))?
+            }
+        };
         let publisher = source.publisher.clone().unwrap_or_else(|| org.name.clone());
-        let source_publisher = publisher_of(source, org, org_id, catalogue_id, &publisher, now);
+        let lang = portal.languages.first().map_or("en", String::as_str);
+        let source_publisher =
+            publisher_of(source, org, (org_id, catalogue_id), lang, &publisher, now);
         out.push((
             HarvestSource {
                 org_id,
@@ -221,9 +348,9 @@ pub(crate) fn harvest_sources_of(
                     .schedule
                     .clone()
                     .unwrap_or_else(|| "23 3 * * *".into()),
-                enabled: true,
-                converted: BTreeMap::new(),
-                gateway: source.gateway.clone(),
+                enabled: source.enabled,
+                converted,
+                gateway,
                 budget: source.budget.map(|b| HarvestBudget {
                     records: b.records,
                     bytes: b.bytes,
@@ -240,8 +367,8 @@ pub(crate) fn harvest_sources_of(
 fn publisher_of(
     source: &PortalSource,
     org: &OrganizationPortals,
-    org_id: OrgId,
-    catalogue_id: CatalogueId,
+    (org_id, catalogue_id): (OrgId, CatalogueId),
+    lang: &str,
     name: &str,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Publisher {
@@ -254,11 +381,11 @@ fn publisher_of(
         catalogue_id,
         id: String::new(),
         name: name.to_owned(),
-        title: BTreeMap::from([("en".to_owned(), title)]),
+        title: BTreeMap::from([(lang.to_owned(), title)]),
         description: source
             .publisher_description
             .iter()
-            .map(|d| ("en".to_owned(), d.clone()))
+            .map(|d| (lang.to_owned(), d.clone()))
             .collect(),
         uri: source
             .publisher_uri
@@ -335,17 +462,27 @@ pub(crate) fn follow(
     if orgs.is_empty() {
         return;
     }
-    joinedcontext_portal::api::portal_sources::hand_desk_to(std::sync::Arc::new(Desk {
-        writer: writer.clone(),
-        orgs: orgs.clone(),
-        active: std::sync::Arc::default(),
-    }));
     let shutdown = shutdown.clone();
     tasks.spawn(async move {
         let mut served: BTreeMap<String, PortalSpec> = BTreeMap::new();
         let mut listing = BTreeSet::new();
+        let mut handed: Option<Vec<String>> = None;
         loop {
             if let Some(state) = super::PORTAL_STATE.get() {
+                let installation =
+                    joinedcontext_portal::permissions::installation_organization(&state.mirror);
+                let orgs = named(&orgs, installation);
+                let names: Vec<String> = orgs.iter().map(|o| o.name.clone()).collect();
+                if handed.as_ref() != Some(&names) {
+                    joinedcontext_portal::api::portal_sources::hand_desk_to(std::sync::Arc::new(
+                        Desk {
+                            writer: writer.clone(),
+                            orgs: orgs.clone(),
+                            active: std::sync::Arc::default(),
+                        },
+                    ));
+                    handed = Some(names);
+                }
                 apply(&writer, &orgs, &mut served, in_mirror(&state.mirror)).await;
                 let endpoints = endpoints_in(&state.mirror);
                 list_endpoints(&writer, &orgs, &served, &endpoints, &mut listing).await;
@@ -680,7 +817,37 @@ mod tests {
             opendata: "data.city.test".into(),
             listed: vec!["mobility.city.test".into()],
             harvest_hosts: vec!["data.kosice.sk".into()],
+            config_dir: None,
+            own_gateway: None,
         }]
+    }
+
+    #[test]
+    fn the_installation_default_portal_is_served_without_organizations() {
+        let template = OrganizationPortals {
+            name: "ignored".into(),
+            ..city().remove(0)
+        };
+        let only = [OrganizationPortals::installation(template)];
+        assert!(
+            named(&only, None).is_empty(),
+            "no installation Organization yet: none"
+        );
+        let orgs = named(&only, Some("city".into()));
+        let spec = catalogue_of(&portal("default", None), &orgs).unwrap();
+        assert_eq!(spec.id, only[0].catalogue_id, "the [dataroom] catalogue");
+        assert_eq!(spec.base.as_deref(), Some("https://data.city.test"));
+        let further = catalogue_of(&portal("mobility", None), &orgs).unwrap();
+        assert_eq!(
+            further.base.as_deref(),
+            Some("https://data.city.test/-/mobility")
+        );
+        let mut other = portal("default", None);
+        other.organization_ref = "town".into();
+        assert!(
+            catalogue_of(&other, &orgs).is_err(),
+            "another Organization is not served"
+        );
     }
 
     fn portal(path: &str, host: Option<&str>) -> PortalSpec {

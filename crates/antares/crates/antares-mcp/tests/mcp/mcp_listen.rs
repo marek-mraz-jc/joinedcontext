@@ -351,6 +351,39 @@ async fn a_view_without_subscriptions_acknowledges_no_uri() -> Result<(), String
     Ok(())
 }
 
+/// A stream that watches nothing holds no slot: a caller's listens on a view without
+/// Subscriptions leave its cap free for one that watches.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stream_that_watches_nothing_holds_no_slot() -> Result<(), String> {
+    let _city = CITY.lock().await;
+    let f = fixture().await?;
+    let mut idle = Vec::new();
+    for _ in 0..4 {
+        let mut s = listen(
+            &f.app,
+            "cars",
+            &["ngsi-ld://cars/entities/urn:ngsi-ld:Car:1"],
+        )
+        .await;
+        assert!(
+            s.next(Duration::from_secs(5)).await.is_some(),
+            "no acknowledgment"
+        );
+        idle.push(s);
+    }
+    let mut watching = listen(
+        &f.app,
+        "watch",
+        &["ngsi-ld://watch/entities/urn:ngsi-ld:Car:1"],
+    )
+    .await;
+    assert!(
+        watching.next(Duration::from_secs(5)).await.is_some(),
+        "no acknowledgment"
+    );
+    until_subscriptions(&f.app, "city", 1).await
+}
+
 /// MCP 5.3: nobody names a stream's endpoint, over HTTP or a tool.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_subscription_naming_a_stream_it_did_not_open_is_refused() -> Result<(), String> {
