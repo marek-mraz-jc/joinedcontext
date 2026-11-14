@@ -27,7 +27,9 @@
     var errors = self.jcRefuse(message.spec, domain);
     if (errors.length) throw new Error("The chart was refused: " + errors[0].pointer + " — " + errors[0].rule + ".");
     var data = message.data || {};
-    var rows = data.format === "csv" ? vega.read(String(data.text || ""), { type: "csv", parse: "auto" }) : data.rows || [];
+    // A CSV is read by csv.js and typed from its records: vega's own CSV reader runs `new
+    // Function`, which this page's CSP refuses (T-6865).
+    var rows = data.format === "csv" ? vega.read(self.jcCsv(String(data.text || "")), { type: "json", parse: "auto" }) : data.rows || [];
     return vegaEmbed(chart, withRows(message.spec, rows), {
       ast: true,
       expr: vega.expressionInterpreter,
