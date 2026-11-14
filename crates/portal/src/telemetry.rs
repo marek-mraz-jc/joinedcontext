@@ -161,6 +161,10 @@ fn handle() -> &'static PrometheusHandle {
         metrics::describe_counter!(REQUESTS, "requests answered by the Portal");
         metrics::describe_histogram!(REQUEST_SECONDS, "seconds to answer one request");
         metrics::describe_counter!(CHANGES, "changes proposed, by lane and kind");
+        metrics::describe_counter!(
+            crate::forge::config_mirror::FAILURES_METRIC,
+            "failed pushes of a configuration repository to its off-pod mirror, by repository"
+        );
         metrics::describe_histogram!(
             FIRST_FRAME_SECONDS,
             "seconds from agent run creation to first frame preview"

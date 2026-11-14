@@ -28,6 +28,8 @@ const APPS_OWNER: &str = "joinedcontext-apps";
 const PORTAL_TOKEN: &str = "portal-token-0123456789";
 const APPS_TOKEN: &str = "apps-token-0123456789";
 const PROJECT: &str = "ovzdusie";
+/// Where people reach the forge; the Portal dials `World::base` (T-6893).
+const PUBLIC_GIT: &str = "https://jc.city.example/git/";
 const CONFIG: &str = "ovzdusie-config";
 
 const AUTHOR: Author<'static> = Author {
@@ -118,6 +120,7 @@ impl World {
         let base = self.base.clone();
         ShakoClient::from_env(move |key| match key {
             "JC_SHAKO_URL" => Some(base.clone()),
+            "JC_SHAKO_PUBLIC_URL" => Some(PUBLIC_GIT.into()),
             "JC_SHAKO_OWNER" => Some(OWNER.into()),
             "JC_SHAKO_REPO" => Some("configuration".into()),
             "JC_SHAKO_TOKEN" => Some(PORTAL_TOKEN.into()),
@@ -320,11 +323,10 @@ async fn a_person_browses_the_projects_repositories_on_shako() {
     )
     .await
     .unwrap();
-    assert!(
-        repo["cloneUrl"]
-            .as_str()
-            .unwrap()
-            .ends_with(&format!("/{OWNER}/{CONFIG}.git")),
+    // the_clone_url_is_the_public_address: never the address the Portal dials.
+    assert_eq!(
+        repo["cloneUrl"],
+        format!("{PUBLIC_GIT}{OWNER}/{CONFIG}.git"),
         "{repo}"
     );
     assert_eq!(repo["lastCommit"]["sha"], c2, "{repo}");
