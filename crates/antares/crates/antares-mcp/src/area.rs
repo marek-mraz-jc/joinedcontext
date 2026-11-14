@@ -190,7 +190,8 @@ pub(crate) fn shape(
             ))
         }
     };
-    if shape.km2() > max_km2 {
+    // what the broker scans is each outer ring: a hole, inside it or not, shrinks no search
+    if shape.m2(false) / 1e6 > max_km2 {
         return Err(refuse(
             "area-too-large",
             format!("the area searched is at most {max_km2} km²; split it or draw it smaller"),
@@ -338,7 +339,12 @@ impl Shape {
     /// The area searched in km²: the circle, the line's box, the polygons
     /// less their holes.
     pub(crate) fn km2(&self) -> f64 {
-        let m2 = match self {
+        self.m2(true) / 1e6
+    }
+
+    /// The area in m², its polygons' holes taken out when `holes`.
+    fn m2(&self, holes: bool) -> f64 {
+        match self {
             Shape::Point { radius, .. } => std::f64::consts::PI * radius * radius,
             Shape::Line { .. } => {
                 let b = self.bbox();
@@ -349,18 +355,24 @@ impl Shape {
             Shape::Area { polygons, .. } => polygons
                 .iter()
                 .map(|rings| {
-                    let origin = rings
-                        .first()
-                        .and_then(|r| r.first())
-                        .copied()
-                        .unwrap_or_default();
+                    // scaled at the outer ring's middle latitude, never at a vertex on a pole
+                    let outer = rings.first().map(Vec::as_slice).unwrap_or_default();
+                    let lats = outer.iter().map(|p| p[1]);
+                    let (south, north) = lats.fold((90.0_f64, -90.0_f64), |(s, n), lat| {
+                        (s.min(lat), n.max(lat))
+                    });
+                    let west = outer.first().map_or(0.0, |p| p[0]);
+                    let origin = [west, f64::midpoint(south, north)];
                     let mut each = rings.iter().map(|r| ring_m2(r, origin));
                     let outer = each.next().unwrap_or_default();
-                    outer - each.sum::<f64>()
+                    if holes {
+                        outer - each.sum::<f64>()
+                    } else {
+                        outer
+                    }
                 })
                 .sum(),
-        };
-        m2 / 1e6
+        }
     }
 
     /// The point distances are measured from: the Point, or the box's centre.
@@ -711,6 +723,16 @@ mod tests {
         );
         let both = json!([square(24.8, 60.1, 0.1), square(25.0, 60.1, 0.1)]);
         assert_eq!(slug("MultiPolygon", both, None), Err("area-too-large"));
+        // a second ring, inside or not, takes nothing off what is searched
+        let big = square(24.0, 60.0, 1.0);
+        let ring = big.get(0).cloned().unwrap_or_default();
+        assert_eq!(
+            slug("Polygon", json!([ring, ring]), None),
+            Err("area-too-large")
+        );
+        // a ring that starts on a pole is measured where it lies
+        let polar = json!([[[0, 90], [0, 80], [10, 80], [0, 90]]]);
+        assert_eq!(slug("Polygon", polar, None), Err("area-too-large"));
     }
 
     #[test]

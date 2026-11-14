@@ -672,10 +672,8 @@ fn cite(hit: &Value) -> String {
 /// cursor, the gateway's own, after the fence and as `structuredContent.nextCursor`.
 fn fenced(list: &Value, key: &str, next: Option<String>) -> Value {
     let json = serde_json::to_string(list).unwrap_or_else(|_| "[]".to_owned());
-    let longest = json.split(|c| c != '`').map(str::len).max().unwrap_or(0);
-    let ticks = "`".repeat(longest.max(2) + 1);
     let mut answer = answered(list, key);
-    let mut text = format!("{UNTRUSTED_PREFACE}\n{ticks}json\n{json}\n{ticks}");
+    let mut text = fence(UNTRUSTED_PREFACE, &json);
     if let Some(next) = next {
         text.push_str(&format!(
             "\nMore hits: call again with \"cursor\": \"{next}\"."
@@ -685,6 +683,14 @@ fn fenced(list: &Value, key: &str, next: Option<String>) -> Value {
     answer["content"][0]["text"] = json!(text);
     answer["_meta"] = json!({ "jc/untrusted": true });
     answer
+}
+
+/// `json` under `preface`, in a fence longer than any backtick run in it, so no value can close
+/// it early (T-5559).
+pub(crate) fn fence(preface: &str, json: &str) -> String {
+    let longest = json.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let ticks = "`".repeat(longest.max(2) + 1);
+    format!("{preface}\n{ticks}json\n{json}\n{ticks}")
 }
 
 /// The tool's description: whose pages, in which languages, and that the text is data.

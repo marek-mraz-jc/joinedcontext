@@ -183,6 +183,20 @@ async fn public_entities(gateway: &Gateway, reach: &[(Arc<Endpoint>, Subject)]) 
     read
 }
 
+/// The `query_entities` arguments of one page of the public catalogue: the types a list, as the
+/// broker's tool takes them.
+fn public_arguments(cursor: Option<Value>) -> Value {
+    let mut arguments = json!({
+        "type": ["Dataset", "Organization"],
+        "format": "normalized",
+        "limit": PUBLIC_PAGE,
+    });
+    if let Some(cursor) = cursor {
+        arguments["cursor"] = cursor;
+    }
+    arguments
+}
+
 /// Every `Dataset` and `Organization` the `catalog` Endpoint holds, a page at a time.
 async fn read_public(
     gateway: &Gateway,
@@ -192,14 +206,7 @@ async fn read_public(
     let mut entities = Vec::new();
     let mut cursor: Option<Value> = None;
     for _ in 0..PUBLIC_PAGES {
-        let mut arguments = json!({
-            "type": "Dataset,Organization",
-            "format": "normalized",
-            "limit": PUBLIC_PAGE,
-        });
-        if let Some(cursor) = cursor.take() {
-            arguments["cursor"] = cursor;
-        }
+        let arguments = public_arguments(cursor.take());
         let message = json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -786,6 +793,14 @@ pub(crate) mod tests {
             r#"searchText~="banska \D+";name=="Žilina""#
         );
         assert_eq!(folded_search("pm10>40"), "pm10>40");
+    }
+
+    #[test]
+    fn the_public_catalogue_asks_its_types_as_a_list() {
+        let first = public_arguments(None);
+        assert_eq!(first["type"], json!(["Dataset", "Organization"]));
+        assert!(first.get("cursor").is_none());
+        assert_eq!(public_arguments(Some(json!("c1")))["cursor"], json!("c1"));
     }
 
     #[test]
