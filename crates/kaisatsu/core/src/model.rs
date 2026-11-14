@@ -143,7 +143,9 @@ impl Default for RealmConfig {
             default_roles: vec!["offline_access".into(), "uma_authorization".into()],
             password_policy: "length(12) and upperCase(1) and lowerCase(1) and digits(1) and notUsername(undefined) and notEmail(undefined) and passwordHistory(5)".into(),
             otp_policy_type: "totp".into(),
-            otp_policy_algorithm: "HmacSHA256".into(),
+            // RFC 6238 SHA1: the algorithm every authenticator app computes (Microsoft Authenticator
+            // and Authy ignore `algorithm=` and take SHA1). Stored credentials keep their own.
+            otp_policy_algorithm: "HmacSHA1".into(),
             otp_policy_initial_counter: 0,
             otp_policy_digits: 6,
             otp_policy_look_ahead_window: 1,
@@ -751,7 +753,7 @@ impl Default for IdentityProviderRepresentation {
 }
 
 /// Stored credential record (internal). Never returned directly over OData or Admin REST.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct CredentialRecord {
     pub id: String,
@@ -766,6 +768,23 @@ pub struct CredentialRecord {
     /// Keycloak `credentialData` JSON (`{"subType":"totp","digits":6,"period":30,"algorithm":"HmacSHA256"}` etc.).
     pub credential_data: String,
     pub temporary: bool,
+}
+
+/// Redacts the secret so a logged credential never carries a password hash or TOTP seed.
+impl std::fmt::Debug for CredentialRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CredentialRecord")
+            .field("id", &self.id)
+            .field("realm_id", &self.realm_id)
+            .field("user_id", &self.user_id)
+            .field("credential_type", &self.credential_type)
+            .field("user_label", &self.user_label)
+            .field("created_date", &self.created_date)
+            .field("secret_data", &"<redacted>")
+            .field("credential_data", &self.credential_data)
+            .field("temporary", &self.temporary)
+            .finish()
+    }
 }
 
 impl Default for CredentialRecord {
@@ -897,7 +916,7 @@ impl From<&SigningKeyRecord> for SigningKeyMetadata {
 }
 
 /// In-flight authentication session (`auth_session`, 30 min, W2, W7).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthSession {
     pub id: String,
@@ -959,6 +978,26 @@ pub struct AuthSession {
     pub acr_achieved: String,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+}
+
+/// Prints only the session's identity: the TOTP seed being enrolled, the CSRF token, the
+/// WebAuthn challenge, the broker's PKCE verifier and every handle stay out of logs.
+impl std::fmt::Debug for AuthSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthSession")
+            .field("id", &self.id)
+            .field("realm_id", &self.realm_id)
+            .field("org_id", &self.org_id)
+            .field("client_id", &self.client_id)
+            .field("redirect_uri", &self.redirect_uri)
+            .field("scope", &self.scope)
+            .field("acr_requested", &self.acr_requested)
+            .field("user_id", &self.user_id)
+            .field("amr", &self.amr)
+            .field("acr_achieved", &self.acr_achieved)
+            .field("expires_at", &self.expires_at)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Single-use authorization code or PAR request URI (`single_use`, 60 s, W2, W12).
@@ -1346,6 +1385,41 @@ pub struct IdentityProviderLinkRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn debug_output_holds_no_seed() {
+        let cred = CredentialRecord {
+            credential_type: "otp".into(),
+            secret_data: r#"{"value":"JBSWY3DPEHPK3PXPSEEDSEED"}"#.into(),
+            ..CredentialRecord::default()
+        };
+        let shown = format!("{cred:?}");
+        assert!(shown.contains("otp"));
+        assert!(!shown.contains("JBSWY3DPEHPK3PXP"));
+        let session: AuthSession = serde_json::from_value(serde_json::json!({
+            "id": "as-1", "realmId": "r", "handleHash": "handle-hash-secret",
+            "clientId": "portal", "redirectUri": "https://x.test/cb", "responseType": "code",
+            "responseMode": "query", "scope": "openid", "codeChallenge": "pkce-challenge",
+            "codeChallengeMethod": "S256", "csrfToken": "csrf-secret-token",
+            "stepStateJson": "{}", "pendingTotpSecret": "JBSWY3DPEHPK3PXPSEEDSEED",
+            "webauthnChallenge": "webauthn-challenge-secret",
+            "brokerStateJson": "{\"pkce_verifier\":\"verifier-secret\"}",
+            "acrAchieved": "pwd", "createdAt": "2026-11-14T00:00:00Z",
+            "expiresAt": "2026-11-14T00:30:00Z"
+        }))
+        .expect("auth session");
+        let shown = format!("{session:?}");
+        assert!(shown.contains("as-1") && shown.contains("portal"));
+        for secret in [
+            "JBSWY3DPEHPK3PXP",
+            "csrf-secret-token",
+            "webauthn-challenge-secret",
+            "verifier-secret",
+            "handle-hash-secret",
+        ] {
+            assert!(!shown.contains(secret), "{secret} in {shown}");
+        }
+    }
 
     #[test]
     fn smtp_debug_output_redacts_password() {

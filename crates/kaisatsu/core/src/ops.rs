@@ -462,7 +462,7 @@ impl OperationRegistry {
             (
                 "totp_enrol",
                 "Enrol TOTP",
-                "Enrols a TOTP HmacSHA256 authenticator for the caller.",
+                "Enrols a TOTP authenticator (the realm's algorithm, HmacSHA1 by default) for the caller.",
                 Action::SelfService,
                 "self",
                 "UPDATE_TOTP",

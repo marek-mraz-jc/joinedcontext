@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
-//! TOTP verification and generation matching RI (`HmacSHA256`, 6 digits, 30 s, look-ahead 1,
-//! UTF-8 raw secret or BASE32) and 10 single-use hashed recovery codes (W1, W7).
+//! TOTP verification and generation (`HmacSHA1`, `HmacSHA256` or `HmacSHA512`; 6 digits, 30 s,
+//! look-ahead 1, UTF-8 raw secret or BASE32) and 10 single-use hashed recovery codes (W1, W7).
 
 use crate::{constant_time_str_eq, sha256_hex};
 use hmac::{Hmac, KeyInit, Mac};

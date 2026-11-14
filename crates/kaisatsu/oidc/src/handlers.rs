@@ -34,6 +34,8 @@ pub struct OidcState {
     pub kek: Kek,
     pub guard: OutboundGuard,
     pub default_mount: Mount,
+    /// The deployment's second-factor floor (`[kaisatsu] second_factor`).
+    pub second_factor: crate::SecondFactor,
 }
 
 impl OidcState {
@@ -2338,6 +2340,22 @@ async fn handle_refresh_token_grant(
         .filter(|u| u.enabled)
         .ok_or_else(|| KaisatsuError::invalid_grant("User disabled or not found"))?;
 
+    // A session signed in without a second factor ends once one is required of the person (the
+    // floor, a role or an Organization turned it on): every session and refresh family of the
+    // person, offline ones included, so the next sign-in asks for it.
+    if family.acr != "mfa" && crate::second_factor_required(state, realm, &user).await? {
+        let ended = state
+            .store
+            .delete_user_sso_sessions(&realm.id, &user.id)
+            .await?;
+        for sso in &ended {
+            let _ = dispatch_backchannel_logout(state, mount, realm, sso).await;
+        }
+        return Err(KaisatsuError::invalid_grant(
+            "A second factor is now required: sign in again",
+        ));
+    }
+
     let (active_scopes, granted_scope_str) = resolve_stored_scopes(
         &state.store,
         realm,
@@ -2949,18 +2967,7 @@ async fn handle_password_grant(
     }
 
     // Check if second factor is required or configured (RI `custom direct grant`)
-    let user_groups = state.store.list_user_groups(&realm.id, &user.id).await?;
-    let all_roles = state.store.list_roles(&realm.id, None).await?;
-    let group_roles: Vec<String> = user_groups
-        .iter()
-        .flat_map(|g| g.realm_roles.iter().cloned())
-        .collect();
-    let eff_roles = kaisatsu_core::claims::resolve_effective_realm_roles(
-        &user.realm_roles,
-        &group_roles,
-        &all_roles,
-    );
-    let mfa_required = eff_roles.iter().any(|r| r == "mfa-required");
+    let mfa_required = crate::second_factor_required(state, realm, &user).await?;
     let otp_cred = creds.iter().find(|c| c.credential_type == "otp");
 
     let mut amr = vec!["pwd".to_owned()];
@@ -2971,7 +2978,7 @@ async fn handle_password_grant(
             return Err(KaisatsuError::oauth(
                 400,
                 "invalid_grant",
-                "OTP required by role mfa-required but not enrolled",
+                "A second factor is required: sign in through the browser once to set up an authenticator app",
             ));
         };
         let submitted_totp = form

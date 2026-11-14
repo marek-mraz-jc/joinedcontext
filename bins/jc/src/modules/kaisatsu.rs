@@ -608,7 +608,11 @@ pub async fn build(
         kek,
         OutboundGuard::default(),
         Arc::new(LocalAuthorizer),
-    );
+    )
+    .with_second_factor(match cfg.second_factor {
+        crate::config::SecondFactorFloor::Optional => kaisatsu_server::SecondFactor::Optional,
+        crate::config::SecondFactorFloor::Required => kaisatsu_server::SecondFactor::Required,
+    });
     Ok(router(state, mount))
 }
 
@@ -970,6 +974,7 @@ mod tests {
             db_max_connections: None,
             database: None,
             branding_file: None,
+            second_factor: Default::default(),
         };
         let store = open_kaisatsu_store(&mem_section, kek).await.unwrap();
         assert!(store.list_realms().await.unwrap().is_empty());
@@ -1012,6 +1017,7 @@ mod tests {
                 db_max_connections: Some(2),
                 database: None,
                 branding_file: None,
+                second_factor: Default::default(),
             }
         };
 

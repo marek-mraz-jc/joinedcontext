@@ -13,6 +13,7 @@ use kaisatsu_core::*;
 use kaisatsu_crypto::*;
 use kaisatsu_server::router;
 use kaisatsu_store_memory::MemoryStore;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tower::ServiceExt;
 
@@ -26,6 +27,8 @@ const MEMBER: &str = "demo.orgmember@hel.fi";
 const MEMBER_PW: &str = "MemberPass123!Valid";
 const STEWARD: &str = "demo.steward@hel.fi";
 const STEWARD_PW: &str = "StewardPass123!Valid";
+const ANALYST: &str = "demo.analyst@hel.fi";
+const ANALYST_PW: &str = "AnalystPass123!Valid";
 
 fn mount() -> Mount {
     Mount::new("kaisatsu", "https", "idm.dev.example.test", "").unwrap()
@@ -539,6 +542,154 @@ async fn step_up_enrols_a_totp_credential() {
             .iter()
             .any(|c| c.credential_type == "otp")
     );
+}
+
+/// The dev realm with the deployment floor `[kaisatsu] second_factor = "required"` and the
+/// realm's OTP algorithm at kaisatsu's default (the fixture pins Keycloak's HmacSHA256).
+async fn app_with_floor() -> (Router, Arc<MemoryStore>) {
+    let (state, store, _) = setup_dev_realm_state().await;
+    let mut realm = store.get_realm("dev").await.unwrap().unwrap();
+    realm.otp_policy_algorithm = RealmConfig::default().otp_policy_algorithm;
+    store.upsert_realm(realm).await.unwrap();
+    let state = state.with_second_factor(kaisatsu_server::SecondFactor::Required);
+    (router(state, mount()).layer(Extension(mount())), store)
+}
+
+/// Organization `alias` (its id the same) with `person` as member and the second-factor
+/// attribute the Portal's reconciler writes, when `value` is given.
+async fn org_with_member(store: &MemoryStore, alias: &str, value: Option<&str>, person: &str) {
+    let mut attributes = HashMap::new();
+    if let Some(v) = value {
+        attributes.insert("jc.secondFactor".to_owned(), vec![v.to_owned()]);
+    }
+    store
+        .upsert_organization(Organization {
+            id: alias.into(),
+            realm_id: "dev".into(),
+            name: alias.into(),
+            alias: alias.into(),
+            enabled: true,
+            description: String::new(),
+            domains: Vec::new(),
+            attributes,
+            managed_by: None,
+        })
+        .await
+        .unwrap();
+    let p = user(store, person).await;
+    store
+        .upsert_membership(Membership {
+            id: format!("{alias}-{}", p.id),
+            realm_id: "dev".into(),
+            org_id: alias.into(),
+            person_id: p.id,
+            org_roles: Vec::new(),
+            created_at: chrono::Utc::now(),
+        })
+        .await
+        .unwrap();
+}
+
+/// Redeems the code of a login's last redirect as `edge`; answers the token response.
+async fn redeem(app: &Router, h: &HeaderMap) -> serde_json::Value {
+    let loc = url::Url::parse(&location(h)).unwrap();
+    let code = loc
+        .query_pairs()
+        .find(|(k, _)| k == "code")
+        .unwrap()
+        .1
+        .into_owned();
+    let (st, _, body) = post_form(
+        app,
+        "/realms/dev/protocol/openid-connect/token",
+        &[
+            ("grant_type", "authorization_code"),
+            ("client_id", "edge"),
+            ("client_secret", "edge-secret-123"),
+            ("code", &code),
+            ("redirect_uri", CALLBACK),
+            ("code_verifier", VERIFIER),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    serde_json::from_str(&body).unwrap()
+}
+
+#[tokio::test]
+async fn the_floor_required_sends_a_person_without_otp_to_enrolment() {
+    // Today's default: the analyst holds no authenticator and gets a code from the password.
+    let (plain, _) = app().await;
+    let a = start(&plain, "").await;
+    let (st, h, _) = a.password(&plain, ANALYST, ANALYST_PW).await;
+    assert!(is_code(st, &h));
+
+    let (app, store) = app_with_floor().await;
+    let a = start(&app, "").await;
+    let (st, _, html) = a.password(&app, ANALYST, ANALYST_PW).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(page_id(&html), "config-totp", "{html}");
+    assert!(
+        html.contains(": SHA1") && !html.contains("SHA256"),
+        "{html}"
+    );
+    let secret = store
+        .get_auth_session_by_id("dev", &a.session)
+        .await
+        .unwrap()
+        .unwrap()
+        .pending_totp_secret
+        .expect("the page generated a secret");
+    // What a SHA1 authenticator app (Microsoft Authenticator, Authy) shows for the scanned key.
+    let code = generate_totp_code_for_credential(
+        &CredentialRecord {
+            secret_data: serde_json::json!({ "value": secret }).to_string(),
+            credential_data:
+                r#"{"digits":6,"period":30,"algorithm":"HmacSHA1","secretEncoding":"BASE32"}"#
+                    .into(),
+            ..Default::default()
+        },
+        chrono::Utc::now().timestamp() as u64,
+    )
+    .unwrap();
+    let (st, h, html) = a.post(&app, &[("otp", &code)]).await;
+    assert!(is_code(st, &h), "{html}");
+    let tokens = redeem(&app, &h).await;
+    let claims = decode_jwt_payload(tokens["access_token"].as_str().unwrap());
+    assert_eq!(claims["amr"], serde_json::json!(["pwd", "otp"]));
+    assert_eq!(claims["acr"], "mfa");
+}
+
+#[tokio::test]
+async fn an_organization_requiring_it_covers_its_member() {
+    let (app, store) = app().await;
+    org_with_member(&store, "org-strict", Some("required"), ANALYST).await;
+    let a = start(&app, "").await;
+    let (st, _, html) = a.password(&app, ANALYST, ANALYST_PW).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(page_id(&html), "config-totp", "{html}");
+    // A person outside that Organization signs in as before.
+    let a = start(&app, "").await;
+    let (st, h, _) = a.password(&app, MEMBER, MEMBER_PW).await;
+    assert!(is_code(st, &h));
+}
+
+#[tokio::test]
+async fn strictest_of_two_organizations_wins() {
+    let (app, store) = app().await;
+    // `optional` alone asks nothing: past the password comes the Organization choice.
+    org_with_member(&store, "org-relaxed", Some("optional"), MEMBER).await;
+    let a = start(&app, "").await;
+    let (st, _, html) = a.password(&app, MEMBER, MEMBER_PW).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(page_id(&html), "org-choice", "{html}");
+    // An `optional` Organization never lowers a `required` one.
+    org_with_member(&store, "org-strict", Some("required"), MEMBER).await;
+    let a = start(&app, "").await;
+    let (st, _, html) = a.password(&app, MEMBER, MEMBER_PW).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(page_id(&html), "config-totp", "{html}");
 }
 
 #[tokio::test]
