@@ -12628,7 +12628,7 @@
     },
     "hint": {
       "organization": "Organizácia, ktorej portál patrí; nikdy sa nepresunie k inej. Napríklad bratislava.",
-      "path": "Malé písmená, číslice a pomlčky, jedinečné v organizácii, napríklad mobility: portál odpovedá na …/opendata/-/mobility/.",
+      "path": "Malé písmená, číslice a pomlčky, jedinečné v organizácii, napríklad mobility: portál odpovedá na …/opendata/-/mobility/. Volí sa raz: cesta sa nikdy nemení, aby adresy datasetov zostali stále.",
       "languages": "Jazyky portálu; prvý zaškrtnutý je predvolený, napríklad slovenčina a angličtina.",
       "title": "Zobrazí sa na každej stránke portálu, napríklad Doprava.",
       "address": "Bežná adresa je pod portálom otvorených údajov organizácie; doména je jedna z tých, ktoré prevádzkovateľ pre organizáciu uviedol.",
@@ -12676,7 +12676,7 @@
       "open": "Otvoriť portál",
       "delete": "Odstrániť portál",
       "defaultKept": "Predvolený portál zostáva: je to vlastný katalóg organizácie.",
-      "fixed": "Po založení portálu sa nemení: portál sa nikdy nepresunie k inej organizácii ani menu."
+      "fixed": "Po založení portálu sa nemení: portál sa nikdy nepresunie k inej organizácii, menu ani ceste."
     }
   }
 }

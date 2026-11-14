@@ -12628,7 +12628,7 @@
     },
     "hint": {
       "organization": "The Organization the portal belongs to; it never moves to another one. For example bratislava.",
-      "path": "Lower-case letters, digits and dashes, unique in the Organization, for example mobility: the portal answers at …/opendata/-/mobility/.",
+      "path": "Lower-case letters, digits and dashes, unique in the Organization, for example mobility: the portal answers at …/opendata/-/mobility/. Chosen once: the path never changes, so dataset addresses stay stable.",
       "languages": "The languages the portal is shown in; the first ticked one is its default, for example Slovak and English.",
       "title": "Shown on every page of the portal, for example Doprava or Mobility.",
       "address": "The slug address lives under your Organization's open data portal; a domain is one your operator listed for the Organization.",
@@ -12676,7 +12676,7 @@
       "open": "Open the portal",
       "delete": "Remove portal",
       "defaultKept": "The default portal stays: it is the Organization's own catalogue.",
-      "fixed": "Fixed once the portal exists: a portal never moves to another Organization or name."
+      "fixed": "Fixed once the portal exists: a portal never moves to another Organization, name or path."
     }
   }
 }

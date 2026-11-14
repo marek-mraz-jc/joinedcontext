@@ -12628,7 +12628,7 @@
     },
     "hint": {
       "organization": "Die Organisation, der das Portal gehört; es zieht nie zu einer anderen um. Zum Beispiel berlin.",
-      "path": "Kleinbuchstaben, Ziffern und Bindestriche, eindeutig in der Organisation, zum Beispiel mobility: das Portal antwortet unter …/opendata/-/mobility/.",
+      "path": "Kleinbuchstaben, Ziffern und Bindestriche, eindeutig in der Organisation, zum Beispiel mobility: das Portal antwortet unter …/opendata/-/mobility/. Einmal gewählt: der Pfad ändert sich nie, damit Datensatzadressen stabil bleiben.",
       "languages": "Die Sprachen des Portals; die erste angehakte ist die Standardsprache, zum Beispiel Deutsch und Englisch.",
       "title": "Steht auf jeder Seite des Portals, zum Beispiel Mobilität.",
       "address": "Die übliche Adresse liegt unter dem Open-Data-Portal der Organisation; eine Domain ist eine, die der Betreiber für die Organisation eingetragen hat.",
@@ -12676,7 +12676,7 @@
       "open": "Portal öffnen",
       "delete": "Portal entfernen",
       "defaultKept": "Das Standardportal bleibt: es ist der eigene Katalog der Organisation.",
-      "fixed": "Fest, sobald das Portal besteht: ein Portal zieht nie zu einer anderen Organisation oder einem anderen Namen um."
+      "fixed": "Fest, sobald das Portal besteht: ein Portal zieht nie zu einer anderen Organisation, einem anderen Namen oder Pfad um."
     }
   }
 }
