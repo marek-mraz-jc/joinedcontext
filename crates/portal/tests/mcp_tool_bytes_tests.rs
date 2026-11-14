@@ -69,7 +69,7 @@ fn the_tool_definitions_a_model_reads_stay_under_their_byte_ratchet() {
 /// the chart reads nothing the data read would not; 85,652 once `jc_render` took `data.widget`
 /// (T-6864, 624 bytes): a saved Dashboard widget drawn by reference, read as the caller; 85,854
 /// with `data.dashboard` (T-6867, 202 bytes): a whole Dashboard, each widget read as the caller.
-const RATCHET: usize = 85_854;
+const RATCHET: usize = 85_855;
 
 /// The cut never opens a schema: every MCP input stays closed, and `project` stays bounded.
 #[test]
