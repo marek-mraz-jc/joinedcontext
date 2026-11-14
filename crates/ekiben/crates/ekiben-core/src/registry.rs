@@ -27,6 +27,9 @@ pub type CacheCtor = Arc<
 pub type RateLimitCtor = Arc<
     dyn Fn(&ComponentConfig, &StreamContext) -> Result<Arc<dyn RateLimit>, CoreError> + Send + Sync,
 >;
+/// A component's own lint rules over its config object (Bento's field specs and `LintRule`s):
+/// each returned line is one lint error.
+pub type LintFn = Arc<dyn Fn(&JsonValue) -> Vec<String> + Send + Sync>;
 pub type BufferCtor = Arc<
     dyn Fn(&ComponentConfig, &StreamContext) -> Result<Arc<dyn Buffer>, CoreError> + Send + Sync,
 >;
@@ -118,6 +121,7 @@ pub struct Registry {
     caches: RwLock<HashMap<String, CacheCtor>>,
     rate_limits: RwLock<HashMap<String, RateLimitCtor>>,
     buffers: RwLock<HashMap<String, BufferCtor>>,
+    lints: RwLock<HashMap<String, LintFn>>,
 }
 
 impl Registry {
@@ -188,6 +192,32 @@ impl Registry {
             .write()
             .unwrap()
             .insert(name.into(), Arc::new(ctor));
+    }
+
+    /// Registers the lint rules of the `kind` (`input`, `output`, `processor`) named `name`.
+    pub fn register_lint<F>(&self, kind: &str, name: &str, lint: F)
+    where
+        F: Fn(&JsonValue) -> Vec<String> + Send + Sync + 'static,
+    {
+        self.lints
+            .write()
+            .unwrap()
+            .insert(format!("{kind}:{name}"), Arc::new(lint));
+    }
+
+    /// Runs the registered lint rules of `conf` (none registered: no errors).
+    pub fn lint_component(&self, kind: &str, conf: &ComponentConfig) -> Vec<String> {
+        let lint = self
+            .lints
+            .read()
+            .unwrap()
+            .get(&format!("{kind}:{}", conf.component_type))
+            .cloned();
+        lint.map(|f| f(&conf.config))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| format!("{kind} {}: {e}", conf.component_type))
+            .collect()
     }
 
     pub fn register_buffer<F>(&self, name: impl Into<String>, ctor: F)
@@ -479,6 +509,9 @@ impl Registry {
             ));
         }
         check_label(&conf.input, &mut seen_labels, &mut report);
+        for e in self.lint_component("input", &conf.input) {
+            report.add_error(e);
+        }
         lint_blobl_fields(&conf.input, "input", &blobl_env, &mut report);
         for p in &conf.input.processors {
             self.lint_processor(p, &blobl_env, &mut seen_labels, &mut report);
@@ -497,6 +530,9 @@ impl Registry {
             ));
         }
         check_label(&conf.output, &mut seen_labels, &mut report);
+        for e in self.lint_component("output", &conf.output) {
+            report.add_error(e);
+        }
         lint_blobl_fields(&conf.output, "output", &blobl_env, &mut report);
         for p in &conf.output.processors {
             self.lint_processor(p, &blobl_env, &mut seen_labels, &mut report);
@@ -522,6 +558,9 @@ impl Registry {
             return;
         }
         check_label(proc_conf, seen_labels, report);
+        for e in self.lint_component("processor", proc_conf) {
+            report.add_error(e);
+        }
 
         match proc_conf.component_type.as_str() {
             "mapping" | "bloblang" | "mutation" => {
@@ -621,4 +660,24 @@ fn lint_blobl_fields(
             }
         }
     }
+}
+
+/// Bento's field-spec lint of a component config object: a key outside `known` is
+/// `field <k> not recognised`, a missing `required` key `field <k> is required`.
+pub fn lint_fields(config: &JsonValue, known: &[&str], required: &[&str]) -> Vec<String> {
+    let Some(obj) = config.as_object() else {
+        return vec!["expected object value".to_string()];
+    };
+    let mut errs: Vec<String> = obj
+        .keys()
+        .filter(|k| !known.contains(&k.as_str()))
+        .map(|k| format!("field {k} not recognised"))
+        .collect();
+    errs.extend(
+        required
+            .iter()
+            .filter(|k| !obj.contains_key(**k))
+            .map(|k| format!("field {k} is required")),
+    );
+    errs
 }

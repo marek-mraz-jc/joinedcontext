@@ -1,0 +1,8 @@
+logger: {level: OFF}
+input:
+  sql_raw:
+    driver: sqlite
+    dsn: ${LITE_DSN}
+    query: "SELECT v FROM t ORDER BY v"
+output:
+  stdout: {}

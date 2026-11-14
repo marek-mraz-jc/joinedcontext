@@ -27,6 +27,7 @@ ekiben-processors = { workspace = true }
 ekiben-io-http = { workspace = true }
 ekiben-io-file = { workspace = true }
 ekiben-io-nats = { workspace = true }
+ekiben-io-sql = { workspace = true }
 ekiben-io-ngsild = { workspace = true, optional = true }
 ekiben-parquet = { workspace = true, optional = true }
 ekiben-protobuf = { workspace = true, optional = true }

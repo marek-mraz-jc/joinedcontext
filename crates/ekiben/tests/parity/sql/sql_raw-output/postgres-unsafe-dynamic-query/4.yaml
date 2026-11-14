@@ -1,0 +1,8 @@
+logger: {level: OFF}
+input:
+  sql_raw:
+    driver: postgres
+    dsn: ${PG_DSN}
+    query: "SELECT (SELECT string_agg(v::text, ',' ORDER BY v) FROM t1) AS a, (SELECT string_agg(v::text, ',' ORDER BY v) FROM t2) AS b"
+output:
+  stdout: {}

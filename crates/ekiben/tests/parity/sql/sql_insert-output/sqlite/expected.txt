@@ -1,0 +1,9 @@
+## step 1 exit 0
+## step 2 exit 0
+## step 3 exit 0
+{"bar":1,"baz":"x","foo":"c1"}
+{"bar":2,"baz":"x","foo":"c2"}
+{"bar":3,"baz":"x","foo":"c3"}
+{"bar":4,"baz":"x","foo":"c4"}
+{"bar":5,"baz":"x","foo":"c5"}
+{"bar":6,"baz":"x","foo":"c6"}
