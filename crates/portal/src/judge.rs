@@ -26,6 +26,9 @@ pub struct Ground<'a> {
     pub apex: Option<&'a str>,
     /// The deployment's organization domain, when no Organization manifest names one (PF-121).
     pub domain: Option<&'a str>,
+    /// The hosts listed for each Organization's portals and `portals.max` (ODP-08, ODP-09);
+    /// `None` at a load of `main`, which checks what the mirror alone decides.
+    pub portals: Option<&'a crate::portals::PortalSettings>,
 }
 
 impl<'a> Ground<'a> {
@@ -37,6 +40,7 @@ impl<'a> Ground<'a> {
             bounds: &state.config.organization_bounds,
             apex: settings.map(|s| s.apex.as_str()),
             domain: settings.map(|s| s.org_domain.as_str()),
+            portals: Some(&state.config.portal_settings),
         }
     }
 
@@ -50,7 +54,7 @@ type Check = fn(&Ground<'_>, &str, &ResourceEnvelope) -> Result<(), ApiError>;
 
 /// Every check, by name, in the order a proposal meets them. A deletion is never judged here:
 /// the propose door checks what a deletion leaves behind itself.
-pub const CHECKS: [(&str, Check); 18] = [
+pub const CHECKS: [(&str, Check); 19] = [
     ("literal-secret", literal_secret),
     ("kind", kind),
     ("endpoint-representations", endpoint_representations),
@@ -69,7 +73,13 @@ pub const CHECKS: [(&str, Check); 18] = [
     ("quota", quota),
     ("mqtt-allowance", mqtt_allowance),
     ("catalogue-publication", catalogue_publication),
+    ("portal", portal),
 ];
+
+/// A Portal's Organization, path, host and the deployment's `portals.max` (ODP-08, ODP-09).
+fn portal(ground: &Ground<'_>, _: &str, envelope: &ResourceEnvelope) -> Result<(), ApiError> {
+    crate::portals::check(ground.mirror, ground.portals, envelope)
+}
 
 /// The first refusal `envelope`, written into `project`, meets.
 pub fn manifest(
@@ -153,6 +163,7 @@ pub fn replay(
                     bounds,
                     apex,
                     domain,
+                    portals: None,
                 };
                 match manifest(&ground, &namespace, envelope) {
                     Ok(()) => {
@@ -639,6 +650,15 @@ mod tests {
                 envelope("DataSource", "feed", "ovzdusie", json!({ "password": "p" })),
             ),
             "kind" => (vec![], envelope("NoSuchKind", "x", "ovzdusie", json!({}))),
+            "portal" => (
+                vec![],
+                envelope(
+                    "Portal",
+                    "hel-mobility",
+                    ORG_NAMESPACE,
+                    json!({ "organizationRef": "hel", "path": "mobility" }),
+                ),
+            ),
             "spec" => (
                 vec![],
                 envelope("DataSource", "feed", "ovzdusie", json!({ "notAField": 1 })),
@@ -818,6 +838,7 @@ mod tests {
                 bounds: &bounds,
                 apex: None,
                 domain: None,
+                portals: None,
             };
             let project = proposed.metadata.namespace.clone().unwrap_or_default();
             let alone = check(&ground, &project, &proposed)
@@ -849,6 +870,7 @@ mod tests {
             bounds: &bounds,
             apex: None,
             domain: None,
+            portals: None,
         };
         let said = |refusal: &str| {
             assert!(

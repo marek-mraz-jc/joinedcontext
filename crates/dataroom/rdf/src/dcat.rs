@@ -1959,6 +1959,8 @@ mod tests {
             modified: Utc::now(),
             deleted: None,
             public_base: None,
+            portal_base: None,
+            left_hosts: Vec::new(),
         }
     }
 
