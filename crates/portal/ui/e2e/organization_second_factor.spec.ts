@@ -106,7 +106,7 @@ async function choose(page: Page, value: string): Promise<void> {
   if ((await signIn.locator("summary").count()) > 0) await signIn.locator("summary").first().click();
   const field = page.getByRole("combobox", { name: /Second factor at sign-in/ });
   await field.selectOption({ label: value });
-  await expect(page.getByText(/are asked to set up an authenticator app at their next sign-in/).locator("visible=true").first()).toBeVisible();
+  await expect(page.getByText(/set up an authenticator app at their next sign-in/).locator("visible=true").first()).toBeVisible();
   await field.evaluate((element) => element.scrollIntoView({ block: "center" }));
 }
 
@@ -146,7 +146,8 @@ test.describe("an Organization's second factor", () => {
       await page.getByRole("button", { name: "Propose change" }).click();
       const reason = page.getByText(/organization-admin binding ran out/).first();
       await expect(reason).toBeVisible();
-      await reason.evaluate((element) => element.scrollIntoView({ block: "center" }));
+      // The dialog brings its refusal into view: the person was scrolled down at the field.
+      await expect(reason).toBeInViewport();
       await shot(page, `second-factor-refused-${width}`);
     });
   }

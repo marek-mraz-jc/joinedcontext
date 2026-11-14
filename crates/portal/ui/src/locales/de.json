@@ -8369,7 +8369,7 @@
       "modelsHint": "Leer lassen, um jedes Modell der Installation zu erlauben.",
       "everyModel": "Jedes Modell der Installation",
       "secondFactor": "Zweiter Faktor bei der Anmeldung",
-      "secondFactorHint": "Erforderlich: Mitglieder mit einer Rolle in der ganzen Organisation (nicht nur in einem Projekt) richten bei der nächsten Anmeldung eine Authenticator-App ein und nutzen sie bei jeder Anmeldung. Das gilt für die eigene Anmeldung der Plattform; eine Installation, die über Keycloak anmeldet, stellt das in Keycloak ein. Beispiel: Erforderlich für eine Organisation, deren Mitarbeitende personenbezogene Daten bearbeiten. Leer lassen, damit die Einstellung der Installation gilt.",
+      "secondFactorHint": "Erforderlich: Personen mit einer Rolle in der ganzen Organisation richten bei der nächsten Anmeldung eine Authenticator-App ein und nutzen sie jedes Mal. Gilt für die eigene Anmeldung der Plattform, nicht für Keycloak. Beispiel: Erforderlich, wenn Ihre Leute personenbezogene Daten bearbeiten. Leer behält die Einstellung der Installation.",
       "secondFactor_required": "Erforderlich",
       "secondFactor_optional": "Optional",
       "secondFactorInherited": "Erforderlich (von der Installation geerbt)",

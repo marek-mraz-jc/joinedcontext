@@ -1,5 +1,5 @@
 /** The edit dialog itself, loaded when it opens (T-3316): see EditResourceDialog.tsx. */
-import { Suspense, lazy, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useMemo, useState } from "react";
 import type { JSX, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -208,6 +208,11 @@ export function EditResourceDialogBody({
   const parseFailure = parseError
     ? t("resourceEdit.parseError", { line: parseError.line, reason: parseError.message })
     : null;
+  // A refusal is shown above the fields, out of sight of a person who scrolled down to the one
+  // they changed: brought into view once, when it appears (T-6895).
+  const showFailure = useCallback((element: HTMLDivElement | null) => {
+    element?.scrollIntoView?.({ block: "nearest" });
+  }, []);
   const failure =
     invalid ??
     parseFailure ??
@@ -309,9 +314,11 @@ export function EditResourceDialogBody({
       ) : (
         <div className="flex flex-col gap-4">
           {failure ? (
-            <Alert tone="danger" role="alert">
-              {failure}
-            </Alert>
+            <div ref={showFailure}>
+              <Alert tone="danger" role="alert">
+                {failure}
+              </Alert>
+            </div>
           ) : null}
           {current.isPending ? (
             // The wait and the failure are two states, not one (T-1752). They used to be the

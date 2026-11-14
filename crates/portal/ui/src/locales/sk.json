@@ -8369,7 +8369,7 @@
       "modelsHint": "Nechajte prázdne, aby boli povolené všetky modely inštalácie.",
       "everyModel": "Všetky modely inštalácie",
       "secondFactor": "Druhý faktor pri prihlásení",
-      "secondFactorHint": "Povinný: členovia s rolou v celej organizácii (nie len v jednom projekte) si pri najbližšom prihlásení nastavia overovaciu aplikáciu a používajú ju pri každom prihlásení. Platí pre vlastné prihlasovanie platformy; nasadenie, ktoré prihlasuje cez Keycloak, to nastavuje v Keycloaku. Príklad: Povinný pre organizáciu, ktorej ľudia pracujú s osobnými údajmi. Nechajte prázdne, ak má platiť nastavenie nasadenia.",
+      "secondFactorHint": "Povinný: ľudia s rolou v celej organizácii si pri najbližšom prihlásení nastavia overovaciu aplikáciu a používajú ju vždy. Platí pre vlastné prihlasovanie platformy, nie pre Keycloak. Príklad: Povinný, ak vaši ľudia pracujú s osobnými údajmi. Prázdne ponechá nastavenie nasadenia.",
       "secondFactor_required": "Povinný",
       "secondFactor_optional": "Voliteľný",
       "secondFactorInherited": "Povinný (zdedené z nasadenia)",
