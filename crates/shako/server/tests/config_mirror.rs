@@ -40,7 +40,12 @@ impl World {
         let authz = Arc::new(LocalAuthorizer::new(vec![RoleBinding {
             org_id: org,
             principal: "jc-portal".into(),
-            actions: vec![Action::Admin, Action::Write, Action::Approve, Action::Publish],
+            actions: vec![
+                Action::Admin,
+                Action::Write,
+                Action::Approve,
+                Action::Publish,
+            ],
             project_id: None,
             repo: None,
         }]));
@@ -88,7 +93,11 @@ impl World {
     }
 
     async fn up(token: &'static str) -> Self {
-        Self::start(tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(), token).await
+        Self::start(
+            tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(),
+            token,
+        )
+        .await
     }
 
     fn client(&self, repo: &str) -> ShakoClient {
@@ -137,26 +146,33 @@ async fn merge_change(forge: &ShakoClient, branch: &str, path: &str) {
         .expect("merged");
 }
 
-/// `refs/heads/*` of a remote repository, as `git ls-remote` reads it with the token.
-fn heads(remote: &World, repo: &str) -> Vec<(String, String)> {
-    let url = format!("{}{OWNER}/{repo}.git", remote.base);
-    let out = std::process::Command::new("git")
-        .args(["-c", &format!("http.extraHeader=Authorization: Bearer {}", remote.token)])
-        .args(["ls-remote", "--heads", "--tags", &url])
-        .output()
-        .expect("git");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|l| l.split_once('\t'))
-        .map(|(sha, name)| (name.to_owned(), sha.to_owned()))
-        .collect()
+/// The branches of a remote repository and the commit its `main` is at, as its forge answers.
+async fn heads(remote: &World, repo: &str) -> (Vec<String>, String) {
+    let client = remote.client(repo);
+    let listed = client
+        .odata_get(
+            &format!("Repositories(Owner='{OWNER}',Name='{repo}')/Branches"),
+            &[],
+            1 << 20,
+        )
+        .await
+        .expect("branches");
+    let names = listed["value"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|b| b["Name"].as_str().map(str::to_owned))
+        .collect();
+    (names, client.branch_head("main").await.unwrap_or_default())
 }
 
 fn mirror_for(remote: &World, dir: &tempfile::TempDir) -> ConfigMirror {
-    ConfigMirror::new(&format!("{}{OWNER}/off-{{repo}}.git", remote.base), token_file(dir))
-        .expect("mirror")
-        .with_timing(Duration::ZERO, Duration::ZERO)
+    ConfigMirror::new(
+        &format!("{}{OWNER}/off-{{repo}}.git", remote.base),
+        token_file(dir),
+    )
+    .expect("mirror")
+    .with_timing(Duration::ZERO, Duration::ZERO)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -165,33 +181,53 @@ async fn a_merged_change_is_pushed_to_the_mirror_and_nothing_but_main() {
     let forge_world = World::up(FORGE_TOKEN).await;
     let remote = World::up(REMOTE_TOKEN).await;
     let installation = forge_world.client("configuration");
-    assert!(installation.ensure_repository("Configuration").await.unwrap());
+    assert!(
+        installation
+            .ensure_repository("Configuration")
+            .await
+            .unwrap()
+    );
     let project = forge_world.client("ovzdusie-config");
     assert!(project.ensure_repository("Project").await.unwrap());
     for repo in ["off-configuration", "off-ovzdusie-config"] {
-        remote.client(repo).create_empty_repository("Off the pod").await.unwrap();
+        remote
+            .client(repo)
+            .create_empty_repository("Off the pod")
+            .await
+            .unwrap();
     }
     // Merged before the mirror was on: the first pass catches up.
     merge_change(&installation, "change/1", "endpoints/one.yaml").await;
     let mirror = mirror_for(&remote, &tmp);
-    mirror.pass(&installation, std::slice::from_ref(&project)).await;
+    mirror
+        .pass(&installation, std::slice::from_ref(&project))
+        .await;
     assert!(
         mirror.statuses().iter().all(|s| s.last_error.is_empty()),
         "{:?}",
         mirror.statuses()
     );
     let main = installation.branch_head("main").await.unwrap();
-    assert_eq!(heads(&remote, "off-configuration"), [("refs/heads/main".to_owned(), main)]);
+    assert_eq!(
+        heads(&remote, "off-configuration").await,
+        (vec!["main".to_owned()], main)
+    );
 
     // Merged after: the forge pushes on the merge, before any pass.
     merge_change(&installation, "change/2", "endpoints/two.yaml").await;
     let main = installation.branch_head("main").await.unwrap();
-    assert_eq!(heads(&remote, "off-configuration"), [("refs/heads/main".to_owned(), main)]);
+    assert_eq!(
+        heads(&remote, "off-configuration").await,
+        (vec!["main".to_owned()], main)
+    );
 
     // An open Change's branch and its commits stay home.
-    installation.create_branch("change/3", "main").await.unwrap();
-    assert!(heads(&remote, "off-configuration").iter().all(|(name, _)| name == "refs/heads/main"));
-    assert_eq!(heads(&remote, "off-ovzdusie-config").len(), 1);
+    installation
+        .create_branch("change/3", "main")
+        .await
+        .unwrap();
+    assert_eq!(heads(&remote, "off-configuration").await.0, ["main"]);
+    assert_eq!(heads(&remote, "off-ovzdusie-config").await.0, ["main"]);
 
     // The mirror's address carries no credential, and nothing the forge answers holds the token.
     let listed = installation.push_mirrors().await.unwrap();
@@ -206,22 +242,49 @@ async fn the_installation_repository_goes_only_to_the_operator_remote() {
     let forge_world = World::up(FORGE_TOKEN).await;
     let remote = World::up(REMOTE_TOKEN).await;
     let installation = forge_world.client("configuration");
-    installation.ensure_repository("Configuration").await.unwrap();
+    installation
+        .ensure_repository("Configuration")
+        .await
+        .unwrap();
     let project = forge_world.client("ovzdusie-config");
     project.ensure_repository("Project").await.unwrap();
-    remote.client("off-configuration").create_empty_repository("x").await.unwrap();
-    remote.client("off-ovzdusie-config").create_empty_repository("x").await.unwrap();
+    remote
+        .client("off-configuration")
+        .create_empty_repository("x")
+        .await
+        .unwrap();
+    remote
+        .client("off-ovzdusie-config")
+        .create_empty_repository("x")
+        .await
+        .unwrap();
     // Someone added copies elsewhere: an Organization's own remote on the installation
     // repository, and one on the project repository.
     let elsewhere = format!("{}{OWNER}/elsewhere.git", remote.base);
-    installation.add_push_mirror(&elsewhere, "x", "y", None).await.unwrap();
-    project.add_push_mirror(&elsewhere, "x", "y", None).await.unwrap();
+    installation
+        .add_push_mirror(&elsewhere, "x", "y", None)
+        .await
+        .unwrap();
+    project
+        .add_push_mirror(&elsewhere, "x", "y", None)
+        .await
+        .unwrap();
 
-    mirror_for(&remote, &tmp).pass(&installation, std::slice::from_ref(&project)).await;
+    mirror_for(&remote, &tmp)
+        .pass(&installation, std::slice::from_ref(&project))
+        .await;
 
-    let on_installation: Vec<String> =
-        installation.push_mirrors().await.unwrap().into_iter().map(|m| m.remote_address).collect();
-    assert_eq!(on_installation, [format!("{}{OWNER}/off-configuration.git", remote.base)]);
+    let on_installation: Vec<String> = installation
+        .push_mirrors()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|m| m.remote_address)
+        .collect();
+    assert_eq!(
+        on_installation,
+        [format!("{}{OWNER}/off-configuration.git", remote.base)]
+    );
     // A project repository keeps what else its people set up beside the operator's copy.
     assert_eq!(project.push_mirrors().await.unwrap().len(), 2);
 }
@@ -234,24 +297,46 @@ async fn a_down_remote_never_blocks_a_merge_and_catches_up() {
     let socket = tokio::net::TcpSocket::new_v4().unwrap();
     socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
     let addr = socket.local_addr().unwrap();
-    let mirror = ConfigMirror::new(&format!("http://{addr}/git/{OWNER}/off-{{repo}}.git"), token_file(&tmp))
-        .expect("mirror")
-        .with_timing(Duration::ZERO, Duration::ZERO);
+    let mirror = ConfigMirror::new(
+        &format!("http://{addr}/git/{OWNER}/off-{{repo}}.git"),
+        token_file(&tmp),
+    )
+    .expect("mirror")
+    .with_timing(Duration::ZERO, Duration::ZERO);
     let installation = forge_world.client("configuration");
-    installation.ensure_repository("Configuration").await.unwrap();
+    installation
+        .ensure_repository("Configuration")
+        .await
+        .unwrap();
 
     mirror.pass(&installation, &[]).await;
     assert!(!mirror.statuses()[0].last_error.is_empty());
     // The merge goes through with the remote down.
     merge_change(&installation, "change/1", "endpoints/one.yaml").await;
     let main = installation.branch_head("main").await.unwrap();
-    assert!(!installation.push_mirrors().await.unwrap()[0].last_error.is_empty());
+    assert!(
+        !installation.push_mirrors().await.unwrap()[0]
+            .last_error
+            .is_empty()
+    );
 
     let remote = World::start(socket.listen(64).unwrap(), REMOTE_TOKEN).await;
-    remote.client("off-configuration").create_empty_repository("x").await.unwrap();
+    remote
+        .client("off-configuration")
+        .create_empty_repository("x")
+        .await
+        .unwrap();
     mirror.pass(&installation, &[]).await;
-    assert_eq!(mirror.statuses()[0].last_error, "", "{:?}", mirror.statuses());
-    assert_eq!(heads(&remote, "off-configuration"), [("refs/heads/main".to_owned(), main)]);
+    assert_eq!(
+        mirror.statuses()[0].last_error,
+        "",
+        "{:?}",
+        mirror.statuses()
+    );
+    assert_eq!(
+        heads(&remote, "off-configuration").await,
+        (vec!["main".to_owned()], main)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -260,7 +345,10 @@ async fn no_force_push_ever() {
     let forge_world = World::up(FORGE_TOKEN).await;
     let remote = World::up(REMOTE_TOKEN).await;
     let installation = forge_world.client("configuration");
-    installation.ensure_repository("Configuration").await.unwrap();
+    installation
+        .ensure_repository("Configuration")
+        .await
+        .unwrap();
     // The remote holds a history of its own.
     let theirs = remote.client("off-configuration");
     theirs.ensure_repository("x").await.unwrap();

@@ -1015,12 +1015,95 @@ mod tests {
 
     /// The writes that do not end as a commit, each with its reason (T-6893). A new write tool
     /// either answers a Change, which the forge commits on approval, or joins this list.
-    const WRITES_OUTSIDE_GIT: &[(&str, &str)] = &[];
+    const WRITES_OUTSIDE_GIT: &[(&str, &str)] = &[
+        // Git itself, without the Change schema in the answer.
+        (
+            "jc_change_plan",
+            "stores a plan for jc_change_apply; writes nothing",
+        ),
+        (
+            "jc_change_revert_plan",
+            "stores a revert plan for jc_change_apply; writes nothing",
+        ),
+        (
+            "jc_change_apply",
+            "opens the plan's Changes or commits it into a workspace branch",
+        ),
+        (
+            "jc_change_approve",
+            "merges a Change into main: the commit itself",
+        ),
+        (
+            "jc_workspace_open",
+            "cuts the workspace's branch on the forge",
+        ),
+        (
+            "jc_workspace_update_from_main",
+            "merges main into the workspace branch",
+        ),
+        (
+            "jc_workspace_discard",
+            "deletes the workspace branch; nothing reaches main",
+        ),
+        (
+            "jc_syncsource_sync",
+            "what the run finds becomes Changes a person approves",
+        ),
+        // Not configuration.
+        (
+            "jc_data_write",
+            "context data, through an Endpoint and its Policy",
+        ),
+        ("jc_draft_put", "a person's draft before it is proposed"),
+        ("jc_draft_drop", "a person's draft before it is proposed"),
+        (
+            "jc_space_complete",
+            "writes drafts the person proposes after",
+        ),
+        (
+            "jc_workspace_preview_start",
+            "runtime preview of a workspace branch",
+        ),
+        (
+            "jc_workspace_preview_stop",
+            "runtime preview of a workspace branch",
+        ),
+        ("jc_pipeline_run", "queues one run: runtime state"),
+        (
+            "jc_syncsource_pause",
+            "runtime pause of a SyncSource, kept in the database",
+        ),
+        ("jc_run_create", "an assistant or app builder run"),
+        ("jc_run_cancel", "an assistant or app builder run"),
+        ("jc_run_answer", "an assistant or app builder run"),
+        ("jc_run_message", "an assistant or app builder run"),
+        // People live in the realm (ADR-N-031).
+        (
+            "jc_person_create",
+            "people live in the realm, not in git (ADR-N-031)",
+        ),
+        (
+            "jc_person_edit",
+            "people live in the realm, not in git (ADR-N-031)",
+        ),
+        (
+            "jc_person_disable",
+            "people live in the realm, not in git (ADR-N-031)",
+        ),
+        (
+            "jc_person_enable",
+            "people live in the realm, not in git (ADR-N-031)",
+        ),
+        ("jc_person_sign_out", "ends sessions in the realm"),
+    ];
 
     #[test]
     fn every_mcp_write_operation_opens_a_change_or_is_allowlisted() {
         let mut skipping = Vec::new();
-        for op in registry().iter().filter(|op| !op.annotations.read_only_hint) {
+        for op in registry()
+            .iter()
+            .filter(|op| !op.annotations.read_only_hint)
+        {
             let answers_a_change = (op.output)().to_string().contains("\"changeId\"");
             let listed = WRITES_OUTSIDE_GIT.iter().any(|(name, _)| *name == op.name);
             assert!(
@@ -1039,7 +1122,10 @@ mod tests {
         );
         for (name, reason) in WRITES_OUTSIDE_GIT {
             assert!(find(name).is_some(), "{name} is listed but is no operation");
-            assert!(!reason.trim().is_empty(), "{name} is listed without a reason");
+            assert!(
+                !reason.trim().is_empty(),
+                "{name} is listed without a reason"
+            );
         }
     }
 

@@ -184,7 +184,9 @@ fn build_send_pack_payload(
             }
             // A tag is created, never moved; a branch only moves forward.
             let forward = old_oid == zero
-                || (r.name == *only && repo.has_object(old_oid) && is_ancestor(&repo, old_oid, r.oid));
+                || (r.name == *only
+                    && repo.has_object(old_oid)
+                    && is_ancestor(&repo, old_oid, r.oid));
             if old_oid != r.oid && !forward {
                 diverged.push(r.name.clone());
                 continue;
@@ -240,19 +242,11 @@ fn verify_remote_report_status(resp: &[u8]) -> ShakoResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
-
-    fn git(dir: &Path, args: &[&str]) -> String {
-        let out = Command::new("git")
-            .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid"])
-            .arg("-C")
-            .arg(dir)
-            .args(args)
-            .output()
-            .expect("git runs");
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
-        String::from_utf8_lossy(&out.stdout).trim().to_owned()
-    }
+    use crate::repo::{
+        CommitAuthor, FileChangeOp, FileOpKind, commit_file_changes, init_bare_repo, set_ref_direct,
+    };
+    use shako_core::{InstanceId, RepoId};
+    use std::path::PathBuf;
 
     fn oid(hex: &str) -> ObjectId {
         ObjectId::from_hex(hex.as_bytes()).expect("an object id")
@@ -260,17 +254,42 @@ mod tests {
 
     /// `main` with two commits and a tag, `change/1` beside it: what a configuration
     /// repository holds while a Change is open.
-    fn repository(dir: &Path) -> (String, String, String) {
-        git(dir, &["init", "-q", "-b", "main"]);
-        git(dir, &["commit", "-q", "--allow-empty", "-m", "one"]);
-        let first = git(dir, &["rev-parse", "HEAD"]);
-        git(dir, &["commit", "-q", "--allow-empty", "-m", "two"]);
-        let second = git(dir, &["rev-parse", "HEAD"]);
-        git(dir, &["tag", "v1"]);
-        git(dir, &["checkout", "-q", "-b", "change/1", &first]);
-        git(dir, &["commit", "-q", "--allow-empty", "-m", "open change"]);
-        let change = git(dir, &["rev-parse", "HEAD"]);
-        (first, second, change)
+    fn repository(dir: &Path) -> (PathBuf, String, String, String) {
+        let repo = init_bare_repo(
+            dir,
+            InstanceId::from_u128(1),
+            RepoId::from_u128(7),
+            "main",
+            false,
+            "t",
+        )
+        .expect("init");
+        let author = CommitAuthor {
+            name: "t".into(),
+            email: "t@example.invalid".into(),
+        };
+        let commit = |branch: &str, path: &str| {
+            commit_file_changes(
+                &repo,
+                branch,
+                path,
+                &author,
+                &author,
+                &[FileChangeOp {
+                    operation: FileOpKind::Create,
+                    path: path.into(),
+                    content: Some(b"kind: Endpoint\n".to_vec()),
+                    sha: None,
+                }],
+            )
+            .expect("commit")
+        };
+        let first = commit("main", "one.yaml");
+        let second = commit("main", "two.yaml");
+        set_ref_direct(&repo, "refs/tags/v1", &second).expect("tag");
+        set_ref_direct(&repo, "refs/heads/change/1", &first).expect("branch");
+        let change = commit("change/1", "open.yaml");
+        (repo, first, second, change)
     }
 
     fn names(commands: &[SendPackCommand]) -> Vec<&str> {
@@ -280,29 +299,35 @@ mod tests {
     #[test]
     fn nothing_but_main_is_pushed() {
         let tmp = tempfile::tempdir().expect("tmp");
-        repository(tmp.path());
+        let (repo, ..) = repository(tmp.path());
         let (commands, pack, diverged) =
-            build_send_pack_payload(&tmp.path().join(".git"), &BTreeMap::new(), Some("main")).expect("payload");
+            build_send_pack_payload(&repo, &BTreeMap::new(), Some("main")).expect("payload");
         assert_eq!(names(&commands), ["refs/heads/main", "refs/tags/v1"]);
         assert!(!pack.is_empty());
         assert!(diverged.is_empty());
 
         // The App mirror keeps every branch.
-        let (all, _, _) =
-            build_send_pack_payload(&tmp.path().join(".git"), &BTreeMap::new(), None).expect("payload");
-        assert!(names(&all).contains(&"refs/heads/change/1"), "{:?}", names(&all));
+        let (all, _, _) = build_send_pack_payload(&repo, &BTreeMap::new(), None).expect("payload");
+        assert!(
+            names(&all).contains(&"refs/heads/change/1"),
+            "{:?}",
+            names(&all)
+        );
     }
 
     #[test]
     fn no_force_push_ever() {
         let tmp = tempfile::tempdir().expect("tmp");
-        let (first, second, change) = repository(tmp.path());
+        let (repo, first, second, change) = repository(tmp.path());
 
         // Behind: a fast-forward goes.
         let behind = BTreeMap::from([("refs/heads/main".to_owned(), oid(&first))]);
         let (commands, _, diverged) =
-            build_send_pack_payload(&tmp.path().join(".git"), &behind, Some("main")).expect("payload");
-        assert_eq!(commands[0], (oid(&first), oid(&second), "refs/heads/main".to_owned()));
+            build_send_pack_payload(&repo, &behind, Some("main")).expect("payload");
+        assert_eq!(
+            commands[0],
+            (oid(&first), oid(&second), "refs/heads/main".to_owned())
+        );
         assert!(diverged.is_empty());
 
         // On a sibling commit, on a commit this repository never saw, or a moved tag: reported,
@@ -313,7 +338,7 @@ mod tests {
             BTreeMap::from([("refs/heads/main".to_owned(), oid(unknown))]),
         ] {
             let (commands, _, diverged) =
-                build_send_pack_payload(&tmp.path().join(".git"), &remote, Some("main")).expect("payload");
+                build_send_pack_payload(&repo, &remote, Some("main")).expect("payload");
             assert_eq!(names(&commands), ["refs/tags/v1"]);
             assert_eq!(diverged, ["refs/heads/main"]);
         }
@@ -322,7 +347,7 @@ mod tests {
             ("refs/tags/v1".to_owned(), oid(&first)),
         ]);
         let (commands, _, diverged) =
-            build_send_pack_payload(&tmp.path().join(".git"), &moved_tag, Some("main")).expect("payload");
+            build_send_pack_payload(&repo, &moved_tag, Some("main")).expect("payload");
         assert!(commands.is_empty());
         assert_eq!(diverged, ["refs/tags/v1"]);
         let err = diverged_error(&diverged).expect_err("reported");

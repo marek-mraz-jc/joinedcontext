@@ -241,7 +241,10 @@ impl ConfigMirror {
         let mirrors = forge.push_mirrors().await.map_err(|e| e.to_string())?;
         let mut ours = None;
         for m in mirrors {
-            let same = m.remote_address.trim_end_matches('/').eq_ignore_ascii_case(&target);
+            let same = m
+                .remote_address
+                .trim_end_matches('/')
+                .eq_ignore_ascii_case(&target);
             if same && m.branch == BRANCH && ours.is_none() {
                 ours = Some(m);
             } else if same || is_installation {
@@ -260,8 +263,7 @@ impl ConfigMirror {
             // A failing mirror most often holds a token rotated since: set it up again with
             // today's, then push. The forge offers no way to change a mirror's credential.
             Some(m) => {
-                metrics::counter!(FAILURES_METRIC, "repository" => forge.repo.clone())
-                    .increment(1);
+                metrics::counter!(FAILURES_METRIC, "repository" => forge.repo.clone()).increment(1);
                 forge
                     .delete_push_mirror(&m.remote_name)
                     .await
@@ -277,11 +279,13 @@ impl ConfigMirror {
         forge.sync_push_mirrors().await.map_err(|e| e.to_string())?;
         let pushed = forge.push_mirrors().await.map_err(|e| e.to_string())?;
         match pushed.into_iter().find(|m| {
-            m.branch == BRANCH && m.remote_address.trim_end_matches('/').eq_ignore_ascii_case(&target)
+            m.branch == BRANCH
+                && m.remote_address
+                    .trim_end_matches('/')
+                    .eq_ignore_ascii_case(&target)
         }) {
             Some(m) if !m.last_error.trim().is_empty() => {
-                metrics::counter!(FAILURES_METRIC, "repository" => forge.repo.clone())
-                    .increment(1);
+                metrics::counter!(FAILURES_METRIC, "repository" => forge.repo.clone()).increment(1);
                 Err(m.last_error)
             }
             Some(_) => Ok(()),
@@ -325,7 +329,11 @@ impl ConfigMirror {
         if url.host_str() != Some(host.as_str()) {
             return Ok(());
         }
-        let mut path = url.path().trim_matches('/').trim_end_matches(".git").splitn(2, '/');
+        let mut path = url
+            .path()
+            .trim_matches('/')
+            .trim_end_matches(".git")
+            .splitn(2, '/');
         let (Some(owner), Some(name)) = (path.next(), path.next()) else {
             return Err(format!("{target} names no owner/repository"));
         };
@@ -408,7 +416,8 @@ mod tests {
     fn token_file(token: &str) -> String {
         static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let file = std::env::temp_dir().join(format!("jc-config-mirror-{}-{n}", std::process::id()));
+        let file =
+            std::env::temp_dir().join(format!("jc-config-mirror-{}-{n}", std::process::id()));
         std::fs::write(&file, format!("{token}\n")).expect("token file");
         file.display().to_string()
     }
@@ -436,18 +445,33 @@ mod tests {
         };
         assert!(refused("http://github.com/acme/jc-{repo}.git", &file).contains("https"));
         assert!(refused("https://github.com/acme/configuration.git", &file).contains("{repo}"));
-        assert!(refused("https://x:tok@github.com/acme/jc-{repo}.git", &file).contains("credential"));
-        assert!(refused("https://github.com/acme/jc-{repo}.git", "/nonexistent/token").contains("cannot be read"));
-        let half = ConfigMirror::from_env(env(&[("JC_CONFIG_MIRROR_REMOTE", "https://github.com/a/{repo}")]));
+        assert!(
+            refused("https://x:tok@github.com/acme/jc-{repo}.git", &file).contains("credential")
+        );
+        assert!(refused(
+            "https://github.com/acme/jc-{repo}.git",
+            "/nonexistent/token"
+        )
+        .contains("cannot be read"));
+        let half = ConfigMirror::from_env(env(&[(
+            "JC_CONFIG_MIRROR_REMOTE",
+            "https://github.com/a/{repo}",
+        )]));
         assert!(half.expect_err("half").to_string().contains("together"));
 
         let mirror = ConfigMirror::from_env(env(&[
-            ("JC_CONFIG_MIRROR_REMOTE", "https://github.com/acme/jc-{repo}.git"),
+            (
+                "JC_CONFIG_MIRROR_REMOTE",
+                "https://github.com/acme/jc-{repo}.git",
+            ),
             ("JC_CONFIG_MIRROR_TOKEN_FILE", &file),
         ]))
         .expect("valid")
         .expect("on");
-        assert_eq!(mirror.remote_for("configuration"), "https://github.com/acme/jc-configuration.git");
+        assert_eq!(
+            mirror.remote_for("configuration"),
+            "https://github.com/acme/jc-configuration.git"
+        );
     }
 
     #[tokio::test]
@@ -459,12 +483,20 @@ mod tests {
             .respond_with(ResponseTemplate::new(401).set_body_string(TOKEN))
             .mount(&github)
             .await;
-        let mirror = ConfigMirror::new("https://github.com/acme/jc-{repo}.git", token_file(TOKEN).into())
-            .expect("mirror")
-            .with_github("github.com", &github.uri())
-            .with_timing(Duration::ZERO, Duration::ZERO);
-        let forge = ShakoClient::new(Url::parse(&shako.uri()).expect("url"), "joinedcontext", "configuration", "forge-token")
-            .expect("client");
+        let mirror = ConfigMirror::new(
+            "https://github.com/acme/jc-{repo}.git",
+            token_file(TOKEN).into(),
+        )
+        .expect("mirror")
+        .with_github("github.com", &github.uri())
+        .with_timing(Duration::ZERO, Duration::ZERO);
+        let forge = ShakoClient::new(
+            Url::parse(&shako.uri()).expect("url"),
+            "joinedcontext",
+            "configuration",
+            "forge-token",
+        )
+        .expect("client");
         mirror.pass(&forge, &[]).await;
         let statuses = mirror.statuses();
         assert_eq!(statuses.len(), 1);
@@ -472,11 +504,18 @@ mod tests {
         assert!(!format!("{statuses:?}{mirror:?}").contains(TOKEN));
         assert!(!mirror.remote_for("configuration").contains(TOKEN));
         let digest = serde_json::to_string(&mirror.digest(Utc::now())).expect("json");
-        assert!(digest.contains("configuration") && !digest.contains(TOKEN), "{digest}");
+        assert!(
+            digest.contains("configuration") && !digest.contains(TOKEN),
+            "{digest}"
+        );
         // The token went in the header only, and nothing reached the forge.
         let calls = github.received_requests().await.expect("recorded");
         assert!(calls.iter().all(|c| !c.url.as_str().contains(TOKEN)));
-        assert!(shako.received_requests().await.expect("recorded").is_empty());
+        assert!(shako
+            .received_requests()
+            .await
+            .expect("recorded")
+            .is_empty());
     }
 
     #[tokio::test]
@@ -485,18 +524,32 @@ mod tests {
         let shako = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/repos/acme/jc-configuration"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"private": false})))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"private": false})),
+            )
             .mount(&github)
             .await;
-        let mirror = ConfigMirror::new("https://github.com/acme/jc-{repo}.git", token_file(TOKEN).into())
-            .expect("mirror")
-            .with_github("github.com", &github.uri())
-            .with_timing(Duration::ZERO, Duration::from_secs(60));
-        let forge = ShakoClient::new(Url::parse(&shako.uri()).expect("url"), "joinedcontext", "configuration", "forge-token")
-            .expect("client");
+        let mirror = ConfigMirror::new(
+            "https://github.com/acme/jc-{repo}.git",
+            token_file(TOKEN).into(),
+        )
+        .expect("mirror")
+        .with_github("github.com", &github.uri())
+        .with_timing(Duration::ZERO, Duration::from_secs(60));
+        let forge = ShakoClient::new(
+            Url::parse(&shako.uri()).expect("url"),
+            "joinedcontext",
+            "configuration",
+            "forge-token",
+        )
+        .expect("client");
         mirror.pass(&forge, &[]).await;
         assert!(mirror.statuses()[0].last_error.contains("is public"));
-        assert!(shako.received_requests().await.expect("recorded").is_empty());
+        assert!(shako
+            .received_requests()
+            .await
+            .expect("recorded")
+            .is_empty());
         // Within its backoff a refused repository is not asked again.
         mirror.pass(&forge, &[]).await;
         assert_eq!(github.received_requests().await.expect("recorded").len(), 1);
