@@ -146,7 +146,10 @@ async fn send(
         .oneshot(
             Request::builder()
                 .method(Method::POST)
-                .uri(format!("/api/endpoint/{SLUG}/ngsi-ld/v1{uri}"))
+                .uri(match uri.strip_prefix("odata:") {
+                    Some(rest) => format!("/api/endpoint/{SLUG}/odata/v4{rest}"),
+                    None => format!("/api/endpoint/{SLUG}/ngsi-ld/v1{uri}"),
+                })
                 .header("content-type", "application/ld+json")
                 .body(Body::from(body.to_string()))
                 .expect("a request"),
@@ -218,6 +221,23 @@ async fn a_foreign_or_missing_owner_is_refused_on_the_id() {
         let (status, problem, asked) = send(&FOUR, endpoint(PROJECT, "public"), uri, body).await;
         assert_refused_on_id(status, &problem, &asked, what);
     }
+}
+
+/// ADR-N-068 on the OData surface: a create naming another Organization's URN is refused on
+/// `id` there too, and the broker is never asked.
+#[tokio::test]
+async fn an_odata_create_naming_a_foreign_owner_is_refused() {
+    let mut odata = endpoint(PROJECT, "public");
+    odata.representations.push(Representation::OData);
+    let (status, problem, asked) = send(
+        &FOUR,
+        odata,
+        "odata:/Device",
+        json!({"id": "urn:ngsi-ld:Device:sk_bratislava:1", "status": "on"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+    assert!(asked.is_empty(), "the broker was asked: {asked:?}");
 }
 
 /// The owner's own id passes, and so does its domain, the form minted before the id existed.
