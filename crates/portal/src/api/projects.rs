@@ -294,7 +294,16 @@ fn may_open_in(
         ))),
         group if group.starts_with("group:") => {
             let name = group.trim_start_matches("group:");
-            if in_group(state, identity, name) {
+            // With several Organizations the group opens projects to this one's members only, as
+            // `anyone` does: a namesake group of another Organization opens nothing here.
+            let member = !several
+                || crate::permissions::belongs_to_organization(
+                    &state.mirror,
+                    &state.config.bootstrap_admins,
+                    identity,
+                    organization,
+                );
+            if member && in_group(state, identity, name) {
                 Ok(())
             } else {
                 Err(ApiError::Denied(format!(
@@ -1884,6 +1893,37 @@ mod tests {
         assert_eq!(creation(&state, "bb"), "org-admin");
         assert!(!lets_anyone_open(&state, "bb"));
         assert!(may_open(&state, &person("sub-jana"), None).is_err());
+    }
+
+    /// ISO-03 (PF-65): with several Organizations, `group:<name>` opens projects to that
+    /// Organization's members only; a person in a namesake realm group bound nowhere in it is
+    /// refused, a member of the group bound in it is let in.
+    #[test]
+    fn a_group_opens_projects_to_its_own_organizations_members_only() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(envelope(
+            "Organization",
+            "aa",
+            json!({ "domain": "aa.sk", "installation": true }),
+        ));
+        state.mirror.upsert(envelope(
+            "Organization",
+            "bb",
+            json!({ "domain": "bb.sk", "projects": { "creation": "group:openers" } }),
+        ));
+        state.mirror.upsert(envelope("Role", "reader", json!({ "rules": [
+            { "kinds": ["Endpoint"], "verbs": ["read"] }] })));
+        state.mirror.upsert(envelope("RoleBinding", "bb-readers", json!({
+            "subjects": [{ "user": "jana@hel.fi" }], "role": "reader",
+            "scope": { "organization": "bb" } })));
+        let mut outsider = person("sub-outsider");
+        outsider.username = "ota".into();
+        outsider.email = Some("ota@aa.sk".into());
+        outsider.groups = vec!["openers".into()];
+        assert!(may_open_in(&state, &outsider, "bb").is_err());
+        let mut member = person("sub-jana");
+        member.groups = vec!["openers".into()];
+        assert!(may_open_in(&state, &member, "bb").is_ok());
     }
 
     /// F-R2POR3-007: a `group:` member written as a Keycloak id (ADR-N-061) is its person.
