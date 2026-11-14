@@ -26,6 +26,7 @@ mod o7 {
         max_orderby_items: 3,
         max_in_list_len: 3,
         max_literal_len: 16,
+        max_skip: 5,
     };
 
     /// Tails that would each change a parse that read them: nothing, a valid continuation,
@@ -116,6 +117,28 @@ mod o7 {
                 "{prefix}: {answers:?}"
             );
         }
+    }
+
+    /// ODA-04: a `$skip` past its bound is refused; the client follows `@odata.nextLink`.
+    #[test]
+    fn a_skip_past_its_bound_is_refused() {
+        assert!(parse("Buildings?$skip=5", &Service, &TINY).is_ok());
+        let over = parse("Buildings?$skip=6", &Service, &TINY);
+        assert!(
+            matches!(
+                over,
+                Err(UrlError {
+                    kind: UrlErrorKind::LimitExceeded {
+                        limit: LimitKind::Skip,
+                        max: 5
+                    },
+                    ..
+                })
+            ),
+            "{over:?}"
+        );
+        let strict = parse("Buildings?$skip=10001", &Service, &Limits::strict());
+        assert!(strict.is_err(), "{strict:?}");
     }
 
     #[test]

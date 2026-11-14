@@ -795,6 +795,7 @@ fn limits_are_checked() {
         max_orderby_items: 2,
         max_in_list_len: 2,
         max_literal_len: 6,
+        max_skip: 10,
     };
     let limit = |uri: &str, kind: LimitKind| {
         let e = err_within(uri, &tiny);

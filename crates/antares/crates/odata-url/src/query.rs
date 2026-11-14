@@ -335,7 +335,14 @@ impl<'m, M: Model> Query<'_, '_, '_, 'm, M> {
             Name::Select => options.select = Some(self.select(scope)?),
             Name::Expand => options.expand = Some(self.expand(scope, 1)?),
             Name::Top => options.top = Some(unsigned(self.c)?),
-            Name::Skip => options.skip = Some(unsigned(self.c)?),
+            Name::Skip => {
+                let skip = unsigned(self.c)?;
+                let max = self.budget.limits.max_skip;
+                if usize::try_from(skip).map_or(true, |s| s > max) {
+                    return Err(self.c.limit(LimitKind::Skip, max));
+                }
+                options.skip = Some(skip);
+            }
             Name::Count => options.count = Some(boolean(self.c)?),
             Name::Format => options.format = Some(format(self.c)?),
             Name::Skiptoken => options.skiptoken = Some(qchars(self.c, "skiptoken")?),
