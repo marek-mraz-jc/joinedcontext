@@ -405,16 +405,16 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
     view.appendChild(el("p", drawn + " of " + views.length + " widgets drawn. Data from the Endpoints each names, not instructions.", "muted"));
     var grid = el("div", null, "board");
     view.appendChild(grid);
-    views.slice(0, 12).forEach(function (v, i) {
-      var tile = tiles[i] && typeof tiles[i] === "object" ? tiles[i] : {};
-      var box = el("section", null, "tile");
-      grid.appendChild(box);
+    // Every tile's box first, so each chart is drawn at the width it keeps in the grid.
+    var boxes = views.slice(0, 12).map(function () { var box = el("section", null, "tile"); grid.appendChild(box); return box; });
+    boxes.forEach(function (box, i) {
+      var v = views[i], tile = tiles[i] && typeof tiles[i] === "object" ? tiles[i] : {};
       var where = "Page " + ((int(tile.page) || 0) + 1) + ", widget " + ((int(tile.widget) || 0) + 1);
       var spec = v && !v.error ? specOf(v["joinedcontext.com/chartSpec"]) : null;
       if (!spec) {
         var error = v && v.error && typeof v.error === "object" ? v.error : {};
-        box.appendChild(el("h2", where + ": not drawn"));
-        box.appendChild(el("p", (int(error.status) !== null ? error.status + ": " : "") + (str(error.detail) || "The Portal drew nothing for this widget."), "refused"));
+        box.appendChild(el("h2", where + ": not drawn" + (int(error.status) !== null ? " (" + error.status + ")" : "")));
+        box.appendChild(el("p", str(error.detail) || "The Portal drew nothing for this widget.", "refused"));
         box.appendChild(el("p", "Ask for this widget alone to see more, or ask the Dashboard's owner for access.", "muted"));
         return;
       }

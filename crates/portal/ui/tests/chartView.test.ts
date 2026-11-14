@@ -152,8 +152,8 @@ describe("chart view", () => {
     expect(tiles.length).toBe(3);
     expect(tiles[0].querySelector("svg path")).not.toBeNull();
     expect(tiles[1].querySelector("svg")).toBeNull();
-    expect(tiles[1].querySelector("h2")?.textContent).toBe("Page 1, widget 2: not drawn");
-    expect(tiles[1].textContent).toContain("422: " + HOSTILE);
+    expect(tiles[1].querySelector("h2")?.textContent).toBe("Page 1, widget 2: not drawn (422)");
+    expect(tiles[1].querySelector("p.refused")?.textContent).toBe(HOSTILE);
     expect(tiles[2].querySelector("svg rect")).not.toBeNull();
     // One tooltip per chart, each labelled by its own title.
     expect(doc.querySelectorAll(".tip").length).toBe(2);
