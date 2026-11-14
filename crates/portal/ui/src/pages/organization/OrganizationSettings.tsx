@@ -38,7 +38,11 @@ interface OrganizationSpec {
   defaultLocale?: string;
   contacts?: Contact[];
   projects?: ProjectsPolicy;
-  policies?: { apps?: { public?: string; services?: string[] }; agents?: { models?: string[] } };
+  policies?: {
+    apps?: { public?: string; services?: string[] };
+    agents?: { models?: string[] };
+    signIn?: { secondFactor?: string };
+  };
   /** What its Portal, open data portal and sign-in page show (UIX-16). */
   appearance?: {
     instanceName?: string;
@@ -194,7 +198,10 @@ export function OrganizationSettings(): JSX.Element {
     label: `${localized(option.title as string | Record<string, string> | null, i18n.language, option.name)} (${option.reference})`,
   }));
   const form: EditableForm = {
-    schema: withMqttDefault(organizationSchema(t, limits.data?.entries ?? [], widgets), t),
+    schema: withMqttDefault(
+      organizationSchema(t, limits.data?.entries ?? [], widgets, limits.data?.secondFactorFloor),
+      t,
+    ),
     uiSchema: {
       policies: { apps: { services: APP_SERVICES_UI } },
       limits: { mqtt: ALLOWANCE_UI },
@@ -309,6 +316,7 @@ export function OrganizationSettings(): JSX.Element {
             publicApps={spec.policies?.apps?.public}
             services={spec.policies?.apps?.services}
             models={spec.policies?.agents?.models}
+            secondFactor={spec.policies?.signIn?.secondFactor}
           />
         )}
       </section>

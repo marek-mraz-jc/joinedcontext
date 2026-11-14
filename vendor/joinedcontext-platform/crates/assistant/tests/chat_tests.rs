@@ -2620,6 +2620,102 @@ async fn without_the_persons_token_the_organizations_endpoint_is_not_offered() {
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 
+/// AG-158 on the internal channel (T-6924): an answer read with the person's token loses the
+/// attributes its Endpoint's LinkML marks personal before the model, the trace and the stored
+/// turn see it, and the model is told which ones were withheld, never their values.
+#[tokio::test]
+async fn internal_chat_withholds_personal_slots_from_model_and_transcript() {
+    let w = world("chatpersonal", internal_deployment(true)).await;
+    let mcp = || {
+        Mock::given(method("POST"))
+            .and(path(format!("/api/endpoint/{HIDDEN_SLUG}/mcp")))
+            .and(header(
+                "authorization",
+                format!("Bearer {PERSON_TOKEN}").as_str(),
+            ))
+    };
+    mcp().and(body_string_contains("tools/list"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"jsonrpc": "2.0", "id": 1, "result": {"tools": [
+            {"name": "query_entities", "description": "Reads the office's own records.", "inputSchema": {"type": "object"}}
+        ]}})))
+        .mount(&w.gateway).await;
+    let linkml = "slots:\n  reporterEmail:\n    annotations: { personalData: true }\nclasses:\n  Record:\n    slots: [open, reporterEmail]\n";
+    mcp().and(body_string_contains("\"describe_schema\""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"jsonrpc": "2.0", "id": 1, "result": {
+            "content": [{"type": "text", "text": json!({"format": "linkml", "document": linkml}).to_string()}]
+        }})))
+        .with_priority(1)
+        .mount(&w.gateway).await;
+    let rows = json!({"entities": [{"id": "urn:ngsi-ld:Record:1", "type": "Record", "open": 3, "reporterEmail": "jana@example.org"}]});
+    mcp()
+        .and(body_string_contains("\"query_entities\""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"jsonrpc": "2.0", "id": 1, "result": {
+                "content": [{"type": "text", "text": rows.to_string()}]
+            }}),
+        ))
+        .mount(&w.gateway)
+        .await;
+    script(
+        &w.proxy,
+        vec![
+            completion(
+                tool_call("c1", "query_entities", json!({"endpoint": "interne"})),
+                500,
+            ),
+            completion(
+                json!({"role": "assistant", "content": "Otvorené sú 3 [1]."}),
+                600,
+            ),
+        ],
+    )
+    .await;
+    let (status, events, _) = answer_of(
+        &w.app,
+        ask_in_portal(
+            json!({"message": "Kto nahlásil otvorené záznamy?"}),
+            Some(PORTAL_TOKEN),
+            Some("jana"),
+            Some(PERSON_TOKEN),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{events:?}");
+    assert!(
+        events
+            .iter()
+            .any(|(n, d)| n == "tool" && d["endpoint"] == "interne" && d["status"] == "done"),
+        "{events:?}"
+    );
+    let calls = model_calls(&w.proxy).await;
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    let read = calls[1].1.to_string();
+    assert!(!read.contains("jana@example.org"), "{read}");
+    assert!(read.contains("Record.reporterEmail"), "{read}");
+    assert!(read.contains("open"), "{read}");
+    let mut stored: Vec<(Option<String>,)> = Vec::new();
+    for _ in 0..50 {
+        let mut tx = assistant::project_scope(&w.pool, "hronov")
+            .await
+            .expect("scope");
+        stored = sqlx::query_as("SELECT output FROM turn_steps WHERE name = 'query_entities'")
+            .fetch_all(&mut *tx)
+            .await
+            .expect("steps");
+        tx.rollback().await.expect("rollback");
+        if !stored.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(!stored.is_empty(), "the read is a stored step");
+    for (output,) in &stored {
+        let output = output.as_deref().unwrap_or_default();
+        assert!(!output.contains("jana@example.org"), "{output}");
+    }
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
 /// AG-115, AG-106: a public assistant answers the Portal as it answers a visitor: public
 /// passages, public Endpoints, and the person's token goes nowhere.
 #[tokio::test]

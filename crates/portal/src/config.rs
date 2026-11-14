@@ -322,6 +322,11 @@ pub struct Config {
     /// the Portal logs a warning at boot when it is off. `Config::for_tests` leaves it off so a
     /// test session that decides does not need a step-up of its own.
     pub decisions_need_second_factor: bool,
+    /// The deployment's sign-in second-factor floor (`JC_PORTAL_SECOND_FACTOR_FLOOR`, `required`
+    /// or `optional`; jc sets it from `[kaisatsu] second_factor`, T-6895): `true` when the
+    /// identity provider asks every person for an authenticator app whatever an Organization
+    /// sets. The Portal only shows it; kaisatsu enforces it.
+    pub second_factor_floor: bool,
     /// The usernames the Portal's own live journeys sign in as, the only people whose runs may
     /// carry `X-JC-Run-Origin: journey` (`JC_PORTAL_JOURNEY_USERS`, comma-separated; default
     /// none, so no one can mark a run; AG-93, T-2816).
@@ -431,6 +436,7 @@ impl std::fmt::Debug for Config {
                 "decisions_need_second_factor",
                 &self.decisions_need_second_factor,
             )
+            .field("second_factor_floor", &self.second_factor_floor)
             .field("dashboards", &self.dashboards)
             .field("setup", &self.setup)
             .field("cookie_key", &"[redacted]")
@@ -859,6 +865,20 @@ fn decisions_need_second_factor(lookup: &impl Fn(&str) -> Option<String>) -> boo
         );
     }
     on
+}
+
+/// `JC_PORTAL_SECOND_FACTOR_FLOOR`: `required`, `optional` or unset (optional); any other value
+/// refuses the start, so a typo never shows people a floor the identity provider does not hold.
+fn second_factor_floor(lookup: &impl Fn(&str) -> Option<String>) -> Result<bool, ConfigError> {
+    const VAR: &str = "JC_PORTAL_SECOND_FACTOR_FLOOR";
+    match lookup(VAR).as_deref().map(str::trim) {
+        None | Some("" | "optional") => Ok(false),
+        Some("required") => Ok(true),
+        Some(_) => Err(ConfigError::Invalid {
+            var: VAR,
+            reason: "write `required` or `optional` (jc: `[kaisatsu] second_factor`)".to_owned(),
+        }),
+    }
 }
 
 /// The group reconciler's Keycloak client: an id and exactly one proof, or neither.
@@ -2168,6 +2188,7 @@ impl Config {
             .unwrap_or_default();
 
         let decisions_need_second_factor = decisions_need_second_factor(&lookup);
+        let second_factor_floor = second_factor_floor(&lookup)?;
         let keycloak_admin = keycloak_admin(&lookup, oidc.as_ref())?;
 
         let artifact_store = artifact_store_settings(&lookup);
@@ -2240,6 +2261,7 @@ impl Config {
             database_url,
             bootstrap_admins,
             decisions_need_second_factor,
+            second_factor_floor,
             journey_users,
             keycloak_admin,
             organization_bounds: organization_bounds(&lookup)?,
@@ -2335,6 +2357,7 @@ impl Config {
             // one that does not is bound by whatever Role/RoleBinding the test puts in the mirror.
             bootstrap_admins: "portal-approver".to_owned(),
             decisions_need_second_factor: false,
+            second_factor_floor: false,
             journey_users: Vec::new(),
             keycloak_admin: None,
             organization_bounds: jc_core::kinds::OrganizationBounds::default(),
@@ -2657,6 +2680,32 @@ mod tests {
         assert!(!with(Some("false")));
         for kept_on in ["true", "0", "no", "False", " false", "off", ""] {
             assert!(with(Some(kept_on)), "{kept_on:?} keeps it on");
+        }
+    }
+
+    /// T-6895: the second-factor floor the settings page shows is `required` only when jc says so,
+    /// and a value the identity provider would not take refuses the start.
+    #[test]
+    fn the_second_factor_floor_is_required_optional_or_refused() {
+        let with = |value: Option<&'static str>| {
+            Config::from_vars(move |name| {
+                (name == "JC_PORTAL_SECOND_FACTOR_FLOOR")
+                    .then_some(value)
+                    .flatten()
+                    .map(str::to_owned)
+            })
+            .map(|config| config.second_factor_floor)
+        };
+        assert!(!with(None).expect("unset"));
+        assert!(!with(Some("optional")).expect("optional"));
+        assert!(with(Some("required")).expect("required"));
+        for refused in ["Required", "yes", "true"] {
+            match with(Some(refused)) {
+                Err(ConfigError::Invalid { var, .. }) => {
+                    assert_eq!(var, "JC_PORTAL_SECOND_FACTOR_FLOOR")
+                }
+                other => panic!("{refused}: {other:?}"),
+            }
         }
     }
 

@@ -223,6 +223,41 @@ async fn an_ungranted_space_and_an_unknown_one_are_indistinguishable() {
     assert_eq!(ungranted_body, unknown_body);
 }
 
+/// RTE-03, SP-06: the answer's `Server-Timing` says no more than its body. A decision the
+/// gateway ran for a space that exists but is closed to the caller would otherwise tell it from
+/// a space nobody serves.
+#[tokio::test]
+async fn an_ungranted_space_and_an_unknown_one_name_the_same_decision_time() {
+    let split = |path: String| async move {
+        let response = gateway("http://127.0.0.1:1")
+            .oneshot(get_with(&path, None))
+            .await
+            .expect("the gateway answers");
+        let timing = response
+            .headers()
+            .get("server-timing")
+            .and_then(|value| value.to_str().ok())
+            .expect("a Server-Timing header")
+            .to_owned();
+        let parts: Vec<String> = timing
+            .split(", ")
+            .filter(|entry| !entry.starts_with("total;"))
+            .map(str::to_owned)
+            .collect();
+        (response.status(), parts)
+    };
+    for path in [
+        "",
+        "/ngsi-ld/v1/entities?type=AirQualityObserved",
+        "/ngsi-ld/v1/entities/urn:ngsi-ld:AirQualityObserved:x",
+    ] {
+        let closed = split(format!("/cs/{CLOSED}{path}")).await;
+        let unknown = split(format!("/cs/nothing-here{path}")).await;
+        assert_eq!(closed.0, StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(closed, unknown, "{path}");
+    }
+}
+
 /// The record was the only surface that answered the same for both; the data surfaces told a
 /// closed space from a missing one, and space names are guessable words (T-0814, R20, SP-06).
 #[tokio::test]

@@ -63,6 +63,22 @@ pub struct SignInPolicy {
     /// The realm's password policy.
     #[serde(default, skip_serializing_if = "is_default")]
     pub password: PasswordPolicy,
+    /// Whether every member must sign in with an authenticator app: `required` asks each one to
+    /// set it up at their next sign-in; `optional` or absent keeps the deployment's floor. It only
+    /// raises that floor: under a `required` deployment, `optional` has no effect. Service accounts
+    /// are never asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub second_factor: Option<SecondFactor>,
+}
+
+/// `spec.policies.signIn.secondFactor`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SecondFactor {
+    /// Every member signs in with an authenticator app.
+    Required,
+    /// The deployment's floor decides.
+    Optional,
 }
 
 /// `spec.policies.signIn.password`: written to the realm's password policy.
@@ -901,6 +917,34 @@ fn quota_mqtt(spec: &OrganizationSpec) -> Option<&crate::kinds::MqttAllowance> {
 mod tests {
     use super::*;
     use crate::kinds::Quotas;
+
+    /// T-6895: `spec.policies.signIn.secondFactor` takes `required` or `optional`, absent is
+    /// neither, and any other value or a misspelt key is refused.
+    #[test]
+    fn the_second_factor_policy_takes_two_values_and_refuses_the_rest() {
+        let policies = |value: serde_json::Value| {
+            serde_json::from_value::<OrganizationPolicies>(serde_json::json!({ "signIn": value }))
+        };
+        let of = |value: &str| {
+            policies(serde_json::json!({ "secondFactor": value })).map(|p| p.sign_in.second_factor)
+        };
+        assert_eq!(of("required").ok(), Some(Some(SecondFactor::Required)));
+        assert_eq!(of("optional").ok(), Some(Some(SecondFactor::Optional)));
+        assert_eq!(
+            policies(serde_json::json!({}))
+                .ok()
+                .map(|p| p.sign_in.second_factor),
+            Some(None)
+        );
+        for refused in ["Required", "sometimes", ""] {
+            assert!(of(refused).is_err(), "{refused}");
+        }
+        assert!(policies(serde_json::json!({ "second_factor": "required" })).is_err());
+        let unset = OrganizationPolicies::default();
+        assert!(serde_json::to_value(&unset)
+            .ok()
+            .is_some_and(|v| v.get("signIn").is_none()));
+    }
 
     /// LIM-01, T-6716: no ceiling set is what deployments ran with, never unlimited; an
     /// Organization's or a Project's quota only narrows the deployment's ceiling.

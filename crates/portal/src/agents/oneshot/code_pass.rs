@@ -610,6 +610,18 @@ impl Driver {
         })
     }
 
+    /// What keeps `files` from building or from running here: [`code::problems`] and a call of a
+    /// service the App's layers have off (AP-164). Every pass and edit asks this before a preview.
+    pub(super) fn check_files(&self, files: &BTreeMap<String, String>) -> Vec<String> {
+        let mut problems = code::problems(files);
+        problems.extend(code::off_service_calls(
+            crate::ops::runs::SERVICES_CATALOG,
+            files,
+            |service| self.service_on(service),
+        ));
+        problems
+    }
+
     /// Whether the App's organization, project and App layers all have `service` on (AP-164): an
     /// App the mirror does not hold yet uses none beyond identity and data.
     fn service_on(&self, service: &str) -> bool {
@@ -675,12 +687,7 @@ impl Driver {
             }),
         )
         .await?;
-        let mut problems = code::problems(files);
-        problems.extend(code::off_service_calls(
-            crate::ops::runs::SERVICES_CATALOG,
-            files,
-            |service| self.service_on(service),
-        ));
+        let mut problems = self.check_files(files);
         // The prose already says what those blocks did, so a lost one is a repair, not a note.
         if unread > 0 {
             problems.push(unread_problem(unread));

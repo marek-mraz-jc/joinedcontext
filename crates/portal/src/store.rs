@@ -166,6 +166,18 @@ impl Mirror {
         self.len() == 0
     }
 
+    /// The kinds of every manifest in `namespace`, the refused ones included: what a clone of
+    /// that project's repository shows (T-6896).
+    pub fn kinds_in(&self, namespace: &str) -> std::collections::BTreeSet<String> {
+        let held = self.resources.read().unwrap_or_else(|p| p.into_inner());
+        let refused = self.refused.read().unwrap_or_else(|p| p.into_inner());
+        held.keys()
+            .chain(refused.keys())
+            .filter(|key| key.namespace == namespace)
+            .map(|key| key.kind.clone())
+            .collect()
+    }
+
     /// Every project the repository holds, sorted: the distinct `metadata.namespace` of the
     /// mirrored manifests, since a project is exactly a `projects/<slug>/` directory with
     /// something in it (PF-05), and every `Project` manifest, which lies under `org`. Cluster-scoped resources carry no namespace and are skipped;

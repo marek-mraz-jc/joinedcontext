@@ -58,6 +58,7 @@ const LIMITS: OrganizationLimits = {
       quota: { contextSpaces: { limit: 12, used: 3 }, agentRunsPerDay: { limit: null, used: null } },
     },
   ],
+  secondFactorFloor: "optional",
 };
 
 /** An organization administrator (UI-75, PF-03): the page opens only for approve and delete on RoleBinding. */
@@ -127,6 +128,27 @@ describe("Organization settings: policies and limits", () => {
     expect(within(models).getByText(en.organization.policy.everyModel)).toBeInTheDocument();
   });
 
+  // T-6895: the second factor tightens only. Under a required deployment floor the row says it is
+  // inherited whatever the Organization sets; under an optional floor the Organization's value holds.
+  it("shows the second factor in force and where it comes from", async () => {
+    const policy = en.organization.policy;
+    const shown = async (floor: string, secondFactor?: string) => {
+      cleanup();
+      renderPage(
+        <OrganizationLimitsView limits={{ ...LIMITS, secondFactorFloor: floor }} secondFactor={secondFactor} />,
+        { answer: () => undefined },
+      );
+      return screen.findByRole("row", { name: new RegExp(policy.secondFactor) });
+    };
+    const inherited = await shown("required", "optional");
+    expect(within(inherited).getByText(policy.secondFactorInherited)).toBeInTheDocument();
+    expect(within(inherited).getByText(policy.secondFactorInheritedHint)).toBeInTheDocument();
+    expect(within(await shown("optional", "required")).getByText(policy.secondFactor_required)).toBeInTheDocument();
+    const unset = await shown("optional");
+    expect(within(unset).getByText(policy.secondFactorByDefault)).toBeInTheDocument();
+    expect(within(unset).getByText(policy.secondFactorHint)).toBeInTheDocument();
+  });
+
   it("shows whose quota each project runs on and what it uses", async () => {
     renderSettings();
     const helsinki = await screen.findByRole("row", { name: /helsinki/ });
@@ -174,7 +196,7 @@ describe("Organization settings: policies and limits", () => {
   });
 
   it("says so when the person reads no project, and the catalog still stands", async () => {
-    renderPage(<OrganizationLimitsView limits={{ entries: LIMITS.entries, projects: [] }} />, { answer: () => undefined });
+    renderPage(<OrganizationLimitsView limits={{ ...LIMITS, projects: [] }} />, { answer: () => undefined });
     expect(await screen.findByText(en.organization.limits.noProjects)).toBeInTheDocument();
     expect(screen.getByText(en.organization.limit.limits.agents.spendPerDay.label)).toBeInTheDocument();
   });
@@ -234,6 +256,29 @@ describe("the Organization form", () => {
     expect(errors(["doprava/prehlad"])).toEqual([]);
     expect(errors(["doprava/interne"]).join("\n")).toMatch(/opendataWidgets/);
     expect(errors(["mhd/linky"]).join("\n")).toMatch(/opendataWidgets/);
+  });
+
+  it("offers the second factor as required or optional, refuses anything else and names an inherited floor", () => {
+    expect(errorsOf({ ...base, policies: { signIn: { secondFactor: "sometimes" } } }).join("\n")).toMatch(/secondFactor/);
+    expect(errorsOf({ ...base, policies: { signIn: { secondFactor: "required" } } })).toEqual([]);
+    expect(errorsOf({ ...base, policies: { signIn: { secondFactor: "optional" } } })).toEqual([]);
+    type Field = { description: string; oneOf: { const: string; title: string }[] };
+    const field = (floor: string) =>
+      (organizationSchema(t, LIMITS.entries, [], floor) as {
+        properties: { policies: { properties: { signIn: { properties: { secondFactor: Field } } } } };
+      }).properties.policies.properties.signIn.properties.secondFactor;
+    expect(field("optional").oneOf.map((option) => option.const)).toEqual(["required", "optional"]);
+    expect(field("optional").description).toBe(en.organization.policy.secondFactorHint);
+    expect(field("required").description).toContain(en.organization.policy.secondFactorInheritedHint);
+    // The form shows the arrangement's help, so under a required floor the Optional choice names the floor itself.
+    const titles = (floor: string) => field(floor).oneOf.map((option) => option.title);
+    expect(titles("required")).toEqual([en.organization.policy.secondFactor_required, en.organization.policy.secondFactor_optionalUnderFloor]);
+    expect(titles("optional")).toEqual([en.organization.policy.secondFactor_required, en.organization.policy.secondFactor_optional]);
+    // The password policy of the catalog still sits beside it.
+    const withPassword = organizationSchema(t, [entry("spec.policies.signIn.password.minLength", "signIn", { min: 12 })]) as {
+      properties: { policies: { properties: { signIn: { properties: Record<string, unknown> } } } };
+    };
+    expect(Object.keys(withPassword.properties.policies.properties.signIn.properties).sort()).toEqual(["password", "secondFactor"]);
   });
 
   it("refuses a public-app policy the platform does not know", () => {

@@ -142,6 +142,12 @@ pub struct ProjectQuota {
 pub struct OrganizationLimits {
     pub entries: Vec<LimitEntry>,
     pub projects: Vec<ProjectQuota>,
+    /// The deployment's sign-in second-factor floor, `required` or `optional` (T-6895). Under
+    /// `required` every Organization inherits it and its own `spec.policies.signIn.secondFactor:
+    /// optional` has no effect; under `optional` the Organization's `required` asks its members.
+    #[serde(rename = "secondFactorFloor")]
+    #[schema(example = "optional")]
+    pub second_factor_floor: &'static str,
 }
 
 /// The section's name as the page and the API spell it: jc-core's own serialization.
@@ -262,7 +268,15 @@ pub async fn get_limits(
             }
         })
         .collect();
-    Ok(Json(OrganizationLimits { entries, projects }))
+    Ok(Json(OrganizationLimits {
+        entries,
+        projects,
+        second_factor_floor: if state.config.second_factor_floor {
+            "required"
+        } else {
+            "optional"
+        },
+    }))
 }
 
 pub fn router() -> Router<AppState> {

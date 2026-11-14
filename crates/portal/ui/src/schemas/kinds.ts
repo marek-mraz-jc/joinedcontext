@@ -2942,6 +2942,8 @@ export const QUOTA_DIMENSIONS = [
 
 /** `spec.policies.apps.public` (ADR-N-035): whether a project may publish an app to everyone. */
 const PUBLIC_APPS = ["allowed", "refused"] as const;
+/** `spec.policies.signIn.secondFactor` (T-6895); absent keeps the deployment's floor. */
+export const SECOND_FACTOR = ["required", "optional"] as const;
 
 /** The platform services an App may call (AP-161…AP-170); `identity` and `data` are every App's. */
 export const APP_SERVICES = ["identity", "data", "files", "email", "jobs", "ai"] as const;
@@ -2985,6 +2987,7 @@ export function organizationSchema(
   t: (key: string) => string,
   entries: readonly LimitEntry[] = [],
   widgets: readonly WidgetOption[] = [],
+  secondFactorFloor = "optional",
 ): JsonSchema {
   const quota = Object.fromEntries(
     QUOTA_DIMENSIONS.map((dimension) => [
@@ -3078,7 +3081,16 @@ export function organizationSchema(
         type: "object",
         title: t("organization.limitGroup.limits"),
         description: t("organization.limitGroup.limitsHint"),
-        properties: {},
+        // Named apart from Policies → Sign-in, which holds the second factor and the passwords.
+        properties: entries.some((entry) => entry.path.startsWith("spec.limits.signIn."))
+          ? {
+              signIn: {
+                type: "object",
+                title: t("organization.limitGroup.sessions"),
+                description: t("organization.limitGroup.sessionsHint"),
+              },
+            }
+          : {},
       },
       // The two policies that are no number; every numeric one comes from the catalog below.
       policies: {
@@ -3098,6 +3110,30 @@ export function organizationSchema(
                 oneOf: PUBLIC_APPS.map((value) => ({ const: value, title: t(`organization.policy.publicApps_${value}`) })),
               },
               services: appServicesProperty(t, "appServices.organizationHint"),
+            },
+          },
+          // Under a `required` deployment floor the field says so: Optional here changes nothing.
+          signIn: {
+            type: "object",
+            title: t("organization.limitGroup.signIn"),
+            description: t("organization.limitGroup.signInPoliciesHint"),
+            properties: {
+              secondFactor: {
+                type: "string",
+                title: t("organization.policy.secondFactor"),
+                description:
+                  secondFactorFloor === "required"
+                    ? `${t("organization.policy.secondFactorHint")} ${t("organization.policy.secondFactorInheritedHint")}`
+                    : t("organization.policy.secondFactorHint"),
+                oneOf: SECOND_FACTOR.map((value) => ({
+                  const: value,
+                  // The form shows the arrangement's help, not this description: the choice itself names the floor.
+                  title:
+                    value === "optional" && secondFactorFloor === "required"
+                      ? t("organization.policy.secondFactor_optionalUnderFloor")
+                      : t(`organization.policy.secondFactor_${value}`),
+                })),
+              },
             },
           },
           agents: {

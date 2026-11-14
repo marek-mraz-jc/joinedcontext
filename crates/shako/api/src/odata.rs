@@ -218,6 +218,30 @@ async fn build_entity_table(
         // caller's `$filter` says.
         .filter(|r| only_repo.is_none_or(|id| r.id == id))
         .collect();
+    // Mirrors, hooks and deliveries name outbound addresses that can carry a credential: Admin reads.
+    let admin_ids = || -> std::collections::BTreeSet<RepoId> {
+        visible_repos
+            .iter()
+            .filter(|r| {
+                state
+                    .authorizer
+                    .check(
+                        ctx,
+                        Action::Admin,
+                        &ObjectTarget::Repository {
+                            instance_id: r.instance_id,
+                            org_id: r.org_id,
+                            project_id: (!r.project_id.is_empty()).then(|| r.project_id.clone()),
+                            owner: r.owner.clone(),
+                            repo: r.name.clone(),
+                            git_ref: None,
+                        },
+                    )
+                    .allowed
+            })
+            .map(|r| r.id)
+            .collect()
+    };
 
     let rows: Vec<Value> = match set_name {
         "Instances" => {
@@ -399,8 +423,7 @@ async fn build_entity_table(
             out
         }
         "Webhooks" => {
-            let visible_ids: std::collections::BTreeSet<RepoId> =
-                visible_repos.iter().map(|r| r.id).collect();
+            let visible_ids = admin_ids();
             state
                 .store()
                 .list_webhooks(ctx.instance_id, ctx.org_id, None)
@@ -417,46 +440,37 @@ async fn build_entity_table(
                 })
                 .collect()
         }
-        "Deliveries" => state
-            .store()
-            .list_deliveries(ctx.instance_id, ctx.org_id, None)
-            .await?
-            .into_iter()
-            .map(|d| {
-                json!({
-                    "Id": d.id.to_string(),
-                    "WebhookId": d.webhook_id.to_string(),
-                    "Event": d.event,
-                    "Status": d.status,
-                    "ResponseCode": d.response_code,
-                    "At": d.delivered_at.to_rfc3339(),
+        "Deliveries" => {
+            let visible_ids = admin_ids();
+            let hooks: std::collections::BTreeSet<_> = state
+                .store()
+                .list_webhooks(ctx.instance_id, ctx.org_id, None)
+                .await?
+                .into_iter()
+                .filter(|h| visible_ids.contains(&h.repo_id))
+                .map(|h| h.id)
+                .collect();
+            state
+                .store()
+                .list_deliveries(ctx.instance_id, ctx.org_id, None)
+                .await?
+                .into_iter()
+                .filter(|d| hooks.contains(&d.webhook_id))
+                .map(|d| {
+                    json!({
+                        "Id": d.id.to_string(),
+                        "WebhookId": d.webhook_id.to_string(),
+                        "Event": d.event,
+                        "Status": d.status,
+                        "ResponseCode": d.response_code,
+                        "At": d.delivered_at.to_rfc3339(),
+                    })
                 })
-            })
-            .collect(),
+                .collect()
+        }
         "PushMirrors" => {
             // A mirror's address and last error are Admin reads, as the repository's own list.
-            let visible_ids: std::collections::BTreeSet<RepoId> = visible_repos
-                .iter()
-                .filter(|r| {
-                    state
-                        .authorizer
-                        .check(
-                            ctx,
-                            Action::Admin,
-                            &ObjectTarget::Repository {
-                                instance_id: r.instance_id,
-                                org_id: r.org_id,
-                                project_id: (!r.project_id.is_empty())
-                                    .then(|| r.project_id.clone()),
-                                owner: r.owner.clone(),
-                                repo: r.name.clone(),
-                                git_ref: None,
-                            },
-                        )
-                        .allowed
-                })
-                .map(|r| r.id)
-                .collect();
+            let visible_ids = admin_ids();
             state
                 .store()
                 .list_push_mirrors(ctx.instance_id, ctx.org_id, None)

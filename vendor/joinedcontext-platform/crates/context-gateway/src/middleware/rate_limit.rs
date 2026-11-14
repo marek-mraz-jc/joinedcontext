@@ -401,8 +401,9 @@ pub(crate) fn address_key(headers: &axum::http::HeaderMap) -> String {
         .get_all("x-forwarded-for")
         .iter()
         .next_back()
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.rsplit(',').next())
+        // By bytes: a client's entry that is no text must not take the edge's with it.
+        .and_then(|value| value.as_bytes().rsplit(|b| *b == b',').next())
+        .and_then(|last| std::str::from_utf8(last).ok())
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("unknown");
@@ -648,6 +649,16 @@ mod tests {
             ])),
             "address:203.0.113.7",
             "the edge's own line is the last one"
+        );
+        let mut opaque = axum::http::HeaderMap::new();
+        opaque.append(
+            "x-forwarded-for",
+            axum::http::HeaderValue::from_bytes(b"\xff, 203.0.113.8").expect("a header value"),
+        );
+        assert_eq!(
+            address_key(&opaque),
+            "address:203.0.113.8",
+            "a client's entry that is no text keeps the edge's"
         );
     }
 }

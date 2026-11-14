@@ -10,7 +10,7 @@ use joinedcontext_portal::config::ClientAuth;
 use std::sync::Arc;
 
 use joinedcontext_portal::reconciler::groups::{
-    derived_groups, DerivedGroup, GroupSync, MANAGED_BY, MANAGED_VALUE,
+    derived_groups, DerivedGroup, GroupSync, MANAGED_BY, MANAGED_VALUE, SECOND_FACTOR_ATTRIBUTE,
 };
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::store::Mirror;
@@ -424,6 +424,7 @@ fn derived(name: &str, member: &str, organization: Option<&str>) -> DerivedGroup
         members: [member.to_owned()].into_iter().collect(),
         jc_org: None,
         jc_groups: organization.map(|organization| format!("/{organization}/{name}")),
+        second_factor: false,
     }
 }
 
@@ -433,6 +434,7 @@ fn bound_group(organization: &str, member: &str) -> DerivedGroup {
         members: [member.to_owned()].into_iter().collect(),
         jc_org: Some(organization.to_owned()),
         jc_groups: None,
+        second_factor: false,
     }
 }
 
@@ -541,6 +543,138 @@ fn bound_in(name: &str, person: &str, scope: Value) -> ResourceEnvelope {
         name,
         json!({ "subjects": [{ "user": person }], "role": "steward", "scope": scope }),
     )
+}
+
+/// T-6895: an Organization whose manifest sets `spec.policies.signIn.secondFactor: required` marks
+/// its group with `jc.secondFactor` for kaisatsu, even before its first project; one that sets
+/// `optional` or nothing has the mark taken off a group that still carries it.
+#[tokio::test]
+async fn an_organization_requiring_a_second_factor_marks_its_group_and_one_that_stops_is_cleared() {
+    let mirror = mirror_with(vec![
+        organizational(
+            "Organization",
+            "hel",
+            json!({ "policies": { "signIn": { "secondFactor": "required" } } }),
+        ),
+        organizational(
+            "Organization",
+            "espoo",
+            json!({ "policies": { "signIn": { "secondFactor": "optional" } } }),
+        ),
+        organizational("Organization", "vantaa", json!({})),
+        organizational("Project", "tapiola", json!({ "organizationRef": "espoo" })),
+    ]);
+    let projects = [("tapiola".to_owned(), "tapiola".to_owned())]
+        .into_iter()
+        .collect();
+    let generated = derived_groups(&mirror, &projects, chrono::Utc::now());
+    let bound = |organization: &str| {
+        generated
+            .iter()
+            .find(|group| group.name == format!("{organization}_bound"))
+    };
+    assert!(bound("hel").is_some_and(|group| group.second_factor));
+    assert!(bound("espoo").is_some_and(|group| !group.second_factor));
+    assert!(
+        bound("vantaa").is_none(),
+        "no project and no rule: no group"
+    );
+    assert!(generated
+        .iter()
+        .filter(|group| group.jc_org.is_none())
+        .all(|group| !group.second_factor));
+
+    let keycloak = realm().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/groups")))
+        .and(query_param("briefRepresentation", "false"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            { "id": "espoo", "name": "espoo_bound", "attributes": {
+                MANAGED_BY: [MANAGED_VALUE], "jc_org": ["espoo"], SECOND_FACTOR_ATTRIBUTE: ["required"]
+            } },
+            { "id": "readers", "name": "tapiola-readers", "attributes": {
+                MANAGED_BY: [MANAGED_VALUE], "jc_groups": ["/espoo/tapiola-readers"]
+            } },
+            { "id": "writers", "name": "tapiola-writers", "attributes": {
+                MANAGED_BY: [MANAGED_VALUE], "jc_groups": ["/espoo/tapiola-writers"]
+            } }
+        ])))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/groups")))
+        .and(query_param("search", "hel_bound"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!([{ "id": "hel", "name": "hel_bound" }])),
+        )
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{REALM}/groups")))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(format!("{REALM}/groups/espoo")))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex(format!("^{REALM}/groups/[a-z]+/members$")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&keycloak)
+        .await;
+
+    let outcomes = sync(&keycloak).converge_with(&mirror, &generated).await;
+    assert!(outcomes.iter().all(|o| o.error.is_none()), "{outcomes:?}");
+    let requests = keycloak.received_requests().await.expect("recorded");
+    let wrote = |verb: &str, address: String| {
+        requests
+            .iter()
+            .find(|r| r.method.as_str() == verb && r.url.path() == address)
+            .map(|r| serde_json::from_slice::<Value>(&r.body).expect("a JSON body"))
+    };
+    let made = wrote("POST", format!("{REALM}/groups")).expect("hel's group");
+    assert_eq!(made["name"], "hel_bound");
+    assert_eq!(
+        made["attributes"],
+        json!({ MANAGED_BY: [MANAGED_VALUE], "jc_org": ["hel"], SECOND_FACTOR_ATTRIBUTE: ["required"] })
+    );
+    let cleared = wrote("PUT", format!("{REALM}/groups/espoo")).expect("espoo's group");
+    assert_eq!(
+        cleared["attributes"],
+        json!({ MANAGED_BY: [MANAGED_VALUE], "jc_org": ["espoo"] })
+    );
+    assert!(wrote("PUT", format!("{REALM}/groups/readers")).is_none());
+}
+
+/// T-6895: an Organization policies block that does not parse (a direct git edit, an older
+/// Portal) keeps the second factor required, so a broken manifest never loosens the rule.
+#[test]
+fn an_organization_whose_policies_do_not_parse_keeps_the_second_factor() {
+    let broken = [
+        json!({ "signIn": { "secondFactor": "sometimes" } }),
+        json!({ "signIn": { "secondFactor": "optional", "unknown": true } }),
+        json!("required"),
+    ];
+    for policies in broken {
+        let mirror = mirror_with(vec![organizational(
+            "Organization",
+            "turku",
+            json!({ "policies": policies }),
+        )]);
+        let generated = derived_groups(
+            &mirror,
+            &std::collections::BTreeMap::new(),
+            chrono::Utc::now(),
+        );
+        assert!(
+            generated
+                .iter()
+                .any(|group| group.name == "turku_bound" && group.second_factor),
+            "{policies}: {generated:?}"
+        );
+    }
 }
 
 /// EP-172, T-6461: membership follows bindings and nothing else. The binding of the project and
