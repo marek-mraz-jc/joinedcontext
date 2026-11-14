@@ -335,20 +335,34 @@ impl RdfGraph {
         self.subjects_with(ns::RDF_TYPE, &Term::Iri(class_iri.to_owned()))
     }
 
+    /// The triples of `(subject, predicate)`, in object order: the set is ordered by subject,
+    /// then predicate, so they are one range starting at the smallest object.
+    fn with_subject_predicate<'a>(
+        &'a self,
+        subject: &'a SubjectNode,
+        predicate: &'a str,
+    ) -> impl Iterator<Item = &'a Triple> + 'a {
+        let start = Triple {
+            subject: subject.clone(),
+            predicate: predicate.to_owned(),
+            object: Term::Iri(String::new()),
+        };
+        self.triples
+            .range(start..)
+            .take_while(move |t| &t.subject == subject && t.predicate == predicate)
+    }
+
     /// Returns all objects for `(subject, predicate)`.
     pub fn objects_of(&self, subject: &SubjectNode, predicate: &str) -> Vec<Term> {
-        self.triples
-            .iter()
-            .filter(|t| &t.subject == subject && t.predicate == predicate)
+        self.with_subject_predicate(subject, predicate)
             .map(|t| t.object.clone())
             .collect()
     }
 
     /// Returns the first object for `(subject, predicate)`.
     pub fn first_object(&self, subject: &SubjectNode, predicate: &str) -> Option<Term> {
-        self.triples
-            .iter()
-            .find(|t| &t.subject == subject && t.predicate == predicate)
+        self.with_subject_predicate(subject, predicate)
+            .next()
             .map(|t| t.object.clone())
     }
 
@@ -392,6 +406,31 @@ impl RdfGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn objects_of_reads_exactly_its_subject_and_predicate() {
+        let mut g = RdfGraph::new();
+        let s = |n: &str| SubjectNode::Named(format!("https://x/{n}"));
+        let lit = |v: &str| Term::Literal(LiteralValue::plain(v));
+        for (subj, pred, obj) in [
+            ("a", "p", "2"),
+            ("a", "p", "1"),
+            ("a", "o", "x"),
+            ("a", "q", "y"),
+            ("b", "p", "z"),
+        ] {
+            g.insert(s(subj), pred, lit(obj));
+        }
+        g.insert(s("a"), "p", Term::Iri(String::new()));
+        g.insert(SubjectNode::Blank("a".into()), "p", lit("w"));
+        assert_eq!(
+            g.objects_of(&s("a"), "p"),
+            [Term::Iri(String::new()), lit("1"), lit("2")]
+        );
+        assert_eq!(g.first_object(&s("a"), "q"), Some(lit("y")));
+        assert_eq!(g.first_object(&s("c"), "p"), None);
+        assert!(g.objects_of(&s("a"), "r").is_empty());
+    }
 
     #[test]
     fn terms_print_as_n_triples_and_convert() {
