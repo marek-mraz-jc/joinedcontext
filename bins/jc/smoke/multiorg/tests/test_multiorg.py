@@ -252,12 +252,13 @@ def test_a_refusal_that_names_the_owners_objects_fails_its_isolation_row(tmp_pat
             return 404, {}, b'{"detail": "no project; did you mean mo-hel-admin?"}' if path.endswith("/drafts") else b"{}"
 
     s = suite.Suite(args(tmp_path))
-    s.exp = {"hel": {"projects": {"helsinki": EMPTY}}, "zilina": {"projects": {}}}
+    s.exp = {"hel": {"projects": {"helsinki": EMPTY | {"Endpoint": ["hel-bikes"]}}}, "zilina": {"projects": {}}}
     s.session = lambda key, on=None: Session(key)
     s.check_project_reads()
     got = {r["id"]: r["result"] for r in s.rows}
     assert got["isolation.zilina-admin.helsinki/drafts"] == "fail" and got["isolation.zilina-admin.helsinki/spaces"] == "pass"
-    assert got["export.hel-admin.helsinki"] == "fail"  # the own export did not name helsinki
+    assert got["export.hel-admin.helsinki"] == "fail"  # the own export did not hold the named Endpoint
+    assert "isolation.zilina-admin.helsinki/export?names=hel-bikes" in got
 
 
 def test_an_operators_installation_organization_gets_operator_rows_and_no_refusal_rows(tmp_path):
