@@ -280,10 +280,11 @@ fn decide(questions: &Questions, id: &str, body: &[u8], now: Instant) -> Respons
         Err(why) => return ngsi_problem(StatusCode::BAD_REQUEST, why),
     };
     let mut map = locked(questions);
-    let Some(q) = map
-        .get_mut(id)
-        .filter(|q| q.until > now && by.iter().all(|pair| q.subject.contains(pair)))
-    else {
+    let Some(q) = map.get_mut(id).filter(|q| {
+        // the person, never only a header many callers share
+        let names_person = by.iter().any(|(name, _)| name == "x-jc-subject");
+        q.until > now && names_person && by.iter().all(|pair| q.subject.contains(pair))
+    }) else {
         return ngsi_problem(StatusCode::NOT_FOUND, "no such open question");
     };
     q.decision = Some(decision);
@@ -437,6 +438,25 @@ mod tests {
         let answer = decide(&q, "n1", wider.to_string().as_bytes(), now);
         assert_eq!(answer.status(), StatusCode::NOT_FOUND);
         assert_eq!(take_in(&q, "n1", &person("alice"), now), Found::Waiting);
+    }
+
+    #[test]
+    fn a_decision_names_the_person_and_not_only_a_shared_header() {
+        let q = Questions::default();
+        let now = Instant::now();
+        let mut subject = person("alice");
+        subject.push(("x-jc-org".to_owned(), b"city".to_vec()));
+        assert!(ask_in(
+            &q,
+            "n1",
+            &subject,
+            ("v", "delete_entity", "Allow?"),
+            now
+        ));
+        let shared = json!({"decision": "accept", "subject": {"x-jc-org": "city"}});
+        let answer = decide(&q, "n1", shared.to_string().as_bytes(), now);
+        assert_eq!(answer.status(), StatusCode::NOT_FOUND);
+        assert_eq!(take_in(&q, "n1", &subject, now), Found::Waiting);
     }
 
     #[test]

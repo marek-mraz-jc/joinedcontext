@@ -130,6 +130,26 @@ pub struct PortalSource {
     /// The public base the Endpoints of converted datasets answer under.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway: Option<String>,
+    /// The deployment's file of converted datasets beside jc.toml, e.g. `od-datasets.json`: only
+    /// those datasets are listed, with their Endpoint's distributions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub converted_file: Option<String>,
+    /// The catalogue base the converted file's dataset URLs name, replaced by this portal's own,
+    /// e.g. `https://opendata.dev.joinedcontext.com/`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub datasets_base: Option<String>,
+    /// Whether the source runs on its schedule; `false` keeps it and its records without runs.
+    #[serde(default = "enabled", skip_serializing_if = "is_enabled")]
+    pub enabled: bool,
+}
+
+const fn enabled() -> bool {
+    true
+}
+
+// serde's skip_serializing_if passes a reference.
+const fn is_enabled(on: &bool) -> bool {
+    *on
 }
 
 /// Desired specification of a [`Portal`][crate::kinds::Portal] (ODP-08).
@@ -349,6 +369,28 @@ impl PortalSource {
                 return Err(invalid(field("gateway"), "an https:// or http:// address"));
             }
         }
+        if let Some(file) = &self.converted_file {
+            let plain = file.ends_with(".json")
+                && file.len() <= 64
+                && !file.starts_with('.')
+                && file
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+            if !plain {
+                return Err(invalid(
+                    field("convertedFile"),
+                    "a .json file name beside jc.toml, no directory, e.g. `od-datasets.json`",
+                ));
+            }
+        }
+        if let Some(base) = &self.datasets_base {
+            if http_url_host(base).is_none() {
+                return Err(invalid(
+                    field("datasetsBase"),
+                    "an https:// or http:// address, e.g. https://opendata.city.sk/",
+                ));
+            }
+        }
         if let Some(budget) = self.budget {
             if budget.records == 0 || budget.bytes == 0 {
                 return Err(invalid(field("budget"), "records and bytes above 0"));
@@ -422,6 +464,44 @@ mod tests {
         ))
         .expect_err("a source carries no credential");
         assert!(err.to_string().contains("secretRef"), "{err}");
+    }
+
+    #[test]
+    fn a_converted_file_is_a_plain_json_name_beside_jc_toml() {
+        let source = |extra: &str| {
+            format!(
+                "{HEAD}spec:\n  organizationRef: ba\n  path: default\n  sources:\n    - {{name: a, \
+                 type: nkod-sparql, url: 'https://a.sk/sparql', allowedHosts: [a.sk]{extra}}}\n"
+            )
+        };
+        parse(&source(
+            ", convertedFile: od-datasets.json, datasetsBase: 'https://opendata.a.sk/', \
+             enabled: false",
+        ))
+        .unwrap();
+        for bad in [
+            "../jc.toml",
+            "/etc/x.json",
+            "a/b.json",
+            ".hidden.json",
+            "jc.toml",
+        ] {
+            let err = parse(&source(&format!(", convertedFile: '{bad}'"))).expect_err(bad);
+            assert!(err.to_string().contains("convertedFile"), "{bad}: {err}");
+        }
+        let err = parse(&source(", datasetsBase: 'ftp://a.sk/'")).expect_err("ftp");
+        assert!(err.to_string().contains("datasetsBase"), "{err}");
+        let spec: PortalSpec = serde_json::from_value(serde_json::json!({
+            "organizationRef": "ba", "path": "default",
+            "sources": [{"name": "a", "type": "dcat-ap", "url": "https://a.sk"}],
+        }))
+        .unwrap();
+        assert!(
+            spec.sources[0].enabled,
+            "a source runs unless it says otherwise"
+        );
+        let back = serde_json::to_value(&spec).unwrap();
+        assert!(back["sources"][0].get("enabled").is_none(), "{back}");
     }
 
     #[test]

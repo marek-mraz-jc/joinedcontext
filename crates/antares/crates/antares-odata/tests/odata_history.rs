@@ -61,6 +61,45 @@ async fn past() -> Result<axum::Router, String> {
     Ok(app)
 }
 
+/// A row older than the newest instances one temporal read returns is still read by its key
+/// and by an `le` or `eq` bound on `observedAt`.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_old_row_is_read_by_its_key_and_an_upper_bound() {
+    let app = past().await.expect("broker");
+    let second = |i: u32| format!("2026-09-01T00:{:02}:{:02}Z", i / 60, i % 60);
+    let speeds: Vec<Value> = (0..1_001)
+        .map(|i| at(&json!(f64::from(i)), &second(i)))
+        .collect();
+    let car = json!({"id": "urn:ngsi-ld:Car:9", "type": format!("{CITY}Car"),
+                     format!("{CITY}speed"): speeds});
+    let (status, answer) = send(
+        &app,
+        Method::POST,
+        "/ngsi-ld/v1/temporal/entities",
+        Some(&car.to_string()),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {answer}");
+    let oldest = second(0);
+    let (status, one) = get(
+        &app,
+        &format!("Car_history(id='urn:ngsi-ld:Car:9',observedAt={oldest})"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{one}");
+    assert_eq!(one["speed"], json!(0.0), "{one}");
+    for op in ["le", "eq"] {
+        let (status, body) = get(
+            &app,
+            &format!("Car_history?$filter=id%20eq%20'urn:ngsi-ld:Car:9'%20and%20observedAt%20{op}%20{oldest}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let rows = rows(&body);
+        assert_eq!(rows.len(), 1, "{op}: {body}");
+    }
+}
+
 async fn get(app: &axum::Router, path: &str) -> (StatusCode, Value) {
     send(app, Method::GET, &format!("{PAST}/{path}"), None).await
 }

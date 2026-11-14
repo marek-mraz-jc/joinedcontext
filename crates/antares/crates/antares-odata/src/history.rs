@@ -19,7 +19,7 @@ use crate::edm::{Member, Set, OBSERVED_AT_IRI};
 use crate::filter::{bounds_of, mint, program, residual_whole, Refused, Translated};
 use crate::read::{
     compare, default_instance, encode, not_found, not_implemented, now, page_link, paged, position,
-    refusal, resource, run, selected, served, token, Reads,
+    refusal, resource, run, selected, served, token, Reads, ODATA_VERSION,
 };
 use antares_ops::residual::{DateTime, Program, Truth};
 use antares_ops::{Caller, OperationId, RESIDUAL_SCAN};
@@ -151,7 +151,10 @@ pub(crate) async fn count(
     let total = whole(reads, caller, &plan, None, version).await?.len();
     Ok((
         StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, "text/plain")],
+        [
+            (axum::http::header::CONTENT_TYPE, "text/plain"),
+            (ODATA_VERSION, version.as_str()),
+        ],
         total.to_string(),
     )
         .into_response())
@@ -178,7 +181,12 @@ pub(crate) async fn entity(
     if *options != bare {
         return Err(not_implemented(ONE_ROW, version));
     }
-    let plan = plan(set, &bare, version)?;
+    let mut plan = plan(set, &bare, version)?;
+    // the row's time ends the read: the newest instances before it are the ones it holds
+    let Some((_, end)) = just_after(micros) else {
+        return Err(not_found(version));
+    };
+    plan.window = format!("timerel=before&timeAt={}", encode(&end));
     let picked = picked(set, options, version)?;
     let rows = whole(reads, caller, &plan, Some(urn), version).await?;
     let row = rows
@@ -198,6 +206,12 @@ pub(crate) async fn entity(
     // A Vec takes every byte: the write cannot fail.
     let _ = write_entity(ctx, &resource, &value, &mut body);
     Ok(json_response(version, ctx.level, body))
+}
+
+/// The exclusive bound one microsecond after `micros`, with its text.
+fn just_after(micros: i64) -> Option<Bound> {
+    let next = micros.checked_add(1)?;
+    Some((next, DateTime::from_unix_micros(next)?.to_string()))
 }
 
 /// The id and `observedAt` (in microseconds) a key names, through the request's aliases.
@@ -271,10 +285,14 @@ fn plan<'s>(
         .filter(|(op, _)| matches!(op, CompareOp::Ge | CompareOp::Gt | CompareOp::Eq))
         .map(|(_, b)| b.clone())
         .max_by_key(|(micros, _)| *micros);
+    // `endTimeAt` is exclusive: `le` and `eq` end one microsecond past their time
     let upper = bounds
         .iter()
-        .filter(|(op, _)| matches!(op, CompareOp::Lt))
-        .map(|(_, b)| b.clone())
+        .filter_map(|(op, b)| match op {
+            CompareOp::Lt => Some(b.clone()),
+            CompareOp::Le | CompareOp::Eq => just_after(b.0),
+            _ => None,
+        })
         .min_by_key(|(micros, _)| *micros);
     let empty = matches!((&lower, &upper), (Some((l, _)), Some((u, _))) if l >= u);
     let window = match (&lower, &upper) {

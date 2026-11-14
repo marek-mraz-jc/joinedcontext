@@ -30,6 +30,7 @@ use serde_json::Value;
 pub(crate) const WITHOUT_ENTITIES: &[&str] = &[
     "list_types",
     "get_type",
+    writes::DESCRIBE_TYPE,
     "list_type_details",
     "list_attributes",
     "list_attribute_details",

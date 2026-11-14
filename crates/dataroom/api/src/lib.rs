@@ -528,7 +528,20 @@ pub fn operations() -> Vec<OperationDef> {
 }
 
 /// Converts a [`DataroomError`] into an RFC 9457 Problem Details JSON response with a slug (A5).
+/// What a client may read of `err`: a storage error's text names tables, constraints and
+/// values, so it goes to the server log and the client reads that it failed.
+pub(crate) fn client_safe(err: DataroomError) -> DataroomError {
+    match err {
+        DataroomError::Storage(detail) => {
+            tracing::error!(error = %detail, "dataroom storage error");
+            DataroomError::Storage("storage failed: the server log has the cause".into())
+        }
+        other => other,
+    }
+}
+
 pub fn problem_response(err: DataroomError) -> Response {
+    let err = client_safe(err);
     let status =
         StatusCode::from_u16(err.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let body = json!({
@@ -764,6 +777,18 @@ async fn handle_portal_catalogue(
         filter.years.push(y);
     }
 
+    // The datasets `package_show` would show this caller: a `jc_hide` one only to its editors.
+    let pub_map: BTreeMap<&str, &Publisher> = publishers
+        .iter()
+        .flat_map(|p| [(p.id.as_str(), p), (p.name.as_str(), p)])
+        .collect();
+    let datasets: Vec<Dataset> = datasets
+        .into_iter()
+        .filter(|ds| {
+            let pub_rec = pub_map.get(ds.publisher_id.as_str()).copied();
+            dataset_shown(&state, &ctx, &cat, ds, pub_rec)
+        })
+        .collect();
     let outcome = match search_datasets(
         &ctx,
         state.authorizer.as_ref(),
@@ -775,6 +800,12 @@ async fn handle_portal_catalogue(
         Ok(o) => o,
         Err(e) => return problem_response(e),
     };
+    // A signed-in caller's answer may hold what an anonymous one may not read: no shared cache.
+    let cache = if ctx.subject.is_anonymous() {
+        "public, max-age=60"
+    } else {
+        "private, no-store"
+    };
 
     let body = json!({
         "total": outcome.total,
@@ -784,12 +815,7 @@ async fn handle_portal_catalogue(
         "facets": outcome.facets,
         "unavailable": [],
     });
-    (
-        StatusCode::OK,
-        [(header::CACHE_CONTROL, "public, max-age=60")],
-        Json(body),
-    )
-        .into_response()
+    (StatusCode::OK, [(header::CACHE_CONTROL, cache)], Json(body)).into_response()
 }
 
 async fn handle_portal_dataset(
@@ -1038,6 +1064,14 @@ async fn handle_validate_sample(
             "dataset '{name}' not found"
         )));
     }
+    // Shapes of the caller's own are an editor's draft: they need Propose on the dataset.
+    if body.shapes_turtle.is_some() {
+        let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
+        let decision = state.authorizer.check(&ctx, Action::Propose, &target);
+        if !decision.allowed {
+            return problem_response(decision_error(decision));
+        }
+    }
     let shapes = body
         .shapes_turtle
         .or_else(|| ds.custom_shacl_shapes.clone())
@@ -1048,15 +1082,24 @@ async fn handle_validate_sample(
         Ok(s) => s,
         Err(e) => return problem_response(e),
     };
-    match state.profiles.validate_custom_sample(
-        &shapes,
-        &body.sample_turtle,
-        ctx.org_id,
-        ctx.catalogue_id,
-        &ds.id,
-    ) {
-        Ok(report) => Json(report).into_response(),
-        Err(e) => problem_response(e),
+    // Parsing and validating is CPU work: off the async workers.
+    let profiles = state.profiles.clone();
+    let checked = tokio::task::spawn_blocking(move || {
+        profiles.validate_custom_sample(
+            &shapes,
+            &body.sample_turtle,
+            ctx.org_id,
+            ctx.catalogue_id,
+            &ds.id,
+        )
+    })
+    .await;
+    match checked {
+        Ok(Ok(report)) => Json(report).into_response(),
+        Ok(Err(e)) => problem_response(e),
+        Err(_) => problem_response(DataroomError::Storage(
+            "the sample check stopped before it finished".into(),
+        )),
     }
 }
 
@@ -1579,6 +1622,11 @@ fn html_response_with_csp(
         [
             (header::CONTENT_TYPE, "text/html; charset=utf-8".to_owned()),
             (header::CONTENT_SECURITY_POLICY, csp),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_owned()),
+            (
+                header::REFERRER_POLICY,
+                "strict-origin-when-cross-origin".to_owned(),
+            ),
         ],
         html,
     )

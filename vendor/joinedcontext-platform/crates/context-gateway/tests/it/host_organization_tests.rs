@@ -11,6 +11,7 @@ use axum::http::{Method, Request, StatusCode};
 use axum::Router;
 use context_gateway::app::{router, Gateway, HostBase, HostOrganization};
 use context_gateway::auth::accounts::ServiceAccounts;
+use context_gateway::mcp::server::McpServer;
 use context_gateway::pdp::PolicyPdp;
 use context_gateway::proxy::Broker;
 use context_gateway::resolver::{Endpoint, Space};
@@ -103,7 +104,27 @@ fn app(realm: &common::Realm) -> Router {
             .collect(),
         ..Provenance::without_organizations()
     });
+    gateway.replace_servers(vec![
+        server("pa", "open", Audience::Public),
+        server("pb", "private", Audience::Organization),
+    ]);
     router(Arc::new(gateway))
+}
+
+/// A named server in `project` that selects every Endpoint its audience takes.
+fn server(project: &str, name: &str, audience: Audience) -> McpServer {
+    McpServer {
+        project: project.to_owned(),
+        name: name.to_owned(),
+        title: Some(format!("{project} {name}")),
+        description: None,
+        members: Vec::new(),
+        select: Some(Default::default()),
+        endpoints: None,
+        audience,
+        allowed_projects: Vec::new(),
+        knowledge_sources: Vec::new(),
+    }
 }
 
 /// One request as `jc` hands it over: on `host`'s Organization, or on none.
@@ -142,11 +163,16 @@ fn tool(name: &str, arguments: Value) -> Value {
 
 /// The slugs the anonymous hub's `list_endpoints` answers on `host`.
 async fn listed(app: &Router, host: Option<&str>) -> Vec<String> {
+    listed_at(app, host, "/api/mcp").await
+}
+
+/// The slugs an anonymous `list_endpoints` at `path` answers on `host`.
+async fn listed_at(app: &Router, host: Option<&str>, path: &str) -> Vec<String> {
     let (_, text) = send(
         app,
         host,
         Method::POST,
-        "/api/mcp",
+        path,
         Some(tool("list_endpoints", json!({}))),
     )
     .await;
@@ -172,6 +198,42 @@ async fn the_anonymous_hub_lists_only_the_hosts_organization() {
     assert_eq!(listed(&app, None).await, [ALPHA, BETA]);
     // A host of an Organization with no Endpoint lists none.
     assert!(listed(&app, Some("gamma")).await.is_empty());
+}
+
+/// A named server selects only the host's Organization's Endpoints, and its metadata on another
+/// Organization's host is the 404 of an unknown server.
+#[tokio::test]
+async fn a_named_server_and_its_metadata_stay_on_the_hosts_organization() {
+    let realm = common::Realm::new();
+    let app = app(&realm);
+    assert_eq!(
+        listed_at(&app, Some("alpha"), "/api/mcp/pa/open").await,
+        [ALPHA]
+    );
+    assert_eq!(
+        listed_at(&app, None, "/api/mcp/pa/open").await,
+        [ALPHA, BETA]
+    );
+    for path in [
+        "/.well-known/oauth-protected-resource/api/mcp/pb/private",
+        "/api/mcp/pb/private/.well-known/oauth-protected-resource",
+    ] {
+        let (status, body) = send(&app, Some("alpha"), Method::GET, path, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body}");
+        assert!(!body.contains("pb private"), "{path}: {body}");
+        let (status, body) = send(&app, Some("beta"), Method::GET, path, None).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {body}");
+    }
+    // The built-in organization server answers on an Organization's host too.
+    let (status, body) = send(
+        &app,
+        Some("alpha"),
+        Method::GET,
+        "/.well-known/oauth-protected-resource/api/mcp/org/all",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
 }
 
 #[tokio::test]

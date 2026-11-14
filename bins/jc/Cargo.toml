@@ -88,6 +88,7 @@ tower = { version = "0.5", features = ["util"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-aws-lc-rs", "json", "migrate"] }
 url = "2"
+percent-encoding = "2.3"
 futures = { version = "0.3", optional = true }
 
 kaisatsu-server = { path = "../../crates/kaisatsu/server", optional = true }

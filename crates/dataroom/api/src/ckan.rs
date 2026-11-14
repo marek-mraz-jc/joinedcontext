@@ -51,6 +51,7 @@ fn ckan_ok(base: &str, action: &str, result: Value, cache_public: bool) -> Respo
 }
 
 fn ckan_err(base: &str, action: &str, err: DataroomError) -> Response {
+    let err = crate::client_safe(err);
     let status = StatusCode::from_u16(err.status_code()).unwrap_or(StatusCode::BAD_REQUEST);
     let mut err_obj = Map::new();
     err_obj.insert("__type".into(), json!(err.ckan_error_type()));
@@ -157,6 +158,26 @@ fn allow_viz_origin(response: &mut Response, origin: Option<&HeaderValue>, viz: 
     }
 }
 
+/// The actions that change data; GET refuses them.
+const CKAN_WRITE_ACTIONS: &[&str] = &[
+    "package_create",
+    "package_update",
+    "package_patch",
+    "package_delete",
+    "dataset_purge",
+    "resource_create",
+    "resource_update",
+    "resource_patch",
+    "resource_delete",
+    "resource_view_create",
+    "resource_view_update",
+    "resource_view_delete",
+    "organization_create",
+    "organization_update",
+    "organization_patch",
+    "organization_delete",
+];
+
 async fn answer_ckan_action(
     state: DataroomState,
     ctx: RequestCtx,
@@ -177,6 +198,21 @@ async fn answer_ckan_action(
                 "{action} is not supported: dataroom holds no data copies and queries Endpoints live (C3)"
             )),
         );
+    }
+
+    // CKAN answers a write only to POST: a GET link or redirect never changes a catalogue, and a
+    // write's payload never lands in a URL (and so in an access log).
+    if is_get && CKAN_WRITE_ACTIONS.contains(&action.as_str()) {
+        let mut response = ckan_err(
+            &base,
+            &action,
+            DataroomError::field_error("method", format!("{action} changes data: send it as POST")),
+        );
+        *response.status_mut() = StatusCode::METHOD_NOT_ALLOWED;
+        response
+            .headers_mut()
+            .insert(header::ALLOW, HeaderValue::from_static("POST"));
+        return response;
     }
 
     match action.as_str() {
@@ -864,7 +900,33 @@ async fn answer_ckan_action(
             if !dec.allowed {
                 return ckan_err(&base, &action, decision_error(dec));
             }
+            if let Some(id) = payload
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+            {
+                // The id lands in links and embed snippets: a slug, as CKAN's generated ids are.
+                if let Err(e) = dataroom_core::validate_slug("id", id) {
+                    return ckan_err(&base, &action, e);
+                }
+            }
             let view = parse_resource_view(&payload, "", resource_id, view_type);
+            // A create never takes over a stored view: that one is changed by resource_view_update,
+            // decided on its own dataset.
+            match state.store.get_resource_view(&ctx, &view.id).await {
+                Ok(None) => {}
+                Ok(Some(_)) => {
+                    return ckan_err(
+                        &base,
+                        &action,
+                        DataroomError::Conflict(format!(
+                            "a view with id '{}' exists: use resource_view_update",
+                            view.id
+                        )),
+                    )
+                }
+                Err(e) => return ckan_err(&base, &action, e),
+            }
             match state.store.upsert_resource_view(&ctx, view).await {
                 Ok(saved) => ckan_ok(&base, &action, resource_view_to_ckan(&saved), false),
                 Err(e) => ckan_err(&base, &action, e),

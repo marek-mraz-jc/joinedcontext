@@ -373,9 +373,10 @@ impl LocalAuthorizer {
     }
 
     fn matches_target(binding: &RoleBinding, object: &ObjectTarget) -> bool {
+        // A project's binding grants on that project's repositories alone: an instance,
+        // organization or package target, or a repository of no project, names none.
         if let Some(bound_proj) = &binding.project_id
-            && let Some(target_proj) = object.project_id()
-            && bound_proj != target_proj
+            && object.project_id() != Some(bound_proj.as_str())
         {
             return false;
         }
@@ -966,6 +967,55 @@ impl TokenVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_project_binding_grants_on_that_projects_repositories_alone() {
+        let (inst, org) = (InstanceId::from_u128(1), OrgId::from_u128(10));
+        let authz = LocalAuthorizer::new(vec![RoleBinding {
+            org_id: org,
+            principal: "proj-admin".into(),
+            actions: vec![Action::Admin],
+            project_id: Some("proj-a".into()),
+            repo: None,
+        }]);
+        let ctx = RequestCtx::new(
+            inst,
+            org,
+            Subject::authenticated("proj-admin", "proj-admin", vec![org], vec![]),
+        );
+        let repo = |project: Option<&str>| ObjectTarget::Repository {
+            instance_id: inst,
+            org_id: org,
+            project_id: project.map(str::to_owned),
+            owner: "jc".into(),
+            repo: "cfg".into(),
+            git_ref: None,
+        };
+        assert!(
+            authz
+                .check(&ctx, Action::Write, &repo(Some("proj-a")))
+                .allowed
+        );
+        for target in [
+            repo(Some("proj-b")),
+            repo(None),
+            ObjectTarget::Instance {
+                instance_id: inst,
+                org_id: org,
+            },
+            ObjectTarget::Organization {
+                instance_id: inst,
+                org_id: org,
+                owner: "jc".into(),
+            },
+        ] {
+            assert!(
+                !authz.check(&ctx, Action::Admin, &target).allowed,
+                "{target:?}"
+            );
+        }
+        assert!(!authz.principal_has_write(inst, org, "jc", "cfg", "proj-admin"));
+    }
 
     #[test]
     fn token_verifier_checks_audience_expiry_and_unknown_kid_refetch() {
