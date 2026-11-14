@@ -1594,13 +1594,12 @@ async fn authenticate_page_post(
         }
 
         let creds = state.store.list_credentials(&realm.id, &user.id).await?;
-        let otp_cred = creds
-            .iter()
-            .find(|c| c.credential_type == "otp")
-            .ok_or_else(|| KaisatsuError::BadRequest("no OTP credential".into()))?;
+        if !creds.iter().any(|c| c.credential_type == "otp") {
+            return Err(KaisatsuError::BadRequest("no OTP credential".into()));
+        }
         let now_secs = Utc::now().timestamp() as u64;
-        let Some(matched_step) = verify_totp_code(
-            otp_cred,
+        let Some((otp_cred, matched_step)) = verify_any_totp_code(
+            &creds,
             otp_code,
             realm.otp_policy_look_ahead_window,
             now_secs,
@@ -2853,6 +2852,9 @@ async fn action_token_post(
             })
             .await?;
         user.required_actions.retain(|a| a != "UPDATE_PASSWORD");
+        if form.contains_key("logout-sessions") {
+            sign_out_other_sessions(&state, &mount, &realm, &user.id, &headers).await?;
+        }
     }
 
     if let Some(cred) = totp_credential {
@@ -2984,6 +2986,7 @@ async fn render_action_form(
             bundle.get("passwordConfirm").to_owned(),
             "new-password",
         ));
+        fields.push(logout_sessions_field(&bundle, true));
     }
     if let (true, Some(secret)) = (
         wants("CONFIGURE_TOTP"),

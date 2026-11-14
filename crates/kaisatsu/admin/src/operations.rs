@@ -209,6 +209,8 @@ pub async fn execute(
             let existing = visible_person(state, ctx, required_key(key)?).await?;
             check_decision(authz.check(ctx, Action::Delete, &person_target(ctx, &existing)))?;
             ensure_person_ceiling(state, ctx, &existing).await?;
+            crate::scim::end_sessions_for_deactivated_user(state, mount, realm, &existing.id)
+                .await?;
             let allowed = ctx.allowed_orgs();
             store
                 .delete_user(realm, allowed.as_deref(), &existing.id)

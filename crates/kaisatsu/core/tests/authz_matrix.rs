@@ -328,7 +328,7 @@ fn realm_management_roles() {
         managed_by: managed.map(str::to_owned),
     };
     for (managed, write) in [
-        (None, true),
+        (None, false),
         (Some("joinedcontext"), true),
         (Some("gitops"), false),
     ] {

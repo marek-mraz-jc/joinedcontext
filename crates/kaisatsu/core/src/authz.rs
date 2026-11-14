@@ -450,14 +450,14 @@ impl Authorizer for LocalAuthorizer {
                 }
             }
             ObjectTarget::Application { managed_by, .. } => {
-                // T-2725 compatibility: `portal-api` (`view-clients`) may write only clients with
-                // `managed-by: joinedcontext` (or newly created ones).
+                // T-2725 compatibility: `portal-api` (`view-clients`) writes only clients marked
+                // `managed-by: joinedcontext`, the mark every Portal create carries; an unmarked
+                // client is nobody's to adopt.
                 let is_portal_client_mgr = ctx.principal.has_realm_mgmt_role("view-clients");
                 let can_write = ctx.principal.has_realm_mgmt_role("manage-clients")
                     || ctx.principal.has_org_role(org_id, "org-admin")
                     || ctx.principal.has_org_role(org_id, "application-manager")
-                    || (is_portal_client_mgr
-                        && managed_by.as_deref().unwrap_or("joinedcontext") == "joinedcontext");
+                    || (is_portal_client_mgr && managed_by.as_deref() == Some("joinedcontext"));
                 let can_read = can_write || is_portal_client_mgr;
                 if (action == Action::Read && can_read) || (action.is_write() && can_write) {
                     Decision::allow("granted on application")
