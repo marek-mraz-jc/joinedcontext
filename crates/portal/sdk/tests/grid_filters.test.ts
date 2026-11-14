@@ -99,6 +99,10 @@ describe("the grid's filter row as an NGSI-LD query", () => {
     expect(quotePattern("^$.|?*+()[]{}/\\")).toBe(
       "\\^\\$\\.\\|\\?\\*\\+\\(\\)\\[\\]\\{\\}\\/\\\\",
     );
+    // A typed quote stays inside the one pattern: the broker ends a quoted pattern at its first `"`.
+    const quoted = askedBy(NAME, { op: "contains", value: 'x";secret>50;a~="y' }).q;
+    expect(quoted).toBe('name~="x\\x22;secret>50;a~=\\x22y"');
+    expect(quoted?.match(/"/g)).toHaveLength(2);
     // And an id pattern is escaped the same way, because it is a regular expression too.
     expect(askedBy(ID, { op: "pattern", value: "hel.*" }).idPattern).toBe("hel\\.\\*");
   });

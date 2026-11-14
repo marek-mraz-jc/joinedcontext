@@ -171,9 +171,12 @@ export function quotePattern(raw: string): string {
   return raw.trim().replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 }
 
-/** A pattern as a `q` string: metacharacters stand for themselves and a quote stays inside it. */
+/**
+ * A pattern as a `q` string: metacharacters stand for themselves and a quote is the escape `\x22`,
+ * because the broker reads a quoted `RegExp` up to its first `"`.
+ */
 function patternLiteral(raw: string, prefix = ""): string {
-  return `"${prefix}${quotePattern(raw).replace(/"/g, '\\"')}"`;
+  return `"${prefix}${quotePattern(raw).replace(/"/g, "\\x22")}"`;
 }
 
 /**
