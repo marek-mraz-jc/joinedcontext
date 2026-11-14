@@ -339,8 +339,10 @@ pub async fn build_with_writer(
     if let Some((public, Some(internal))) = &own_gateway {
         engine = engine.with_own_gateway(public, *internal);
     }
+    // One engine for the schedule and for the runs and tests the Portal's sources routes start.
+    let engine = Arc::new(engine);
     let scheduler = HarvestScheduler::new(
-        Arc::new(engine),
+        engine.clone(),
         store.clone(),
         authorizer.clone(),
         catalogues,
@@ -359,6 +361,7 @@ pub async fn build_with_writer(
         bases.insert(id, format!("{}://{}", mount.scheme, org.hosts.opendata));
     }
     let state = DataroomState::new(store, authorizer.clone(), org_id, catalogue_id)
+        .with_harvester(engine)
         .with_organization_catalogues(by_organization)
         .with_catalogue_bases(bases)
         .with_tokens(bindings)

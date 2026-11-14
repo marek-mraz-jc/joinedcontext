@@ -15,6 +15,7 @@ use kaisatsu_crypto::Kek;
 pub use kaisatsu_login::account::{ACCOUNT_AUDIENCE, ACCOUNT_CONSOLE_CLIENT};
 use kaisatsu_login::login_router;
 use kaisatsu_mcp::mcp_router;
+pub use kaisatsu_oidc::SecondFactor;
 use kaisatsu_oidc::{OidcState, OutboundGuard, oidc_router};
 use kaisatsu_store_memory::MemoryStore;
 use std::path::PathBuf;
@@ -27,6 +28,7 @@ pub struct KaisatsuState {
     kek: Kek,
     guard: OutboundGuard,
     authorizer: Arc<dyn Authorizer>,
+    second_factor: SecondFactor,
 }
 
 impl KaisatsuState {
@@ -42,7 +44,15 @@ impl KaisatsuState {
             kek,
             guard,
             authorizer,
+            second_factor: SecondFactor::Optional,
         }
+    }
+
+    /// Sets the deployment's second-factor floor (`[kaisatsu] second_factor`).
+    #[must_use]
+    pub fn with_second_factor(mut self, second_factor: SecondFactor) -> Self {
+        self.second_factor = second_factor;
+        self
     }
 
     #[must_use]
@@ -54,6 +64,7 @@ impl KaisatsuState {
             kek,
             guard: OutboundGuard::default(),
             authorizer: Arc::new(LocalAuthorizer),
+            second_factor: SecondFactor::Optional,
         }
     }
 
@@ -73,6 +84,7 @@ pub fn router(state: KaisatsuState, mount: Mount) -> Router {
         kek: state.kek.clone(),
         guard: state.guard.clone(),
         default_mount: mount,
+        second_factor: state.second_factor,
     };
     let admin_state = AdminState::new(oidc_state.clone(), state.authorizer.clone());
 

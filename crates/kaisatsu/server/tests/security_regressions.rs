@@ -434,6 +434,288 @@ async fn password_grant_locks_after_repeated_failures_like_the_login_page() {
     assert_eq!(st, StatusCode::OK, "{body}");
 }
 
+/// A password grant for `user` as `apisix-gateway` with `extra` fields.
+async fn password_grant(
+    app: &axum::Router,
+    user: &str,
+    pw: &str,
+    extra: &[(&str, &str)],
+) -> (StatusCode, Value) {
+    let mut form = vec![
+        ("grant_type", "password"),
+        ("client_id", "apisix-gateway"),
+        ("client_secret", concat!("apisix-", "secret-123")),
+        ("username", user),
+        ("password", pw),
+    ];
+    form.extend_from_slice(extra);
+    let (st, _, body) = post_form(app, TOKEN, &form, None).await;
+    (st, json_body(&body))
+}
+
+async fn refresh_grant(app: &axum::Router, refresh: &str) -> (StatusCode, Value) {
+    let (st, _, body) = post_form(
+        app,
+        TOKEN,
+        &[
+            ("grant_type", "refresh_token"),
+            ("client_id", "apisix-gateway"),
+            ("client_secret", concat!("apisix-", "secret-123")),
+            ("refresh_token", refresh),
+        ],
+        None,
+    )
+    .await;
+    (st, json_body(&body))
+}
+
+#[tokio::test]
+async fn the_password_grant_obeys_the_floor() {
+    let (state, _store, _) = setup_dev_realm_state().await;
+    let plain = router(state.clone(), mount());
+    let floor = router(
+        state.with_second_factor(kaisatsu_server::SecondFactor::Required),
+        mount(),
+    );
+    let (st, _) = password_grant(&plain, "demo.analyst@hel.fi", "AnalystPass123!Valid", &[]).await;
+    assert_eq!(st, StatusCode::OK);
+    // Under the floor the person without an authenticator gets no token from a password alone.
+    let (st, body) =
+        password_grant(&floor, "demo.analyst@hel.fi", "AnalystPass123!Valid", &[]).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "invalid_grant");
+    assert!(
+        body["error_description"]
+            .as_str()
+            .unwrap()
+            .contains("second factor"),
+        "{body}"
+    );
+    // The steward passes it with the authenticator's code.
+    let now = chrono::Utc::now().timestamp() as u64;
+    let code = generate_totp_code("steward-totp-seed-123456", 6, 30, "HmacSHA256", now).unwrap();
+    let (st, body) = password_grant(
+        &floor,
+        "demo.steward@hel.fi",
+        "StewardPass123!Valid",
+        &[("totp", &code)],
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let claims = decode_jwt_payload(body["access_token"].as_str().unwrap());
+    assert_eq!(claims["amr"], json!(["pwd", "otp"]));
+}
+
+#[tokio::test]
+async fn client_credentials_never_asks_for_a_second_factor() {
+    let (state, _store, _) = setup_dev_realm_state().await;
+    let floor = router(
+        state.with_second_factor(kaisatsu_server::SecondFactor::Required),
+        mount(),
+    );
+    let (st, _, body) = post_form(
+        &floor,
+        TOKEN,
+        &[
+            ("grant_type", "client_credentials"),
+            ("client_id", "apisix-gateway"),
+            ("client_secret", concat!("apisix-", "secret-123")),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert!(json_body(&body)["access_token"].is_string());
+}
+
+#[tokio::test]
+async fn turning_the_floor_on_revokes_refresh_and_offline_sessions() {
+    let (state, store, _) = setup_dev_realm_state().await;
+    let mut gateway = store
+        .get_client_by_client_id("dev", "apisix-gateway")
+        .await
+        .unwrap()
+        .unwrap();
+    gateway.optional_client_scopes.push("offline_access".into());
+    store.upsert_client(gateway).await.unwrap();
+    let before = router(state.clone(), mount());
+    let after = router(
+        state.with_second_factor(kaisatsu_server::SecondFactor::Required),
+        mount(),
+    );
+    let (st, online) =
+        password_grant(&before, "demo.analyst@hel.fi", "AnalystPass123!Valid", &[]).await;
+    assert_eq!(st, StatusCode::OK, "{online}");
+    let (st, offline) = password_grant(
+        &before,
+        "demo.analyst@hel.fi",
+        "AnalystPass123!Valid",
+        &[("scope", "openid offline_access")],
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{offline}");
+    assert!(
+        offline["scope"]
+            .as_str()
+            .unwrap()
+            .split(' ')
+            .any(|s| s == "offline_access"),
+        "{offline}"
+    );
+    let online = online["refresh_token"].as_str().unwrap().to_owned();
+    let offline = offline["refresh_token"].as_str().unwrap().to_owned();
+    // The floor turns on: the next refresh of a password-only session is refused ...
+    let (st, body) = refresh_grant(&after, &online).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "invalid_grant");
+    assert!(
+        body["error_description"]
+            .as_str()
+            .unwrap()
+            .contains("second factor"),
+        "{body}"
+    );
+    // ... and every session of the person ended with it, the offline one included: even a
+    // server without the floor refuses the rest.
+    let (st, body) = refresh_grant(&before, &offline).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error_description"], "Session not active");
+}
+
+const ANALYST_ID: &str = "de300000-0000-4000-8000-000000000010";
+
+/// Plants a password-only SSO session of demo.analyst (signed in before the floor turned on)
+/// and returns its cookie.
+async fn password_only_sso(store: &dyn Store) -> String {
+    let now = chrono::Utc::now();
+    store
+        .upsert_sso_session(SsoSession {
+            id: "sso-before-floor".into(),
+            realm_id: "dev".into(),
+            org_id: None,
+            handle_hash: sha256_hex("sso-before-floor-handle"),
+            user_id: ANALYST_ID.into(),
+            username: "demo.analyst@hel.fi".into(),
+            ip_address: "127.0.0.1".into(),
+            user_agent: String::new(),
+            start: now.timestamp_millis(),
+            last_access: now.timestamp_millis(),
+            auth_time: now.timestamp(),
+            acr: "pwd".into(),
+            amr: vec!["pwd".into()],
+            clients: std::collections::HashMap::new(),
+            idle_expires_at: now + chrono::Duration::hours(1),
+            max_expires_at: now + chrono::Duration::hours(8),
+        })
+        .await
+        .unwrap();
+    format!("{}=sso-before-floor-handle", mount().cookie_name("sso"))
+}
+
+async fn authorize_with(app: &axum::Router, cookie: &str, extra: &str) -> (StatusCode, String) {
+    let uri = format!(
+        "/realms/dev/protocol/openid-connect/auth?client_id=edge&redirect_uri={}&response_type=code&scope=openid&state=s&code_challenge={}&code_challenge_method=S256{extra}",
+        url::form_urlencoded::byte_serialize(b"https://portal.dev.example.test/callback")
+            .collect::<String>(),
+        sha256_base64url("pkce-verifier-string-with-at-least-43-characters-long-012345"),
+    );
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&uri)
+                .header(header::COOKIE, cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let location = resp
+        .headers()
+        .get(header::LOCATION)
+        .map(|l| l.to_str().unwrap().to_owned())
+        .unwrap_or_default();
+    (resp.status(), location)
+}
+
+#[tokio::test]
+async fn a_session_from_before_the_floor_mints_no_code_at_authorize() {
+    let (state, store, _) = setup_dev_realm_state().await;
+    let cookie = password_only_sso(store.as_ref()).await;
+    let before = router(state.clone(), mount());
+    let after = router(
+        state.with_second_factor(kaisatsu_server::SecondFactor::Required),
+        mount(),
+    );
+    // Without the floor the session signs the person in silently, as today.
+    let (st, loc) = authorize_with(&before, &cookie, "&prompt=none").await;
+    assert_eq!(st, StatusCode::SEE_OTHER);
+    assert!(loc.contains("?code="), "{loc}");
+    // Under the floor prompt=none answers login_required ...
+    let (st, loc) = authorize_with(&after, &cookie, "&prompt=none").await;
+    assert_eq!(st, StatusCode::SEE_OTHER);
+    assert!(loc.contains("error=login_required"), "{loc}");
+    assert!(!loc.contains("?code=") && !loc.contains("&code="), "{loc}");
+    // ... and the interactive request goes to the sign-in page instead of a code.
+    let (st, loc) = authorize_with(&after, &cookie, "").await;
+    assert_eq!(st, StatusCode::SEE_OTHER);
+    assert!(loc.contains("/login-actions/authenticate"), "{loc}");
+    assert!(!loc.contains("?code=") && !loc.contains("&code="), "{loc}");
+}
+
+#[tokio::test]
+async fn a_session_from_before_the_floor_approves_no_device() {
+    let (state, store, _) = setup_dev_realm_state().await;
+    let cookie = password_only_sso(store.as_ref()).await;
+    let device = |app: axum::Router| {
+        let cookie = cookie.clone();
+        async move {
+            app.oneshot(
+                Request::builder()
+                    .uri("/realms/dev/device")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let before = device(router(state.clone(), mount())).await;
+    assert_eq!(before.status(), StatusCode::OK);
+    let after = device(router(
+        state.with_second_factor(kaisatsu_server::SecondFactor::Required),
+        mount(),
+    ))
+    .await;
+    assert_eq!(after.status(), StatusCode::SEE_OTHER);
+    let loc = after.headers()[header::LOCATION].to_str().unwrap();
+    assert!(loc.contains("/login-actions/authenticate"), "{loc}");
+}
+
+/// A tightening the shared check brings with the floor optional: a person who holds
+/// `mfa-required` and still has a password-only session (granted the role after signing in,
+/// or brokered before brokered sign-ins asked for it) signs in again at the next refresh.
+#[tokio::test]
+async fn the_mfa_required_role_ends_a_password_only_session_at_refresh() {
+    let (state, store, _) = setup_dev_realm_state().await;
+    let app = router(state, mount());
+    let (st, tokens) =
+        password_grant(&app, "demo.analyst@hel.fi", "AnalystPass123!Valid", &[]).await;
+    assert_eq!(st, StatusCode::OK, "{tokens}");
+    let refresh = tokens["refresh_token"].as_str().unwrap().to_owned();
+    let mut analyst = store
+        .get_user_by_id("dev", None, ANALYST_ID)
+        .await
+        .unwrap()
+        .unwrap();
+    analyst.realm_roles.push("mfa-required".into());
+    store.update_user(analyst).await.unwrap();
+    let (st, body) = refresh_grant(&app, &refresh).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "invalid_grant");
+}
+
 /// Starts a browser login for `edge` and returns `(login_url, csrf, session_code)`.
 async fn start_login(app: &axum::Router, extra: &str) -> (String, String, String) {
     let verifier = "pkce-verifier-string-with-at-least-43-characters-long-012345";

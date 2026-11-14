@@ -426,6 +426,34 @@ def test_a_run_whose_failure_is_filed_after_its_row_appears_is_read_when_it_ende
     assert took < 30 + suite.RUN_TIMEOUT + 20, took
 
 
+def test_runs_that_never_end_fail_within_the_suite_budget_with_a_line_each(monkeypatch, capsys):
+    """jc-dev 2026-11-14T140509Z: ten run-nows listed and never ended held the suite past the
+    harness's 3600 s, so it wrote no row at all. Under --budget the run being waited for fails
+    naming its status, each later one fails `run` unasked, and stderr has a line per Pipeline."""
+    import argparse
+    import suite
+    clock = Clock(monkeypatch)
+    t0 = clock.now
+    portal = ending_portal(clock, t0 + 30, t0 + 10 ** 6, ZERO, ZERO, [])
+    r = suite.Results("pipelines", "http://x")
+    a = argparse.Namespace(wait=300, budget=1000)
+    until = t0 + a.budget
+    keys = ["kataster", "kniznice", "obyvatelia"]
+    for name in keys:
+        p = manifests.Pipeline("banskabystrica", name, "p.yaml", {"period": "168h"}, True)
+        suite.ask_run(r, portal, portal, p, a, ["banskabystrica"], None, None, {}, until)
+    assert clock.now - t0 < a.budget + 20, clock.now - t0
+    rows = {(c["target"].split("/")[1], c["id"]): c for c in r.rows}
+    first, cut, unasked = (rows[(n, i)] for n, i in zip(keys, ("history", "history", "run")))
+    assert first["result"] == "fail" and "not ended within 900 s of it; status x: running since" in first["actual"]
+    assert cut["result"] == "fail" and "--budget ended the wait; status x: running since" in cut["actual"], cut
+    assert unasked["result"] == "fail" and "budget was spent" in unasked["actual"], unasked
+    lines = [x for x in capsys.readouterr().err.splitlines() if x.startswith("pipelines: ")]
+    assert [x.split(":")[1].strip() for x in lines] == [f"banskabystrica/{n}" for n in keys], lines
+    assert "history fail" in lines[1] and lines[1].endswith("running since " + stamp(t0 + 30)), lines
+    assert "run fail" in lines[2], lines
+
+
 def test_schedule_hours_reads_the_hour_field():
     import suite
     assert suite.schedule_hours("41 2,10,18 * * 0") == [2, 10, 18]

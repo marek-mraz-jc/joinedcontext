@@ -343,9 +343,12 @@ impl Owned {
         self.field("Name")
     }
 
-    /// The address a person clones from: the forge's public one (`JC_SHAKO_PUBLIC_URL`), never
-    /// the address the Portal dials, which the forge's own `CloneUrl` names (T-6893).
+    /// The address a person clones from: the forge's public one (`JC_SHAKO_PUBLIC_URL`) when
+    /// set, else the forge's own `CloneUrl`; never the address the Portal dials (T-6893).
     fn clone_url(&self) -> String {
+        if self.client.public_base == self.client.base {
+            return self.field("CloneUrl").to_owned();
+        }
         let owner = match self.field("Owner") {
             "" => self.client.owner.as_str(),
             owner => owner,

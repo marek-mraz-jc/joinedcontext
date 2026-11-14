@@ -12679,7 +12679,127 @@
       "open": "Otevřít portál",
       "delete": "Odstranit portál",
       "defaultKept": "Výchozí portál zůstává: je to vlastní katalog organizace.",
-      "fixed": "Po založení portálu se nemění: portál se nikdy nepřesune k jiné organizaci, jménu ani cestě."
+      "fixed": "Po založení portálu se nemění: portál se nikdy nepřesune k jiné organizaci, jménu ani cestě.",
+      "descriptionTabs": "Nastavení portálu, jeho zdroje s běhy a jeho datové sady. Každá změna se navrhne schvalovateli."
+    },
+    "tabs": {
+      "label": "Pohledy portálu",
+      "settings": "Nastavení",
+      "sources": "Zdroje",
+      "datasets": "Datové sady"
+    },
+    "sources": {
+      "empty": "Zatím žádný zdroj",
+      "emptyHint": "Zdroj plní portál: zveřejněné koncové body vaší Organizace nebo jiný katalog sklízený podle plánu, například DCAT-AP feed města. Přidejte první.",
+      "add": "Přidat zdroj",
+      "addTitle": "Nový zdroj",
+      "propose": "Navrhnout zdroj",
+      "cancel": "Zrušit",
+      "remove": "Odebrat",
+      "refused": "Změna nebyla navržena",
+      "test": "Otestovat připojení",
+      "runNow": "Spustit nyní",
+      "showRuns": "Poslední běhy",
+      "hideRuns": "Skrýt běhy",
+      "started": "Běh začal. Jeho počty se zobrazí v Posledních bězích, až skončí.",
+      "limited": "Příliš mnoho testů v krátké době. {detail}",
+      "busy": "Běh tohoto zdroje ještě probíhá; počkejte, až skončí.",
+      "noCatalogue": "Tato instalace zatím neposkytuje katalog otevřených dat, proto zde zdroje nelze testovat, spouštět ani vypsat. Požádejte operátora o zapnutí.",
+      "gone": "Tento zdroj už v portálu není; obnovte stránku.",
+      "projectsLine": "Zveřejněné koncové body projektů: {projects}",
+      "scheduleLine": "Běží podle plánu {schedule} (UTC)",
+      "noSchedule": "Bez plánu: běží jen po spuštění",
+      "noProjects": "{organization} zatím nemá projekt, který čtete; nejprve ho vytvořte.",
+      "type": {
+        "endpoints": "Zveřejněné koncové body",
+        "dcat-ap": "Katalog DCAT-AP",
+        "ckan-action": "Katalog CKAN",
+        "nkod-sparql": "Národní katalog (SPARQL)",
+        "arcgis-hub": "ArcGIS Hub"
+      },
+      "field": {
+        "type": "Typ",
+        "typePick": "Vyberte typ",
+        "name": "Název",
+        "url": "Adresa",
+        "allowedHosts": "Další povolené hostitele",
+        "records": "Nejvýše záznamů na běh",
+        "bytes": "Nejvýše bajtů na běh",
+        "schedule": "Plán",
+        "projects": "Projekty"
+      },
+      "hint": {
+        "type": "Odkud datové sady pocházejí: vaše zveřejněné koncové body nebo katalog sklízený přes https, například Katalog DCAT-AP.",
+        "name": "Malá písmena, číslice a pomlčky, jedinečné v portálu, například kosice.",
+        "url": {
+          "dcat-ap": "Adresa https katalogu DCAT-AP v Turtle, RDF/XML nebo JSON-LD, například https://data.kosice.sk/catalog.ttl.",
+          "ckan-action": "Adresa https CKAN Action API, například https://data.gov.sk/api/3/action.",
+          "nkod-sparql": "Adresa https koncového bodu SPARQL, například https://data.slovensko.sk/sparql.",
+          "arcgis-hub": "Adresa https stránky ArcGIS Hub, například https://opendata.bratislava.sk."
+        },
+        "allowedHosts": "Hostitelé, ze kterých běh smí také číst, oddělení čárkou, například files.kosice.sk; hostitel adresy je povolen vždy. Každý musí být v seznamu povolených operátora.",
+        "records": "Běh skončí po tomto počtu záznamů, například 5000.",
+        "bytes": "Běh skončí po přečtení tohoto počtu bajtů, například 50000000 (50 MB). Test přečte nejvýše tolik.",
+        "schedule": "Pět polí cron v UTC, například 23 3 * * * pro 03:23 každý den. Prázdné: jen Spustit nyní.",
+        "projects": "Vypíšou se jen zveřejněné koncové body těchto projektů Organizace portálu, například mobility."
+      },
+      "fault": {
+        "name": "Použijte malá písmena, číslice a pomlčky.",
+        "nameTaken": "Portál už má zdroj s tímto názvem.",
+        "type": "Vyberte typ.",
+        "url": "Napište adresu https, například https://data.kosice.sk/catalog.ttl.",
+        "allowedHosts": "Napište jen názvy hostitelů.",
+        "number": "Napište celé číslo větší než 0.",
+        "schedule": "Napište pět polí cron.",
+        "projects": "Zaškrtněte alespoň jeden projekt."
+      },
+      "testNamed": "Otestovat připojení zdroje {name}",
+      "runNamed": "Spustit {name} nyní",
+      "removeNamed": "Odebrat zdroj {name}",
+      "endpointsNote": "Koncové body se zobrazí do minuty od zveřejnění; není co spouštět."
+    },
+    "outcome": {
+      "ok": "Zdroj odpověděl v očekávaném formátu.",
+      "unreachable": "Zdroj neodpověděl. Zkontrolujte adresu nebo to zkuste později.",
+      "refused_host": "Adresa je odmítnuta: musí být https, na povoleném hostiteli, na veřejné adrese, a stejně každé přesměrování.",
+      "not_the_expected_format": "Zdroj odpověděl, ale ne ve formátu svého typu {type}.",
+      "too_large": "Odpověď je větší než bajtový rozpočet zdroje.",
+      "over_budget": "Běh se zastavil na rozpočtu zdroje. Zvyšte Nejvýše záznamů na běh nebo Nejvýše bajtů na běh, nebo zužte zdroj.",
+      "past_the_time_cap": "Běh se zastavil na časovém limitu.",
+      "failed": "Běh selhal; zkuste to později nebo se obraťte na operátora."
+    },
+    "runs": {
+      "empty": "Zatím žádný běh. Spustit nyní ho zahájí.",
+      "caption": "Poslední běhy zdroje {source}",
+      "started": "Začátek",
+      "state": "Stav",
+      "counts": "Záznamy",
+      "countLine": "{created} nových, {updated} změněných, {unchanged} stejných, {withdrawn} stažených, {skipped} vynechaných",
+      "stateName": {
+        "running": "Běží",
+        "done": "Hotovo",
+        "stopped": "Zastaven dříve"
+      },
+      "reason": "Co ho zastavilo"
+    },
+    "datasets": {
+      "empty": "Zatím žádná datová sada",
+      "emptyHint": "Datové sady se zde zobrazí, až zdroj proběhne. Přidejte zdroj v Zdrojích a spusťte ho přes Spustit nyní.",
+      "hint": "Skrytá datová sada zůstává v katalogu a z tohoto portálu zmizí; každá změna se navrhne schvalovateli.",
+      "caption": "Datové sady portálu",
+      "title": "Datová sada",
+      "source": "Zdroj",
+      "listed": "Na portálu",
+      "actions": "Akce",
+      "hidden": "Skrytá",
+      "shown": "Zobrazená",
+      "hide": "Skrýt",
+      "unhide": "Znovu zobrazit",
+      "hideNamed": "Skrýt {name}",
+      "unhideNamed": "Znovu zobrazit {name}",
+      "noCatalogue": "Tato instalace zatím neposkytuje katalog otevřených dat, proto tento portál zde nevypíše žádné datové sady. Požádejte operátora o zapnutí katalogu.",
+      "toSources": "Přejít na Zdroje",
+      "noCatalogueTitle": "Zatím zde není katalog otevřených dat"
     }
   }
 }

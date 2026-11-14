@@ -14,7 +14,6 @@
 //!   application-initiated action `UPDATE_PASSWORD`, an authenticator added by `CONFIGURE_TOTP`.
 //! - Sessions: list, sign out one, sign out all others (or all with `current=true`).
 
-use crate::handlers::second_factor_required;
 use crate::i18n::{Bundle, negotiate_locale};
 use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::request::Parts;
@@ -26,6 +25,7 @@ use chrono::Utc;
 use jc_router::Mount;
 use kaisatsu_core::*;
 use kaisatsu_crypto::*;
+use kaisatsu_oidc::second_factor_required;
 use kaisatsu_oidc::{ClientIp, OidcState};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -632,7 +632,7 @@ async fn credential_groups(state: &OidcState, c: &Caller) -> Result<Value> {
             }})
         })
         .collect();
-    let otp_required = second_factor_required(&state.store, &c.realm, &c.user).await?;
+    let otp_required = second_factor_required(state, &c.realm, &c.user).await?;
     Ok(json!([
         {
             "type": "password",
@@ -687,7 +687,7 @@ async fn remove_credential(
                     .iter()
                     .filter(|cr| cr.credential_type == "otp" && cr.id != id)
                     .count();
-                if others == 0 && second_factor_required(&state.store, &c.realm, &c.user).await? {
+                if others == 0 && second_factor_required(state, &c.realm, &c.user).await? {
                     return Ok(field_error(
                         StatusCode::CONFLICT,
                         "otp",

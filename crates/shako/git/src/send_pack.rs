@@ -172,6 +172,10 @@ fn build_send_pack_payload(
     let mut new_tips = Vec::new();
     let mut diverged = Vec::new();
     let only = branch.map(|b| format!("refs/heads/{b}"));
+    let main_tip = only
+        .as_ref()
+        .and_then(|only| local_refs.iter().find(|r| r.name == *only))
+        .map(|r| r.oid);
 
     for r in &local_refs {
         if r.name == "HEAD" {
@@ -180,6 +184,12 @@ fn build_send_pack_payload(
         let old_oid = remote_refs.get(&r.name).copied().unwrap_or(zero);
         if let Some(only) = &only {
             if r.name != *only && !r.name.starts_with("refs/tags/") {
+                continue;
+            }
+            // A tag goes only when it points at main's head or one of its ancestors.
+            if r.name != *only
+                && !main_tip.is_some_and(|tip| is_ancestor(&repo, r.peeled.unwrap_or(r.oid), tip))
+            {
                 continue;
             }
             // A tag is created, never moved; a branch only moves forward.
@@ -289,6 +299,8 @@ mod tests {
         set_ref_direct(&repo, "refs/tags/v1", &second).expect("tag");
         set_ref_direct(&repo, "refs/heads/change/1", &first).expect("branch");
         let change = commit("change/1", "open.yaml");
+        // A tag on the open Change's commit is not on main and stays home.
+        set_ref_direct(&repo, "refs/tags/unapproved", &change).expect("tag");
         (repo, first, second, change)
     }
 

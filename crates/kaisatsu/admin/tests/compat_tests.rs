@@ -96,6 +96,7 @@ async fn setup_app() -> (axum::Router, Arc<MemoryStore>, String, String) {
         kek,
         guard: OutboundGuard::default(),
         default_mount: Mount::default(),
+        second_factor: Default::default(),
     };
     let admin_state = AdminState::new(oidc_state, Arc::new(LocalAuthorizer));
     let app = admin_router(admin_state.clone()).merge(odata_router(admin_state));

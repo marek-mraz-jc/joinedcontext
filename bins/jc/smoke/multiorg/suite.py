@@ -1378,8 +1378,9 @@ class Suite:
         closed = sorted(s for p in self.exp[other]["projects"].values() for s in p["closed"])
         api = self.hosts[other]["api"] if self.hosts else urllib.parse.urlparse(self.base).hostname
         cases = {"foreign-project": [{"name": "theirs", "type": "endpoints", "projects": projects[:1]}] if projects else None,
+                 # allowedHosts names the url's host without the port (jc-core's spec check)
                  "foreign-endpoint": [{"name": "theirs", "type": "dcat-ap", "url": f"https://{api}/api/endpoint/{closed[0]}/",
-                                       "allowedHosts": [api]}] if closed else None}
+                                       "allowedHosts": [urllib.parse.urlsplit(f"//{api}").hostname]}] if closed else None}
         # the member the refusal names and a phrase of its reason (crates/portal/src/portals.rs)
         reasons = {"foreign-project": ("spec.sources[0].projects", "no project of"),
                    "foreign-endpoint": ("spec.sources[0].allowedHosts", "harvest allow-list")}

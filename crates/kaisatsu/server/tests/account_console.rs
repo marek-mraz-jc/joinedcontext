@@ -15,7 +15,7 @@ use http_body_util::BodyExt;
 use jc_router::Mount;
 use kaisatsu_core::*;
 use kaisatsu_crypto::*;
-use kaisatsu_server::router;
+use kaisatsu_server::{KaisatsuState, router};
 use kaisatsu_store_memory::MemoryStore;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -50,6 +50,12 @@ async fn app() -> (Router, Arc<MemoryStore>) {
 
 /// [`app`] plus the key-encryption key, for tests that sign their own tokens.
 async fn app_and_kek() -> (Router, Arc<MemoryStore>, Kek) {
+    let (state, store, kek) = console_state().await;
+    (router(state, mount()).layer(Extension(mount())), store, kek)
+}
+
+/// The state behind [`app`], for tests that serve it twice (with and without the floor).
+async fn console_state() -> (KaisatsuState, Arc<MemoryStore>, Kek) {
     let (state, store, kek) = setup_dev_realm_state().await;
     store
         .upsert_client(ClientRepresentation {
@@ -82,7 +88,7 @@ async fn app_and_kek() -> (Router, Arc<MemoryStore>, Kek) {
         })
         .await
         .unwrap();
-    (router(state, mount()).layer(Extension(mount())), store, kek)
+    (state, store, kek)
 }
 
 async fn call(
@@ -822,6 +828,61 @@ async fn credentials_list_metadata_and_keep_the_required_authenticator() {
     )
     .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn the_last_authenticator_is_kept_under_the_floor() {
+    let (state, store, _) = console_state().await;
+    let plain = router(state.clone(), mount()).layer(Extension(mount()));
+    let floor = router(
+        state.with_second_factor(kaisatsu_server::SecondFactor::Required),
+        mount(),
+    )
+    .layer(Extension(mount()));
+    let member = sign_in(&plain, &store, MEMBER, MEMBER_PW).await;
+    let m = user(&store, MEMBER).await;
+    let s = user(&store, STEWARD).await;
+    let mut otp = store
+        .list_credentials("dev", &s.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.credential_type == "otp")
+        .unwrap();
+    otp.id = "member-otp".into();
+    otp.user_id = m.id.clone();
+    store.upsert_credential(otp).await.unwrap();
+
+    // Only the floor requires the member's authenticator: it is listed required and stays.
+    let (st, groups) = rest(&floor, Method::GET, "/credentials", &member.token, None).await;
+    assert_eq!(st, StatusCode::OK);
+    let otp_group = groups
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["type"] == "otp")
+        .unwrap();
+    assert_eq!(otp_group["required"], true);
+    let (st, err) = rest(
+        &floor,
+        Method::DELETE,
+        "/credentials/member-otp",
+        &member.token,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{err}");
+    assert_eq!(err["errorMessage"], "accountOtpRequired");
+    // Without the floor the same authenticator may go.
+    let (st, _) = rest(
+        &plain,
+        Method::DELETE,
+        "/credentials/member-otp",
+        &member.token,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
 }
 
 #[tokio::test]

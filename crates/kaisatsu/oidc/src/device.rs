@@ -185,7 +185,14 @@ async fn signed_in(
         .store
         .get_sso_session_by_handle(&realm.id, &sha256_hex(&handle))
         .await?;
-    Ok(sso.filter(|s| s.max_expires_at > Utc::now() && s.idle_expires_at > Utc::now()))
+    let Some(sso) = sso.filter(|s| s.max_expires_at > Utc::now() && s.idle_expires_at > Utc::now())
+    else {
+        return Ok(None);
+    };
+    // A session without the second factor the person now needs approves no device: sign in again.
+    Ok(crate::sso_session_suffices(state, realm, &sso)
+        .await?
+        .then_some(sso))
 }
 
 /// The page's CSRF token: a MAC of the SSO session id, so only a page this session loaded posts.

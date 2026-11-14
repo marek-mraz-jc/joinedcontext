@@ -117,6 +117,7 @@ async fn setup() -> (
         kek,
         guard: OutboundGuard::default(),
         default_mount: Mount::default(),
+        second_factor: Default::default(),
     };
     let state =
         AdminState::new(oidc, Arc::new(LocalAuthorizer)).with_dns_resolver(resolver.clone());

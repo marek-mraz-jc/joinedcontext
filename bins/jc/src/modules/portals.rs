@@ -18,6 +18,7 @@ use dataroom_core::{
 };
 use dataroom_server::{CatalogueSpec, CatalogueWriter, PortalRoute};
 use jc_core::kinds::{PortalSource, PortalSourceType, PortalSpec};
+use joinedcontext_portal::api::portal_sources::{DeskDataset, DeskError, DeskFuture, SourceDesk};
 use joinedcontext_portal::store::{ListOptions, Mirror};
 use std::collections::{BTreeMap, BTreeSet};
 use tokio_util::sync::CancellationToken;
@@ -334,6 +335,11 @@ pub(crate) fn follow(
     if orgs.is_empty() {
         return;
     }
+    joinedcontext_portal::api::portal_sources::hand_desk_to(std::sync::Arc::new(Desk {
+        writer: writer.clone(),
+        orgs: orgs.clone(),
+        active: std::sync::Arc::default(),
+    }));
     let shutdown = shutdown.clone();
     tasks.spawn(async move {
         let mut served: BTreeMap<String, PortalSpec> = BTreeMap::new();
@@ -350,6 +356,121 @@ pub(crate) fn follow(
             }
         }
     });
+}
+
+/// The Portal's sources routes on this process's catalogues (ODP-15): each call runs as the
+/// portal's catalogue's own harvest principal, so it reaches that catalogue's rows alone.
+struct Desk {
+    writer: CatalogueWriter,
+    orgs: Vec<OrganizationPortals>,
+    /// The sources a run started from the Portal holds, until it ends.
+    active: std::sync::Arc<std::sync::Mutex<BTreeSet<(CatalogueId, String)>>>,
+}
+
+impl Desk {
+    fn key(&self, portal: &PortalSpec) -> Result<(OrgId, CatalogueId), DeskError> {
+        catalogue_key(portal, &self.orgs).ok_or(DeskError::NotFound)
+    }
+
+    async fn op(
+        &self,
+        portal: &PortalSpec,
+        op: &str,
+        source: &str,
+    ) -> Result<serde_json::Value, DeskError> {
+        let (org, id) = self.key(portal)?;
+        self.writer
+            .run_op(org, id, op, serde_json::json!({ "source": source }))
+            .await
+            .map_err(desk_error)
+    }
+}
+
+fn desk_error(e: dataroom_core::DataroomError) -> DeskError {
+    match e {
+        dataroom_core::DataroomError::NotFound(_) => DeskError::NotFound,
+        dataroom_core::DataroomError::Conflict(_) => DeskError::Busy,
+        other => DeskError::Failed(other.to_string()),
+    }
+}
+
+impl SourceDesk for Desk {
+    fn test<'a>(&'a self, portal: &'a PortalSpec, source: &'a str) -> DeskFuture<'a, String> {
+        Box::pin(async move {
+            let answer = self.op(portal, "harvest_source.test", source).await?;
+            answer["outcome"]
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| DeskError::Failed("a source test answered no outcome".into()))
+        })
+    }
+
+    fn start<'a>(&'a self, portal: &'a PortalSpec, source: &'a str) -> DeskFuture<'a, ()> {
+        Box::pin(async move {
+            let (_, id) = self.key(portal)?;
+            // The list proves the source is served and shows a scheduled run still going.
+            let runs = self.op(portal, "harvest_run.list", source).await?;
+            let running = runs["runs"]
+                .as_array()
+                .is_some_and(|r| r.iter().any(|r| r["state"] == "running"));
+            let held = (id, source.to_owned());
+            if running
+                || !self
+                    .active
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(held.clone())
+            {
+                return Err(DeskError::Busy);
+            }
+            let (writer, active, (org, id)) =
+                (self.writer.clone(), self.active.clone(), self.key(portal)?);
+            let name = source.to_owned();
+            tokio::spawn(async move {
+                let input = serde_json::json!({ "source": name });
+                if let Err(e) = writer.run_op(org, id, "harvest_run.start", input).await {
+                    tracing::warn!(source = %name, error = %e, "portal source run failed");
+                }
+                active
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .remove(&held);
+            });
+            Ok(())
+        })
+    }
+
+    fn runs<'a>(
+        &'a self,
+        portal: &'a PortalSpec,
+        source: &'a str,
+    ) -> DeskFuture<'a, Vec<serde_json::Value>> {
+        Box::pin(async move {
+            let mut answer = self.op(portal, "harvest_run.list", source).await?;
+            Ok(match answer["runs"].take() {
+                serde_json::Value::Array(runs) => runs,
+                _ => Vec::new(),
+            })
+        })
+    }
+
+    fn datasets<'a>(&'a self, portal: &'a PortalSpec) -> DeskFuture<'a, Vec<DeskDataset>> {
+        Box::pin(async move {
+            let (org, id) = self.key(portal)?;
+            let all = self.writer.datasets(org, id).await.map_err(desk_error)?;
+            Ok(all
+                .into_iter()
+                .filter(|d| d.state == RecordState::Active)
+                .map(|d| DeskDataset {
+                    title: dataroom_core::model::text_in_lang(&d.title, None)
+                        .unwrap_or(&d.name)
+                        .to_owned(),
+                    source: d.harvest_source_id,
+                    name: d.name,
+                })
+                .collect())
+        })
+    }
 }
 
 /// The `generated_by` of a dataset the Portal published from an Endpoint's `publish` block

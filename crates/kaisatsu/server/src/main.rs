@@ -77,6 +77,11 @@ enum Commands {
         /// Portal's `JC_BRANDING_FILE`), applied at start as every realm's branding.
         #[arg(long)]
         branding_file: Option<PathBuf>,
+        /// The second-factor floor for every person of every realm: `required` sends each one
+        /// without an authenticator to enrolment at the next sign-in (jc: `[kaisatsu]
+        /// second_factor`).
+        #[arg(long, default_value = "optional", value_parser = ["optional", "required"])]
+        second_factor: String,
         #[command(flatten)]
         db: DbArgs,
     },
@@ -377,6 +382,7 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
             smtp_password_file,
             outbox_interval_secs,
             branding_file,
+            second_factor,
             db,
         } => {
             let kek = Kek::from_file(&kek_file).map_err(fail(EXIT_INVALID_INPUT))?;
@@ -473,7 +479,12 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
                 kek,
                 OutboundGuard::default(),
                 Arc::new(LocalAuthorizer),
-            );
+            )
+            .with_second_factor(if second_factor == "required" {
+                kaisatsu_server::SecondFactor::Required
+            } else {
+                kaisatsu_server::SecondFactor::Optional
+            });
             let app = router(state, mount);
             // Served through the mount router so the client address (trusted proxies honoured)
             // and the forwarded scheme/host reach every handler (W9, W7 brute force per address).

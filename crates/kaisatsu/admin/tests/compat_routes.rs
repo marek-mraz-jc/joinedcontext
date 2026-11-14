@@ -241,6 +241,7 @@ async fn fixture() -> Fixture {
         kek,
         guard: OutboundGuard::default(),
         default_mount: Mount::default(),
+        second_factor: Default::default(),
     };
     let app = admin_router(AdminState::new(oidc, Arc::new(LocalAuthorizer)))
         .layer(Extension(Mount::default()));
@@ -2130,6 +2131,7 @@ async fn create_user_joins_the_groups_its_body_names() {
             kek: f.kek.clone(),
             guard: OutboundGuard::default(),
             default_mount: Mount::default(),
+            second_factor: Default::default(),
         },
         Arc::new(NoGroupWrites),
     ))

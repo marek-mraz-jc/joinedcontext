@@ -6,6 +6,7 @@
 import argparse
 import importlib.util
 import json
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -346,6 +347,12 @@ class PortalJc:
                 spec = body["spec"]
                 if not jc.ours(org, spec["organizationRef"]):
                     return 403, {"detail": "not yours"}
+                src = (spec["sources"] or [{}])[0]
+                url_host = urllib.parse.urlsplit(src.get("url", "")).hostname
+                if url_host and url_host not in src.get("allowedHosts", []):
+                    # jc-core's spec check: allowedHosts lists the url's host name, no port
+                    return 200, {"valid": False, "verdict": {"ok": False, "findings": [{"level": "error", "path": "",
+                                 "message": f"invalid spec.sources[0].allowedHosts: must list `{url_host}`, the url's own host"}]}}
                 if spec["sources"] and jc.wrong_reason:
                     # refused for a reason that is not the isolation rule (a loopback guard)
                     return 422, {"detail": "spec.sources[0].url: loopback address refused"}
@@ -390,7 +397,8 @@ def test_the_portal_rows_pass_on_an_isolated_jc_and_each_fails_where_isolation_b
     orgs = ("hel", "zilina")
     s.exp = {"hel": {"projects": {"helsinki": EMPTY | {"closed": {"hslug": ("bikes", "organization")}}}},
              "zilina": {"projects": {"zilina": EMPTY | {"closed": {"zslug": ("air", "organization")}}}}}
-    s.hosts = {o: {k: f"{k}.{o}.localhost" for k in ("portal", "opendata", "api", "mcp")} for o in orgs}
+    # the smoke stack's hosts carry its port, as jc.toml lists them
+    s.hosts = {o: {k: f"{k}.{o}.localhost:42301" for k in ("portal", "opendata", "api", "mcp")} for o in orgs}
     jc = PortalJc(orgs, leaky)
     s.session, s.client = jc.session, jc.client
     s.check_portals()
