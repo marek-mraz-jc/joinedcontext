@@ -490,6 +490,11 @@ async fn render_chart_marks_a_cut_answer_truncated() {
     let result = render_saved("truncated", app(&broker.url, &realm, false), bar(OPEN)).await;
     png_of(&result);
     assert_eq!(result["structuredContent"]["truncated"], json!(true));
+    // The chart view says so as well (UI judge, T-6882).
+    assert_eq!(
+        result["_meta"]["joinedcontext.com/pointsTruncated"],
+        json!(true)
+    );
     let text = result["content"][1]["text"].as_str().expect("text");
     assert!(text.contains("not complete"), "{text}");
     assert_eq!(broker.hops().len(), 1, "the cursor is not followed");

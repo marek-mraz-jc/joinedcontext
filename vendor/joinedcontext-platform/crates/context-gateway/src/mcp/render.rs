@@ -293,7 +293,11 @@ async fn draw(hub: &Hub, id: Value, arguments: &Map<String, Value>) -> Value {
     let charted = spec::chart_of(&spec, &rows, &DOOR);
     let truncated = cut || charted.truncated;
     // What the chart view draws (T-6882): the checked spec and the points, channels only.
-    let view = spec::view_of(&spec, &charted, &DOOR);
+    let mut view = spec::view_of(&spec, &charted, &DOOR);
+    // A read with a next page is a cut chart in the view too, never one that looks complete.
+    if truncated {
+        view["joinedcontext.com/pointsTruncated"] = json!(true);
+    }
     let Some(_slot) = slot().await else {
         return refusal(
             id,
