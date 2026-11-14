@@ -1293,7 +1293,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_public_panel_sends_no_token() {
+    async fn a_public_panel_sends_no_token_and_reads_as_the_public() {
         let server = service("grafana").await;
         render_answering(&server).await;
         let mut state = world(Some(&server));
@@ -1304,6 +1304,11 @@ mod tests {
         assert!(data.error.is_none(), "{data:?}");
         let requests = server.received_requests().await.expect("recorded");
         assert_eq!(person_headers(&requests), [None]);
+        let read_as: Vec<_> = requests
+            .iter()
+            .filter_map(|request| request.headers.get(crate::grafana::READ_AS_HEADER))
+            .collect();
+        assert_eq!(read_as, ["public"], "daiya refuses a read for nobody");
     }
 
     /// T-6783: a Portal cookie session reads a members-only panel with its kept access token
