@@ -1913,10 +1913,12 @@ async fn wait_for_thought(app: &axum::Router, cookie: &str, id: &str, prefix: &s
 
 #[tokio::test]
 async fn a_version_whose_pages_show_the_sampled_entities_is_checked_without_a_model_call() {
+    // The forge serves the bikes model, so its personal marks can be read (AG-158).
+    let forge = forge().await;
     let (_state, app, cookie, proxy) = portal_state_with(
         "openai-compatible",
         &[code_answer("Stations.", &stations_app(STATIONS))],
-        None,
+        Some(&forge),
     )
     .await;
     mount_types(&proxy).await;
@@ -1946,6 +1948,8 @@ async fn a_version_whose_pages_show_the_sampled_entities_is_checked_without_a_mo
 #[tokio::test]
 async fn what_the_preview_shows_wrong_goes_back_as_a_verification_pass_and_a_new_version() {
     let repaired = STATIONS.replace("{rows.map", "{(rows ?? []).map");
+    // The forge serves the bikes model, so its personal marks can be read (AG-158).
+    let forge = forge().await;
     let (state, app, cookie, proxy) = portal_state_with(
         "openai-compatible",
         &[
@@ -1956,7 +1960,7 @@ async fn what_the_preview_shows_wrong_goes_back_as_a_verification_pass_and_a_new
                 &[("src/pages/Stations.tsx", "", repaired.clone())],
             ),
         ],
-        None,
+        Some(&forge),
     )
     .await;
     mount_types(&proxy).await;
