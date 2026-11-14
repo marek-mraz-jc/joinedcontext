@@ -119,6 +119,8 @@ const SAME = {
 
 /** The project's assistants, as the picker reads them; `[]` is a project without one. */
 let deployments: string[] = ["obcan"];
+/** A second page of the list behind cursor `c2`; null keeps the list one page long. */
+let secondPage: typeof LIST | null = null;
 
 function renderAs(verbs: string[], link: { open?: string; against?: string } = {}) {
   const calls: { method: string; url: URL }[] = [];
@@ -140,7 +142,9 @@ function renderAs(verbs: string[], link: { open?: string; against?: string } = {
         ? { items: deployments.map((name) => ({ apiVersion: "joinedcontext.com/v1alpha1", kind: "AssistantDeployment", metadata: { name, namespace: PROJECT, title: { en: "Citizen desk" } }, spec: {} })) }
       : url.pathname.endsWith("/same") ? SAME
       : url.pathname.endsWith(TWO) ? OTHER
-      : url.pathname.endsWith(ONE) ? DETAIL : LIST;
+      : url.pathname.endsWith(ONE) ? DETAIL
+      : secondPage && url.searchParams.get("cursor") === "c2" ? secondPage
+      : secondPage ? { ...LIST, nextCursor: "c2" } : LIST;
     return Promise.resolve(
       new Response(body === null ? null : JSON.stringify(body), {
         status: body === null ? 204 : 200,
@@ -287,6 +291,23 @@ describe("Asistent → Konverzácie", () => {
     await user.type(screen.getByLabelText(i18n.t("conversations.filter.q")), "parking");
     await waitFor(() => expect(calls.some((c) => c.url.searchParams.get("q") === "parking")).toBe(true));
     expect(calls.filter((c) => c.url.searchParams.has("q")).map((c) => c.url.searchParams.get("q"))).toEqual(["parking"]);
+  });
+
+  it("goes back from a later page the way Next came, and offers no Previous on the first (T-6917)", async () => {
+    const user = userEvent.setup();
+    secondPage = { items: [{ ...LIST.items[1], id: TWO, firstQuestion: "Kde parkovať?" }], nextCursor: null };
+    try {
+      renderAs(["read", "approve"]);
+      await screen.findByText("Aké je PM10?");
+      expect(screen.queryByRole("button", { name: i18n.t("conversations.previous") })).toBeNull();
+      await user.click(screen.getByRole("button", { name: i18n.t("conversations.next") }));
+      expect(await screen.findByText("Kde parkovať?")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: i18n.t("conversations.previous") }));
+      expect(await screen.findByText("Aké je PM10?")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: i18n.t("conversations.previous") })).toBeNull();
+    } finally {
+      secondPage = null;
+    }
   });
 
   it("the administrator filters, opens a conversation with its steps and copies a turn; erase needs delete", async () => {
