@@ -2852,6 +2852,9 @@ async fn action_token_post(
             })
             .await?;
         user.required_actions.retain(|a| a != "UPDATE_PASSWORD");
+        if form.contains_key("logout-sessions") {
+            sign_out_other_sessions(&state, &mount, &realm, &user.id, &headers).await?;
+        }
     }
 
     if let Some(cred) = totp_credential {
@@ -2983,6 +2986,7 @@ async fn render_action_form(
             bundle.get("passwordConfirm").to_owned(),
             "new-password",
         ));
+        fields.push(logout_sessions_field(&bundle, true));
     }
     if let (true, Some(secret)) = (
         wants("CONFIGURE_TOTP"),
