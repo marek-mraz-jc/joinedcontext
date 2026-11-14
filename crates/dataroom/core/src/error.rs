@@ -66,6 +66,19 @@ pub enum DataroomError {
 }
 
 impl DataroomError {
+    /// What a client may read of this error: a storage error's text names tables, constraints
+    /// and values, so it goes to the server log and the client reads that storage failed.
+    #[must_use]
+    pub fn client_safe(self) -> Self {
+        match self {
+            Self::Storage(detail) => {
+                tracing::error!(error = %detail, "dataroom storage error");
+                Self::Storage("storage failed: the server log has the cause".into())
+            }
+            other => other,
+        }
+    }
+
     /// Constructs a single-field validation error.
     pub fn field_error(field: impl Into<String>, problem: impl Into<String>) -> Self {
         let field = field.into();
