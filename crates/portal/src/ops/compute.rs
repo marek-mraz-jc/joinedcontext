@@ -402,7 +402,7 @@ async fn kpi_compute(
         }
         None => (kpi_value(&input.rows.unwrap_or_default(), &params)?, None),
     };
-    let org_domain = assistant::org_domain(state, project);
+    let org_domain = assistant::project_org_domain(state, project);
     // The Endpoint read, or for rows the indicator space's, as the provenance's source.
     let (ep_slug, ep_name) = read
         .or_else(|| kpi::kpi_endpoint(state, project))
@@ -742,7 +742,16 @@ mod tests {
                 status: None,
             });
         }
-        let caller = crate::ops::Caller {
+        let mut input = json!({ "name": "n", "type": "BikeCounter", "endpoint": SLUG });
+        input
+            .as_object_mut()
+            .expect("an object")
+            .extend(args.as_object().expect("an object").clone());
+        kpi_compute(&caller(), &state, "elsewhere", parse_input(input)?).await
+    }
+
+    fn caller() -> crate::ops::Caller {
+        crate::ops::Caller {
             identity: crate::auth::session::Identity {
                 client: None,
                 subject: "sub".into(),
@@ -756,13 +765,43 @@ mod tests {
             via: crate::ops::Via::Mcp,
             access: None,
             bearer: None,
-        };
-        let mut input = json!({ "name": "n", "type": "BikeCounter", "endpoint": SLUG });
-        input
-            .as_object_mut()
-            .expect("an object")
-            .extend(args.as_object().expect("an object").clone());
-        kpi_compute(&caller, &state, "elsewhere", parse_input(input)?).await
+        }
+    }
+
+    /// ADR-N-068: an indicator of a project of another Organization is minted under that
+    /// Organization's domain, the owner the gateway reads, as the assistant's compute_kpi mints it.
+    #[tokio::test]
+    async fn an_indicator_is_minted_under_its_projects_organization_domain() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let org = crate::api::blueprints::ORG_NAMESPACE;
+        for (kind, name, spec) in [
+            (
+                "Organization",
+                "city",
+                json!({ "domain": "city.example", "installation": true }),
+            ),
+            ("Organization", "bcn", json!({ "domain": "barcelona.cat" })),
+            ("Project", "mobility", json!({ "organizationRef": "bcn" })),
+        ] {
+            state.mirror.upsert(crate::resource::ResourceEnvelope {
+                api_version: crate::resource::API_VERSION.to_owned(),
+                kind: kind.to_owned(),
+                metadata: crate::resource::ObjectMeta::new(name, org),
+                spec,
+                status: None,
+            });
+        }
+        let input = json!({ "name": "n", "type": "BikeCounter", "agg": "count", "rows": [{ "id": "urn:ngsi-ld:BikeCounter:1" }] });
+        let answer = kpi_compute(
+            &caller(),
+            &state,
+            "mobility",
+            parse_input(input).expect("an input"),
+        )
+        .await
+        .expect("an indicator");
+        let id = answer["id"].as_str().unwrap_or_default();
+        assert!(id.contains(":barcelona.cat:"), "{id}");
     }
 
     /// A gateway holding `total` counters of count 1, 2, ... that answers at most `page` a read.

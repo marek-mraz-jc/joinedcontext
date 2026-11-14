@@ -580,8 +580,37 @@ impl Driver {
         serde_json::from_str::<Value>(&body).map_err(|err| err.to_string())
     }
 
-    /// One GET through the proxy with the run's ticket, as text.
+    /// One GET through the proxy with the run's ticket, as text, without the attributes the
+    /// read projects' models mark personal (AG-158, JC1-03): every page a run reads reaches the
+    /// model provider, as a sample, a test input or a preview.
     pub(super) async fn read_text(&self, url: &str) -> Result<String, String> {
+        let body = self.read_raw(url).await?;
+        match serde_json::from_str::<Value>(&body) {
+            Ok(mut page) if crate::personal_data::carries_entities(&page) => {
+                self.withhold_personal_in(&mut page).await?;
+                Ok(page.to_string())
+            }
+            _ => Ok(body),
+        }
+    }
+
+    /// Removes from `value` the attributes marked personal by the models of this run's project
+    /// and of each project whose endpoint it reads. A model that cannot be read is an `Err`:
+    /// nothing could be withheld, so the caller refuses the page.
+    // ponytail: reads the models per page; keep them on the Driver when runs read many pages.
+    pub(super) async fn withhold_personal_in(&self, value: &mut Value) -> Result<(), String> {
+        let mut projects = std::collections::BTreeSet::from([self.project.clone()]);
+        projects.extend(self.endpoints.iter().filter_map(|endpoint| {
+            super::tools_data::endpoint_project(&self.state, &endpoint.slug)
+        }));
+        for project in projects {
+            let marks = crate::personal_data::of_project(&self.state, &project).await?;
+            crate::personal_data::withhold(value, &marks);
+        }
+        Ok(())
+    }
+
+    async fn read_raw(&self, url: &str) -> Result<String, String> {
         let response = self
             .http
             .get(url)
@@ -1383,6 +1412,49 @@ mod effort_tests {
             .expect("a JSON body"),
             json!({}),
             "no effort named, none sent"
+        );
+    }
+}
+
+#[cfg(test)]
+mod personal_tests {
+    use super::*;
+    use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+
+    /// JC1-03, AG-158: the samples a code pass sends the model provider leave out what the
+    /// project's models mark personal; when those models cannot be read, no sample is sent.
+    #[tokio::test]
+    async fn samples_whose_personal_marks_cannot_be_read_never_reach_the_model() {
+        let proxy = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!([{
+                "id": "urn:ngsi-ld:PotholeReport:1",
+                "type": "PotholeReport",
+                "contactEmail": "jana@example.org"
+            }])))
+            .mount(&proxy)
+            .await;
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let mut driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.proxy_base = proxy.uri();
+        let types = ["PotholeReport".to_owned()];
+
+        // A project without models marks nothing: the sample passes whole.
+        let whole = driver.samples(&types).await.expect("samples");
+        assert!(whole.to_string().contains("jana@example.org"), "{whole}");
+
+        // A model the Portal cannot read (no forge here): nothing could be withheld.
+        state.mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.into(),
+            kind: "DataModel".into(),
+            metadata: ObjectMeta::new("reports", "helsinki"),
+            spec: json!({ "linkml": "model.linkml.yaml" }),
+            status: None,
+        });
+        let refused = driver.samples(&types).await.expect("samples");
+        assert!(
+            !refused.to_string().contains("jana@example.org"),
+            "{refused}"
         );
     }
 }

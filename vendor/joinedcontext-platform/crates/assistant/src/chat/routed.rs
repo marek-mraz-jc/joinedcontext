@@ -687,9 +687,12 @@ pub fn asked_of(arguments: &Value) -> Vec<String> {
         .map(str::to_owned)
         .collect();
     if let Some(q) = arguments.get("q").and_then(Value::as_str) {
-        let tested = regex::Regex::new(r"([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?(?:\.[A-Za-z_][A-Za-z0-9_]*)?\s*(?:==|!=|>=|<=|!~=|~=|>|<)")
-            .ok();
-        for found in tested.iter().flat_map(|re| re.captures_iter(q)) {
+        // Compiled once: every data call of every answer asks it.
+        static TESTED: std::sync::LazyLock<Option<regex::Regex>> = std::sync::LazyLock::new(|| {
+            regex::Regex::new(r"([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?(?:\.[A-Za-z_][A-Za-z0-9_]*)?\s*(?:==|!=|>=|<=|!~=|~=|>|<)")
+                .ok()
+        });
+        for found in TESTED.iter().flat_map(|re| re.captures_iter(q)) {
             let name = found[1].to_owned();
             if !out.contains(&name) {
                 out.push(name);
@@ -1581,6 +1584,10 @@ async fn search_index(
     query: &str,
     limit: i64,
 ) -> Result<(Vec<Hit>, String), crate::Error> {
+    // A deployment without sources has nothing to rank: no embedding is waited for.
+    if ask.sources.is_empty() {
+        return Ok((Vec::new(), "time: no sources to search".to_owned()));
+    }
     let (vector, took) = ask.embedder.query_timed(query).await?;
     let began = Instant::now();
     let hits = crate::search_projects(
@@ -2166,6 +2173,7 @@ async fn read(ask: &Ask<'_>, connector: &Connected, wanted: &Read) -> Result<Tab
                 .surface
                 .call(ask.http, "query_entities", arguments.clone())
                 .await;
+            let result = without_personal(ask, connector, result).await;
             let endpoint = Some(connector.endpoint.as_str());
             ask.trace
                 .tool("query_entities", endpoint, &arguments, began, &result);
@@ -2449,14 +2457,20 @@ const MODEL_BYTES: usize = 1 << 20;
 /// table's display order (T-4672); kept per deployment and Endpoint for [`TYPES_LIFE`], a failed
 /// read too, so a slow schema surface costs one wait, not one per table. `None` without one.
 pub(super) async fn model_of(ask: &Ask<'_>, connector: &Connected) -> Option<std::sync::Arc<str>> {
+    if !offers(connector, "describe_schema") {
+        return None;
+    }
+    schema_of(ask, connector).await
+}
+
+/// [`model_of`] whether or not the deployment offers `describe_schema` to its model: the
+/// personal marks are read from it for every answer read with the person's token.
+async fn schema_of(ask: &Ask<'_>, connector: &Connected) -> Option<std::sync::Arc<str>> {
     let key = format!("{}/{}", ask.deployment, connector.surface.slug.as_str());
     if let Some(kept) = ask.cache.model_of(&key) {
         return kept;
     }
     let read = async {
-        if !offers(connector, "describe_schema") {
-            return None;
-        }
         let call =
             connector
                 .surface
@@ -2472,6 +2486,60 @@ pub(super) async fn model_of(ask: &Ask<'_>, connector: &Connected) -> Option<std
     let model = read.await;
     ask.cache.keep_model(&key, model.clone());
     model
+}
+
+/// AG-158 on the internal channel: an answer read with the person's token loses the attributes
+/// its Endpoint's LinkML marks `personalData` before a table, a script buffer, the trace or a
+/// model reads it, and an object answer names them under `withheld`, without their values. An
+/// answer read as anyone passes as it is: a public Endpoint never serves them (DM-122). An
+/// answer with entities whose model cannot be read is refused, and so is one cut past JSON that
+/// mentions a marked attribute.
+pub(super) async fn without_personal(
+    ask: &Ask<'_>,
+    connector: &Connected,
+    answered: Result<String, String>,
+) -> Result<String, String> {
+    let text = answered?;
+    if connector.surface.token.is_none() {
+        return Ok(text);
+    }
+    let parsed = serde_json::from_str::<Value>(&text).ok();
+    let entities = match &parsed {
+        Some(answer) => jc_core::personal::carries_entities(answer),
+        // A cut or text answer, read for the entities it names.
+        None => text.contains("urn:ngsi-ld:"),
+    };
+    if !entities {
+        return Ok(text);
+    }
+    let unreadable = || {
+        format!(
+            "the data model of Endpoint {} could not be read, so its personal attributes cannot be withheld; try again in a few minutes",
+            connector.endpoint
+        )
+    };
+    let model = schema_of(ask, connector).await.ok_or_else(unreadable)?;
+    let marks = jc_core::personal::marks(&model).map_err(|_| unreadable())?;
+    let Some(mut answer) = parsed else {
+        return if marks
+            .values()
+            .flatten()
+            .any(|name| text.contains(name.as_str()))
+        {
+            Err("the answer was too large to withhold its personal attributes; ask for fewer rows or attributes".to_owned())
+        } else {
+            Ok(text)
+        };
+    };
+    let removed = jc_core::personal::withhold(&mut answer, &marks);
+    if removed.is_empty() {
+        return Ok(text);
+    }
+    tracing::info!(deployment = %ask.deployment, endpoint = %connector.endpoint, withheld = %removed.join(","), "personal attributes withheld");
+    if let Value::Object(members) = &mut answer {
+        members.insert("withheld".to_owned(), json!(removed));
+    }
+    Ok(answer.to_string())
 }
 
 /// A `query_entities` answer of `kind` from `connector` as the table the person sees, with the
@@ -3722,17 +3790,26 @@ async fn cache_key(ask: &Ask<'_>, history: &[Turn], question: &str) -> Option<[u
         }),
     };
     match read {
-        // The local day is part of the key, so an answer about "today" is not kept past it.
+        // The local day is part of the key, so an answer about "today" is not kept past it; so
+        // are the connectors the answer reads, so a question that switched some off never
+        // answers one that did not.
         Ok(digest) => Some(AnswerCache::key(
             ask.deployment,
             question,
-            &format!("{digest}@{}", local_day(ask)),
+            &kept_index(&digest, &local_day(ask).to_string(), ask.connectors),
         )),
         Err(why) => {
             tracing::warn!(deployment = %ask.deployment, %why, "the index digest failed; no cache");
             None
         }
     }
+}
+
+/// What a kept answer was made from: the index digest, the local day and the connectors read.
+fn kept_index(digest: &str, day: &str, connectors: &[Connected]) -> String {
+    let mut slugs: Vec<&str> = connectors.iter().map(|c| c.surface.slug.as_str()).collect();
+    slugs.sort_unstable();
+    format!("{digest}@{day}#{}", slugs.join(","))
 }
 
 /// A judge call's reply and how long it took.
@@ -6308,6 +6385,33 @@ mod tests {
         let answer = vec![Event::Answer("Od 9:00 [1].".into())];
         cache.put(key, "bb/public", answer.clone(), CACHE_LIFE);
         assert_eq!(cache.get(&key).map(|(a, _)| a), Some(answer));
+    }
+
+    /// A question that switches connectors off is kept apart from one that reads them all, so a
+    /// visitor's narrowed answer never answers the next visitor.
+    #[test]
+    fn a_kept_answer_is_keyed_by_the_connectors_it_read() {
+        let connector = |slug: &str| Connected {
+            titles: Default::default(),
+            endpoint: slug.into(),
+            title: None,
+            surface: super::super::mcp::Surface {
+                gateway: "http://gateway".into(),
+                slug: slug.into(),
+                timeout: Duration::from_secs(1),
+                token: None,
+            },
+            tools: Vec::new(),
+            label: None,
+            siblings: Vec::new(),
+            dataset: None,
+        };
+        let both = [connector("parking"), connector("roads")];
+        let index = kept_index("10:99", "2026-11-14", &both);
+        assert_ne!(index, kept_index("10:99", "2026-11-14", &[]));
+        assert_ne!(index, kept_index("10:99", "2026-11-14", &both[..1]));
+        let swapped = [connector("roads"), connector("parking")];
+        assert_eq!(index, kept_index("10:99", "2026-11-14", &swapped));
     }
 
     /// T-4731: a kept answer is the events the visitor was sent, tables and follow-ups included,

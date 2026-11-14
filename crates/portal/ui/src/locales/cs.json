@@ -8311,6 +8311,9 @@
       "gatewayHint": "Co smí nést jeden zápis přes endpoint.",
       "signIn": "Přihlášení",
       "signInHint": "Relace a hesla.",
+      "signInPoliciesHint": "Druhý faktor a jaké musí být heslo.",
+      "sessions": "Relace",
+      "sessionsHint": "Kdy přihlášení skončí.",
       "password": "Hesla",
       "passwordHint": "Jaké musí být heslo.",
       "people": "Lidé",
@@ -8367,7 +8370,17 @@
       "publicApps_refused": "Zakázáno",
       "models": "Modely, které smí asistent používat",
       "modelsHint": "Nechte prázdné, aby byly povoleny všechny modely instalace.",
-      "everyModel": "Všechny modely instalace"
+      "everyModel": "Všechny modely instalace",
+      "secondFactor": "Druhý faktor při přihlášení",
+      "secondFactorHint": "Povinný požádá lidi s rolí v celé organizaci, aby si při příštím přihlášení nastavili ověřovací aplikaci, například pokud pracují s osobními údaji.",
+      "secondFactor_required": "Povinný",
+      "secondFactor_optional": "Volitelný",
+      "secondFactor_optionalUnderFloor": "Volitelný (bez účinku: nasazení jej vyžaduje)",
+      "secondFactorInherited": "Povinný (zděděno z nasazení)",
+      "secondFactorInheritedHint": "Zděděno: povinný (nasazení). Každý člen se už přihlašuje s ověřovací aplikací, takže Volitelný zde nemá účinek.",
+      "secondFactorByDefault": "Volitelný (výchozí nasazení)",
+      "secondFactorFixed": "Určeno nasazením",
+      "secondFactorChoice": "Povinný nebo Volitelný"
     },
     "brokers": {
       "title": "Kontextové brokery",

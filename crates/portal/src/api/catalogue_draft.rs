@@ -202,18 +202,7 @@ pub fn keywords(linkml: &str, classes: &[String], language: &str) -> Vec<String>
 pub fn attributes(linkml: &str, classes: &[String], hidden: &[String]) -> Vec<DraftAttribute> {
     use serde_norway::Value as Yaml;
     let model = serde_norway::from_str::<Yaml>(linkml).unwrap_or_default();
-    let personal = |node: &Yaml| {
-        let mark = &node["annotations"]["personalData"];
-        let mark = if mark.get("value").is_some() {
-            &mark["value"]
-        } else {
-            mark
-        };
-        mark.as_bool() == Some(true)
-            || mark
-                .as_str()
-                .is_some_and(|s| s.eq_ignore_ascii_case("true"))
-    };
+    let personal = jc_core::personal::marked;
     let mut out = Vec::new();
     for class in classes {
         let node = &model["classes"][class.as_str()];
