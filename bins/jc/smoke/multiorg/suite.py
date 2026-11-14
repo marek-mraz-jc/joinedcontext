@@ -18,11 +18,29 @@ call on its own Portal host, every request sent to --base-url with the Host head
 show: a person of A signed in on B's host (SSO) gets 403, A's cookie on B's host is no session,
 the platform admin on a host sees that Organization alone, the gateway and open data hosts of one
 link and list nothing of another, a host outside the registry is 421, B's prefix on A's host is a
-404 and A's own prefixed form answers in place (API) or 308 (page)."""
+404 and A's own prefixed form answers in place (API) or 308 (page).
+
+Counting (GOAL-multiorg): every ordered pair of Organizations (A acting on B) has at least one
+isolation row, or `setup.pairs` fails; the skips of each row template (the id with Organization and
+project names as {o}, object names as {n}) stay within skip-bound.json, measured on the
+three-Organization bundle; both are printed in the run line.
+
+Live mode (--live, T-6851; without it the base must be loopback): the base is one of LIVE_HOSTS
+(https) or loopback (a rehearsal of the live mode). Every request passes `Allowlist` first and is
+logged in <out>/requests.log: GET anywhere; POST to the realm's token endpoint and sign-in form,
+NGSI-LD entityOperations/query, MCP initialize and tools/list, and tools/call of a tool whose
+annotations say readOnlyHint; any other method or path only on a project of ctl-a or ctl-b, or the
+DELETE of the run's own personas. A request outside is refused before it is sent. The personas
+come from --personas (the file the owner-approved Operator Change made; `--make-personas FILE`
+writes it on a local jc); no ui, connectors or operators rows; after the run, also a failed one,
+the personas are deleted (--state on a local jc) or listed in <out>/cleanup.json for the
+operator's cleanup Change, and the credentials file is removed."""
 import argparse
 import base64
 import hashlib
+import ipaddress
 import json
+import os
 import re
 import secrets
 import sys
@@ -38,6 +56,10 @@ from common import realm_of  # noqa: E402
 
 CONFIG = ("joinedcontext", "configuration")
 DENIED = (403, 404)
+LIVE_HOSTS = ("jc.jcdev.dev.joinedcontext.com", "smartcity.joinedcontext.com")
+FIXTURES = ("ctl-a", "ctl-b")  # the Organizations whose projects a live run may write into
+LIVE_OFF = ("ui", "connectors", "operators")  # a browser, or writes outside the fixtures
+BOUND = Path(__file__).resolve().parent / "skip-bound.json"
 MCP_CLIENT = "mcp-local"  # the realm's public client for a local MCP client
 # Project-scoped reads every Organization's people use; each is checked both ways.
 PROJECT_READS = ["", "/spaces", "/endpoints", "/pipelines", "/apps", "/datamodels", "/datasources",
@@ -80,6 +102,101 @@ class HostHttp(R.Http):
         return super().call(method, wire, body, {**(headers or {}), "Host": netloc}, form, timeout)
 
 
+class Refused(RuntimeError):
+    """A request the live allowlist does not admit; raised before anything is sent."""
+
+
+def live_base(base: str) -> None:
+    """--live: one of the live deployments over https, or loopback (a rehearsal of the live mode)."""
+    u = urllib.parse.urlparse(base)
+    if (u.hostname or "").lower() in LIVE_HOSTS and u.scheme == "https" and u.port in (None, 443):
+        return
+    host = u.hostname or ""
+    if host != "localhost":
+        try:
+            if ipaddress.ip_address(host).is_loopback:
+                return
+        except ValueError:
+            pass
+        raise SystemExit(f"--live: {host or base} is none of {', '.join(LIVE_HOSTS)} (https) and not loopback")
+
+
+class Allowlist:
+    """What a --live run may send (module docstring); `check` logs each request and refuses one
+    outside before it leaves. `fixtures` are the projects of ctl-a/ctl-b, `personas` the run's own
+    user ids, `hosts` the addresses of the deployment."""
+
+    SIGN_IN = re.compile(r"/id/realms/[\w.-]+/(?:protocol/openid-connect/token|login-actions/authenticate)")
+    MCP = re.compile(r"/api/v1/mcp|/c/[\w-]+|/api/endpoint/[a-z2-7]+/mcp")
+    MCP_READS = ("initialize", "notifications/initialized", "tools/list", "ping")
+
+    def __init__(self, log: Path, hosts, fixtures=(), personas=()):
+        self.log, self.hosts = log, set(hosts)
+        self.fixtures, self.personas = set(fixtures), set(personas)
+        self.read_only: set[str] = set()
+
+    def verdict(self, method: str, url: str, body) -> str | None:
+        u = urllib.parse.urlparse(url)
+        if u.netloc.lower() not in self.hosts:
+            return None
+        path = u.path
+        if method in ("GET", "HEAD"):
+            return "read"
+        project = re.match(r"/api/v1/projects/([\w.-]+)(?:/|$)", path)
+        if project and project.group(1) in self.fixtures:
+            return "fixture"
+        person = re.fullmatch(r"/id/admin/realms/[\w.-]+/users/([\w-]+)", path)
+        if method == "DELETE" and person and person.group(1) in self.personas:
+            return "cleanup"
+        if method != "POST":
+            return None
+        if self.SIGN_IN.fullmatch(path):
+            return "sign-in"
+        if path.endswith("/ngsi-ld/v1/entityOperations/query"):
+            return "query"
+        if self.MCP.fullmatch(path):
+            try:
+                rpc = json.loads(body) if isinstance(body, bytes) else body
+            except ValueError:
+                return None
+            method_ = (rpc or {}).get("method") if isinstance(rpc, dict) else None
+            if method_ in self.MCP_READS:
+                return "mcp"
+            if method_ == "tools/call" and ((rpc.get("params") or {}).get("name") in self.read_only):
+                return "mcp read-only tool"
+        return None
+
+    def check(self, method: str, url: str, body) -> None:
+        why = self.verdict(method, url, body)
+        u = urllib.parse.urlparse(url)
+        with self.log.open("a") as f:  # the path without its query: no code, state or search term
+            f.write(f"{method} {u.netloc}{u.path} {why or 'REFUSED'}\n")
+        if why is None:
+            raise Refused(f"--live: {method} {u.path} is outside the allowlist")
+
+    def learn(self, answer) -> None:
+        """The read-only tools of a tools/list answer (annotations.readOnlyHint)."""
+        tools = ((answer or {}).get("result") or {}).get("tools", []) if isinstance(answer, dict) else []
+        self.read_only |= {t["name"] for t in tools if (t.get("annotations") or {}).get("readOnlyHint") is True}
+
+    def guard(self, h: "R.Http") -> "R.Http":
+        """`h` with every call checked first; MCP tool lists teach the read-only tools."""
+        inner = h.call
+
+        def call(method, path, body=None, headers=None, form=None, timeout=60):
+            self.check(method, h.url(path), body)  # the address the request names (HostHttp: its host)
+            st, hdrs, raw = inner(method, path, body, headers, form, timeout)
+            if isinstance(body, dict) and body.get("method") == "tools/list" and st == 200:
+                try:
+                    self.learn(json.loads(raw))
+                except ValueError:
+                    pass
+            return st, hdrs, raw
+
+        h.call = call
+        return h
+
+
 def users(emails) -> list[str]:
     """The user names of e-mail addresses, sorted: rows name people by user name, never by address
     (the logs suite fails any result file naming an e-mail address)."""
@@ -100,11 +217,17 @@ class Suite:
         self.state = Path(a.state) if a.state else None
         self.realm = realm_of(self.state)
         self.exp: dict = {}
+        self.installation: str | None = None
         self.export = Path(a.export)
         self.people: dict[str, dict] = {}
         self.dashboards: dict[str, tuple[str, str]] = {}
         self.exchange_ok = False  # an own control exchange succeeded: a foreign refusal then counts  # org -> (project, name) the suite committed
         self.hosts = organization_hosts(Path(a.jc_config)) if a.jc_config else {}
+        self.live = bool(getattr(a, "live", False))
+        self.guard: Allowlist | None = None
+        if self.live:
+            base = urllib.parse.urlparse(self.base).netloc.lower()
+            self.guard = Allowlist(Path(a.out) / "requests.log", {base, *(h for o in self.hosts.values() for h in o.values())})
 
     # ---- results
     def row(self, id_, target, call, expected, actual, ok, reason=""):
@@ -159,9 +282,11 @@ class Suite:
     def client(self, org: str | None = None, kind: str = "portal") -> R.Http:
         """Path mode: the base. Host mode: `org`'s `kind` host (the base without an org)."""
         if not self.hosts:
-            return R.Http(self.base)
-        every = [h for o in self.hosts.values() for h in o.values()]
-        return HostHttp(self.base, self.hosts[org][kind] if org else None, every)
+            h = R.Http(self.base)
+        else:
+            every = [h for o in self.hosts.values() for h in o.values()]
+            h = HostHttp(self.base, self.hosts[org][kind] if org else None, every)
+        return self.guard.guard(h) if self.guard else h
 
     def home(self, key: str) -> str | None:
         """The Organization whose Portal host persona `key` works on in host mode: its own; the
@@ -170,7 +295,56 @@ class Suite:
             return None
         return self.installation if key == "platform" else key.rsplit("-", 1)[0]
 
+    def personas_from(self, file: Path) -> None:
+        """--personas: the run's people as the owner-approved Operator Change made them, in a file
+        only its owner reads (0600, in a 0700 directory)."""
+        for f, mode in ((file, 0o600), (file.parent, 0o700)):
+            if f.stat().st_mode & 0o777 & ~mode:
+                raise RuntimeError(f"{f.name} is readable by others (mode {f.stat().st_mode & 0o777:o}); want {mode:o}")
+        people = json.loads(file.read_text())
+        want = {"platform", *(f"{o}-{k}" for o in self.exp for k in ("admin", "member"))}
+        if set(people) != want:
+            raise RuntimeError(f"--personas names {sorted(set(people) ^ want)[:6]} unlike the bundle's Organizations")
+        self.people = {k: {"username": v["username"], "id": v["id"], "password": v["password"]} for k, v in people.items()}
+
+    def save_personas(self, file: Path) -> None:
+        """--make-personas: the people setup made, for a later --live run (the local stand-in for the
+        Operator Change), 0600 in a 0700 directory."""
+        file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(file.parent, 0o700)
+        fd = os.open(file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump({k: {"username": v["username"], "id": v["id"], "password": v["password"]}
+                       for k, v in self.people.items()}, f)
+
+    def cleanup(self) -> None:
+        """After a --live run, also a failed one: the personas deleted through the realm admin (a
+        local jc's --state), else listed for the operator's cleanup Change; the credentials gone."""
+        ids = {k: v["id"] for k, v in self.people.items() if v.get("id")}
+        left = dict(ids)
+        if self.state and ids:
+            self.guard.personas = set(ids.values())
+            h = self.client()
+            auth = {"Authorization": f"Bearer {R.admin_token(h, self.state)}"}
+            for key, uid in ids.items():
+                st, _, _ = h.call("DELETE", f"/id/admin/realms/{self.realm}/users/{uid}", headers=auth)
+                if st in (204, 404):
+                    left.pop(key)
+        (Path(self.a.out) / "cleanup.json").write_text(json.dumps(
+            {"personas": sorted(left.values()), "deleted": len(ids) - len(left)}, indent=1))
+        self.row("live.cleanup", "all", "DELETE each persona", "none left", f"{len(left)} left", not left,
+                 "" if not left else "the operator's cleanup Change removes those in cleanup.json")
+        if self.a.personas:
+            Path(self.a.personas).unlink(missing_ok=True)
+        for p in self.people.values():
+            p.pop("password", None)
+
     def setup(self):
+        if self.live:
+            self.personas_from(Path(self.a.personas))
+            self.guard.fixtures = {p for o in FIXTURES for p in self.exp.get(o, {}).get("projects", {})}
+            self.guard.personas = {v["id"] for v in self.people.values()}
+            return self.synced()
         h = self.client()
         tok = R.admin_token(h, self.state)
         names = {"platform": ["/platform-admins"]}
@@ -192,6 +366,8 @@ class Suite:
                               f"    - user: {p['id']} # {p['username']}\n  role: {role}\n"
                               f"  scope: {{ organization: {org} }}\n"))
         for org, e in self.exp.items():
+            if not e["projects"]:  # a DelegationPolicy names projects: an empty control has none
+                continue
             subjects = "".join(f"    - id: {self.people[f'{org}-{k}']['id']}\n      kind: User\n" for k in ("admin", "member"))
             files.append((f"users/delegation/multiorg-{org}.yaml",
                           "apiVersion: joinedcontext.com/v1alpha1\nkind: DelegationPolicy\nmetadata:\n"
@@ -214,16 +390,21 @@ class Suite:
                           f"    - title: Overview\n      widgets:\n        - widgetType: temporal-chart\n"
                           f"          endpointRef: {endpoint}\n")],
                         f"multiorg smoke: a Dashboard of {org}", repo=("joinedcontext", project))
-        # Wait until each admin sees its Organization's projects (the Portal's sync).
+        self.synced()
+
+    def synced(self):
+        """Waits until each admin sees its Organization's projects (the Portal's sync)."""
         deadline = time.time() + self.a.sync_timeout
         pending = set(self.exp)
         while pending and time.time() < deadline:
             for org in sorted(pending):
                 st, body = self.session(f"{org}-admin").json("GET", "/api/v1/projects")
-                st_d, _ = self.session("platform").json("GET", f"/api/v1/projects/org/delegationpolicies/multiorg-{org}")
+                st_d = self.session("platform").json("GET", f"/api/v1/projects/org/delegationpolicies/multiorg-{org}")[0] \
+                    if self.exp[org]["projects"] and not self.live else 200
                 dash = self.dashboards.get(org)
                 st_b = self.session("platform", org if self.hosts else None).json("GET", f"/api/v1/projects/{dash[0]}/dashboards/{dash[1]}")[0] if dash else 200
-                if st == 200 and st_d == 200 and st_b == 200 and self.bound(org) >= {f"mo-{org}-admin", f"mo-{org}-member"} and \
+                if st == 200 and st_d == 200 and st_b == 200 and \
+                        (not self.state or self.bound(org) >= {f"mo-{org}-admin", f"mo-{org}-member"}) and \
                         set(self.exp[org]["projects"]) <= {i["name"] for i in body.get("items", [])}:
                     pending.discard(org)
             if pending:
@@ -353,6 +534,8 @@ class Suite:
                 calls += [f"/api/v1/projects/{project}/pipelines/{n}" for n in objs["Pipeline"][:2]]
                 for call in calls:
                     st_own, _, _ = self.session(f"{owner}-admin").call("GET", call)
+                    if st_own != 200:  # a read the Organization's admin lacks: the operator's 200 shows the route
+                        st_own, _, _ = self.session("platform", owner if self.hosts else None).call("GET", call)
                     for other in self.exp:
                         if other == owner:
                             continue
@@ -362,7 +545,7 @@ class Suite:
                             if st_own != 200:
                                 self.row(rid, f"{other}->{owner}", f"GET {call}", "control 200, foreign 403/404",
                                          f"control {st_own}, foreign {st}", st in DENIED and None,
-                                         f"no control: {owner}-admin got {st_own}" if st in DENIED
+                                         f"no control: {owner}-admin and the platform admin got {st_own}" if st in DENIED
                                          else f"foreign got {st}, control {st_own}")
                                 if st not in DENIED:
                                     self.rows[-1]["result"] = "fail"
@@ -374,7 +557,7 @@ class Suite:
         """A foreign org admin's DELETE of an Endpoint is refused and the Endpoint stays."""
         for owner, e in self.exp.items():
             project = next((p for p, o in e["projects"].items() if o["Endpoint"]), None)
-            if not project:
+            if not project or (self.live and owner not in FIXTURES):
                 continue
             ep = e["projects"][project]["Endpoint"][0]
             call = f"/api/v1/projects/{project}/endpoints/{ep}"
@@ -478,18 +661,19 @@ class Suite:
         def leaks(text, skip=()):
             return sorted({m for m in marks if m in text and m.strip('"') not in skip})
 
-        own = next(p for p, o in sorted(self.exp[org]["projects"].items()) if o["Endpoint"])
-        st, res = call("jc_resource_list", {"project": own, "kind": "Endpoint"})
-        text = json.dumps(res, ensure_ascii=False)
-        missing = [n for n in self.exp[org]["projects"][own]["Endpoint"] if f'\\"name\\":\\"{n}\\"' not in text]
-        self.row(f"mcp.{key}.own-endpoints.{own}", org, f"tools/call jc_resource_list {own}",
-                 f"every Endpoint of {own} ({len(self.exp[org]['projects'][own]['Endpoint'])})",
-                 f"{st}, missing {missing[:4]}", st == 200 and not missing)
+        own = next((p for p, o in sorted(self.exp[org]["projects"].items()) if o["Endpoint"]), None)
+        if own and not (self.live and "jc_resource_list" not in self.guard.read_only):
+            st, res = call("jc_resource_list", {"project": own, "kind": "Endpoint"})
+            text = json.dumps(res, ensure_ascii=False)
+            missing = [n for n in self.exp[org]["projects"][own]["Endpoint"] if f'\\"name\\":\\"{n}\\"' not in text]
+            self.row(f"mcp.{key}.own-endpoints.{own}", org, f"tools/call jc_resource_list {own}",
+                     f"every Endpoint of {own} ({len(self.exp[org]['projects'][own]['Endpoint'])})",
+                     f"{st}, missing {missing[:4]}", st == 200 and not missing)
         for name in ("jc_endpoint_list_all", "jc_person_list", "jc_member_list", "jc_organization_read",
                      "jc_catalog_search", "jc_permissions_me", "jc_workspace_list", "jc_activity_list"):
-            if name not in self.people[key].get("tools", []):
+            if name not in self.people[key].get("tools", []) or (self.live and name not in self.guard.read_only):
                 continue
-            args = {"project": own} | {"jc_catalog_search": {"q": "air"},
+            args = ({"project": own} if own else {}) | {"jc_catalog_search": {"q": "air"},
                                        "jc_organization_read": {"aspect": "projects"}}.get(name, {})
             st, res = call(name, args)
             r = (res or {}).get("result") or {}
@@ -506,12 +690,13 @@ class Suite:
         for other, oe in self.exp.items():
             if other == org:
                 continue
-            project = sorted(oe["projects"])[0]
+            project = min(oe["projects"], default=None)
             for name, args in (("jc_resource_list", {"project": project, "kind": "Endpoint"}),
                                ("jc_project_get", {"project": project}),
                                ("jc_change_list", {"project": project}),
                                ("jc_organization_read", {"organization": other})):
-                if name not in self.people[key].get("tools", []):
+                if name not in self.people[key].get("tools", []) or (project is None and "project" in args) \
+                        or (self.live and name not in self.guard.read_only):
                     continue
                 st, res = call(name, args)
                 r = (res or {}).get("result") or {}
@@ -527,6 +712,8 @@ class Suite:
         made = {}
         expires = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 7 * 86400))
         for org, e in self.exp.items():
+            if not e["projects"]:  # a connector is scoped to a project: an empty control makes none
+                continue
             own = sorted(e["projects"])[0]
             h = self.session(f"{org}-admin")
             st, body = h.json("POST", "/api/v1/connectors", body={
@@ -538,7 +725,7 @@ class Suite:
             if cid:
                 made[org] = (cid, own)
             for other, oe in self.exp.items():
-                if other == org:
+                if other == org or not oe["projects"]:
                     continue
                 foreign = sorted(oe["projects"])[0]
                 st, body = h.json("POST", "/api/v1/connectors", body={
@@ -762,10 +949,11 @@ class Suite:
             for other in orgs:
                 if other == org:
                     continue
-                foreign = sorted(self.exp[other]["projects"])[0]
-                st, _, _ = self.session("platform", org).call("GET", f"/api/v1/projects/{foreign}")
-                self.row(f"hosts.platform.{org}.foreign.{foreign}", f"{org}->{other}",
-                         f"GET /api/v1/projects/{foreign} on {org}'s host as the platform admin", "403/404", st, st in DENIED)
+                foreign = min(self.exp[other]["projects"], default=None)
+                if foreign:
+                    st, _, _ = self.session("platform", org).call("GET", f"/api/v1/projects/{foreign}")
+                    self.row(f"hosts.platform.{org}.foreign.{foreign}", f"{org}->{other}",
+                             f"GET /api/v1/projects/{foreign} on {org}'s host as the platform admin", "403/404", st, st in DENIED)
                 # SSO: other's admin, whose browser holds the realm session from signing in on its
                 # own host, opens this host's sign-in: the realm answers at once, back to this host.
                 st_own, _ = self.session(f"{other}-admin").json("GET", "/api/v1/projects")
@@ -785,13 +973,13 @@ class Suite:
                 cookie = "; ".join(f"{n}={v}" for n, (v, _) in jar.items())
                 replay = self.client(org)
                 st_r, _, _ = replay.call("GET", "/api/v1/projects", headers={"Cookie": cookie})
-                st_w, _, _ = replay.call("POST", f"/api/v1/projects/{sorted(self.exp[org]['projects'])[0]}/workspaces",
-                                         headers={"Cookie": cookie, "x-csrf-token": jar.get("__Host-jc_csrf", ("",))[0]},
-                                         body={})
+                st_w = None if self.live else replay.call(  # live: the read alone (no write outside the fixtures)
+                    "POST", f"/api/v1/projects/{min(self.exp[org]['projects'], default='org')}/workspaces",
+                    headers={"Cookie": cookie, "x-csrf-token": jar.get("__Host-jc_csrf", ("",))[0]}, body={})[0]
                 self.row(f"hosts.cookie.{other}.on.{org}", f"{other}->{org}",
                          f"GET /api/v1/projects, POST workspaces on {org}'s host with {other}'s cookies",
                          "401 / 401-403 (control 200 on its own host)", f"read {st_r}, write {st_w}, control {st_own}",
-                         st_own == 200 and st_r == 401 and st_w in (401, 403))
+                         st_own == 200 and st_r == 401 and (self.live or st_w in (401, 403)))
             # The gateway on this Organization's API host links its own hosts alone.
             api = self.client(org, "api")
             for path in ("/api/endpoints", "/catalog.jsonld", "/cs"):
@@ -884,6 +1072,7 @@ class Suite:
             marks = self.foreign_marks(org)
             for kind in ("admin", "member"):
                 key = f"{org}-{kind}"
+                answered = []  # (path, text) of each 200
                 for path in self.GLOBAL_READS:
                     st, body = self.session(key).json("GET", path)
                     text = json.dumps(body, ensure_ascii=False)
@@ -895,9 +1084,22 @@ class Suite:
                     if hits and org == self.installation and kind == "admin":
                         ok, reason = None, ("installation admin: realm-wide kinds (ADR-N-058 2.2) name other "
                                             "Organizations' objects; owner decision")
+                    elif st == 200:  # the per-pair rows judge what the per-path rows judge
+                        answered.append((path, text))
                     self.row(f"global.{key}.{path}", org, f"GET {path} as mo-{key}",
                              "403/404, or 200 naming no object of another Organization",
                              f"{st}, foreign {hits[:4]}", ok, reason)
+                # The same answers per Organization: an empty control has no object, its people's
+                # names are its marks, so a pair row holds for it too.
+                for other in self.exp:
+                    if other == org:
+                        continue
+                    theirs = [m for m, o in marks.items() if o == other]
+                    seen = sorted({path for path, text in answered if any(m in text for m in theirs)})
+                    self.row(f"global.{key}.none-of.{other}", f"{org}->{other}",
+                             f"GET each of {len(self.GLOBAL_READS)} routes without a project as mo-{key}",
+                             f"no answer names {other}'s people or objects", f"{len(answered)} answered, named in {seen[:4]}",
+                             not seen)
 
     def check_dashboards(self):
         """Each Organization's Dashboards (the export's and the suite's own) are listed for its
@@ -930,6 +1132,111 @@ class Suite:
                             self.row(f"dashboards.{org}.{p}.{d}.foreign-{other}-{kind}{'' if call == path else '-list'}",
                                      org, f"GET {call} as mo-{other}-{kind}", "403/404",
                                      f"{st}{', names it' if leaked else ''}", st in DENIED)
+
+    def check_operators(self):
+        """No Organization holds the installation role: the operators are the platform-admins group.
+        They propose an Organization, a RoleBinding and a Group at the org namespace (a dry run: no
+        Change is filed) and read the pages that fell back to the installation's Organization; no
+        Organization's admin reaches the org namespace."""
+        if self.installation:
+            return
+        tag = f"mo-op-{secrets.token_hex(3)}"
+        me = self.people["platform"]["id"]
+        target = next(iter(self.exp))
+        def manifest(kind, spec):
+            return {"apiVersion": "joinedcontext.com/v1alpha1", "kind": kind,
+                    "metadata": {"name": tag, "namespace": "org"}, "spec": spec}
+        bodies = {
+            "organizations": manifest("Organization", {"domain": f"{tag}.example", "locales": ["en"], "defaultLocale": "en",
+                                                        "projects": {"visibility": "organization", "creation": "org-admin"}}),
+            "rolebindings": manifest("RoleBinding", {"subjects": [{"user": me}], "role": "viewer",
+                                                     "scope": {"organization": target}}),
+            "groups": manifest("Group", {"description": "multiorg operator check", "members": [{"user": me}]}),
+        }
+        for plural, body in bodies.items():
+            call = f"/api/v1/projects/org/{plural}?dryRun=All"
+            st, raw = self.session("platform").json("POST", call, body=body)
+            control = st == 200
+            self.row(f"operators.platform.propose.{plural}", "platform", f"POST {call}",
+                     "200: the dry run of an operator's proposal", f"{st} {str(raw)[:160]}" if not control else "200", control)
+            for org in self.exp:
+                st, raw = self.session(f"{org}-admin").json("POST", call, body=body)
+                self.row(f"operators.{org}-admin.propose.{plural}", org, f"POST {call} as mo-{org}-admin",
+                         "403/404 (the operator's dry run 200)", f"{st} {str(raw)[:120]}" if st not in DENIED else str(st),
+                         (st in DENIED) if control else None, "" if control else "no control: the operator's dry run failed")
+        # The pages that answered with the installation's Organization: an operator's answer now.
+        everyone = {f"mo-{o}-{k}" for o in self.exp for k in ("admin", "member")}
+        st, body = self.session("platform").json("GET", "/api/v1/organization/people?max=100")
+        names = set(users(i.get("email", "") for i in (body or {}).get("items", []))) if st == 200 else set()
+        self.row("operators.platform.people", "platform", "GET /api/v1/organization/people",
+                 "200 naming the people of every Organization", f"{st}, missing {len(everyone - names)}",
+                 st == 200 and everyone <= names)
+        for path in ("/api/v1/organization/widgets", "/api/v1/organization/setup"):
+            st, body = self.session("platform").json("GET", path)
+            self.row(f"operators.platform.{path}", "platform", f"GET {path}", "200",
+                     f"{st} {str(body)[:120]}" if st != 200 else "200", st == 200)
+        st, _, raw = self.session("platform").call("GET", "/api/v1/", headers={"OData-MaxVersion": "4.0",
+                                                                                 "Accept": "application/json"})
+        self.row("operators.platform.odata", "platform", "GET /api/v1/ (OData service document)",
+                 "200, or 404 naming no Organization (path mode has no Organization of the request)",
+                 f"{st} {raw[:120]!r}", st == 200 or (st == 404 and not any(o in raw.decode(errors='replace') for o in self.exp)))
+        for org in self.exp:
+            for plural in ("rolebindings", "groups", "organizations"):
+                call = f"/api/v1/projects/org/{plural}"
+                st, body = self.session(f"{org}-admin").json("GET", call)
+                text = json.dumps(body, ensure_ascii=False)
+                foreign = sorted(o for o in self.exp if o != org and (f"multiorg-{o}-" in text or f'"name": "{o}"' in text))
+                self.row(f"operators.{org}-admin.org-namespace.{plural}", org, f"GET {call} as mo-{org}-admin",
+                         "403/404, or 200 naming nothing of another Organization", f"{st}, foreign {foreign[:4]}",
+                         st in DENIED or (st == 200 and not foreign))
+
+    def template(self, rid: str) -> str:
+        """A row id with Organization and project names as {o} and object names as {n}: the rows
+        one check makes for each Organization or object share it."""
+        if not hasattr(self, "_names"):
+            names = {}
+            for e in self.exp.values():
+                for o in e["projects"].values():
+                    for n in [*o["Endpoint"], *o["Pipeline"], *o["Dashboard"], *o["ckanOrgs"], *o["closed"]]:
+                        names[n] = "{n}"
+            for org, e in self.exp.items():
+                names.update({p: "{o}" for p in e["projects"]} | {org: "{o}"})
+            alt = "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
+            self._names = (names, re.compile(rf"(?<![A-Za-z0-9_])(?:{alt})(?![A-Za-z0-9_])") if names else None)
+        names, rx = self._names
+        return rx.sub(lambda m: names[m.group(0)], rid) if rx else rid
+
+    def count(self, full: bool):
+        """The run's counters: rows per ordered pair (`setup.pairs` fails on a pair without one, on a
+        full run) and skips per row template against skip-bound.json (a template over its bound
+        fails; a template the bound does not name may skip nothing)."""
+        orgs = list(self.exp)
+        pairs = {(a, b): 0 for a in orgs for b in orgs if a != b}
+        for r in self.rows:
+            a, sep, b = str(r["target"]).partition("->")
+            if sep and (a, b) in pairs and r["result"] != "skip":
+                pairs[(a, b)] += 1
+        missing = sorted(f"{a}->{b}" for (a, b), n in pairs.items() if not n)
+        if full and pairs:
+            self.row("setup.pairs", f"{len(pairs)} pairs", "rows per ordered pair of Organizations",
+                     ">= 1 isolation row for each", f"{len(pairs) - len(missing)} of {len(pairs)}; none for {missing[:6]}",
+                     not missing)
+        skips: dict[str, int] = {}
+        for r in self.rows:
+            if r["result"] == "skip":
+                t = self.template(r["id"])
+                skips[t] = skips.get(t, 0) + 1
+        mode = "hosts" if self.hosts else "path"
+        bound = dict(json.loads(BOUND.read_text())[mode]) if BOUND.is_file() else {}
+        if self.live:  # a live run adds no Dashboard (no write outside the fixtures): an Organization
+            # whose export holds none of its own has nothing to judge there
+            bound["dashboards.{o}"] = bound.get("dashboards.{o}", 0) + sum(
+                1 for e in self.exp.values() if not any(p["Dashboard"] for p in e["projects"].values()))
+        for t, n in sorted(skips.items()):
+            if n > bound.get(t, 0):
+                self.row(f"skips.{t}", mode, "skips of one row template", f"<= {bound.get(t, 0)} (skip-bound.json)",
+                         str(n), False)
+        return {"pairs": f"{len(pairs) - len(missing)}/{len(pairs)}", "skipsByTemplate": skips}
 
     def check_ui(self):
         """Shots at 1440 and 400 px per persona: the project list, an own project and a foreign
@@ -970,9 +1277,9 @@ class Suite:
             for key, p in self.people.items():
                 org = key.rsplit("-", 1)[0] if key != "platform" else None
                 base = f"{scheme}://{self.hosts[self.home(key)]['portal']}" if self.hosts else self.base
-                own = sorted(self.exp[org]["projects"])[0] if org else "helsinki"
-                foreign = sorted(sorted(o["projects"])[0] for k, o in self.exp.items() if k != org)[0] if org else None
-                pages = [("own-project", f"/projects/{own}"), ("projects", "/"), ("organization", "/organization")]
+                own = min(self.exp[org]["projects"], default=None) if org else "helsinki"
+                foreign = min((min(o["projects"]) for k, o in self.exp.items() if k != org and o["projects"]), default=None) if org else None
+                pages = ([("own-project", f"/projects/{own}")] if own else []) + [("projects", "/"), ("organization", "/organization")]
                 if foreign:
                     pages.append(("foreign-project", f"/projects/{foreign}"))
                 for width, height in ((1440, 900), (400, 860)):
@@ -1034,20 +1341,32 @@ class Suite:
                      "not applicable: the export is one installation, not a composed multi-organization bundle")
             return
         self.expectations()
-        if not self.state:
+        if not self.state and not self.live:
             self.row("setup", "all", "-", "--state", "none", None, "no --state: persons cannot be made")
             return
+        try:
+            self.checks()
+        finally:
+            if self.live:
+                self.cleanup()
+
+    def checks(self):
         try:
             self.setup()
         except Exception as ex:  # noqa: BLE001 - a setup failure is a row, the rest is skipped
             self.row("setup", "all", "persons and bindings", "made", str(ex)[:300], False)
             return
+        if getattr(self.a, "make_personas", None):
+            self.save_personas(Path(self.a.make_personas))
+            return
         steps = (self.check_projects, self.check_hosts, self.check_project_reads, self.check_writes, self.check_people,
-                 self.check_mcp, self.check_connectors, self.check_data, self.check_catalogue, self.check_dashboards, self.check_global)
+                 self.check_mcp, self.check_connectors, self.check_data, self.check_catalogue, self.check_dashboards,
+                 self.check_global, self.check_operators)
         if self.a.shots:
             steps += (self.check_ui,)
         for step in steps:
-            if self.a.only and step.__name__.removeprefix("check_") not in self.a.only.split(","):
+            group = step.__name__.removeprefix("check_")
+            if (self.a.only and group not in self.a.only.split(",")) or (self.live and group in LIVE_OFF):
                 continue
             try:
                 step()
@@ -1056,14 +1375,18 @@ class Suite:
 
     def write(self, out: Path):
         out.mkdir(parents=True, exist_ok=True)
+        made = getattr(self.a, "make_personas", None)  # setup alone: no pair to count
+        counted = self.count(not self.a.only and not made) if self.exp else {}
         (out / "results.json").write_text(json.dumps({"suite": "multiorg", "base": self.base, "checks": self.rows},
                                                      indent=1))
         tools = {k: {"portal": v.get("tools"), "connector": v.get("connectorTools")}
                  for k, v in self.people.items() if v.get("tools") is not None or v.get("connectorTools")}
         (out / "mcp-tools.json").write_text(json.dumps(tools, indent=1))
         n = {r: sum(1 for x in self.rows if x["result"] == r) for r in ("pass", "fail", "skip")}
+        (out / "counts.json").write_text(json.dumps(counted, indent=1))
         lines = ["# multiorg smoke", "", f"Base {self.base}; organizations {', '.join(self.exp)}; "
-                 f"{n['pass']} pass, {n['fail']} fail, {n['skip']} skip.", "",
+                 f"{n['pass']} pass, {n['fail']} fail, {n['skip']} skip; pairs {counted.get('pairs', '-')}; "
+                 f"skips by template {json.dumps(counted.get('skipsByTemplate', {}))}.", "",
                  "| id | target | call | expected | actual | result |", "|---|---|---|---|---|---|"]
         order = {"fail": 0, "skip": 1, "pass": 2}
         for r in sorted(self.rows, key=lambda x: order[x["result"]]):
@@ -1071,7 +1394,7 @@ class Suite:
             lines.append(f"| {cell(r['id'])} | {cell(r['target'])} | `{cell(r['call'])}` | {cell(r['expected'])} | "
                          f"{cell(r['actual'])} | {r['result']}{' (' + cell(r['reason']) + ')' if r['reason'] else ''} |")
         (out / "REPORT.md").write_text("\n".join(lines) + "\n")
-        return n
+        return n | counted
 
 
 def main(argv):
@@ -1082,17 +1405,29 @@ def main(argv):
     ap.add_argument("--state", help="the rehearsal's state dir (realm admin client, forge token)")
     ap.add_argument("--admin-token-file", help="unused: persons are made through --state")
     ap.add_argument("--person-token-file", help="unused: persons are made through --state")
-    ap.add_argument("--only", help="comma list of check groups: projects,hosts,project_reads,writes,people,mcp,connectors,data,catalogue,dashboards,global,ui")
+    ap.add_argument("--only", help="comma list of check groups: projects,hosts,project_reads,writes,people,mcp,connectors,data,catalogue,dashboards,global,operators,ui")
     ap.add_argument("--shots", action="store_true", help="browser shots 1440/400 per persona (Playwright)")
     ap.add_argument("--sync-timeout", type=int, default=180)
     ap.add_argument("--composed", action="store_true",
                     help="the bundle must be composed (the smoke gate): no multiorg block is a failure, not a skip")
     ap.add_argument("--jc-config", "--hosts", dest="jc_config",
                     help="the jc.toml (or its [[organizations]] fragment): host mode, each Organization on its own hosts")
+    ap.add_argument("--live", action="store_true",
+                    help="judge a live deployment: requests only from the allowlist, personas from --personas")
+    ap.add_argument("--personas", help="--live: the personas file the owner-approved Operator Change made (0600)")
+    ap.add_argument("--make-personas", help="on a local jc: make the personas and their bindings, write them here, stop")
     a = ap.parse_args(argv)
-    R.loopback_only(a.base_url)
+    if a.live:
+        if not a.personas:
+            ap.error("--live needs --personas")
+        if a.make_personas or a.shots:
+            ap.error("--live makes no personas and takes no shots")
+        live_base(a.base_url)
+    else:
+        R.loopback_only(a.base_url)
+    a.out.mkdir(parents=True, exist_ok=True)
     s = Suite(a)
     s.run()
     n = s.write(a.out)
-    print(json.dumps(n))
+    print(json.dumps(n))  # the run line: pass, fail, skip, pairs covered, skips per row template
     return 1 if n["fail"] else 0
