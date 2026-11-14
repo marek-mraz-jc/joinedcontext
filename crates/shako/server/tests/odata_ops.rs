@@ -711,11 +711,19 @@ async fn every_answer_carries_the_fixed_content_security_policy() {
     let resp = w
         .app
         .clone()
-        .oneshot(Request::builder().uri("/odata/Repositories").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/odata/Repositories")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     let csp = resp.headers()["content-security-policy"].to_str().unwrap();
-    assert!(csp.starts_with("default-src 'none'; style-src 'self'; "), "{csp}");
+    assert!(
+        csp.starts_with("default-src 'none'; style-src 'self'; "),
+        "{csp}"
+    );
     assert!(!csp.contains("nonce"), "{csp}");
 }
 
