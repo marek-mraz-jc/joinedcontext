@@ -482,6 +482,31 @@ fn follow_endpoint_scopes(
     });
 }
 
+/// How often expired sign-in rows (sessions, codes, revoked token ids) are deleted.
+const SWEEP_EVERY: Duration = Duration::from_secs(60);
+
+/// Deletes expired sign-in rows every `every` until `shutdown`, as `kaisatsu serve` does: the
+/// reads already skip them, the sweep keeps the tables from growing with every sign-in.
+fn sweep_expired_rows(
+    store: Arc<dyn Store>,
+    every: Duration,
+    shutdown: &CancellationToken,
+    tasks: &TaskTracker,
+) {
+    let shutdown = shutdown.clone();
+    tasks.spawn(async move {
+        loop {
+            if let Err(e) = store.sweep_expired().await {
+                tracing::warn!(error = %e, "kaisatsu: expired rows not swept");
+            }
+            tokio::select! {
+                () = shutdown.cancelled() => return,
+                () = tokio::time::sleep(every) => {}
+            }
+        }
+    });
+}
+
 /// Keeps each Organization's sign-in pages its `Organization.spec.appearance` over the realm's
 /// block (UIX-16, T-6777): one block per Organization, keyed by its Portal host, which the
 /// sign-in finds by the redirect URI the Portal there sends. A member the Organization leaves
@@ -620,6 +645,7 @@ pub async fn build(
     }
     check_edge_client(&store, realm).await?;
     follow_endpoint_scopes(store.clone(), realm.clone(), shutdown, tasks);
+    sweep_expired_rows(store.clone(), SWEEP_EVERY, shutdown, tasks);
     #[cfg(feature = "portal")]
     follow_appearances(&store, realm, organizations, shutdown, tasks);
     #[cfg(not(feature = "portal"))]
@@ -896,6 +922,29 @@ mod tests {
     }
 
     /// An empty import dir (first start) applies nothing; a realm file in it is applied.
+    /// jc sweeps expired rows as `kaisatsu serve` does: an expired revoked-token row is gone
+    /// once the sweeper ran, so a sweep afterwards finds nothing left.
+    #[tokio::test]
+    async fn the_sweeper_deletes_expired_rows() {
+        let kek = Kek::from_raw_bytes(&[7u8; 32]).unwrap();
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek));
+        store
+            .mark_token_revoked(kaisatsu_core::RevokedTokenRecord {
+                jti_hash: "gone".into(),
+                realm_id: "dev".into(),
+                expires_at: chrono::Utc::now() - chrono::Duration::minutes(1),
+            })
+            .await
+            .unwrap();
+        let (shutdown, tasks) = (CancellationToken::new(), TaskTracker::new());
+        sweep_expired_rows(store.clone(), Duration::from_millis(10), &shutdown, &tasks);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        shutdown.cancel();
+        tasks.close();
+        tasks.wait().await;
+        assert_eq!(store.sweep_expired().await.unwrap(), 0);
+    }
+
     #[tokio::test]
     async fn an_empty_import_dir_applies_nothing_and_a_realm_file_is_applied() {
         let dir = tempfile::tempdir().unwrap();

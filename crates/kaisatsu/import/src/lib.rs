@@ -1279,6 +1279,18 @@ pub async fn apply_realm_files(
             idp.realm_id = realm_id.clone();
             idp.managed_by = Some("apply".into());
             let prev = store.get_idp(&realm_id, &idp.alias).await?;
+            // The upstream client secret resolves like a client's: an unset variable keeps the
+            // stored one (re-applying an export), a literal needs the policy's consent.
+            if let Some(raw) = idp.config.get("clientSecret").cloned() {
+                let kept = prev
+                    .as_ref()
+                    .and_then(|p| p.config.get("clientSecret").cloned());
+                let value = match kept {
+                    Some(kept) if secret_variable_unset(&raw, opts) => kept,
+                    _ => resolve_secret_value(&raw, "identityProvider.config.clientSecret", opts)?,
+                };
+                idp.config.insert("clientSecret".into(), value);
+            }
             let act = match prev {
                 None => ChangeAction::Create,
                 Some(p) if p.config == idp.config && p.enabled == idp.enabled => {
@@ -1645,7 +1657,18 @@ pub async fn export_realm(
     }
     let roles = store.list_roles(realm_id, None).await?;
     let groups = store.list_groups(realm_id, None, None, false).await?;
-    let idps = store.list_idps(realm_id).await?;
+    let mut idps = store.list_idps(realm_id).await?;
+    for idp in &mut idps {
+        if idp.config.contains_key("clientSecret") {
+            idp.config.insert(
+                "clientSecret".into(),
+                format!(
+                    "$(IDP_SECRET_{})",
+                    idp.alias.to_ascii_uppercase().replace('-', "_")
+                ),
+            );
+        }
+    }
 
     let mut out =
         serde_json::to_value(&realm).map_err(|e| KaisatsuError::Storage(e.to_string()))?;
