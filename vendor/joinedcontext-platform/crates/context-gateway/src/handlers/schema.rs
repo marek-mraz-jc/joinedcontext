@@ -34,7 +34,8 @@ pub struct Visible {
     /// it says which slots each class has. Held per class, so a caller granted `age` on `User`
     /// is never described an `age` on `Vehicle` (MP-02, T-2132).
     slots: BTreeMap<String, BTreeSet<String>>,
-    /// No permission is in force for the caller: no type is described (EP-47).
+    /// Nothing is described to the caller: no permission is in force, a prohibition takes every
+    /// type back, or the granted types are none the projection serves (EP-47).
     ungranted: bool,
 }
 
@@ -129,15 +130,22 @@ pub fn visible(subject: &Subject, endpoint: &Endpoint, now: DateTime<Utc>) -> Vi
         visible.attrs.extend(granted_attrs(&policy.information));
     }
     for policy in &prohibitions {
-        let attrs = granted_attrs(&policy.information);
-        // A prohibition that names attributes takes those back; one that names none takes
-        // the whole type back.
-        if attrs.is_empty() {
-            visible
-                .denied_types
-                .extend(granted_types(&policy.information));
-        } else {
-            visible.denied_attrs.extend(attrs);
+        // An entry is read alone, as the data paths read it (`withheld_by`): one that names
+        // attributes takes those back, one that names none takes its types back, and one that
+        // names neither, or a prohibition of reads with no entry, takes every type back.
+        if policy.information.is_empty() && policy.operations.iter().any(|op| !op.is_write()) {
+            visible.ungranted = true;
+        }
+        for info in &policy.information {
+            let attrs = granted_attrs(std::slice::from_ref(info));
+            let types = granted_types(std::slice::from_ref(info));
+            if !attrs.is_empty() {
+                visible.denied_attrs.extend(attrs);
+            } else if types.is_empty() {
+                visible.ungranted = true;
+            } else {
+                visible.denied_types.extend(types);
+            }
         }
     }
     // EP-61: what the endpoint does not serve is not described either, so the schema and
@@ -153,7 +161,10 @@ pub fn visible(subject: &Subject, endpoint: &Endpoint, now: DateTime<Utc>) -> Vi
             .iter()
             .map(|class| class.name.clone())
             .collect();
-        visible.types = narrow(&visible.types, &classes);
+        let types = narrow(&visible.types, &classes);
+        // Granted types the projection does not serve leave no type, not every type.
+        visible.ungranted |= types.is_empty() && !visible.types.is_empty();
+        visible.types = types;
         let slots: BTreeSet<String> = projection
             .classes
             .iter()
@@ -431,6 +442,51 @@ mod visible_tests {
             seen.covers_attr("pm10"),
             "a grant naming no attribute reads them all"
         );
+    }
+
+    /// EP-47: the empty type list that reads as "every type" is never what is left once a
+    /// prohibition takes every type back or the projection serves none of the granted ones.
+    #[test]
+    fn nothing_left_to_describe_describes_no_type() {
+        let mut no_entry = prohibiting(&["AirQualityObserved"], &[]);
+        no_entry.information.clear();
+        let mut writes_only = no_entry.clone();
+        writes_only.operations = serde_norway::from_str("[deleteEntity]").expect("operations");
+        let mut nothing_named = prohibiting(&["AirQualityObserved"], &[]);
+        nothing_named.information[0].entities.clear();
+        // Two entries are two prohibitions: the one naming no attribute takes its type back.
+        let mut two_entries = prohibiting(&["Vehicle"], &["speed"]);
+        two_entries
+            .information
+            .extend(prohibiting(&["AirQualityObserved"], &[]).information);
+        let grant = || granting(&["AirQualityObserved", "Vehicle"], &[]);
+        for (name, prohibition, left) in [
+            ("no entry", no_entry, vec![]),
+            ("an entry naming nothing", nothing_named, vec![]),
+            ("two entries", two_entries, vec!["Vehicle"]),
+            (
+                "writes only",
+                writes_only,
+                vec!["AirQualityObserved", "Vehicle"],
+            ),
+        ] {
+            let seen_on = endpoint(vec![grant(), prohibition]);
+            let seen = visible(&Subject::anonymous(), &seen_on, now());
+            assert_eq!(visible_types(&seen_on, &seen), left, "{name}");
+        }
+
+        let mut projected = endpoint(vec![granting(&["AirQualityObserved"], &[])]);
+        projected.projection = Some(std::sync::Arc::new(
+            serde_norway::from_str(
+                "contextSpaceRef: ovzdusie\n\
+                 dataModelRef: { kind: DataModel, name: air, version: \"1\" }\n\
+                 classes:\n  - name: Vehicle\n    slots: [speed]\n",
+            )
+            .expect("a projection"),
+        ));
+        let seen = visible(&Subject::anonymous(), &projected, now());
+        assert!(visible_types(&projected, &seen).is_empty());
+        assert!(!seen.covers_attr("speed"));
     }
 
     /// T-1158, GW8, EP-47: a prohibition that names no attribute takes the whole type back, and

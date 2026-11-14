@@ -201,6 +201,12 @@ pub async fn record(
         })
         .await;
     let seconds = started.elapsed().as_secs_f64();
+    // A 404 says nothing of whether the thing exists (RTE-03, SP-06); the time a decision or
+    // the broker took for it would, so it names neither.
+    let (pdp, broker) = match response.status() {
+        axum::http::StatusCode::NOT_FOUND => (0.0, 0.0),
+        _ => (pdp, broker),
+    };
     let timing = format!(
         "pdp;dur={:.3}, broker;dur={:.3}, total;dur={:.3}",
         pdp * 1000.0,
