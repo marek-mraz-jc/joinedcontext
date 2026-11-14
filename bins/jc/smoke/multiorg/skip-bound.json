@@ -1,29 +1,28 @@
 {
- "source": "skips per row template of smoke run 43300263524 (jc-portal-1 98b8c735), the three-Organization bundle (hel, zilina, barcelona); a template may not skip more on any bundle (T-6850)",
+ "source": "skips per row template of a local gate.sh run (worker-t6850, 2026-11-14, jc-portal-1 f715ca86 + T-6850), the six-Organization bundle (ops the installation's with no data, hel, zilina, barcelona, ctl-a and ctl-b empty); a template may not skip more on any bundle, and may only shrink (T-6850). people.{o}-admin.own is the per-Organization people list gap of every Organization but the installation's; dashboards.{o} the three Organizations with no project; catalogue.{o}.{n}.* the CKAN organisation hel-fi with no dataset.",
  "hosts": {
+  "dashboards.{o}": 3,
   "data.{o}-admin.readable.own-organization": 1,
   "data.{o}-member.readable.own-organization": 1,
   "global.{o}-admin./api/v1/organization/connectors": 1,
   "global.{o}-admin./api/v1/organization/costs": 1,
   "global.{o}-admin./api/v1/organization/data-access": 1,
   "global.{o}-admin./api/v1/organization/health-checks": 1,
-  "isolation.{o}-admin.{o}/rolebindings": 4,
-  "isolation.{o}-member.{o}/rolebindings": 4,
   "people.{o}-admin.no-foreign": 1,
-  "people.{o}-admin.own": 2
+  "people.{o}-admin.own": 5
  },
  "path": {
   "catalogue.{o}.{n}.dcat": 1,
   "catalogue.{o}.{n}.page": 1,
+  "catalogue.{o}.{n}.ttl": 1,
+  "dashboards.{o}": 3,
   "data.{o}-admin.readable.own-organization": 1,
   "data.{o}-member.readable.own-organization": 1,
   "global.{o}-admin./api/v1/organization/connectors": 1,
   "global.{o}-admin./api/v1/organization/costs": 1,
   "global.{o}-admin./api/v1/organization/data-access": 1,
   "global.{o}-admin./api/v1/organization/health-checks": 1,
-  "isolation.{o}-admin.{o}/rolebindings": 4,
-  "isolation.{o}-member.{o}/rolebindings": 4,
   "people.{o}-admin.no-foreign": 1,
-  "people.{o}-admin.own": 2
+  "people.{o}-admin.own": 5
  }
 }
