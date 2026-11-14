@@ -1361,16 +1361,6 @@ pub async fn add_webhook(
         .await
 }
 
-/// The disk path of a repository the caller reads, for read-only git work.
-pub async fn readable_repo(
-    state: &ShakoState,
-    ctx: &RequestCtx,
-    owner: &str,
-    name: &str,
-) -> ShakoResult<(RepoRecord, PathBuf)> {
-    resolve_and_authorize_repo(state, ctx, owner, name, Action::Read).await
-}
-
 // =========================================================================
 // Generic packages
 // =========================================================================

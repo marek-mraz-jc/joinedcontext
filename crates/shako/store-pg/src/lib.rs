@@ -16,7 +16,7 @@ use shako_core::{
     ShakoError, ShakoResult, Store, StoreFuture, TagProtectionRecord, WebhookId, WebhookRecord,
 };
 use shako_store_memory::MemoryStore;
-use sqlx::postgres::{PgConnectOptions, PgListener, PgPool, PgPoolOptions};
+use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use sqlx::{Postgres, Row, Transaction};
 use std::path::Path;
 use std::str::FromStr;
@@ -354,22 +354,6 @@ impl PgStore {
         Ok(())
     }
 
-    pub fn spawn_outbox_listener(&self) -> tokio::task::JoinHandle<()> {
-        let pool = self.pool.clone();
-        let counter = self.outbox_notifications.clone();
-        tokio::spawn(async move {
-            while let Ok(mut listener) = PgListener::connect_with(&pool).await {
-                if listener.listen("shako_outbox").await.is_err() {
-                    break;
-                }
-                counter.fetch_add(1, Ordering::SeqCst);
-                while listener.recv().await.is_ok() {
-                    counter.fetch_add(1, Ordering::SeqCst);
-                }
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
-        })
-    }
 }
 
 impl Store for PgStore {
