@@ -45,21 +45,28 @@ impl PortalTables {
         read(&self.hosts).get(host).copied()
     }
 
-    /// Routes catalogue `id` at `(org, path)` and on `host`, dropping its previous slug. A host
-    /// it left keeps answering for it, so an IRI pinned there still reaches its dataset.
-    /// ponytail: kept until restart; upgrade path: the catalogue row stores its past hosts.
+    /// Routes catalogue `id` at `(org, path)`, on `host` and on each host in `left` it no
+    /// longer has (its catalogue row keeps them), dropping its previous slug: an IRI pinned on
+    /// a left host still reaches its dataset. A left host another portal has taken stays that
+    /// portal's.
     pub fn route(
         &self,
         id: CatalogueId,
         org: &str,
         path: &str,
         host: Option<&str>,
+        left: &[String],
         address: PortalAddress,
     ) {
         write(&self.slugs).retain(|_, a| a.id != id);
-        if let Some(host) = host {
-            write(&self.hosts).insert(host.to_owned(), (address.org_id, id));
+        let mut hosts = write(&self.hosts);
+        for gone in left {
+            hosts.entry(gone.clone()).or_insert((address.org_id, id));
         }
+        if let Some(host) = host {
+            hosts.insert(host.to_owned(), (address.org_id, id));
+        }
+        drop(hosts);
         write(&self.slugs).insert((org.to_owned(), path.to_owned()), address);
     }
 

@@ -116,6 +116,18 @@ pub fn check(
                 "a portal never moves to another Organization; make a new one there".into(),
             ));
         }
+        // A path names the portal's catalogue: a new path would be a new catalogue, every
+        // dataset IRI would move (ODP-11), and a `default` renamed away could be deleted.
+        if let Some(was) = held.as_ref().map(|h| &h.path).filter(|p| **p != spec.path) {
+            return Err(refused(
+                "spec.path",
+                format!(
+                    "a portal's path never changes (it is {was}); give it a host for a new \
+                     address, or make a new portal at {}",
+                    spec.path
+                ),
+            ));
+        }
     }
     let all = others(mirror, name);
     if all
@@ -130,6 +142,32 @@ pub fn check(
             ),
         ));
     }
+    if let Some(host) = spec.host.as_ref().filter(|h| {
+        all.iter()
+            .any(|(_, o)| o.host.as_ref().is_some_and(|x| x.eq_ignore_ascii_case(h)))
+    }) {
+        return Err(refused(
+            "spec.host",
+            format!("another portal answers on {host} already; choose another listed host"),
+        ));
+    }
+    // ponytail: refused until the dataroom lists published Endpoints per portal (T-6879), so a
+    // source is never accepted that serves nothing.
+    if let Some(i) = spec
+        .sources
+        .iter()
+        .position(|s| s.kind == jc_core::kinds::PortalSourceType::Endpoints)
+    {
+        return Err(refused(
+            &format!("spec.sources[{i}].type"),
+            "an `endpoints` source is not served yet; the default portal lists the \
+             Organization's published Endpoints, use dcat-ap, ckan-action, nkod-sparql or \
+             arcgis-hub here"
+                .into(),
+        ));
+    }
+    // A replay of `main` passes no settings: each manifest there passed the host, source and
+    // cap checks at the propose door, which always has them.
     let Some(settings) = settings else {
         return Ok(());
     };
@@ -327,6 +365,57 @@ mod tests {
         assert!(detail.starts_with("spec.organizationRef:"), "{detail}");
         let detail = field(check(&mirror, None, &portal("x", "praha", "x", None)).unwrap_err());
         assert!(detail.contains("no Organization praha"), "{detail}");
+    }
+
+    #[test]
+    fn a_path_never_changes_to_or_from_default() {
+        let mirror = mirror();
+        mirror.upsert(portal("ba-default", "ba", "default", None));
+        mirror.upsert(portal("ba-mobility", "ba", "mobility", None));
+        for (name, path) in [
+            ("ba-default", "old"),
+            ("ba-mobility", "default"),
+            ("ba-mobility", "doprava"),
+        ] {
+            let detail = field(check(&mirror, None, &portal(name, "ba", path, None)).unwrap_err());
+            assert!(
+                detail.starts_with("spec.path: a portal's path never changes"),
+                "{name} -> {path}: {detail}"
+            );
+        }
+        // Default stays default, so it still cannot be deleted.
+        assert!(deletion(&mirror, "Portal", ORG_NAMESPACE, "ba-default").is_err());
+    }
+
+    #[test]
+    fn an_endpoints_source_is_refused_until_it_is_served() {
+        let mut p = portal("ba-region", "ba", "region", None);
+        p.spec["sources"] = json!([{ "name": "own", "type": "endpoints" }]);
+        let detail = field(check(&mirror(), None, &p).unwrap_err());
+        assert!(detail.starts_with("spec.sources[0].type:"), "{detail}");
+    }
+
+    #[test]
+    fn two_portals_cannot_name_one_host() {
+        let mirror = mirror();
+        let s = parse("ba=mobility.ba.sk", Some("10"), "").expect("settings");
+        mirror.upsert(portal(
+            "ba-mobility",
+            "ba",
+            "mobility",
+            Some("mobility.ba.sk"),
+        ));
+        for settings in [Some(&s), None] {
+            let detail = field(
+                check(
+                    &mirror,
+                    settings,
+                    &portal("ba-skoly", "ba", "skoly", Some("mobility.ba.sk")),
+                )
+                .unwrap_err(),
+            );
+            assert!(detail.starts_with("spec.host: another portal"), "{detail}");
+        }
     }
 
     #[test]

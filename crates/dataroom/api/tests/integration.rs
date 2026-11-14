@@ -118,6 +118,8 @@ fn make_catalogue(org_id: OrgId, cat_id: CatalogueId, name: &str, host: &str) ->
         modified: Utc::now(),
         deleted: None,
         public_base: None,
+        portal_base: None,
+        left_hosts: Vec::new(),
     }
 }
 
