@@ -1,6 +1,7 @@
 import React, { useCallback, useRef } from "react";
-import { coerce, storedText } from "./GridCellEditors";
+import { coerce, storedText, storedValue } from "./GridCellEditors";
 import { parseClipboard, planPaste } from "./paste";
+import { structured } from "./model";
 import type { ValueRule } from "./rules";
 import type { AttributeAccess } from "./source";
 import type { EntityGrid as EntityGridApi, UseEntityGridOptions, VisibleColumn } from "./useEntityGrid";
@@ -140,7 +141,7 @@ export function useGridKeys(
         e.preventDefault();
         control.focus();
         const stored = storedText(rows[at!.row]?.cells[cell.attr]);
-        setEdit(cell.id, cell.attr, e.key === stored ? undefined : coerce(e.key, stored, rules?.[cell.attr]));
+        setEdit(cell.id, cell.attr, e.key === stored ? undefined : coerce(e.key, storedValue(rows[at!.row]?.cells[cell.attr]), rules?.[cell.attr]));
         return;
       }
       // Typing on a locked cell says why nothing opens (T-5530), in the grid's status line.
@@ -177,8 +178,8 @@ export function useGridKeys(
         }
         const cell = row.cells[column.attr];
         const one = Array.isArray(cell) ? cell[0] : cell;
-        // A geometry is drawn on the map and a relationship picked: neither is typed over.
-        if (one?.kind === "geo" || one?.kind === "relationship" || relations?.[column.attr]) {
+        // A geometry is drawn on the map and a relationship picked: neither is typed over, nor a structure.
+        if (one?.kind === "geo" || one?.kind === "relationship" || structured(one) || relations?.[column.attr]) {
           return { id: row.id, attr: column.attr, current: null };
         }
         const pending = state.edits[row.id]?.[column.attr];
@@ -203,7 +204,7 @@ export function useGridKeys(
           return {
             id: edit.id,
             attr: edit.attr,
-            value: edit.text === stored ? undefined : coerce(edit.text, stored, rules?.[edit.attr]),
+            value: edit.text === stored ? undefined : coerce(edit.text, one?.value, rules?.[edit.attr]),
           };
         }),
       );

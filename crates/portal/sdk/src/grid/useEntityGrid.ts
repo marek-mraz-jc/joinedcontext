@@ -1056,7 +1056,11 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
             column.key === "entity:type"
               ? config.type.split(",").map((each) => ({ value: each.trim() }))
               : column.attr !== null && column.meta === null ? enums?.[column.attr] : undefined,
-          ...(column.attr !== null && column.meta === null && holdsTime(shapeRows, column.attr) ? { datetime: true } : {}),
+          // A timestamp member always holds a date and a time, so its filter asks for both.
+          ...((column.meta !== null && META_KIND[column.meta] === "date") ||
+          (column.attr !== null && column.meta === null && holdsTime(shapeRows, column.attr))
+            ? { datetime: true }
+            : {}),
           unit: column.attr !== null && column.meta === null ? unitSymbol(unitOfColumn(shapeRows, column.attr)) : undefined,
           ...(column.attr !== null && column.meta === null && holdsLanguage(shapeRows, column.attr) ? { language: true } : {}),
         }))
@@ -1101,7 +1105,15 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
           // The cell's own kind decides how it is written: a geometry as a GeoProperty, so the
           // attribute keeps the type the model gave it (UI-72).
           // A model's relationship end is one even where the entity has no target on it yet.
-          kind: one?.kind === "relationship" || relations?.[attribute] ? "relationship" : one?.kind === "geo" ? "geo" : "property",
+          kind:
+            one?.kind === "relationship" || relations?.[attribute]
+              ? "relationship"
+              : one?.kind === "geo" || one?.kind === "language" || one?.kind === "vocab"
+                ? one.kind
+                : "property",
+          datasetId: one?.datasetId,
+          languageMap: one?.languageMap,
+          language: one?.language,
         };
       });
       return { id, changes };
@@ -1247,7 +1259,8 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
         setRows((loaded) => {
           const seen = new Set(loaded.map((row) => row.id));
           const next = [...loaded, ...page.rows.filter((row) => !seen.has(row.id))].slice(0, MAX_VIRTUAL_ROWS);
-          setMore(next.length < MAX_VIRTUAL_ROWS && hasMore(next.length, page.total, page.rows.length, limit));
+          // a page of rows already loaded (inserts moved them) ends it: asked again, it would repeat
+          setMore(next.length > loaded.length && next.length < MAX_VIRTUAL_ROWS && hasMore(next.length, page.total, page.rows.length, limit));
           return next;
         });
         if (page.total !== undefined) setTotal(page.total);

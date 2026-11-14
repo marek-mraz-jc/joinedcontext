@@ -187,6 +187,23 @@ pub(crate) fn cursor_after(
     Ok(Some(last))
 }
 
+/// The query a Link hands back to the client: the narrowed `narrowed` with
+/// the client's own `q` and `scopeQ`, so no Link shows a Policy's or a
+/// view's predicates (ADR-0023). The next request is narrowed again.
+pub(crate) fn link_params(
+    narrowed: &HashMap<String, String>,
+    client: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut out = narrowed.clone();
+    for key in ["q", "scopeQ"] {
+        match client.get(key) {
+            Some(v) => out.insert(key.to_owned(), v.clone()),
+            None => out.remove(key),
+        };
+    }
+    out
+}
+
 /// The next Link of `links` with the cursor of the page after `last`
 /// added; every other Link unchanged.
 pub(crate) fn with_next_cursor(
@@ -513,10 +530,20 @@ pub fn order_entities(
                         }
                     }
                 }
-                match cur.get("value").or_else(|| cur.get("object")) {
-                    Some(v) => Some(v.clone()),
-                    None => Some(cur.clone()),
-                }
+                // the member that holds the value, as the q evaluator reads it
+                // (4.9): an instance's own members never order it
+                let held = [
+                    "value",
+                    "object",
+                    "languageMap",
+                    "vocab",
+                    "json",
+                    "valueList",
+                    "objectList",
+                ]
+                .iter()
+                .find_map(|m| cur.get(*m));
+                Some(held.unwrap_or(cur).clone())
             }
         }?;
         match &k.bracket {
@@ -1321,6 +1348,46 @@ mod tests {
                 "urn:absent"
             ]
         );
+    }
+
+    /// A LanguageProperty orders by the text of the language its bracket
+    /// names, a VocabProperty by its vocab: never by the instance's own
+    /// `createdAt`, which a whole-instance value would sort first.
+    #[test]
+    fn language_and_vocab_attributes_order_by_what_they_hold() {
+        let ctx = Loader::new().core();
+        let attr = |id: &str, created: &str, member: &str, v: Value| {
+            json!({"id": id, "type": ["T"], format!("{D}name"): [
+                {"type": "Property", "createdAt": created, member: v}]})
+        };
+        let mut docs = vec![
+            attr(
+                "urn:b",
+                "2020-01-01T00:00:00Z",
+                "languageMap",
+                json!({"sk": "Bratislava"}),
+            ),
+            attr(
+                "urn:a",
+                "2021-01-01T00:00:00Z",
+                "languageMap",
+                json!({"sk": "Amsterdam"}),
+            ),
+            attr(
+                "urn:c",
+                "2019-01-01T00:00:00Z",
+                "languageMap",
+                json!({"sk": "Cork"}),
+            ),
+        ];
+        order_entities(&mut docs, "name[sk]", &params(&[]), &ctx).expect("order");
+        assert_eq!(ids(&docs), ["urn:a", "urn:b", "urn:c"]);
+        let mut docs = vec![
+            attr("urn:y", "2020-01-01T00:00:00Z", "vocab", json!("y")),
+            attr("urn:x", "2021-01-01T00:00:00Z", "vocab", json!("x")),
+        ];
+        order_entities(&mut docs, "name", &params(&[]), &ctx).expect("order");
+        assert_eq!(ids(&docs), ["urn:x", "urn:y"]);
     }
 
     /// T-4919: each document's ordering value is read once, before the sort;

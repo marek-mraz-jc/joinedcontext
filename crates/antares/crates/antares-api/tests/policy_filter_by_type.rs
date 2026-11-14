@@ -238,6 +238,38 @@ async fn same_short_name_two_vocabularies_are_different_attributes() {
     );
 }
 
+/// A one-Attribute read judges each rule's condition on the whole Entity: a
+/// condition on another Attribute neither leaks nor hides the one asked for.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn one_attribute_read_judges_rule_conditions_on_the_whole_entity() {
+    let when = |q: &str, attrs: &[&str]| Rule {
+        q: Some(Box::new(antares_ql::parse_q(q).expect("q"))),
+        ..rule("Car", attrs)
+    };
+    let st = state(Filter {
+        rules: vec![
+            rule("Car", &["speed"]),
+            when("!restricted", &["secret"]),
+            when("status==\"published\"", &["colour"]),
+        ],
+        ..Filter::default()
+    })
+    .await;
+    create(
+        &st,
+        json!({"id": "urn:ngsi-ld:Car:9", "type": "Car", "speed": prop(json!(80)),
+               "restricted": prop(json!(true)), "secret": prop(json!("s")),
+               "status": prop(json!("published")), "colour": prop(json!("red"))}),
+    )
+    .await;
+    let at = |a: &str| format!("/ngsi-ld/v1/entities/urn:ngsi-ld:Car:9/attrs/{a}");
+    let (code, body) = send(&st, "GET", &at("secret"), None).await;
+    assert_eq!(code, StatusCode::NOT_FOUND, "{body}");
+    let (code, body) = send(&st, "GET", &at("colour"), None).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(body["value"], json!("red"));
+}
+
 /// No rule holds for a User: it is out, as if absent, never "frame only".
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn entity_matching_no_rule_is_not_served() {

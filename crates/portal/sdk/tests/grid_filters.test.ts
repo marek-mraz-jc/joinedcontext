@@ -56,6 +56,8 @@ describe("the grid's filter row as an NGSI-LD query", () => {
 
   it("filters a metadata column on the attribute's own member", () => {
     expect(term("temperature", "observedAt")).toBe("temperature.observedAt");
+    // The unit column is the `unitCode` member the broker reads (CIM 009 4.9).
+    expect(term("temperature", "unit")).toBe("temperature.unitCode");
     expect(askedBy(SEEN, { op: "gte", value: "2026-09-19" }).q).toBe("temperature.observedAt>=2026-09-19");
     expect(askedBy(SEEN, { op: "between", value: "2026-09-01", value2: "2026-09-19T12:00:00Z" }).q).toBe(
       "temperature.observedAt>=2026-09-01;temperature.observedAt<=2026-09-19T12:00:00Z",
@@ -99,6 +101,10 @@ describe("the grid's filter row as an NGSI-LD query", () => {
     expect(quotePattern("^$.|?*+()[]{}/\\")).toBe(
       "\\^\\$\\.\\|\\?\\*\\+\\(\\)\\[\\]\\{\\}\\/\\\\",
     );
+    // A typed quote stays inside the one pattern: the broker ends a quoted pattern at its first `"`.
+    const quoted = askedBy(NAME, { op: "contains", value: 'x";secret>50;a~="y' }).q;
+    expect(quoted).toBe('name~="x\\x22;secret>50;a~=\\x22y"');
+    expect(quoted?.match(/"/g)).toHaveLength(2);
     // And an id pattern is escaped the same way, because it is a regular expression too.
     expect(askedBy(ID, { op: "pattern", value: "hel.*" }).idPattern).toBe("hel\\.\\*");
   });

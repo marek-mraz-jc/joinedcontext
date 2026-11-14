@@ -190,6 +190,9 @@ describe("the manifests the formulas run by", () => {
       metadata: { name: "formulas-station-read" },
       spec: { assignee: { kind: "serviceAccount", id: "pipelines" }, operations: ["queryEntity"] },
     });
+    // The Organization grants both: its own did:web, a DID that holds no braces.
+    expect(read.spec).toMatchObject({ assigner: "did:web:hel.fi" });
+    expect(write.spec).toMatchObject({ assigner: "did:web:hel.fi" });
     expect(write).toMatchObject({ spec: { operations: ["upsertBatch"], information: [{ entities: [{ type: "Station" }] }] } });
     // Written: the formula slots and nothing else; read: what they compute from, and themselves.
     const names = (manifest: typeof write) => (manifest.spec as { information: { propertyNames: string[] }[] }).information[0].propertyNames;

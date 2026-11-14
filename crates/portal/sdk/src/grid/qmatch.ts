@@ -125,6 +125,24 @@ function compare(actual: unknown, op: Op, expected: string | number | boolean): 
   }
 }
 
+/** The longest pattern a colour rule may test, in characters. */
+const MAX_PATTERN = 256;
+/** A quantified group that holds a quantifier itself (`(a+)+`, `(a*)*`, `(a|b?){2,}`). */
+const NESTED_QUANTIFIER = /\((?:[^()\\]|\\.)*[*+?}](?:[^()\\]|\\.)*\)[*+{]/;
+
+/**
+ * A saved view's pattern compiled for this browser, whose regular expressions backtrack: a long
+ * one, or one with a quantified group holding a quantifier, could hold the page on every cell, so
+ * it throws and marks nothing. The broker checks the same `q` with a linear engine.
+ */
+// ponytail: catches nested quantifiers, not overlapping alternations such as (a|a)+.
+export function boundedPattern(source: string): RegExp {
+  if (source.length > MAX_PATTERN || NESTED_QUANTIFIER.test(source)) {
+    throw new SyntaxError("pattern too costly to test in the browser");
+  }
+  return new RegExp(source, "u");
+}
+
 function holds(row: RichRow, term: Term): boolean {
   const values = valuesAt(row, term.path);
   if (term.op === undefined) return values.length > 0;
@@ -132,7 +150,7 @@ function holds(row: RichRow, term: Term): boolean {
   if (term.op === "~=" || term.op === "!~=") {
     let pattern: RegExp;
     try {
-      pattern = new RegExp(String(literal(raw)), "u");
+      pattern = boundedPattern(String(literal(raw)));
     } catch {
       // A pattern this browser cannot compile marks nothing.
       return false;

@@ -721,8 +721,10 @@ impl<'a> Parser<'a> {
         let raw = raw.trim();
         // The unquoted alternatives are `dateTime`/`date`/`time` (4.6.3), a
         // Number and a `URI` (RFC 3986). None of them admits a `\"`, so one
-        // here is an unterminated `quotedStr`, not a value.
-        if !regexp && raw.contains('"') {
+        // here is an unterminated `quotedStr`, not a value. An unquoted
+        // `RegExp` holds none either: written back inside quotes, it would
+        // end there.
+        if raw.contains('"') {
             return Err(bad(raw, "unquoted value must not contain a quote (4.9)"));
         }
         self.rest = rest;

@@ -109,8 +109,19 @@ pub fn referenced_attributes(params: &[(String, String)]) -> BTreeSet<String> {
     );
     for selector in ["orderBy", "geoproperty", "timeproperty"] {
         for name in split_list(first(params, selector)) {
-            // `orderBy` takes a leading `!` for descending order; the rest is a path like q's.
-            names.insert(head_of(name.trim_start_matches('!')));
+            // `orderBy` names a path like q's, with `;asc`, `;desc` or a leading `!` for the
+            // direction (CIM 009 4.23); `id`, `type` and the timestamps are no attributes.
+            let head = head_of(
+                name.split(';')
+                    .next()
+                    .unwrap_or_default()
+                    .trim_start_matches('!'),
+            );
+            if selector != "orderBy"
+                || !matches!(head.as_str(), "id" | "type" | "createdAt" | "modifiedAt")
+            {
+                names.insert(head);
+            }
         }
     }
     // A geo query with no `geoproperty` is a query on `location`, which CIM 009 makes the default.
@@ -480,6 +491,17 @@ pub fn decode(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_order_by_names_its_attributes_without_direction_or_core_members() {
+        let names = referenced_attributes(&parse(
+            "orderBy=id,age%3Bdesc,address%5Bcity%5D%3Basc,!speed",
+        ));
+        assert_eq!(
+            names,
+            BTreeSet::from(["address", "age", "speed"].map(str::to_owned))
+        );
+    }
 
     #[test]
     fn a_view_read_carries_the_callers_selectors_and_falls_back_only_when_none() {

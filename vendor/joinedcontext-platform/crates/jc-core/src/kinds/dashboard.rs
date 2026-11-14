@@ -322,10 +322,12 @@ fn param_names(value: &Value, out: &mut Vec<String>) {
     match value {
         Value::Object(map) => {
             if let Some(Value::Array(params)) = map.get("params") {
+                // A param named like a browser global would put that global on the allow-list.
                 out.extend(
                     params
                         .iter()
                         .filter_map(|p| p.get("name").and_then(Value::as_str))
+                        .filter(|n| !GLOBALS.contains(n))
                         .map(str::to_owned),
                 );
             }
@@ -336,8 +338,25 @@ fn param_names(value: &Value, out: &mut Vec<String>) {
     }
 }
 
+/// Names a param may not take: each would let an expression reach the page.
+const GLOBALS: &[&str] = &[
+    "window",
+    "document",
+    "globalThis",
+    "self",
+    "top",
+    "parent",
+    "frames",
+    "event",
+    "view",
+    "item",
+    "Function",
+    "eval",
+];
+
 /// Every member that holds an expression: `expr`, `calculate`, `signal`, `update`, any `…Expr`,
-/// and `filter` or `test` given as a string. Inline rows are data and are not read.
+/// `filter` or `test` given as a string, and a predicate under `not`, `and` or `or`. Inline rows
+/// are data and are not read.
 fn expressions(value: &Value, at: &str, params: &[String]) -> Result<()> {
     match value {
         Value::Object(map) => {
@@ -349,9 +368,18 @@ fn expressions(value: &Value, at: &str, params: &[String]) -> Result<()> {
                 let holds_expression =
                     matches!(key.as_str(), "expr" | "calculate" | "signal" | "update")
                         || key.ends_with("Expr")
-                        || matches!(key.as_str(), "filter" | "test");
+                        || matches!(key.as_str(), "filter" | "test" | "not");
                 match member {
                     Value::String(text) if holds_expression => expression(text, &here, params)?,
+                    Value::Array(items) if matches!(key.as_str(), "and" | "or") => {
+                        for (i, item) in items.iter().enumerate() {
+                            let here = format!("{here}/{i}");
+                            match item {
+                                Value::String(text) => expression(text, &here, params)?,
+                                other => expressions(other, &here, params)?,
+                            }
+                        }
+                    }
                     other => expressions(other, &here, params)?,
                 }
             }
@@ -383,6 +411,9 @@ pub fn expression(text: &str, at: &str, params: &[String]) -> Result<()> {
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
     let mut after_dot = false;
+    // After a name, `]` or `)`, a `[` reads a member: it may hold one quoted name or a number
+    // only, so no member name is built at run time (`datum['con' + 'structor']`).
+    let mut after_operand = false;
     while i < chars.len() {
         let c = chars[i];
         if c.is_whitespace() {
@@ -398,11 +429,15 @@ pub fn expression(text: &str, at: &str, params: &[String]) -> Result<()> {
                 return refuse("an expression's text is not closed".into());
             }
             let literal: String = chars[i + 1..j].iter().collect();
+            if literal.contains('\\') {
+                return refuse("an expression's text holds no escape such as \\u0063".into());
+            }
             if forbidden(&literal) {
                 return refuse("no __proto__, constructor or prototype".into());
             }
             i = j + 1;
             after_dot = false;
+            after_operand = true;
             continue;
         }
         if c.is_ascii_digit() {
@@ -410,6 +445,7 @@ pub fn expression(text: &str, at: &str, params: &[String]) -> Result<()> {
                 i += 1;
             }
             after_dot = false;
+            after_operand = true;
             continue;
         }
         if c.is_ascii_alphabetic() || c == '_' || c == '$' {
@@ -434,10 +470,27 @@ pub fn expression(text: &str, at: &str, params: &[String]) -> Result<()> {
                 ));
             }
             after_dot = false;
+            after_operand = true;
             continue;
+        }
+        if c == '[' && after_operand {
+            let rest: String = chars[i + 1..].iter().collect();
+            let inner = rest.trim_start();
+            let len = match inner.chars().next() {
+                Some(q @ ('\'' | '"')) => inner[1..].find(q).map(|e| e + 2),
+                Some(d) if d.is_ascii_digit() => inner
+                    .find(|ch: char| !ch.is_ascii_digit())
+                    .or(Some(inner.len())),
+                _ => None,
+            };
+            let closed = len.is_some_and(|n| inner[n..].trim_start().starts_with(']'));
+            if !closed {
+                return refuse("a `[...]` member holds one quoted name or a number".into());
+            }
         }
         if "+-*/%<>=!&|?:,()[].".contains(c) {
             after_dot = c == '.';
+            after_operand = c == ')' || c == ']';
             i += 1;
             continue;
         }
@@ -847,6 +900,50 @@ mod tests {
             let (field_at, reason) = field(vega_lite(widget));
             assert_eq!(field_at, path, "{reason}");
             assert!(reason.contains(words), "{path}: {reason}");
+        }
+
+        // A predicate inside `not`/`and`/`or`, a computed or escaped member and a param named
+        // after a browser global are expressions too.
+        let calc = |e: &str| serde_json::json!({"transform": [{"calculate": e, "as": "x"}]});
+        let hidden = [
+            (
+                bars(serde_json::json!({"transform": [{"filter": {"not": "window.location"}}]})),
+                format!("{at}/spec/transform/0/filter/not"),
+                "`window`",
+            ),
+            (
+                bars(
+                    serde_json::json!({"transform": [{"filter": {"or": ["datum.a > 1", "event.x"]}}]}),
+                ),
+                format!("{at}/spec/transform/0/filter/or/1"),
+                "`event`",
+            ),
+            (
+                bars(calc("datum['con' + 'structor']")),
+                format!("{at}/spec/transform/0/calculate"),
+                "one quoted name or a number",
+            ),
+            (
+                bars(calc("datum['\\u0063onstructor']")),
+                format!("{at}/spec/transform/0/calculate"),
+                "escape",
+            ),
+            (
+                bars(serde_json::json!({
+                    "params": [{"name": "window", "value": 1}],
+                    "transform": [{"calculate": "window.location", "as": "x"}]
+                })),
+                format!("{at}/spec/transform/0/calculate"),
+                "`window`",
+            ),
+        ];
+        for (widget, path, words) in hidden {
+            let (field_at, reason) = field(vega_lite(widget));
+            assert_eq!(field_at, path, "{reason}");
+            assert!(reason.contains(words), "{path}: {reason}");
+        }
+        for fine in ["datum['pm 10'] > datum[0]", "max([1, 2][0], datum.k) >= 0"] {
+            vega_lite(bars(calc(fine))).expect(fine);
         }
 
         let mut no_data = bars(serde_json::json!({}));
