@@ -544,6 +544,13 @@ pub fn org_domain(state: &AppState, fallback: &str) -> String {
     )
 }
 
+/// The domain the URNs of `project`'s entities are minted under: its Organization's, as the
+/// gateway reads the owner of the project's URNs (ADR-N-068), else [`org_domain`].
+pub fn project_org_domain(state: &AppState, project: &str) -> String {
+    crate::permissions::organization_domain(&state.mirror, project)
+        .unwrap_or_else(|| org_domain(state, project))
+}
+
 /// [`org_domain`] over `mirror`, with the deployment's domain `configured` when no Organization
 /// names one.
 pub fn org_domain_in(
@@ -1208,6 +1215,35 @@ mod tests {
         );
     }
 
+    /// ADR-N-068: a project of another Organization mints its URNs under that Organization's
+    /// domain, which is the owner the gateway reads; a project naming none keeps the
+    /// installation's.
+    #[test]
+    fn a_projects_urns_are_minted_under_its_own_organizations_domain() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let org = crate::api::blueprints::ORG_NAMESPACE;
+        state.mirror.upsert(envelope(
+            "Organization",
+            org,
+            "city",
+            json!({ "domain": "hel.fi", "installation": true }),
+        ));
+        state
+            .mirror
+            .upsert(envelope("Organization", org, "bcn", json!({ "domain": "barcelona.cat" })));
+        state.mirror.upsert(envelope(
+            "Project",
+            org,
+            "mobility",
+            json!({ "organizationRef": "bcn" }),
+        ));
+        state
+            .mirror
+            .upsert(envelope("Project", org, "helsinki", json!({})));
+        assert_eq!(crate::api::assistant::project_org_domain(&state, "mobility"), "barcelona.cat");
+        assert_eq!(crate::api::assistant::project_org_domain(&state, "helsinki"), "hel.fi");
+    }
+
     /// T-6435: the gateway binds Policy URNs on the installation Organization, so the first by
     /// name must not stand in for it.
     #[test]
@@ -1464,6 +1500,37 @@ mod tests {
         .is_err());
     }
 
+    /// TEN-07: audience organization admits the Endpoint's own Organization; a reference from a
+    /// project of another Organization opens nothing, while one of the same Organization does.
+    #[test]
+    fn an_organization_endpoint_is_shared_only_inside_its_organization() {
+        let state = shared_world();
+        let org = crate::permissions::ORG_NAMESPACE;
+        for name in ["hel", "bb"] {
+            state
+                .mirror
+                .upsert(envelope("Organization", org, name, json!({})));
+        }
+        let project = |name: &str, organization: &str| {
+            envelope(
+                "Project",
+                org,
+                name,
+                json!({ "organizationRef": organization }),
+            )
+        };
+        state.mirror.upsert(project("helsinki", "hel"));
+        state.mirror.upsert(project("banskabystrica", "bb"));
+        assert!(crate::api::assistant::shared_endpoints(&state.mirror, "helsinki").is_empty());
+
+        state.mirror.upsert(project("banskabystrica", "hel"));
+        let shared: Vec<_> = crate::api::assistant::shared_endpoints(&state.mirror, "helsinki")
+            .into_iter()
+            .map(|(_, endpoint)| endpoint.metadata.name)
+            .collect();
+        assert_eq!(shared, ["app-banskabystrica-ovzdusie"]);
+    }
+
     #[test]
     fn diacritics_fold_and_a_long_word_matches_inside_a_compound() {
         let fields = vec![("name", "app-banskabystrica-ovzdusie".to_owned())];
@@ -1500,37 +1567,6 @@ mod tests {
             (
                 "classes",
                 "https://smartdatamodels.org/BikeHireDockingStation".to_owned(),
-    /// TEN-07: audience organization admits the Endpoint's own Organization; a reference from a
-    /// project of another Organization opens nothing, while one of the same Organization does.
-    #[test]
-    fn an_organization_endpoint_is_shared_only_inside_its_organization() {
-        let state = shared_world();
-        let org = crate::permissions::ORG_NAMESPACE;
-        for name in ["hel", "bb"] {
-            state
-                .mirror
-                .upsert(envelope("Organization", org, name, json!({})));
-        }
-        let project = |name: &str, organization: &str| {
-            envelope(
-                "Project",
-                org,
-                name,
-                json!({ "organizationRef": organization }),
-            )
-        };
-        state.mirror.upsert(project("helsinki", "hel"));
-        state.mirror.upsert(project("banskabystrica", "bb"));
-        assert!(crate::api::assistant::shared_endpoints(&state.mirror, "helsinki").is_empty());
-
-        state.mirror.upsert(project("banskabystrica", "hel"));
-        let shared: Vec<_> = crate::api::assistant::shared_endpoints(&state.mirror, "helsinki")
-            .into_iter()
-            .map(|(_, endpoint)| endpoint.metadata.name)
-            .collect();
-        assert_eq!(shared, ["app-banskabystrica-ovzdusie"]);
-    }
-
             ),
         ];
         assert_eq!(score(&fields, &words("change the color to black")).0, 0);

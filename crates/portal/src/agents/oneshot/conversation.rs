@@ -1086,7 +1086,7 @@ change_resource that ContextSpace; a patch replaces the whole list, so keep its 
             );
         }
         let sources = self.names_of("DataSource");
-        let domain = crate::api::assistant::org_domain(&self.state, &self.project);
+        let domain = crate::api::assistant::project_org_domain(&self.state, &self.project);
         let targets: Vec<String> = self
             .state
             .mirror

@@ -912,7 +912,7 @@ impl Driver {
                     .to_owned(),
             );
         }
-        let domain = crate::api::assistant::org_domain(&self.state, &self.project);
+        let domain = crate::api::assistant::project_org_domain(&self.state, &self.project);
         let model = model_change::apply(&model_change::blank(&domain, name), operations)?;
         let source = serde_norway::to_string(&model).map_err(|err| err.to_string())?;
         crate::api::datamodels::check_source(
@@ -965,7 +965,7 @@ impl Driver {
         let checked = if roles.iter().any(|role| role == params.role.trim()) {
             grant::manifest(
                 &params,
-                &crate::api::assistant::org_domain(&self.state, &self.project),
+                &crate::api::assistant::project_org_domain(&self.state, &self.project),
             )
         } else {
             Err(format!(

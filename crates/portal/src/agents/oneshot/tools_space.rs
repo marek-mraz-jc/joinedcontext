@@ -241,7 +241,7 @@ impl Driver {
         };
         let now = now_rfc3339();
         let provenance = kpi::Provenance {
-            org_domain: &crate::api::assistant::org_domain(&self.state, &self.project),
+            org_domain: &crate::api::assistant::project_org_domain(&self.state, &self.project),
             project: &self.project,
             endpoint_space: &endpoint_space,
             endpoint_name: &endpoint_name,
@@ -377,7 +377,7 @@ impl Driver {
             .filter_map(|env| serde_json::to_value(env).ok())
             .collect();
         let run_endpoint = chosen.first().map(|e| e.name.clone());
-        let org_domain = crate::api::assistant::org_domain(&self.state, &self.project);
+        let org_domain = crate::api::assistant::project_org_domain(&self.state, &self.project);
         let slug = share::slug();
         let world = kpi_pipeline::World {
             project: &self.project,
