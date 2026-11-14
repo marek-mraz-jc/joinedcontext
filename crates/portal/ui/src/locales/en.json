@@ -5882,6 +5882,8 @@
     "rowsShown": "Rows {first}–{last}",
     "moreNext": "more may follow",
     "history": "History",
+    "historyAvailable": "History available",
+    "historyOfValue": "Show the history of this value (key H)",
     "areaPick": "Pick area on map",
     "signedOutTitle": "Sign in to see this dataset",
     "signedOutBody": "This dataset is not public. Sign in with an account that has access to it.",
@@ -5986,6 +5988,9 @@
     "historySuperseded": "Replaced",
     "historyChangedBy": "Changed by",
     "historyReason": "Reason",
+    "historyVersionsPublic": "Every version of each value",
+    "historyUnavailable": "No history can be shown for this value.",
+    "historyDataset": "Dataset",
     "changes": {
       "tab": "Changes",
       "attribute": "Attribute",

@@ -188,7 +188,7 @@ surface.
 | `GET access` | the caller's grants; the representation the `Accept` header names first, `application/json` otherwise (never 406) |
 | `POST access/check` | AuthZEN: `{"action": {"name": …}, "resource": {"type": …, "properties": {"attribute": …}}}` (`attribute` optional, a short name or an IRI) → `{"decision": true, "context": {"reason": "policy_grant_matched", "assigner": …}}` or `{"decision": false}` |
 | `POST access/explain` | the same request and decision, with why: `context.reason` is `policy_grant_matched`, `prohibited`, `not_in_grant` (a permission covers the type but lists other Attributes) or `no_grant`, and `context.policy` (with its `assigner`) names the policy that decided, a refusal's too |
-| `POST access/attributes` | `{"type": …, "attributes": [1 to 200 names]}` → `{"type", "attributes": [{"name", "read", "write", "delete", "reason"}]}`: `read` is `retrieveEntity`, `write` `updateAttrs`, `delete` `deleteAttrs` on that Attribute; `reason` is the strongest verdict of the three (`prohibited`, `formula` for a grant with a condition on the stored Entity, `grant`, `not_in_grant`, `no_grant`) and names no policy |
+| `POST access/attributes` | `{"type": …, "attributes": [1 to 200 names]}` → `{"type", "attributes": [{"name", "read", "write", "delete", "history", "reason"}]}`: `read` is `retrieveEntity`, `write` `updateAttrs`, `delete` `deleteAttrs`, `history` `retrieveTemporal` on that Attribute; `reason` is the strongest verdict of the first three (`prohibited`, `formula` for a grant with a condition on the stored Entity, `grant`, `not_in_grant`, `no_grant`) and names no policy |
 
 | `Accept` | Representation |
 |---|---|

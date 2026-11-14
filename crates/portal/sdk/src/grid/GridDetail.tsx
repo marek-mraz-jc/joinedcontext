@@ -88,6 +88,7 @@ export function GridDetail({ view }: { view: GridView }): React.JSX.Element | nu
                 labels={options.labels?.historyLabels}
                 versions
                 versionsFirst={cellPlace !== null}
+                publicView={props.publicView}
               />
             )
           : undefined
@@ -152,6 +153,8 @@ export function GridCellPanels({ view }: { view: GridView }): React.JSX.Element 
           heading={history.heading}
           maxPoints={options.config.history.maxPoints}
           labels={options.labels?.historyLabels}
+          versions
+          publicView={props.publicView}
           onClose={() => setHistory(null)}
         />
         </div>

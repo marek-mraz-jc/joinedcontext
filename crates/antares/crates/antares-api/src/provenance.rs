@@ -153,10 +153,49 @@ pub(crate) fn from_gateway(headers: &HeaderMap, gateway: Option<&str>) -> bool {
 
 /// Whether a read may answer each attribute's `modifiedBy` (ADR-N-054 2.8,
 /// DM-138): only to a caller the gateway grants `readVersions`, since
-/// `actor` is a person's `sub` or a client id. Vanilla answers it to nobody.
+/// `actor` is a person's `sub` or a client id, and never to an anonymous
+/// one ([`names_writers`]). Vanilla answers it to nobody.
 #[cfg(feature = "jc")]
 pub fn shows_modified_by(headers: &HeaderMap, gateway: Option<&str>) -> bool {
-    may_read_versions(headers, gateway)
+    may_read_versions(headers, gateway) && names_writers(headers, gateway)
+}
+
+/// Whether a read may name who wrote a version (GDPR, T-6878): the
+/// `actor`, the `client` it came through, the `reason` in the writer's words
+/// and the `requestId`. An anonymous caller, whom the gateway names
+/// `anonymous` on every hop, reads the channel, operation, time,
+/// Organization and kind of writer only.
+#[cfg(feature = "jc")]
+pub fn names_writers(headers: &HeaderMap, gateway: Option<&str>) -> bool {
+    !(from_gateway(headers, gateway)
+        && headers
+            .get("jc-provenance-actor")
+            .is_some_and(|a| a.as_bytes() == b"anonymous"))
+}
+
+/// Vanilla answers no provenance that names a writer.
+#[cfg(not(feature = "jc"))]
+pub fn names_writers(_headers: &HeaderMap, _gateway: Option<&str>) -> bool {
+    false
+}
+
+/// The provenance members that can name a person (T-6878).
+pub const WRITER_MEMBERS: [&str; 4] = ["actor", "client", "reason", "requestId"];
+
+/// Drops [`WRITER_MEMBERS`] from the provenance of every kept version in
+/// `chains` (attribute to its list of versions).
+pub fn without_writers(chains: &mut serde_json::Map<String, Value>) {
+    for version in chains
+        .values_mut()
+        .filter_map(Value::as_array_mut)
+        .flatten()
+    {
+        if let Some(provenance) = version.get_mut("provenance").and_then(Value::as_object_mut) {
+            for member in WRITER_MEMBERS {
+                provenance.remove(member);
+            }
+        }
+    }
 }
 
 /// Vanilla: no read answers `modifiedBy`.

@@ -27,6 +27,19 @@ export interface RichRow {
   raw: Record<string, unknown>;
 }
 
+/**
+ * Whether a cell's own answer shows its value has history (T-6878): an `observedAt`, or a change
+ * after the attribute was created. Read from the row, so marking a cell asks the server nothing.
+ */
+export function valueHasHistory(cell: RichCell | RichCell[] | undefined): boolean {
+  const cells = Array.isArray(cell) ? cell : cell ? [cell] : [];
+  return cells.some(
+    (one) =>
+      one.observedAt !== undefined ||
+      (one.createdAt !== undefined && one.modifiedAt !== undefined && Date.parse(one.modifiedAt) > Date.parse(one.createdAt)),
+  );
+}
+
 export const ENTITY_MEMBERS: readonly string[] = [
   "id", "type", "@context", "scope", "createdAt", "modifiedAt", "deletedAt", "observationSpace", "operationSpace",
 ];
