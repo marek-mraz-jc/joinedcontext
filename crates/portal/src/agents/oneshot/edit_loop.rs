@@ -1009,13 +1009,20 @@ impl Driver {
                 if error.is_some_and(crate::api::agent_runs::unauthenticated) {
                     return (FUNCTION_READS_DATA.to_owned(), false);
                 }
+                // What the function read reaches the model only without its personal attributes
+                // (AG-158, JC1-03).
+                let mut body = invocation.outcome.get("body").cloned();
+                if let Some(body) = body
+                    .as_mut()
+                    .filter(|body| crate::personal_data::carries_entities(body))
+                {
+                    if let Err(reason) = self.withhold_personal_in(body).await {
+                        return (reason, false);
+                    }
+                }
                 let payload = match error {
                     Some(error) => format!("error: {error}"),
-                    None => invocation
-                        .outcome
-                        .get("body")
-                        .map(Value::to_string)
-                        .unwrap_or_default(),
+                    None => body.as_ref().map(Value::to_string).unwrap_or_default(),
                 };
                 let logs = invocation
                     .outcome
