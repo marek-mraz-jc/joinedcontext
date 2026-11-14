@@ -471,5 +471,12 @@ async fn a_public_assistant_offers_its_context_as_a_resource() {
         json!({"jsonrpc": "2.0", "id": 1, "method": "resources/list"}),
     )
     .await;
-    assert_eq!(internal["result"]["resources"], json!([]), "{internal}");
+    // No context of its own: only the chart view every server lists (T-6882).
+    assert_eq!(
+        internal["result"]["resources"]
+            .as_array()
+            .map(|all| all.iter().map(|r| r["uri"].clone()).collect::<Vec<_>>()),
+        Some(vec![json!("ui://joinedcontext/chart-view.html")]),
+        "{internal}"
+    );
 }

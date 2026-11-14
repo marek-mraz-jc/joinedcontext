@@ -408,13 +408,16 @@ pub(crate) fn initialized(server: Option<&McpServer>) -> Value {
          happen, describe_access names an Endpoint's WebSocket in `liveUpdates`.\n\n",
     );
     instructions.push_str(&super::PRIMER);
-    let mut capabilities = json!({ "tools": { "listChanged": false } });
+    // The chart view is a resource on every server (T-6882); the context one where it is.
+    let capabilities = json!({
+        "tools": { "listChanged": false },
+        "resources": { "listChanged": false },
+    });
     if server.is_some_and(McpServer::has_context) {
         instructions.push_str(
             "\n\nThe resource `context` says what this assistant knows: its categories, its \
              Endpoints with their counts and its knowledge sources. Read it first.",
         );
-        capabilities["resources"] = json!({ "listChanged": false });
     }
     json!({
         "protocolVersion": jsonrpc::PROTOCOL_VERSION,

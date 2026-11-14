@@ -99,6 +99,7 @@ pub(crate) const ANONYMOUS_TOOLS: &[&str] = &[
     "get_endpoint",
     "area_overview",
     "search",
+    "render_chart",
     "search_documents",
     "read_knowledge_context",
     "list_types",

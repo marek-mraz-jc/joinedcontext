@@ -17,6 +17,7 @@ members = [
   "crates/shared/jc-router",
   "crates/shared/jc-secret",
   "crates/shared/jc-door",
+  "crates/shared/jc-chart",
   "crates/embedder",
   "crates/kaisatsu/core",
   "crates/kaisatsu/crypto",

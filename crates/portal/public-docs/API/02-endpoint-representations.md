@@ -1178,6 +1178,77 @@ curl -sS -X POST "https://api.{domain}/api/mcp" \
 }
 ```
 
+### A chart of one read (`render_chart`, T-6881)
+
+The hub draws one read of one Endpoint as a PNG for any caller, anonymous or signed in. It takes
+three arguments, nothing else:
+
+- `endpoint`: the Endpoint's slug or title, as every other hub tool takes it.
+- `spec`: the closed Vega-Lite 5 subset the Portal's `jc_render` takes (API/14 §4): `mark` (line,
+  bar, area, point, arc, rule), `encoding` with `x`, `y`, `color`, `size`, `theta` (each `{field,
+  type, title?}`, `type` quantitative, temporal or nominal; `tooltip` ignored), `title`,
+  `description`, `width` (50 to 1200 px) and `height` (50 to 800 px; 800 x 450 when absent) and `$schema`
+  (named, never fetched).
+- `data`: `{tool, arguments}`, where `tool` is `query_entities` or `query_temporal` and
+  `arguments` are that tool's arguments without `endpoint` and `count`.
+
+The rows come from exactly one call of that tool through the hub as the caller: the same
+Policy, the same withheld attributes, the same Organization isolation and, without a token, the
+same anonymous bounds (a history read names `type` or `id` and a window of at most 31 days). No
+next page is followed. Each row keeps only the fields the channels read and `observedAt`.
+
+Caps, per gateway process: 1,000 points, 1200 x 800 px, a PNG of at most 256 KiB, 3 s of
+drawing and two renders at once inside the hub's 10 s call deadline. A call that finds both
+render slots taken for 500 ms is a tool error `busy, retry`. The per-address and per-Endpoint
+budgets count it as one call.
+
+Refused as a tool error (`isError: true`, no image): any member outside the subset, naming it
+(`url`, `data` or `values` in the spec, `transform`, `params`, expressions, `href`, the `image`
+mark, any other member); a `data.tool` other than the two reads; a channel field or `attrs`
+naming an attribute the Endpoint's model marks personal, for every caller (chart personal data
+in the Portal, where the Policy and the personal-read record apply); an Endpoint outside the
+caller's reach, answered as an unknown one; a refused read, answered as the read's own error.
+
+The answer is MCP image content (`image/png`, base64), a text line and `structuredContent`
+`{rows, categories, sources, truncated, untrusted: true}`. Only the caller's title and axis
+titles, numbers and dates are drawn (ASCII, at most 120 characters); category values come from
+the data, so the picture numbers them `#1`, `#2` and `categories` names each. `truncated: true`,
+with a line in the text, says the read had a next page or more than 1,000 points: the chart is
+not complete.
+
+```bash
+curl -sS -X POST "https://api.{domain}/api/mcp" \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"render_chart","arguments":{
+    "endpoint":"k4y7pq2mzt6vhx3nbwrs5cjd8f",
+    "spec":{"title":"PM10","mark":"line","encoding":{
+      "x":{"field":"observedAt","type":"temporal"},"y":{"field":"pm10","type":"quantitative"}}},
+    "data":{"tool":"query_temporal","arguments":{"type":"AirQualityObserved","attrs":"pm10",
+      "timerel":"between","timeAt":"2026-11-01T00:00:00Z","endTimeAt":"2026-11-08T00:00:00Z"}}}}}'
+```
+
+#### The chart view (MCP Apps, T-6882)
+
+A host that speaks MCP Apps (SEP-1865) also draws the chart live. Every hub and named-server
+`initialize` declares `resources`; `resources/list` names `ui://joinedcontext/chart-view.html`
+(`text/html;profile=mcp-app`), and `render_chart` names it in `tools/list` under
+`_meta.ui.resourceUri` and the flat `_meta["ui/resourceUri"]`. `resources/read` of that exact
+URI answers the page, the same bytes for every caller, anonymous included: it holds no data.
+Any other `ui://` URI is `-32002` resource not found.
+
+The page is the Portal's chart view (API/14 §4.7), served from one copy. On this door it draws
+no link: no origin is written into it, neither from configuration nor from the request's
+`Host`. Its resource `_meta.ui.csp` names no `connectDomains` and no `resourceDomains`, so the
+host's frame connects nowhere and loads nothing; the page reads the tool result the host posts
+to it from its parent frame, JSON-RPC 2.0 only, draws inline SVG and sets every text, category
+values included, as text.
+
+A drawn answer's `_meta` carries `joinedcontext.com/chartSpec` (the checked spec: mark, title,
+size, each channel's scale and title), `joinedcontext.com/chartPoints` (at most 1,000 points,
+each only `x`, `y`, `color`, `size`, `theta` and `observedAt`) and
+`joinedcontext.com/pointsTruncated`. None of them is in the text or `structuredContent`, and a
+refusal carries none. The PNG stays in the answer for hosts without MCP Apps.
+
 ### OAuth for an assistant that needs it
 
 A public MCP server, the hub or any server an anonymous caller may read, needs no token. An assistant that connects only through OAuth 2.1 (Gemini's custom apps) runs the flow against the gateway's own authorization server on `api.{domain}`, which stores nothing and identifies nobody ([EP-129](../Requirements/endpoints.md), [ADR-N-052](../Decisions/adr-n-052-anonymous-oauth-public-mcp.md)):

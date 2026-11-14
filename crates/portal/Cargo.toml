@@ -72,6 +72,8 @@ path = "src/main.rs"
 odata-url = { path = "../antares/crates/odata-url", version = "0.3.0", features = ["edm"] }
 odata-csdl = { path = "../antares/crates/odata-csdl", version = "0.3.0" }
 odata-table = { path = "../antares/crates/odata-table", version = "0.3.0" }
+# The chart subset and raster jc_render shares with the gateway's render_chart (T-6881).
+jc-chart = { path = "../shared/jc-chart", version = "0.1.0" }
 # The manifest contract, by tag or by full commit, never by path into another agent's clone
 # (T-0249). Pinned to platform 530abc4 (T-5647: a ServiceAccount may not derive the mcp-*, context-gateway, jc-assistant or jc-build-lane client id; before: 068296a: platform main e25be7a with T-5766: archive member requests carry no body, which CloudFront refused 403; before: e3d437f, 3df270c: platform main aacd307 with T-5710: people named by Keycloak id,
 # ADR-N-061; and T-5087: no CKAN DataStore mirror; T-5748: a refused CKAN read says its problem detail; T-5208: a string slot with an ISO 8601 date pattern fits DTSTART); the three crates share one reference, so cargo

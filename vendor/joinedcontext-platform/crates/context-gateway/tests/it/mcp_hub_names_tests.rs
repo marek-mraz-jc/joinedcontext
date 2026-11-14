@@ -184,8 +184,10 @@ async fn tools_list_is_the_same_bytes_for_one_endpoint_and_for_10000() {
     // so the ceiling is 16,100, and it only comes down. get_endpoint naming its query card
     // (T-5642) stays inside it. The grammar said once in the primer, the page limits once in the
     // schema and no TS 104 175 clause in a description (T-6058): 12,269, so the ceiling is
-    // 12,300, and it only comes down.
-    assert!(sizes[0] < 12_300, "{sizes:?}");
+    // 12,300, and it only comes down. The hub's own render_chart (T-6881, T-6882: a PNG of one
+    // read, and the chart view it names in `_meta`) measures 540 bytes listed: 12,818, so the
+    // ceiling rises by those 540 to 12,840, and it only comes down.
+    assert!(sizes[0] < 12_840, "{sizes:?}");
 }
 
 #[tokio::test]
@@ -299,6 +301,7 @@ async fn the_public_tool_definitions_stay_under_their_byte_ratchet() {
     eprintln!("{} tools, {total} bytes: {sizes:?}", sizes.len());
     // 22,969 bytes on main 6915f902, 15,991 once the per-argument grammar, the page-limit
     // sentences, the clause numbers and the output schema's `restricted` and `jc:source` went.
-    // The ratchet only comes down.
-    assert!(total < 16_000, "{total} bytes");
+    // The ratchet only comes down. render_chart (T-6881, T-6882) measures 540 bytes listed:
+    // 16,539, so the ceiling rises by those 540 to 16,540, and it only comes down.
+    assert!(total < 16_540, "{total} bytes");
 }

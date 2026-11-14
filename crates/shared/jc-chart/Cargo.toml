@@ -1,0 +1,13 @@
+[package]
+name = "jc-chart"
+version = "0.1.0"
+edition = "2021"
+# The licence the moved code had in crates/portal (T-6881).
+license = "EUPL-1.2"
+publish = false
+description = "The closed Vega-Lite subset and the PNG raster both chart doors share: the Portal's jc_render and the gateway's render_chart"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["alloc"] }
+flate2 = "1"
+serde_json = "1"

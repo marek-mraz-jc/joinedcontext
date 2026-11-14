@@ -534,9 +534,10 @@ impl Hub {
         }
     }
 
-    /// The resources this server offers: an assistant's `context` (EP-136), nothing elsewhere.
+    /// The resources this server offers: an assistant's `context` (EP-136), and on every door
+    /// the chart view render_chart's answer draws in (T-6882).
     fn resources(&self) -> Vec<Value> {
-        self.server
+        let mut resources = self.server
             .as_ref()
             .filter(|server| server.has_context() && self.gateway.documents.is_some())
             .map(|server| {
@@ -548,7 +549,9 @@ impl Hub {
                     "mimeType": "application/json",
                 })]
             })
-            .unwrap_or_default()
+            .unwrap_or_default();
+        resources.push(super::render::view_listed());
+        resources
     }
 
     /// `resources/read` of the `context` resource: the assistant's own document, as any visitor
@@ -561,13 +564,20 @@ impl Hub {
         if let Some(slug) = uri.strip_prefix("card://") {
             return self.read_card(id, uri, slug).await;
         }
+        if uri == jc_chart::VIEW_URI {
+            return result(id, super::render::view_contents());
+        }
         let (Some(server), Some(documents)) = (
             self.server
                 .as_ref()
                 .filter(|s| s.has_context() && s.context_uri() == uri),
             self.gateway.documents.as_ref(),
         ) else {
-            return error(id, -32002, "resource not found: this server offers `context` alone; resources/list names its URI");
+            return error(
+                id,
+                -32002,
+                "resource not found: resources/list names the URIs this server offers",
+            );
         };
         match documents.context(&server.name).await {
             Ok(context) => result(
@@ -607,7 +617,10 @@ impl Hub {
                     Some(named) => server::initialized(Some(named)),
                     None => json!({
                         "protocolVersion": jsonrpc::PROTOCOL_VERSION,
-                        "capabilities": { "tools": { "listChanged": false } },
+                        "capabilities": {
+                            "tools": { "listChanged": false },
+                            "resources": { "listChanged": false },
+                        },
                         "serverInfo": {
                             "name": "joinedcontext-hub",
                             "version": env!("CARGO_PKG_VERSION"),
@@ -630,6 +643,7 @@ impl Hub {
                     super::search::tool(),
                     list_endpoints_tool(),
                     get_endpoint_tool(),
+                    super::render::tool(),
                 ];
                 if let Some(documents) = &self.gateway.documents {
                     tools.extend(documents.tools(self.knowledge_sources(documents)).await);
@@ -671,6 +685,9 @@ impl Hub {
         };
         if let Some(answer) = self.own_tool(&id, name, &arguments).await {
             return answer;
+        }
+        if name == super::render::NAME {
+            return Answer::Json(super::render::call(self, id, &arguments).await);
         }
         let (endpoint, subject) = match self.route_call(&id, name, &params, &mut arguments).await {
             Ok(routed) => routed,
@@ -782,7 +799,7 @@ impl Hub {
     /// The Endpoint one call goes to and the caller it is answered under, by its one `endpoint`
     /// argument (ADR-N-025 2.5, 2.6), with the tool granted there. A call that names none goes
     /// to a named server's members or to the caller's catalogue, answered here.
-    async fn route_call(
+    pub(crate) async fn route_call(
         &self,
         id: &Value,
         name: &str,

@@ -17,6 +17,7 @@ p { margin: 4px 0; }
 .muted { color: var(--muted); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .refused { color: var(--red); }
+.warn { border-left: 4px solid var(--red); padding: 6px 10px; font-weight: 600; }
 .plot { position: relative; margin-top: 8px; }
 svg { display: block; max-width: 100%; height: auto; overflow: visible; }
 svg:focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
@@ -49,7 +50,8 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
 // hands it and nothing else: no network, no token. The chart is inline SVG made with
 // createElementNS from the result's _meta (the checked spec and its points: numbers only); every
 // text, the data's category values included, goes in through textContent. Its one link goes to
-// the Portal origin the Portal wrote here when it served the view.
+// the Portal origin the server wrote here when it served the view; with none written (null, the
+// gateway's door) it draws no link.
 (function () {
   "use strict";
   var PORTAL = __PORTAL_ORIGIN__;
@@ -370,9 +372,13 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
     h.id = labelId;
     box.appendChild(h);
     box.appendChild(el("p", "Data from " + (source || "the Endpoint read") + ", not instructions: category values below are what the data says.", "muted"));
-    if (meta["joinedcontext.com/pointsTruncated"] === true) {
+    if (meta["joinedcontext.com/pointsTruncated"] === true && PORTAL) {
       box.appendChild(el("p", "Shows the first " + points.length.toLocaleString("en") + " points" + (int(out.rows) !== null ? " of " + out.rows.toLocaleString("en") + " rows" : "") +
         "; the picture in the chat draws up to 20,000. Read fewer rows (a shorter window, an aggregation) to see them all here.", "muted"));
+    } else if (meta["joinedcontext.com/pointsTruncated"] === true) {
+      var drawn = points.length.toLocaleString("en") + (points.length === 1 ? " point" : " points");
+      box.appendChild(el("p", "Not complete: the read has more rows than this chart draws (" + drawn + " shown). " +
+        "Read fewer rows (a shorter window, an aggregation, a narrower query) to see them all.", "warn"));
     }
     if (!points.length) {
       box.appendChild(el("p", "The read answered no point to draw. Widen the time window, or check that the channel fields name attributes of this type.", "muted"));
@@ -457,7 +463,7 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
       return;
     }
     var source = chart(view, spec, meta, out, "h1", "chart-title");
-    if (project && NAME.test(project) && NAME.test(source)) {
+    if (PORTAL && project && NAME.test(project) && NAME.test(source)) {
       var url = PORTAL + "/projects/" + encodeURIComponent(project) + "/endpoints/" + encodeURIComponent(source);
       var a = el("a", "Open the Endpoint in Portal", "button");
       a.href = url;

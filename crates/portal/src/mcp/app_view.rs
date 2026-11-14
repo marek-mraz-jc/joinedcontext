@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 /// The plan view's address.
 pub const URI: &str = "ui://joinedcontext/plan-view.html";
 /// The chart view's address.
-pub const CHART_URI: &str = "ui://joinedcontext/chart-view.html";
+pub const CHART_URI: &str = jc_chart::VIEW_URI;
 /// The MCP Apps HTML profile; a host renders only a resource of this type.
 pub const MIME: &str = "text/html;profile=mcp-app";
 
@@ -40,7 +40,7 @@ const VIEWS: &[View] = &[
         name: "chart-view",
         title: "Chart view",
         description: "Draws a jc_render chart live from the answer's points; connects nowhere",
-        page: include_str!("chart_view.html"),
+        page: jc_chart::VIEW_PAGE,
         tools: &["jc_render"],
     },
 ];
@@ -110,7 +110,7 @@ mod tests {
     /// sink, no request and no URL but the one Portal link.
     #[test]
     fn chart_view_page_has_no_eval_innerhtml_or_url_sinks() {
-        let page = include_str!("chart_view.html");
+        let page = jc_chart::VIEW_PAGE;
         for sink in [
             "eval(",
             "new Function",
