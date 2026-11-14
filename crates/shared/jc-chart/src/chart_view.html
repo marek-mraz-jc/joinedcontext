@@ -164,7 +164,7 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
         return { field: name + "l", type: "nominal", sort: { field: name, op: "min" }, title: null, axis: { labelAngle: 0 } };
       }
       if (ch.scale === "temporal") return { field: name, type: "temporal", scale: { type: "utc" }, title: null };
-      return { field: name, type: "quantitative", title: null, scale: { zero: false } };
+      return { field: name, type: "quantitative", title: null, scale: { zero: false, nice: 6 } };
     }
     var domain = [];
     for (var k = 0; k < Math.max(colors, 1); k++) domain.push(label(k));
@@ -185,11 +185,11 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
       if (spec.mark === "bar" || spec.mark === "area") {
         // A bar or an area starts at zero and draws each group beside, never on top of, the others.
         var value = horizontal ? x : y;
-        if (value && value.type === "quantitative") { value.scale = { zero: true }; value.stack = null; }
+        if (value && value.type === "quantitative") { value.scale = { zero: true, nice: 6 }; value.stack = null; }
         if (grouped && spec.mark === "bar" && horizontal && y && y.type === "nominal") enc.yOffset = { field: "cl", type: "nominal", sort: { field: "c", op: "min" } };
         else if (grouped && spec.mark === "bar" && x && x.type === "nominal") enc.xOffset = { field: "cl", type: "nominal", sort: { field: "c", op: "min" } };
       }
-      if (spec.mark === "rule" && x && y) { y.scale = { zero: true }; enc.y2 = { datum: 0 }; }
+      if (spec.mark === "rule" && x && y) { y.scale = { zero: true, nice: 6 }; enc.y2 = { datum: 0 }; }
       if (spec.mark === "point" && spec.size) enc.size = { field: "size", type: "quantitative", legend: null };
       // A line or an area is hovered at its points, which are drawn but not painted.
       if (spec.mark === "line" || spec.mark === "area") mark.point = { opacity: 0, size: 80 };
@@ -344,12 +344,13 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
       fallback(last);
       return source;
     }
-    box.appendChild(el("p", "Hover a point, or focus the chart and use the arrow keys, to read its values.", "muted hint"));
-    box.appendChild(live);
+    // The values the "#n" labels and the colours stand for, right under the chart.
     [["x", spec.x, cats.x, false], ["y", spec.y, cats.y, false], ["color", spec.color, cats.color, true]].forEach(function (c) {
       var list = categoryList(c[0], (c[1] && c[1].title || c[0]) + " values (data)", c[2], c[3]);
       if (list) box.appendChild(list);
     });
+    box.appendChild(el("p", "Hover a point, or focus the chart and use the arrow keys, to read its values.", "muted hint"));
+    box.appendChild(live);
     return source;
   }
 
