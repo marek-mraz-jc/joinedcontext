@@ -122,6 +122,22 @@ pub async fn project_scope<'c>(
     Ok(tx)
 }
 
+/// [`project_scope`] for a page lookup's regular-expression scan of the passages: the server
+/// cancels the scan at [`chat::routed::PAGE_DEADLINE`], when the answer stops waiting for it, so a
+/// scan the answer gave up on stops holding a pooled connection and the server's CPU.
+pub async fn page_scope<'c>(
+    pool: &sqlx::PgPool,
+    project: &str,
+) -> Result<Transaction<'c, Postgres>, Error> {
+    let mut tx = project_scope(pool, project).await?;
+    let millis = chat::routed::PAGE_DEADLINE.as_millis().to_string();
+    sqlx::query("SELECT set_config('statement_timeout', $1, true)")
+        .bind(millis)
+        .execute(&mut *tx)
+        .await?;
+    Ok(tx)
+}
+
 /// A DNS label, which is what a project's `metadata.name` is.
 pub(crate) fn is_project_name(name: &str) -> bool {
     !name.is_empty()
@@ -659,7 +675,7 @@ pub async fn dataset_page_projects(
         return Ok(None);
     }
     for (project, names) in sources {
-        let mut tx = project_scope(pool, project).await?;
+        let mut tx = page_scope(pool, project).await?;
         let page = dataset_page(&mut tx, slugs, kind, names, public_only).await?;
         tx.rollback().await?;
         if page.is_some() {
@@ -780,7 +796,7 @@ pub async fn endpoint_page_projects(
     public_only: bool,
 ) -> Result<Option<String>, Error> {
     for (project, names) in sources {
-        let mut tx = project_scope(pool, project).await?;
+        let mut tx = page_scope(pool, project).await?;
         let page = endpoint_page(&mut tx, slug, names, public_only).await?;
         tx.rollback().await?;
         if page.is_some() {

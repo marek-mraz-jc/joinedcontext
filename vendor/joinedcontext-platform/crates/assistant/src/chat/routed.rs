@@ -2173,6 +2173,7 @@ async fn read(ask: &Ask<'_>, connector: &Connected, wanted: &Read) -> Result<Tab
                 .surface
                 .call(ask.http, "query_entities", arguments.clone())
                 .await;
+            let result = without_personal(ask, connector, result).await;
             let endpoint = Some(connector.endpoint.as_str());
             ask.trace
                 .tool("query_entities", endpoint, &arguments, began, &result);
@@ -2370,7 +2371,7 @@ async fn dataset_or(
 /// row-level security: 5-15 s on prod over the 2026-10-25 crawl, while the rows took 0.4 s.
 // ponytail: the page is lost to a slow scan; keep each Endpoint type's page in a table filled at
 // index time when a link matters more than these seconds.
-pub(super) const PAGE_DEADLINE: Duration = Duration::from_millis(1_500);
+pub(crate) const PAGE_DEADLINE: Duration = Duration::from_millis(1_500);
 
 /// `work`'s output, or `None` once `deadline` passed first.
 async fn bounded<T>(deadline: Duration, work: impl std::future::Future<Output = T>) -> Option<T> {
@@ -2456,14 +2457,20 @@ const MODEL_BYTES: usize = 1 << 20;
 /// table's display order (T-4672); kept per deployment and Endpoint for [`TYPES_LIFE`], a failed
 /// read too, so a slow schema surface costs one wait, not one per table. `None` without one.
 pub(super) async fn model_of(ask: &Ask<'_>, connector: &Connected) -> Option<std::sync::Arc<str>> {
+    if !offers(connector, "describe_schema") {
+        return None;
+    }
+    schema_of(ask, connector).await
+}
+
+/// [`model_of`] whether or not the deployment offers `describe_schema` to its model: the
+/// personal marks are read from it for every answer read with the person's token.
+async fn schema_of(ask: &Ask<'_>, connector: &Connected) -> Option<std::sync::Arc<str>> {
     let key = format!("{}/{}", ask.deployment, connector.surface.slug.as_str());
     if let Some(kept) = ask.cache.model_of(&key) {
         return kept;
     }
     let read = async {
-        if !offers(connector, "describe_schema") {
-            return None;
-        }
         let call =
             connector
                 .surface
@@ -2479,6 +2486,60 @@ pub(super) async fn model_of(ask: &Ask<'_>, connector: &Connected) -> Option<std
     let model = read.await;
     ask.cache.keep_model(&key, model.clone());
     model
+}
+
+/// AG-158 on the internal channel: an answer read with the person's token loses the attributes
+/// its Endpoint's LinkML marks `personalData` before a table, a script buffer, the trace or a
+/// model reads it, and an object answer names them under `withheld`, without their values. An
+/// answer read as anyone passes as it is: a public Endpoint never serves them (DM-122). An
+/// answer with entities whose model cannot be read is refused, and so is one cut past JSON that
+/// mentions a marked attribute.
+pub(super) async fn without_personal(
+    ask: &Ask<'_>,
+    connector: &Connected,
+    answered: Result<String, String>,
+) -> Result<String, String> {
+    let text = answered?;
+    if connector.surface.token.is_none() {
+        return Ok(text);
+    }
+    let parsed = serde_json::from_str::<Value>(&text).ok();
+    let entities = match &parsed {
+        Some(answer) => jc_core::personal::carries_entities(answer),
+        // A cut or text answer, read for the entities it names.
+        None => text.contains("urn:ngsi-ld:"),
+    };
+    if !entities {
+        return Ok(text);
+    }
+    let unreadable = || {
+        format!(
+            "the data model of Endpoint {} could not be read, so its personal attributes cannot be withheld; try again in a few minutes",
+            connector.endpoint
+        )
+    };
+    let model = schema_of(ask, connector).await.ok_or_else(unreadable)?;
+    let marks = jc_core::personal::marks(&model).map_err(|_| unreadable())?;
+    let Some(mut answer) = parsed else {
+        return if marks
+            .values()
+            .flatten()
+            .any(|name| text.contains(name.as_str()))
+        {
+            Err("the answer was too large to withhold its personal attributes; ask for fewer rows or attributes".to_owned())
+        } else {
+            Ok(text)
+        };
+    };
+    let removed = jc_core::personal::withhold(&mut answer, &marks);
+    if removed.is_empty() {
+        return Ok(text);
+    }
+    tracing::info!(deployment = %ask.deployment, endpoint = %connector.endpoint, withheld = %removed.join(","), "personal attributes withheld");
+    if let Value::Object(members) = &mut answer {
+        members.insert("withheld".to_owned(), json!(removed));
+    }
+    Ok(answer.to_string())
 }
 
 /// A `query_entities` answer of `kind` from `connector` as the table the person sees, with the
