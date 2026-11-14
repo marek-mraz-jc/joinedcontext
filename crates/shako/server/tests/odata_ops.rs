@@ -935,6 +935,45 @@ async fn a_hook_of_another_repository_is_not_redelivered() {
     assert_eq!(w.delivered.lock().len(), before + 1);
 }
 
+/// A hook's target address can carry its own credential, so hooks and their deliveries are
+/// Admin reads like the repository's mirrors: a reader sees none, the administrator sees each.
+#[tokio::test]
+async fn a_reader_sees_no_hook_or_delivery_of_the_repository() {
+    let w = world();
+    create_repo(&w, "helsinki").await;
+    let (st, hook, _) = call(
+        &w.app,
+        "POST",
+        &format!("{R}/Shako.AddWebhook"),
+        Some("portal-token"),
+        Some(json!({"Url": HOOK_URL, "Secret": HOOK_SECRET})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{hook}");
+    let id = hook["Id"].as_str().unwrap();
+    let (st, _, _) = call(
+        &w.app,
+        "POST",
+        &format!("/api/v1/repos/joinedcontext/helsinki/hooks/{id}/tests"),
+        Some("portal-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    for path in [
+        "/odata/Webhooks".to_owned(),
+        "/odata/Deliveries".to_owned(),
+        format!("{R}/Webhooks"),
+    ] {
+        let (st, admin, _) = call(&w.app, "GET", &path, Some("portal-token"), None).await;
+        assert_eq!(st, StatusCode::OK, "{path}: {admin}");
+        assert_eq!(admin["value"].as_array().map(Vec::len), Some(1), "{path}");
+        let (st, reader, _) = call(&w.app, "GET", &path, Some("bob-token"), None).await;
+        assert_eq!(st, StatusCode::OK, "{path}: {reader}");
+        assert_eq!(reader["value"], json!([]), "{path}");
+    }
+}
+
 /// A commit through the API passes the secret scan a push passes: a literal secret in a manifest
 /// is refused with the rule and path, never the value, and nothing lands on the branch.
 #[tokio::test]
