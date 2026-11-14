@@ -56,6 +56,20 @@ describe("a domain word and its definition", () => {
     expect(definition.className).toContain("sr-only");
   });
 
+  it("keeps the definition open while the pointer moves from the word onto it (WCAG 1.4.13)", async () => {
+    const person = userEvent.setup();
+    show("contextSpace", "Context Space");
+    const word = screen.getByRole("term");
+    const definition = document.getElementById(word.getAttribute("aria-describedby")!)!;
+
+    await person.hover(word);
+    expect(definition.className).not.toContain("sr-only");
+    await person.hover(definition);
+    expect(definition.className).not.toContain("sr-only");
+    await person.unhover(definition);
+    expect(definition.className).toContain("sr-only");
+  });
+
   it("closes the definition on Escape without moving the focus", async () => {
     const person = userEvent.setup();
     show("policy", "Policies");
