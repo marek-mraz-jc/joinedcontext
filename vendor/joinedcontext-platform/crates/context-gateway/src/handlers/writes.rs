@@ -415,6 +415,9 @@ pub(crate) struct HeldDelete<'a> {
     pub(crate) endpoint: &'a Endpoint,
     pub(crate) headers: &'a HeaderMap,
     pub(crate) rules: &'a crate::relationships::RelationshipRules,
+    /// Whether the planned changes are made: an MCP call the person has not confirmed yet
+    /// plans them, so a refusal is told at once, and changes nothing.
+    pub(crate) apply: bool,
 }
 
 impl HeldDelete<'_> {
@@ -422,6 +425,9 @@ impl HeldDelete<'_> {
     pub(crate) async fn entity(&self, id: &str) -> Result<(), Box<Response<Body>>> {
         let answer = |problem: Box<ProblemDetails>| Box::new(problem.into_response());
         let steps = self.plan(id).await.map_err(answer)?;
+        if !self.apply {
+            return Ok(());
+        }
         self.apply(id, &steps).await.map_err(answer)
     }
 
@@ -462,7 +468,7 @@ impl HeldDelete<'_> {
                 Err(problem) => return Err(answer(problem)),
             }
         }
-        for (id, steps) in &plans {
+        for (id, steps) in plans.iter().filter(|_| self.apply) {
             self.apply(id, steps).await.map_err(answer)?;
         }
         if refused.is_empty() {

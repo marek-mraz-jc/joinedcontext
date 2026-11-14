@@ -303,12 +303,52 @@ async fn two_signed_in_callers_behind_one_address_keep_their_own_share_of_a_form
     let ok = json!({ "jsonrpc": "2.0", "id": 7, "result": { "content": [] } });
     let (upstream, hops) = broker(StatusCode::OK, ok).await;
     let app = router(Arc::new(gateway(&upstream, endpoint(Some(form())), &realm)));
-    let create = call("create_entity", json!({ "entity": entity }));
+    // Only the confirmed retry takes a create: the call before it asks the person (S-1-11).
+    let mut create = call("create_entity", json!({ "entity": entity }));
+    for _ in 0..3 {
+        let (_, answer) = send(&app, &mcp(), Some(&format!("Bearer {jana}")), &create).await;
+        assert!(refusal(&answer).is_none(), "{answer}");
+    }
+    create["params"]["requestState"] = json!("sealed-by-the-broker");
     for (token, refused) in [(&jana, false), (&peter, false), (&jana, true)] {
         let (_, answer) = send(&app, &mcp(), Some(&format!("Bearer {token}")), &create).await;
         assert_eq!(refusal(&answer).is_some(), refused, "{answer}");
     }
-    assert_eq!(hops.lock().expect("the hop log").len(), 2);
+    assert_eq!(hops.lock().expect("the hop log").len(), 5);
+}
+
+/// A form's create asked through MCP and then confirmed sends the broker the same minted id
+/// both times, since the broker binds its question to the arguments (S-1-11).
+#[tokio::test]
+async fn a_forms_confirmed_create_through_mcp_keeps_the_id_the_person_was_asked_about() {
+    let realm = common::Realm::new();
+    let ok = json!({ "jsonrpc": "2.0", "id": 7, "result": { "content": [] } });
+    let (upstream, hops) = broker(StatusCode::OK, ok).await;
+    let form = Creates {
+        mint_ids: true,
+        per_day: None,
+        embed_origins: Vec::new(),
+    };
+    let app = router(Arc::new(gateway(&upstream, endpoint(Some(form)), &realm)));
+    let bearer = format!("Bearer {}", steward(&realm, "mira"));
+    let asked = call(
+        "create_entity",
+        json!({ "entity": { "type": "AirQualityObserved", "no2": 40 } }),
+    );
+    let mut confirmed = asked.clone();
+    confirmed["params"]["requestState"] = json!("sealed-by-the-broker");
+    for message in [&asked, &confirmed, &confirmed] {
+        let (_, answer) = send(&app, &mcp(), Some(&bearer), message).await;
+        assert!(refusal(&answer).is_none(), "{answer}");
+    }
+    let ids: Vec<Value> = hops
+        .lock()
+        .expect("the hop log")
+        .iter()
+        .map(|hop| hop["params"]["arguments"]["entity"]["id"].clone())
+        .collect();
+    assert!(ids[0].is_string(), "{ids:?}");
+    assert_eq!(ids, vec![ids[0].clone(); 3]);
 }
 
 #[tokio::test]
