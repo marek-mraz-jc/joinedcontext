@@ -1809,10 +1809,21 @@ mod tests {
         );
         let migrated = super::super::portals::harvest_sources_of(&read.spec, &orgs).unwrap();
         assert_eq!(migrated.len(), seeds.len());
-        for (seed, (from_portal, _)) in seeds.iter().zip(migrated) {
+        for (seed, (from_portal, publisher)) in seeds.iter().zip(migrated) {
             let seeded = seed_harvest(&store, ctx.org_id, ctx.catalogue_id, seed, SITE, None)
                 .await
                 .unwrap();
+            let seeded_publisher = store
+                .get_publisher(&ctx, &seed.publisher)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                (&publisher.title, &publisher.description),
+                (&seeded_publisher.title, &seeded_publisher.description),
+                "{}: the publisher keeps its language",
+                seed.name
+            );
             assert!(
                 !from_portal.converted.is_empty(),
                 "{}: converted datasets",

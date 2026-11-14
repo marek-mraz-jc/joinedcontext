@@ -158,6 +158,8 @@ pub(crate) fn default_portal_of(
     let spec: PortalSpec = serde_json::from_value(serde_json::json!({
         "organizationRef": organization,
         "path": jc_core::kinds::DEFAULT_PORTAL,
+        // The seeds wrote their publisher texts in Slovak; the manifest keeps that language.
+        "languages": ["sk"],
     }))
     .map_err(|e| e.to_string())?;
     let spec = PortalSpec { sources, ..spec };
@@ -321,7 +323,9 @@ pub(crate) fn harvest_sources_of(
             }
         };
         let publisher = source.publisher.clone().unwrap_or_else(|| org.name.clone());
-        let source_publisher = publisher_of(source, org, org_id, catalogue_id, &publisher, now);
+        let lang = portal.languages.first().map_or("en", String::as_str);
+        let source_publisher =
+            publisher_of(source, org, (org_id, catalogue_id), lang, &publisher, now);
         out.push((
             HarvestSource {
                 org_id,
@@ -363,8 +367,8 @@ pub(crate) fn harvest_sources_of(
 fn publisher_of(
     source: &PortalSource,
     org: &OrganizationPortals,
-    org_id: OrgId,
-    catalogue_id: CatalogueId,
+    (org_id, catalogue_id): (OrgId, CatalogueId),
+    lang: &str,
     name: &str,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Publisher {
@@ -377,11 +381,11 @@ fn publisher_of(
         catalogue_id,
         id: String::new(),
         name: name.to_owned(),
-        title: BTreeMap::from([("en".to_owned(), title)]),
+        title: BTreeMap::from([(lang.to_owned(), title)]),
         description: source
             .publisher_description
             .iter()
-            .map(|d| ("en".to_owned(), d.clone()))
+            .map(|d| (lang.to_owned(), d.clone()))
             .collect(),
         uri: source
             .publisher_uri
