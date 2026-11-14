@@ -815,7 +815,8 @@ mod tests {
     }
 
     /// The first administrator is seeded on the first start only: one an administrator disabled
-    /// stays disabled when `jc` starts again.
+    /// stays disabled when `jc` starts again with changed realm files (an upgrade, an added
+    /// Organization), which an unchanged file's checksum would skip.
     #[tokio::test]
     async fn a_disabled_first_admin_stays_disabled_on_the_next_start() {
         let dir = tempfile::tempdir().unwrap();
@@ -827,14 +828,15 @@ mod tests {
             env_vars: setup::realm_env(&setup),
             ..ApplyOptions::default()
         };
-        let start = || async {
+        let (setup, store, options) = (&setup, &store, &options);
+        let start = |portals: Vec<String>| async move {
             let mut files =
-                setup::portal_realm_files("https://portal.city.example/", &[], &setup.realm)
+                setup::portal_realm_files("https://portal.city.example/", &portals, &setup.realm)
                     .unwrap();
-            seed_first_admin_once(&store, &setup.realm, &mut files)
+            seed_first_admin_once(store, &setup.realm, &mut files)
                 .await
                 .unwrap();
-            apply_realm_files(&store, &files, &options).await.unwrap();
+            apply_realm_files(store, &files, options).await.unwrap();
         };
         let admin = || async {
             store
@@ -843,12 +845,12 @@ mod tests {
                 .unwrap()
                 .expect("the first admin")
         };
-        start().await;
+        start(vec![]).await;
         let mut first = admin().await;
         assert!(first.enabled);
         first.enabled = false;
         store.update_user(first).await.unwrap();
-        start().await;
+        start(vec!["https://portal.org.city.example".into()]).await;
         assert!(!admin().await.enabled);
     }
 
