@@ -191,8 +191,17 @@ def test_a_cluster_import_fences_catalogues_to_the_instances_own_host_and_nothin
     ckan = b"kind: CkanInstance\nspec:\n  url: https://opendata.dev.joinedcontext.com\n"
     own = rh.catalogue_url("https://jcprod-opendata.dev.joinedcontext.com")
     assert rh.fence_writes(ckan, own) == b"kind: CkanInstance\nspec:\n  url: https://jcprod-opendata.dev.joinedcontext.com\n"
-    for bad in ["http://jcprod-opendata.dev.joinedcontext.com", "https://x.dev.joinedcontext.com/path",
-                "https://u@x.example", "https://x.example:8443", "https://x.example\n  apiKey: y", "https://localhost"]:
+    for bad in ["http://jcprod-opendata.dev.joinedcontext.com", "https://u@x.example", "https://x.example:8443", "https://x.example\n  apiKey: y", "https://localhost"]:
+        with pytest.raises(SystemExit):
+            rh.catalogue_url(bad)
+
+
+def test_a_slug_mode_import_keeps_the_dataroom_path_in_every_catalogue():
+    ckan = b"kind: CkanInstance\nspec:\n  url: https://opendata.smartcity.joinedcontext.com\n"
+    own = rh.catalogue_url("https://jc.jcdev.dev.joinedcontext.com/opendata")
+    assert rh.fence_writes(ckan, own) == b"kind: CkanInstance\nspec:\n  url: https://jc.jcdev.dev.joinedcontext.com/opendata\n"
+    for bad in ["https://x.example/opendata/", "https://x.example/opendata?x=1", "https://x.example/../a",
+                "https://x.example/Opendata", "https://x.example/opendata\n  apiKey: y"]:
         with pytest.raises(SystemExit):
             rh.catalogue_url(bad)
 
