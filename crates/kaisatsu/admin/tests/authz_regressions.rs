@@ -258,6 +258,83 @@ async fn org_admin_cannot_hand_out_admin_client_roles() {
     assert_eq!(st, StatusCode::NO_CONTENT);
 }
 
+/// An Organization's admin manages the people of the Organization, never a realm administrator
+/// who happens to be a member: no password reset, credential delete, update or delete. A realm
+/// user manager (`manage-users`) still can, as in Keycloak; the own account stays one's own.
+#[tokio::test]
+async fn org_admin_cannot_reset_or_change_a_realm_admin_of_the_organization() {
+    let f = Fixture::new().await;
+    f.store
+        .create_user(UserRepresentation {
+            id: "hel-root".into(),
+            realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
+            username: "hel-root".into(),
+            realm_roles: vec!["realm-admin".into()],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let t = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    let reset = json!({ "type": "password", "value": "Another-pass-123", "temporary": false });
+    for (method, path, body) in [
+        (
+            Method::PUT,
+            "/admin/realms/dev/users/hel-root/reset-password",
+            Some(reset.clone()),
+        ),
+        (
+            Method::PUT,
+            "/admin/realms/dev/users/hel-root",
+            Some(json!({ "username": "hel-root", "firstName": "X" })),
+        ),
+        (
+            Method::DELETE,
+            "/admin/realms/dev/users/hel-root/credentials/c-1",
+            None,
+        ),
+        (Method::DELETE, "/admin/realms/dev/users/hel-root", None),
+    ] {
+        let st = f.send(method.clone(), path, &t, body).await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{method} {path}");
+    }
+    assert!(
+        f.store
+            .get_user_by_id("dev", None, "hel-root")
+            .await
+            .unwrap()
+            .is_some()
+    );
+    // The same admin still resets a plain member, and a realm user manager resets the admin.
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev/users/hel-person/reset-password",
+            &t,
+            Some(reset.clone()),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let manager = f
+        .token(
+            "dev",
+            "user-manager",
+            json!({ "resource_access": { "realm-management": { "roles": ["manage-users"] } } }),
+        )
+        .await;
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev/users/hel-root/reset-password",
+            &manager,
+            Some(reset),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+}
+
 #[tokio::test]
 async fn role_mapping_delete_is_checked_against_the_persons_organization() {
     let f = Fixture::new().await;
@@ -423,6 +500,34 @@ async fn a_revoked_admin_token_is_refused() {
             .await,
         StatusCode::UNAUTHORIZED
     );
+}
+
+/// Only an existing, enabled realm's keys verify an admin token: a disabled realm's tokens stop
+/// working, and a token on an unknown realm's path is refused before any key is read for it.
+#[tokio::test]
+async fn a_disabled_or_unknown_realm_verifies_no_admin_token() {
+    let f = Fixture::new().await;
+    let claims = json!({ "realm_access": { "roles": ["realm-admin"] } });
+    let t = f.token("dev", "boss", claims).await;
+    assert_eq!(
+        f.send(Method::GET, "/admin/realms/dev/users", &t, None)
+            .await,
+        StatusCode::OK
+    );
+    let mut dev = f.store.get_realm("dev").await.unwrap().unwrap();
+    dev.enabled = false;
+    f.store.upsert_realm(dev).await.unwrap();
+    assert_eq!(
+        f.send(Method::GET, "/admin/realms/dev/users", &t, None)
+            .await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        f.send(Method::GET, "/admin/realms/no-such-realm/users", &t, None)
+            .await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert!(f.store.get_realm("no-such-realm").await.unwrap().is_none());
 }
 
 /// Scope links, mappers, role holders and group members of an application or group were served

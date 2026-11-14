@@ -273,6 +273,12 @@ pub async fn extract_admin_ctx(
 
     let mut verified: Option<(Value, &str)> = None;
     for candidate_realm in [realm_id, "master"] {
+        // Only an existing, enabled realm issues admin tokens: reading the keys of any other
+        // name would mint and store keys for it on an unauthenticated request.
+        let issuing = state.oidc.store.get_realm(candidate_realm).await?;
+        if !issuing.is_some_and(|r| r.enabled) {
+            continue;
+        }
         if let Ok(keys) = state.oidc.store.list_signing_keys(candidate_realm).await {
             let issuer = mount.realm_issuer(candidate_realm);
             if let Ok((_, claims)) = verify_jwt::<Value>(raw_token, &keys, Some(&issuer), None)
@@ -1059,6 +1065,7 @@ async fn compat_update_user(
             person_id: existing.id.clone(),
         },
     ))?;
+    crate::operations::ensure_person_ceiling(&state, &ctx, &existing).await?;
     user.id = id.clone();
     user.realm_id = realm;
     let user = merge_user_update(&existing, user, &ctx);
@@ -1099,6 +1106,7 @@ async fn compat_delete_user(
             person_id: existing.id.clone(),
         },
     ))?;
+    crate::operations::ensure_person_ceiling(&state, &ctx, &existing).await?;
     state
         .oidc
         .store
@@ -1236,10 +1244,11 @@ async fn compat_delete_user_credential(
         Action::Delete,
         &ObjectTarget::Person {
             realm_id: realm.clone(),
-            org_id: user.org_id,
+            org_id: user.org_id.clone(),
             person_id: user.id.clone(),
         },
     ))?;
+    crate::operations::ensure_person_ceiling(&state, &ctx, &user).await?;
     let deleted = state
         .oidc
         .store
@@ -1841,6 +1850,7 @@ async fn compat_add_user_client_roles(
             person_id: user.id.clone(),
         },
     ))?;
+    crate::operations::ensure_person_ceiling(&state, &ctx, &user).await?;
     ensure_may_map_client_roles(&state, &ctx, &realm, &client_uuid).await?;
     for item in items {
         state
@@ -1899,6 +1909,7 @@ async fn compat_delete_user_client_roles(
             person_id: user.id.clone(),
         },
     ))?;
+    crate::operations::ensure_person_ceiling(&state, &ctx, &user).await?;
     ensure_may_map_client_roles(&state, &ctx, &realm, &client_uuid).await?;
     for item in items {
         state

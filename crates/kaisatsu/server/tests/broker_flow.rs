@@ -319,6 +319,43 @@ async fn k12_upstream_oidc_broker_happy_path_pkce_state_nonce_and_link_confirmat
     .await;
     assert_eq!(st_wrong_pw, StatusCode::OK);
     assert!(html_wrong_pw.contains("role=\"alert\""));
+    // The link confirmation counts wrong passwords like the login page: past the realm's
+    // failure factor the account is locked and even the right password links nothing.
+    for _ in 0..10 {
+        post_form(
+            &app,
+            "/realms/dev/broker/entra/endpoint",
+            &[
+                ("csrf_token", &conf_csrf),
+                ("session_code", &s2),
+                ("password", "WrongLocalPass!"),
+            ],
+            Some(&ck2),
+        )
+        .await;
+    }
+    let (st_locked, _, html_locked) = post_form(
+        &app,
+        "/realms/dev/broker/entra/endpoint",
+        &[
+            ("csrf_token", &conf_csrf),
+            ("session_code", &s2),
+            ("password", "MemberPass123!Valid"),
+        ],
+        Some(&ck2),
+    )
+    .await;
+    assert_eq!(st_locked, StatusCode::OK, "{html_locked}");
+    assert!(html_locked.contains("role=\"alert\""));
+    let member = store
+        .get_user_by_username_or_email("dev", None, "demo.orgmember@hel.fi")
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .clear_login_failure("dev", &format!("user:{}", member.id))
+        .await
+        .unwrap();
 
     // Right local password confirms the link and completes login
     let (st_linked, h_linked, _) = post_form(

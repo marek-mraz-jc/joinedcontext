@@ -149,7 +149,7 @@ async fn realm_smtp_sender_refuses_without_settings_and_keeps_the_row_for_retry(
     };
     realm(&store, &kek, "mailing", Some(tls)).await;
     let missing = std::env::temp_dir().join(format!("kaisatsu-no-pw-{}", uuid::Uuid::now_v7()));
-    let sender = RealmSmtpSender::new(store.clone(), missing.clone());
+    let sender = RealmSmtpSender::new(store.clone(), missing.clone(), "127.0.0.1".into());
 
     let err = sender
         .send_mail("plain", "a@example.test", "s", "b", "l")
@@ -161,6 +161,16 @@ async fn realm_smtp_sender_refuses_without_settings_and_keeps_the_row_for_retry(
         .await
         .unwrap_err();
     assert!(err.to_string().contains("SMTP password file"), "{err}");
+    // A realm naming another host gets no mail: the deployment's password stays with its host.
+    let elsewhere = RealmSmtpSender::new(store.clone(), missing.clone(), "smtp.example.org".into());
+    let err = elsewhere
+        .send_mail("mailing", "a@example.test", "s", "b", "l")
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("not the deployment's SMTP host"),
+        "{err}"
+    );
 
     store
         .enqueue_outbox(row("plain", "ob-plain"))

@@ -777,6 +777,11 @@ impl AppState {
                         Some(namespace) => clients.with_app_jobs(namespace),
                         None => clients,
                     };
+                    let clients = clients.with_own_pipeline_clients(
+                        self.config.pipeline_identity
+                            && self.config.pipeline_credential
+                                == crate::reconciler::streams::PipelineCredential::Secret,
+                    );
                     // A removed account's tokens end with it (T-5568).
                     let state = self.clone();
                     let clients = clients.with_revoke(Arc::new(move |subject: String| {
