@@ -1074,11 +1074,13 @@ async fn whole_dashboard(
             Err((status, detail)) => {
                 // The picture says only where and the status; the words are in the answer.
                 tiles.push(chart::Tile::Error {
-                    width: TILE.0 / 2,
+                    width: 800,
                     height: 120,
+                    // Counted from 1 for a person, as the chart view says it.
                     text: format!(
-                        "page {} widget {}: not drawn ({status})",
-                        at.page, at.widget
+                        "Page {}, widget {}: not drawn ({status})",
+                        at.page + 1,
+                        at.widget + 1
                     ),
                 });
                 let error = json!({ "status": status, "detail": detail });
