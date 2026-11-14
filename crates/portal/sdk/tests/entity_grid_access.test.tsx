@@ -181,7 +181,7 @@ describe("the permission-aware grid", () => {
     expect(screen.queryByRole("dialog", { name: /Your access/ })).toBeNull();
     // A row's detail, opened from a cell, says when a value changed and nothing about who may read it.
     fireEvent.click(screen.getByText("Kamppi"));
-    await screen.findByText("Created");
+    await screen.findByRole("dialog", { name: /Kamppi/ });
     for (const words of [/your access/i, /\ballowed\b/i, /not allowed/i, /no access/i]) {
       expect(document.body.textContent).not.toMatch(words);
     }

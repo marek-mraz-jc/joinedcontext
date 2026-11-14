@@ -128,8 +128,7 @@ export function AttributeMetadata(props: AttributeMetadataProps): React.JSX.Elem
   const hidden = (why: HiddenReason) => <span className="jc-grid-meta-hidden">{`${labels.hidden} (${labels.hiddenWhy[why]})`}</span>;
   const time = (iso: string | undefined) => {
     const shown = iso ? when(iso, locale, props.now?.() ?? new Date(), timeZone) : null;
-    // A public view names no access at all (T-6869): a time it does not pass is a plain dash.
-    if (!iso || !shown) return publicView ? "—" : hidden("member");
+    if (!iso || !shown) return hidden("member");
     return (
       <time dateTime={iso} title={shown.absolute}>
         {shown.relative}
@@ -149,8 +148,11 @@ export function AttributeMetadata(props: AttributeMetadataProps): React.JSX.Elem
     [labels.created, time(cell?.createdAt)],
     [labels.modified, time(cell?.modifiedAt)],
   ];
-  // A public view never passes who wrote a value and says nothing about it (T-6869): the times alone.
-  if (publicView) return metadataList(rows);
+  // A public view never passes who wrote a value and names no access (T-6869): the times it has, alone.
+  if (publicView) {
+    const known = rows.filter((_, at) => (at === 0 ? cell?.createdAt : cell?.modifiedAt));
+    return known.length > 0 ? metadataList(known) : <p className="jc-grid-meta">{labels.notRecorded}</p>;
+  }
   // One refusal covers who, where from, through what and why: said once, not four times.
   if (read.state === "hidden") rows.push([labels.changedBy, hidden(read.why)]);
   // Nothing recorded is said once too (UI judge, T-6344).
