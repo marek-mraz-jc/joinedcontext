@@ -4963,9 +4963,10 @@ mod tests {
     #[test]
     fn a_write_policy_binds_on_the_organization_refs_domain_before_the_projects_own() {
         let state = AppState::new(Config::for_tests(), None);
-        state
-            .mirror
-            .upsert(organization("hel", json!({ "domain": "hel.fi", "installation": true })));
+        state.mirror.upsert(organization(
+            "hel",
+            json!({ "domain": "hel.fi", "installation": true }),
+        ));
         state.mirror.upsert(organization(
             "banskabystrica",
             json!({ "domain": "banskabystrica.sk" }),
@@ -4983,7 +4984,9 @@ mod tests {
         state.mirror.upsert(manifest(
             "Endpoint",
             "air-write",
-            public_air(Some("urn:ngsi-ld:Policy:hel.fi:ovzdusie-ovzdusie:air-write")),
+            public_air(Some(
+                "urn:ngsi-ld:Policy:hel.fi:ovzdusie-ovzdusie:air-write",
+            )),
         ));
         let writer = manifest(
             "Policy",

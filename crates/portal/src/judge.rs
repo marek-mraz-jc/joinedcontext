@@ -959,7 +959,10 @@ mod tests {
                 ),
             ],
         );
-        let names: Vec<_> = refused.iter().map(|(e, _)| e.metadata.name.as_str()).collect();
+        let names: Vec<_> = refused
+            .iter()
+            .map(|(e, _)| e.metadata.name.as_str())
+            .collect();
         assert_eq!(names, ["leftover-write"], "{refused:?}");
     }
 
