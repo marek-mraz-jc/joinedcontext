@@ -256,6 +256,28 @@ async fn a_write_is_checked_against_the_narrower_type_and_the_terms() {
     );
 }
 
+/// A member a write may not change (`odata_immutable`, `odata_computed`) is
+/// as read-only to `DELETE` of the property as to `PUT` and `PATCH`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_property_delete_keeps_to_the_terms() {
+    let (_b, app) = store().await.expect("broker");
+    for (method, member, body) in [
+        (Method::DELETE, "serial", None),
+        (Method::DELETE, "made", None),
+        (Method::PUT, "serial", Some(r#"{"value": "s-9"}"#)),
+    ] {
+        let (status, answer) = odata(&app, method.clone(), &format!("{ITEM}/{member}"), body).await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{method} {member}: {answer}"
+        );
+    }
+    let (status, item) = odata(&app, Method::GET, ITEM, None).await;
+    assert_eq!(status, StatusCode::OK, "{item}");
+    assert_eq!(item["serial"], "s-1", "{item}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_write_the_class_refuses_is_405_before_its_body_is_read() {
     let (_b, app) = store().await.expect("broker");
