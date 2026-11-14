@@ -242,15 +242,19 @@ fn org_set(name: &str) -> Option<&'static ListSet> {
 }
 
 /// Whether the manifest `name` of `kind` in the `org` namespace is `org`'s own: a RoleBinding
-/// belongs to the Organization its scope reaches; every other Organization-scoped manifest names
-/// no Organization, so it is the installation's (ADR-N-058 section 2.2) and no other one reads it.
+/// belongs to the Organization its scope reaches, a Portal to its `spec.organizationRef`
+/// (ODP-08); every other Organization-scoped manifest names no Organization, so it is the
+/// installation's (ADR-N-058 section 2.2) and no other one reads it.
 fn owned_by(state: &AppState, org: &str, kind: &str, name: &str) -> bool {
     let m = &state.mirror;
-    let owner = if kind == "RoleBinding" {
-        m.get(ORG_NAMESPACE, kind, name)
-            .and_then(|env| crate::permissions::binding_organization(m, &env.spec))
-    } else {
-        crate::permissions::installation_organization(m)
+    let owner = match kind {
+        "RoleBinding" => m
+            .get(ORG_NAMESPACE, kind, name)
+            .and_then(|env| crate::permissions::binding_organization(m, &env.spec)),
+        "Portal" => m
+            .get(ORG_NAMESPACE, kind, name)
+            .and_then(|env| env.spec["organizationRef"].as_str().map(str::to_owned)),
+        _ => crate::permissions::installation_organization(m),
     };
     owner.as_deref() == Some(org)
 }
@@ -260,7 +264,8 @@ fn owned_by(state: &AppState, org: &str, kind: &str, name: &str) -> bool {
 /// ([`crate::permissions::holds_at_organization`]); a project's binding reads none of it.
 fn org_set_readable(state: &AppState, user: &CurrentUser, org: &str, set: &ListSet) -> bool {
     let installation = crate::permissions::installation_organization(&state.mirror);
-    (set.type_name == "RoleBinding" || installation.as_deref() == Some(org))
+    (matches!(set.type_name.as_str(), "RoleBinding" | "Portal")
+        || installation.as_deref() == Some(org))
         && crate::permissions::holds_at_organization(
             state,
             &user.0.identity,

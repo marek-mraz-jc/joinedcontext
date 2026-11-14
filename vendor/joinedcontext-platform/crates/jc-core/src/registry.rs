@@ -108,6 +108,7 @@ catalogue!(
     crate::kinds::EnvironmentSpec,
     crate::kinds::DashboardSpec,
     crate::kinds::LayerSpec,
+    crate::kinds::PortalSpec,
 );
 
 /// Looks a kind up by its manifest `kind` name (case-sensitive, as written in the file).

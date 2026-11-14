@@ -118,6 +118,8 @@ fn make_catalogue(org_id: OrgId, cat_id: CatalogueId, name: &str, host: &str) ->
         modified: Utc::now(),
         deleted: None,
         public_base: None,
+        portal_base: None,
+        left_hosts: Vec::new(),
     }
 }
 
@@ -1229,6 +1231,8 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
                     schedule: "23 3 * * *".into(),
                     enabled: true,
                     modified: Utc::now(),
+                    budget: None,
+                    position: 0,
                 },
             )
             .await
