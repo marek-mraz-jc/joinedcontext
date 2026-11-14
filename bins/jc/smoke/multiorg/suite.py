@@ -58,7 +58,8 @@ CONFIG = ("joinedcontext", "configuration")
 DENIED = (403, 404)
 LIVE_HOSTS = ("jc.jcdev.dev.joinedcontext.com", "smartcity.joinedcontext.com")
 FIXTURES = ("ctl-a", "ctl-b")  # the Organizations whose projects a live run may write into
-LIVE_OFF = ("ui", "connectors", "operators")  # a browser, or writes outside the fixtures
+LIVE_OFF = ("ui", "connectors", "operators", "portals")  # a browser, or writes outside the fixtures
+PORTAL_PATH = "multiorg"  # the further Portal setup commits for each Organization (check_portals)
 BOUND = Path(__file__).resolve().parent / "skip-bound.json"
 MCP_CLIENT = "mcp-local"  # the realm's public client for a local MCP client
 # Project-scoped reads every Organization's people use; each is checked both ways.
@@ -195,6 +196,14 @@ class Allowlist:
 
         h.call = call
         return h
+
+
+def portal_manifest(name: str, org: str, sources: list, path: str = PORTAL_PATH) -> str:
+    """A Portal manifest (ODP-08) of Organization `org` at `/{org}/opendata/-/{path}/`."""
+    return json.dumps({"apiVersion": "joinedcontext.com/v1alpha1", "kind": "Portal",
+                       "metadata": {"name": name, "namespace": "org"},
+                       "spec": {"organizationRef": org, "path": path, "title": {"en": f"multiorg {org}"},
+                                "sources": sources}}, indent=1) + "\n"
 
 
 def users(emails) -> list[str]:
@@ -412,6 +421,11 @@ class Suite:
                           f"    - title: Overview\n      widgets:\n        - widgetType: temporal-chart\n"
                           f"          endpointRef: {endpoint}\n")],
                         f"multiorg smoke: a Dashboard of {org}", repo=("joinedcontext", project))
+        # One further Portal per Organization listing its published Endpoints (ODP-10), read by
+        # check_portals: a forge commit as the RoleBindings, as an approved Change would be.
+        self.commit([(f"portals/multiorg-{org}.yaml", portal_manifest(f"multiorg-{org}", org, [
+            {"name": "published", "type": "endpoints"}])) for org in self.exp],
+            "multiorg smoke: a further Portal of each Organization")
         self.synced()
 
     def synced(self):
@@ -1279,6 +1293,136 @@ class Suite:
                              f"no answer names {other}'s people or objects", f"{len(answered)} answered, named in {seen[:4]}",
                              not seen)
 
+    def check_portals(self):
+        """ODP-12: an Organization's Portals, their sources and what they list reach no other
+        Organization. Through the Portal API each admin lists and reads its own further Portal
+        (setup's `multiorg-{o}`) and none of another's (404), proposes and deletes none of
+        another's (403/404; that admin's own dry run 200), and a source of its own Portal that
+        names another Organization's project or private Endpoint address is refused (422). In
+        host mode each further Portal's address (`{opendata}/-/multiorg/`) lists its own
+        published datasets and none of another's, in search, list, DCAT, Turtle, Atom and the MCP
+        catalogue tool; path mode serves no Organization catalogue (no [[organizations]]), so
+        those rows skip there."""
+        tag = f"mo-pt-{secrets.token_hex(3)}"
+        own_ok = {}
+        for org in self.exp:
+            h = self.session(f"{org}-admin")
+            st, body = h.json("GET", "/api/v1/projects/org/portals")
+            names = {i.get("metadata", {}).get("name") or i.get("name") for i in (body or {}).get("items", [])} if st == 200 else set()
+            foreign = sorted(f"multiorg-{o}" for o in self.exp if o != org and f"multiorg-{o}" in names)
+            self.row(f"portals.{org}-admin.list", org, "GET /api/v1/projects/org/portals",
+                     f"200 with multiorg-{org}, no portal of another Organization",
+                     f"{st}, own {f'multiorg-{org}' in names}, foreign {foreign[:3]}",
+                     st == 200 and f"multiorg-{org}" in names and not foreign)
+            st, _, _ = h.call("GET", f"/api/v1/projects/org/portals/multiorg-{org}")
+            own_ok[org] = st == 200
+            self.row(f"portals.{org}-admin.read.own", org, f"GET /api/v1/projects/org/portals/multiorg-{org}",
+                     "200", str(st), st == 200)
+        for org in self.exp:
+            h = self.session(f"{org}-admin")
+            for other in self.exp:
+                if other == org:
+                    continue
+                call = f"/api/v1/projects/org/portals/multiorg-{other}"
+                st, _, raw = h.call("GET", call)
+                self.row(f"portals.{org}-admin.read.{other}", f"{org}->{other}", f"GET {call}",
+                         "403/404 (its owner reads 200)", f"{st} {raw[:100]!r}" if st not in DENIED else str(st),
+                         (st in DENIED) if own_ok[other] else None, "" if own_ok[other] else "no control: the owner's read failed")
+                st, _, raw = h.call("DELETE", f"{call}?dryRun=All")
+                self.row(f"portals.{org}-admin.delete.{other}", f"{org}->{other}", f"DELETE {call}?dryRun=All",
+                         "403/404", f"{st} {raw[:100]!r}" if st not in DENIED else str(st), st in DENIED)
+                body = json.loads(portal_manifest(f"{tag}-{other}", other, [], path=tag))
+                st, raw = h.json("POST", "/api/v1/projects/org/portals?dryRun=All", body=body)
+                st_c, _ = self.session(f"{other}-admin").json("POST", "/api/v1/projects/org/portals?dryRun=All", body=body)
+                self.row(f"portals.{org}-admin.propose.{other}", f"{org}->{other}",
+                         f"POST /api/v1/projects/org/portals?dryRun=All (a Portal of {other})",
+                         "403/404 (its owner's dry run 200)", f"{st} {str(raw)[:100]}, owner {st_c}",
+                         (st in DENIED) if st_c == 200 else None, "" if st_c == 200 else f"no control: the owner's dry run answered {st_c}")
+                self.check_portal_sources(org, other, tag)
+        if not self.hosts:
+            for org in self.exp:
+                self.row(f"portals.{org}.address", org, f"GET /{org}/opendata/-/{PORTAL_PATH}/", "host mode only",
+                         "path mode", None, "path mode serves no Organization catalogue: no [[organizations]]")
+            return
+        self.check_portal_addresses()
+
+    def check_portal_sources(self, org, other, tag):
+        """`org`'s admin proposes its own Portal with a source reaching `other`: an `endpoints`
+        source naming `other`'s project, a `dcat-ap` source at `other`'s private Endpoint
+        address. Both 422 naming the source; the same Portal with no source dry-runs 200."""
+        h = self.session(f"{org}-admin")
+        def propose(sources):
+            body = json.loads(portal_manifest(f"{tag}-{org}", org, sources, path=tag))
+            return h.json("POST", "/api/v1/projects/org/portals?dryRun=All", body=body)
+        control, _ = propose([])
+        projects = sorted(self.exp[other]["projects"])
+        closed = sorted(s for p in self.exp[other]["projects"].values() for s in p["closed"])
+        api = self.hosts[other]["api"] if self.hosts else urllib.parse.urlparse(self.base).hostname
+        cases = {"foreign-project": [{"name": "theirs", "type": "endpoints", "projects": projects[:1]}] if projects else None,
+                 "foreign-endpoint": [{"name": "theirs", "type": "dcat-ap", "url": f"https://{api}/api/endpoint/{closed[0]}/",
+                                       "allowedHosts": [api]}] if closed else None}
+        for case, sources in cases.items():
+            rid = f"portals.{org}-admin.source.{case}.{other}"
+            if sources is None:
+                self.row(rid, f"{org}->{other}", "POST /api/v1/projects/org/portals?dryRun=All", "422", "-", None,
+                         f"{other} has no {'project' if case == 'foreign-project' else 'private Endpoint'}")
+                continue
+            st, raw = propose(sources)
+            text = json.dumps(raw)
+            self.row(rid, f"{org}->{other}", f"POST /api/v1/projects/org/portals?dryRun=All ({case} of {other})",
+                     "422 naming spec.sources[0] (the Portal without it 200)", f"{st} {text[:140]}, control {control}",
+                     (st == 422 and "spec.sources[0]" in text) if control == 200 else None,
+                     "" if control == 200 else f"no control: the Portal without sources answered {control}")
+
+    def check_portal_addresses(self):
+        """Host mode: each further Portal's address lists its own Organization's published
+        datasets (the reconciler copies them within a few rounds) and nothing of another's."""
+        found = {}
+        for org in self.exp:
+            st, body = self.client(org, "opendata").json("GET", "/api/3/action/package_search?rows=1000")
+            found[org] = {r.get("name") for r in (body or {}).get("result", {}).get("results", [])} if st == 200 else set()
+        base = f"/-/{PORTAL_PATH}"
+        listed = {}
+        deadline = time.time() + self.a.sync_timeout
+        for org in self.exp:
+            h = self.client(org, "opendata")
+            while True:
+                st, body = h.json("GET", f"{base}/api/3/action/package_search?rows=1000")
+                listed[org] = {r.get("name") for r in (body or {}).get("result", {}).get("results", [])} if st == 200 else set()
+                if (st == 200 and (listed[org] or not found[org])) or time.time() > deadline:
+                    break
+                time.sleep(5)
+            self.row(f"portals.{org}.listed", org, f"GET {{opendata}}{base}/api/3/action/package_search",
+                     "200, its own published datasets listed (an Organization that publishes none: none)",
+                     f"{st}, {len(listed[org])} of {len(found[org])} published", st == 200 and (bool(listed[org]) or not found[org]))
+        for org in self.exp:
+            h = self.client(org, "opendata")
+            others = {n for o, ns in found.items() if o != org for n in ns} - found[org]
+            for kind, path in (("search", "/api/3/action/package_search?rows=1000"), ("list", "/api/3/action/package_list"),
+                               ("dcat", "/catalog.jsonld"), ("ttl", "/catalog.ttl"), ("atom", "/feeds/dataset.atom")):
+                st, _, raw = h.call("GET", base + path)
+                text = raw.decode(errors="replace")
+                if kind in ("search", "list"):
+                    result = (json.loads(text or "{}") if st == 200 else {}).get("result", [])
+                    names = {r.get("name") for r in result.get("results", [])} if kind == "search" else set(result)
+                    leaked = sorted(n for n in others if n in names)
+                else:
+                    leaked = sorted(n for n in others if n and re.search(rf"/dataset/{re.escape(n)}(?![\w-])", text))
+                hosts = sorted({hh for o, hs in self.hosts.items() if o != org for hh in hs.values() if hh in text})
+                self.row(f"portals.{org}.{kind}.no-foreign", org, f"GET {{opendata}}{base}{path}",
+                         "200, no dataset or host of another Organization", f"{st}, leaked {leaked[:3]}, hosts {hosts}",
+                         st == 200 and not leaked and not hosts)
+            rpc = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                   "params": {"name": "jc_dataset_search", "arguments": {}}}
+            st, body = h.json("POST", f"{base}/mcp", body=rpc)
+            text = json.dumps(body, ensure_ascii=False)
+            names = {n for n in [*others, *listed[org]] if n and re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", text)}
+            leaked = sorted(others & names)
+            own = not listed[org] or bool(listed[org] & names)
+            self.row(f"portals.{org}.mcp.no-foreign", org, f"POST {{opendata}}{base}/mcp tools/call jc_dataset_search",
+                     "200, an own dataset, none of another Organization", f"{st}, own {own}, leaked {leaked[:3]}",
+                     st == 200 and own and not leaked)
+
     def check_dashboards(self):
         """Each Organization's Dashboards (the export's and the suite's own) are listed for its
         people and refused to every other Organization's, item by item; the platform admin reads all."""
@@ -1552,8 +1696,8 @@ class Suite:
             self.save_personas(Path(self.a.make_personas))
             return
         steps = (self.check_projects, self.check_hosts, self.check_project_reads, self.check_writes, self.check_people,
-                 self.check_mcp, self.check_connectors, self.check_data, self.check_catalogue, self.check_dashboards,
-                 self.check_global, self.check_operators, self.check_forged)
+                 self.check_mcp, self.check_connectors, self.check_data, self.check_catalogue, self.check_portals,
+                 self.check_dashboards, self.check_global, self.check_operators, self.check_forged)
         if self.a.shots:
             steps += (self.check_ui,)
         for step in steps:
@@ -1597,7 +1741,7 @@ def main(argv):
     ap.add_argument("--state", help="the rehearsal's state dir (realm admin client, forge token)")
     ap.add_argument("--admin-token-file", help="unused: persons are made through --state")
     ap.add_argument("--person-token-file", help="unused: persons are made through --state")
-    ap.add_argument("--only", help="comma list of check groups: projects,hosts,project_reads,writes,people,mcp,connectors,data,catalogue,dashboards,global,operators,forged,ui")
+    ap.add_argument("--only", help="comma list of check groups: projects,hosts,project_reads,writes,people,mcp,connectors,data,catalogue,portals,dashboards,global,operators,forged,ui")
     ap.add_argument("--shots", action="store_true", help="browser shots 1440/400 per persona (Playwright)")
     ap.add_argument("--sync-timeout", type=int, default=180)
     ap.add_argument("--composed", action="store_true",

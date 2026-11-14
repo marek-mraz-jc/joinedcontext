@@ -366,6 +366,7 @@ pub async fn build_with_writer(
         .with_catalogue_branding(by_catalogue)
         // Several catalogues by host: a loopback name names none of them.
         .with_loopback_default(organizations.is_empty())
+        .with_sources_by_portal(cfg!(feature = "portal"))
         .with_public_base(mount.public_base())
         .with_mount_prefix(mount.path_prefix);
     #[cfg(feature = "portal")]
@@ -1139,6 +1140,104 @@ mod tests {
             .upsert(spec)
             .await
             .expect("an update of the same catalogue");
+    }
+
+    /// A package as the Portal's publisher sends it for the Endpoint `slug` (`published`), or
+    /// as a hand-made or harvested one (no `generated_by`), tagged `tag`.
+    fn endpoint_package(name: &str, slug: &str, tag: &str, published: bool) -> serde_json::Value {
+        let mut extras = vec![serde_json::json!({
+            "key": "endpoint", "value": format!("https://api.city.test/api/endpoint/{slug}/")
+        })];
+        if published {
+            extras
+                .push(serde_json::json!({"key": "generated_by", "value": "jcctl/ckan-publisher"}));
+        }
+        let mut package = package(name);
+        package["tags"] = serde_json::json!([{ "name": tag }]);
+        package["extras"] = serde_json::Value::Array(extras);
+        package
+    }
+
+    #[cfg(feature = "portal")]
+    #[tokio::test]
+    async fn an_endpoint_without_publish_never_appears_through_a_tag_selection() {
+        use crate::modules::portals::{self, EndpointRow, OrganizationPortals};
+        let (router, writer) = runtime_dataroom().await;
+        let default = portal_spec(0xA3, 0xC3, "city");
+        let (host, token) = (default.host.clone(), default.publish_token.clone());
+        let orgs = vec![OrganizationPortals {
+            name: "city".into(),
+            org_id: default.org_id,
+            catalogue_id: default.id,
+            scheme: "https".into(),
+            opendata: host.clone(),
+            listed: Vec::new(),
+            harvest_hosts: Vec::new(),
+        }];
+        writer.upsert(default).await.unwrap();
+        for (name, slug, tag, published) in [
+            ("air", "airslug", "mobility", true),
+            ("bikes", "bikeslug", "mobility", false),
+            ("noise", "noiseslug", "noise", true),
+        ] {
+            let package = endpoint_package(name, slug, tag, published);
+            let made = action(
+                &router,
+                &host,
+                token.as_deref(),
+                "package_create",
+                Some(package),
+            );
+            assert!(made.await.is_success(), "{name}");
+        }
+        let endpoints: Vec<EndpointRow> = ["air", "bikes", "noise", "parking"]
+            .map(|n| EndpointRow {
+                project: "doprava".into(),
+                space: "mesto".into(),
+                name: n.into(),
+                slug: format!("{n}slug"),
+            })
+            .into();
+        let mut mobility: jc_core::kinds::PortalSpec = serde_json::from_value(serde_json::json!({
+            "organizationRef": "city", "path": "mobility",
+            "sources": [{ "name": "tagged", "type": "endpoints", "tags": ["mobility"] }],
+        }))
+        .unwrap();
+        let spec = portals::catalogue_of(&mobility, &orgs).unwrap();
+        let further = spec.host.clone();
+        writer.upsert(spec).await.unwrap();
+        let mut served = BTreeMap::from([("city-mobility".to_owned(), mobility.clone())]);
+        let mut listing = std::collections::BTreeSet::new();
+        portals::list_endpoints(&writer, &orgs, &served, &endpoints, &mut listing).await;
+        let shown = async |name: &str| {
+            let call = format!("package_show?id={name}");
+            action(&router, &further, None, &call, None).await
+        };
+        assert_eq!(
+            shown("air").await,
+            axum::http::StatusCode::OK,
+            "published and tagged"
+        );
+        assert_eq!(
+            shown("bikes").await,
+            axum::http::StatusCode::NOT_FOUND,
+            "tagged, but its Endpoint never published it"
+        );
+        assert_eq!(
+            shown("noise").await,
+            axum::http::StatusCode::NOT_FOUND,
+            "another tag"
+        );
+        assert_eq!(shown("parking").await, axum::http::StatusCode::NOT_FOUND);
+        mobility.sources.clear();
+        served.insert("city-mobility".into(), mobility);
+        portals::list_endpoints(&writer, &orgs, &served, &endpoints, &mut listing).await;
+        assert_eq!(
+            shown("air").await,
+            axum::http::StatusCode::NOT_FOUND,
+            "a source taken away withdraws its copies"
+        );
+        assert!(listing.is_empty());
     }
 
     #[tokio::test]

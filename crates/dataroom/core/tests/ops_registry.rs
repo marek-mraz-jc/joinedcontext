@@ -62,6 +62,7 @@ impl World {
             authorizer: self.authz.clone(),
             validator: None,
             harvester: None,
+            sources_by_portal: false,
         }
     }
     async fn run(&self, ctx: &RequestCtx, op: &str, input: Value) -> Result<Value> {
@@ -876,6 +877,27 @@ impl HarvestRunner for Harvester {
 }
 
 #[tokio::test]
+async fn harvest_source_propose_is_refused_where_the_portal_writes_the_sources() {
+    let w = world().await;
+    let ops = OpContext {
+        sources_by_portal: true,
+        ..w.ops()
+    };
+    let src = json!({"source": {"name": "nkod", "kind": "dcat-ap",
+        "url": "https://nkod.example/feed.ttl", "publisherId": "city",
+        "allowedHosts": ["nkod.example"]}});
+    let r = execute_operation(&ops, &w.admin(), "harvest_source.propose", src).await;
+    match r {
+        Err(DataroomError::NotSupported(why)) => assert!(why.contains("ODP-11"), "{why}"),
+        other => panic!("not refused: {other:?}"),
+    }
+    let listed = execute_operation(&ops, &w.admin(), "harvest_source.list", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(listed["sources"], json!([]), "nothing written");
+}
+
+#[tokio::test]
 async fn harvest_operations_are_for_members_with_rights() {
     let w = world().await;
     let r = w
@@ -1202,6 +1224,7 @@ async fn allowed_answers_like_the_call() {
         authorizer: Arc::new(scoped),
         validator: None,
         harvester: None,
+        sources_by_portal: false,
     };
     let dept_admin = w.ctx(Subject::authenticated(
         "dept-admin",

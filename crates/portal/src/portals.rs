@@ -130,6 +130,16 @@ pub fn check(
             ),
         ));
     }
+    for (i, source) in spec.sources.iter().enumerate() {
+        if let Some(project) = source.projects.iter().find(|p| !project_of(mirror, p, org)) {
+            return Err(refused(
+                &format!("spec.sources[{i}].projects"),
+                format!(
+                    "{project} is no project of {org}; an endpoints source lists only this                      Organization's published Endpoints (ODP-12)"
+                ),
+            ));
+        }
+    }
     let Some(settings) = settings else {
         return Ok(());
     };
@@ -174,6 +184,19 @@ pub fn check(
         }
     }
     Ok(())
+}
+
+/// Whether `project` is a project of Organization `org`: its `Project` manifest names `org`,
+/// or names no Organization (a single-Organization installation).
+fn project_of(mirror: &Mirror, project: &str, org: &str) -> bool {
+    mirror
+        .get(ORG_NAMESPACE, "Project", project)
+        .is_some_and(|p| {
+            p.spec
+                .get("organizationRef")
+                .and_then(crate::resource::reference_name)
+                .is_none_or(|o| o == org)
+        })
 }
 
 /// How many portals the deployment holds with `spec` written as `name`: every Organization's
@@ -349,6 +372,34 @@ mod tests {
         assert!(parse("", Some("0"), "").is_err());
         assert!(parse("", None, "http://x.sk").is_err());
         assert_eq!(parse(" ", None, " ").unwrap(), PortalSettings::default());
+    }
+
+    #[test]
+    fn an_endpoints_source_naming_another_organizations_project_is_refused() {
+        let mirror = mirror();
+        for (project, org) in [("doprava", "ba"), ("kosice-air", "ke")] {
+            mirror.upsert(envelope(
+                "Project",
+                project,
+                json!({ "organizationRef": { "name": org } }),
+            ));
+        }
+        let listing = |project: &str| {
+            let mut p = portal("ba-mobility", "ba", "mobility", None);
+            p.spec["sources"] =
+                json!([{ "name": "own", "type": "endpoints", "projects": [project] }]);
+            p
+        };
+        check(&mirror, None, &listing("doprava")).expect("its own project");
+        for foreign in ["kosice-air", "nowhere"] {
+            let detail = field(check(&mirror, None, &listing(foreign)).unwrap_err());
+            assert!(
+                detail.starts_with(&format!(
+                    "spec.sources[0].projects: {foreign} is no project of ba"
+                )),
+                "{detail}"
+            );
+        }
     }
 
     #[test]

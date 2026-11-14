@@ -31,6 +31,9 @@ pub struct OpContext {
     pub validator: Option<Arc<dyn DatasetValidator>>,
     /// Optional hook for triggering a harvest run provided by `dataroom-harvest`.
     pub harvester: Option<Arc<dyn HarvestRunner>>,
+    /// Harvest sources are written by the Portal's reconciler alone (ODP-11, in `jc`): the
+    /// direct `harvest_source.propose` is refused.
+    pub sources_by_portal: bool,
 }
 
 /// Hook trait so `dataroom-core` operations can invoke SHACL validation without a circular
@@ -532,6 +535,9 @@ fn activity_row(
 }
 
 /// Executes a registered operation through the single authorization and validation pipeline (C11).
+/// Why `harvest_source.propose` is refused where a Portal holds the sources (ODP-11).
+pub const SOURCES_BY_PORTAL: &str = "harvest sources are written by the Portal (ODP-11): add the source to a Portal's spec.sources and propose the Change";
+
 pub async fn execute_operation(
     op_ctx: &OpContext,
     req_ctx: &RequestCtx,
@@ -1024,6 +1030,9 @@ pub async fn execute_operation(
             enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Read, &target))?;
             let sources = op_ctx.store.list_harvest_sources(req_ctx).await?;
             Ok(json!({ "sources": sources }))
+        }
+        "harvest_source.propose" if op_ctx.sources_by_portal => {
+            Err(DataroomError::NotSupported(SOURCES_BY_PORTAL.into()))
         }
         "harvest_source.propose" => {
             let raw_src = scoped_record(
