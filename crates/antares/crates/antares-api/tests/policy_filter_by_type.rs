@@ -270,6 +270,35 @@ async fn one_attribute_read_judges_rule_conditions_on_the_whole_entity() {
     assert_eq!(body["value"], json!("red"));
 }
 
+/// A hidden Attribute held only by datasetId answers as an absent one, not
+/// with the hint to ask it by datasetId (ADR-0023 rule 2).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_hidden_attribute_with_only_named_instances_answers_as_absent() {
+    let st = state(Filter {
+        rules: vec![rule("Car", &["speed"])],
+        ..Filter::default()
+    })
+    .await;
+    let named = json!({"type": "Property", "value": "s", "datasetId": "urn:ngsi-ld:Dataset:a"});
+    create(
+        &st,
+        json!({"id": "urn:ngsi-ld:Car:10", "type": "Car", "speed": prop(json!(80)), "secret": named}),
+    )
+    .await;
+    let at = |a: &str| format!("/ngsi-ld/v1/entities/urn:ngsi-ld:Car:10/attrs/{a}");
+    let (hidden_code, hidden) = send(&st, "GET", &at("secret"), None).await;
+    let (absent_code, absent) = send(&st, "GET", &at("nothing"), None).await;
+    assert_eq!(hidden_code, StatusCode::NOT_FOUND, "{hidden}");
+    assert_eq!(absent_code, StatusCode::NOT_FOUND, "{absent}");
+    assert_eq!(
+        hidden["detail"]
+            .as_str()
+            .map(|d| d.replace("secret", "nothing")),
+        absent["detail"].as_str().map(str::to_owned),
+        "{hidden}"
+    );
+}
+
 /// No rule holds for a User: it is out, as if absent, never "frame only".
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn entity_matching_no_rule_is_not_served() {

@@ -3636,7 +3636,11 @@ async fn retrieve_attr_inner(
     // One answer for an Attribute the Entity lacks and one the narrowing
     // hides (ADR-0023 rule 2).
     let lacks = || NgsiError::ResourceNotFound(format!("entity {id} has no attribute {attr}"));
-    let node = doc.get(&attr_iri).ok_or_else(lacks)?;
+    // Shape the whole Entity, so each rule's condition reads every Attribute
+    // it names, and judge only what the narrowing shows: a hidden Attribute
+    // answers as an absent one, whatever instances it holds.
+    let shaped = crate::repr::apply(&doc, &repr);
+    let node = shaped.get(&attr_iri).ok_or_else(lacks)?;
     // 10.4.4.4: without ?datasetId the Attribute is found only by its
     // default instance, the one carrying no datasetId.
     let default_instance = |i: &Value| i.get("datasetId").is_none();
@@ -3650,14 +3654,12 @@ async fn retrieve_attr_inner(
         ))
         .into());
     }
-    // Shape the whole Entity, so each rule's condition reads every Attribute
-    // it names, then compact only the one asked for: it serializes exactly
-    // as it would inside a full retrieve.
-    let shaped = crate::repr::apply(&doc, &repr);
+    // Compact only the one asked for: it serializes exactly as it would
+    // inside a full retrieve.
     let mini = serde_json::json!({
         "id": doc.get("id").cloned().unwrap_or_default(),
         "type": doc.get("type").cloned().unwrap_or_default(),
-        attr_iri.clone(): shaped.get(&attr_iri).cloned().ok_or_else(lacks)?,
+        attr_iri.clone(): node.clone(),
     });
     let compacted = compact_for(&repr, &mini, &ctx);
     let key = ctx.compact_iri(&attr_iri);
