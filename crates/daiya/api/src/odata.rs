@@ -572,6 +572,7 @@ pub async fn exec_odata_datasource_resource(
     path: &str,
     params: BTreeMap<String, String>,
 ) -> CrResult<Value> {
+    crate::state::reads_for_someone(&ctx.subject)?;
     let dec = state.authorizer.check(
         ctx,
         Action::Read,

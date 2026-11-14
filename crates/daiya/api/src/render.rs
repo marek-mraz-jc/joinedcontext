@@ -207,6 +207,7 @@ pub(crate) async fn execute_targets_with_authorizer(
     variables: &BTreeMap<String, String>,
     skip_cache: bool,
 ) -> CrResult<Vec<FrameSet>> {
+    crate::state::reads_for_someone(&req_ctx.subject)?;
     if raw_targets.len() > state.limits.max_targets_per_panel {
         return Err(CrError::BadRequest(format!(
             "query request has {} targets, exceeding limit of {}",
@@ -292,7 +293,8 @@ pub(crate) async fn execute_targets_with_authorizer(
     };
 
     let mut ds_frame_sets: Vec<FrameSet> = Vec::with_capacity(ds_targets.len());
-    // A person a server administrator reads for is a principal of the cache key too.
+    // Whom a server administrator reads for (a token digest, or the public) is a principal of
+    // the cache key too.
     let person = req_ctx
         .subject
         .on_behalf_of
