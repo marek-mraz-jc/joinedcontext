@@ -929,25 +929,32 @@ async fn store_cosign_signature_tag(
     let sig_b64 = state.signing_key().sign_cosign_payload(&payload_bytes);
     let payload_digest = format!("sha256:{}", sha256_hex(&payload_bytes));
 
-    // Store the simple-signing payload as a blob
-    let disk_path = blob_disk_path(state, owner, &payload_digest);
-    if let Some(p) = disk_path.parent() {
-        let _ = tokio::fs::create_dir_all(p).await;
+    // Store the simple-signing payload and the empty config (`{}`) the manifest names as blobs
+    let config_bytes: &[u8] = b"{}";
+    let config_digest = format!("sha256:{}", sha256_hex(config_bytes));
+    for (digest, bytes) in [
+        (&payload_digest, payload_bytes.as_slice()),
+        (&config_digest, config_bytes),
+    ] {
+        let disk_path = blob_disk_path(state, owner, digest);
+        if let Some(p) = disk_path.parent() {
+            let _ = tokio::fs::create_dir_all(p).await;
+        }
+        let _ = tokio::fs::write(&disk_path, bytes).await;
+        let _ = state
+            .store()
+            .upsert_blob(BlobRecord {
+                id: uuid::Uuid::now_v7(),
+                instance_id,
+                org_id,
+                owner: owner.to_owned(),
+                repo_name: image.to_owned(),
+                digest: digest.clone(),
+                size_bytes: bytes.len() as u64,
+                created_at: Utc::now(),
+            })
+            .await;
     }
-    let _ = tokio::fs::write(&disk_path, &payload_bytes).await;
-    let _ = state
-        .store()
-        .upsert_blob(BlobRecord {
-            id: uuid::Uuid::now_v7(),
-            instance_id,
-            org_id,
-            owner: owner.to_owned(),
-            repo_name: image.to_owned(),
-            digest: payload_digest.clone(),
-            size_bytes: payload_bytes.len() as u64,
-            created_at: Utc::now(),
-        })
-        .await;
 
     let sig_tag = format!("sha256-{hex_digest}.sig");
     let sig_manifest = json!({
@@ -955,8 +962,8 @@ async fn store_cosign_signature_tag(
         "mediaType": "application/vnd.oci.image.manifest.v1+json",
         "config": {
             "mediaType": "application/vnd.oci.image.config.v1+json",
-            "size": 2,
-            "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+            "size": config_bytes.len(),
+            "digest": config_digest
         },
         "layers": [{
             "mediaType": "application/vnd.dev.cosign.simplesigning.v1+json",
