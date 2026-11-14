@@ -3,6 +3,7 @@ import type { JSX, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./Menu";
 import { Button } from "./Button";
+import { safeHref } from "./safeHref";
 
 /** One thing a row can do, as the menu shows it. */
 export interface RowAction {
@@ -52,6 +53,12 @@ export function RowActions({
 }): JSX.Element {
   const { t } = useTranslation();
   const details = useContext(RowDetails);
+  // A link item is one only to an address safeHref lets through; any other (a `javascript:` one) is left out.
+  actions = actions.flatMap((action) => {
+    if (action.href === undefined) return [action];
+    const href = safeHref(action.href);
+    return href ? [{ ...action, href }] : [];
+  });
   if (details) {
     actions = [{ key: "details", ...details, separatorAfter: actions.length > 0 }, ...actions];
   }
