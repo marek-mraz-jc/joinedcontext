@@ -353,7 +353,10 @@ pub async fn resolve_scopes_for_client(
         }
         // Exact client scope check (e.g. `endpoint:{slug}`, `mcp:portal`, `gateway-hub`, `offline_access`)
         let allowed_on_client = client.default_client_scopes.iter().any(|s| s == token)
-            || client.optional_client_scopes.iter().any(|s| s == token);
+            || client.optional_client_scopes.iter().any(|s| s == token)
+            || all_scopes
+                .iter()
+                .any(|s| s.name == token && client.has_optional_scope(s));
         if !allowed_on_client {
             return Err(KaisatsuError::invalid_scope(format!(
                 "Invalid scopes: {token}"

@@ -101,7 +101,11 @@ The Portal needs none of these; each refusal has its test in `portal_contract.rs
   the client type would let it rewrite `roles` or `connector`.
 - portal-api links no scope to `mcp-hub`, to itself or to any unmanaged client: the deployment's
   admin-permissions Job (a realm admin) links `endpoint:` scopes. In the one binary that Job does
-  not exist, so the link is the integrator's (see the report).
+  not exist: a realm-file client with the attribute `kaisatsu.linked-scope-prefix: endpoint:`
+  (`portal-api`, `mcp-hub` in `jc-portal.json`) takes each `endpoint:{slug}` scope the Portal
+  marks (`managed-by: joinedcontext`, `joinedcontext.endpoint`, no mapper, an opaque slug) as
+  optional, resolved at each token request and listing, so a deleted scope is gone at once and
+  `endpoint:*` or an unmarked scope is never taken (T-6857).
 - portal-api writes no unmanaged client (`portal-reconciler`, `mcp-hub`) and creates no person.
 - portal-reconciler lists, reads and writes no client.
 - `POST /users` stores no role mapping, group or service-account link from the body, for every

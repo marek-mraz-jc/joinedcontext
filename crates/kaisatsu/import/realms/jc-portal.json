@@ -279,6 +279,7 @@
         "gateway-hub"
       ],
       "attributes": {
+        "kaisatsu.linked-scope-prefix": "endpoint:",
         "post.logout.redirect.uris": "https://portal.jc.localhost/",
         "pkce.code.challenge.method": "S256",
         "backchannel.logout.url": "https://portal.jc.localhost/api/v1/auth/backchannel-logout",
@@ -519,6 +520,7 @@
         "offline_access"
       ],
       "attributes": {
+        "kaisatsu.linked-scope-prefix": "endpoint:",
         "pkce.code.challenge.method": "S256"
       },
       "protocolMappers": [],

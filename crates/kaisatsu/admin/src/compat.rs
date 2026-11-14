@@ -2888,8 +2888,14 @@ async fn compat_list_client_optional_scopes(
         .await?
         .ok_or_else(|| KaisatsuError::NotFound("client not found".into()))?;
     check_application(&state, &ctx, &client, Action::Read)?;
-    let scopes =
+    let mut scopes =
         resolve_scope_objects(&state.oidc.store, &realm, &client.optional_client_scopes).await?;
+    // The scopes the client takes by its prefix (T-6857), as Keycloak would list a link.
+    for scope in state.oidc.store.list_client_scopes(&realm).await? {
+        if client.has_optional_scope(&scope) && !scopes.iter().any(|s| s.name == scope.name) {
+            scopes.push(scope);
+        }
+    }
     Ok(Json(scopes))
 }
 
@@ -2948,13 +2954,16 @@ async fn compat_unlink_client_optional_scope(
         .await?
         .ok_or_else(|| KaisatsuError::NotFound("client not found".into()))?;
     check_application(&state, &ctx, &client, Action::Update)?;
-    let scope_name = state
-        .oidc
-        .store
-        .get_client_scope(&realm, &scope_id)
-        .await?
-        .map(|s| s.name)
-        .unwrap_or_else(|| scope_id.clone());
+    let scope = state.oidc.store.get_client_scope(&realm, &scope_id).await?;
+    // A link the realm file's prefix makes would answer 204 and stay (T-6857).
+    if let Some(linked) = scope.as_ref().filter(|s| client.links_by_prefix(s)) {
+        return Err(KaisatsuError::Conflict(format!(
+            "{} is linked to {} by its attribute {LINKED_SCOPE_PREFIX}; remove that attribute \
+             from the realm file, or delete the scope",
+            linked.name, client.client_id
+        )));
+    }
+    let scope_name = scope.map(|s| s.name).unwrap_or_else(|| scope_id.clone());
     client
         .optional_client_scopes
         .retain(|s| s != &scope_name && s != &scope_id);
