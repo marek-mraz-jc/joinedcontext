@@ -97,7 +97,8 @@ impl PgStore {
         to: OrgId,
         catalogue: CatalogueId,
     ) -> Result<u64> {
-        let fail = |e: sqlx::Error| DataroomError::Storage(format!("move catalogue {catalogue}: {e}"));
+        let fail =
+            |e: sqlx::Error| DataroomError::Storage(format!("move catalogue {catalogue}: {e}"));
         let mut tx = self.pool.begin().await.map_err(fail)?;
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext('jc-migrate-dataroom'))")
             .execute(&mut *tx)
@@ -105,7 +106,11 @@ impl PgStore {
             .map_err(fail)?;
         let mut moved = 0;
         for table in REQUIRED_RLS_TABLES {
-            let column = if table == "cat_catalogue" { "id" } else { "catalogue_id" };
+            let column = if table == "cat_catalogue" {
+                "id"
+            } else {
+                "catalogue_id"
+            };
             sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
                 "ALTER TABLE dataroom.{table} NO FORCE ROW LEVEL SECURITY"
             )))

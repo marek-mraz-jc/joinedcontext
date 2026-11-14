@@ -75,7 +75,12 @@ async fn open_store(
     // Without the migration owner nothing moved: a catalogue still under the installation's
     // OrgId would be served to no Organization, so the start stops and names the fix.
     for &(from, _, catalogue) in moves {
-        if store.get_catalogue(from, catalogue).await.map_err(|e| err(&e))?.is_some() {
+        if store
+            .get_catalogue(from, catalogue)
+            .await
+            .map_err(|e| err(&e))?
+            .is_some()
+        {
             return Err(err(&format!(
                 "catalogue {catalogue} still sits under [dataroom] org_id: start once with the \
                  migration owner ([dataroom.database] migrate) so it moves to its Organization (ODP-12)"
@@ -732,16 +737,23 @@ mod tests {
     /// dataset URL answers as before, each catalogue now sits under its Organization's own
     /// OrgId, and Organization A's tenant sees none of B's rows.
     #[tokio::test]
+    #[allow(clippy::disallowed_methods)] // The test reads its database URL, as tests/restart_pg.rs does.
     async fn every_dataset_url_answers_after_the_org_split() {
         use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
         use std::str::FromStr;
         use tower::ServiceExt;
         let Ok(admin_url) = std::env::var("DATAROOM_TEST_DATABASE_URL") else {
-            println!("SKIP every_dataset_url_answers_after_the_org_split: DATAROOM_TEST_DATABASE_URL is unset");
+            println!(
+                "SKIP every_dataset_url_answers_after_the_org_split: DATAROOM_TEST_DATABASE_URL is unset"
+            );
             return;
         };
         let base = PgConnectOptions::from_str(&admin_url).unwrap();
-        let admin = PgPoolOptions::new().max_connections(1).connect_with(base.clone()).await.unwrap();
+        let admin = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(base.clone())
+            .await
+            .unwrap();
         let db = format!("jc_split_{}", std::process::id());
         let dir = tempfile::tempdir().unwrap();
         for statement in [
@@ -766,12 +778,13 @@ mod tests {
             .unwrap();
             let file = dir.path().join(role);
             std::fs::write(&file, &pw).unwrap();
-            std::fs::set_permissions(
-                &file,
-                std::os::unix::fs::PermissionsExt::from_mode(0o600),
-            )
-            .unwrap();
-            let url = format!("postgres://{role}@{}:{}/{db}", base.get_host(), base.get_port());
+            std::fs::set_permissions(&file, std::os::unix::fs::PermissionsExt::from_mode(0o600))
+                .unwrap();
+            let url = format!(
+                "postgres://{role}@{}:{}/{db}",
+                base.get_host(),
+                base.get_port()
+            );
             urls.push((url, file));
         }
         let database = crate::pg::DatabaseSection {
@@ -781,7 +794,10 @@ mod tests {
             migrate_url: Some(urls[1].0.clone()),
             migrate_password_file: Some(urls[1].1.clone()),
         };
-        let cfg = DataroomSection { database: Some(database), ..DataroomSection::default() };
+        let cfg = DataroomSection {
+            database: Some(database),
+            ..DataroomSection::default()
+        };
         let installation = OrgId::parse_verified(&cfg.org_id).unwrap();
         let organizations: Vec<OrganizationSection> = ["city-a", "city-b"]
             .iter()
@@ -801,10 +817,21 @@ mod tests {
 
         // Before ODP-12: the schema, and both catalogues with a public dataset under the
         // installation's OrgId, as every jc wrote them.
-        let owner = crate::pg::connect(cfg.database.as_ref().unwrap().migrate_options().unwrap().unwrap(), 1)
+        let owner = crate::pg::connect(
+            cfg.database
+                .as_ref()
+                .unwrap()
+                .migrate_options()
+                .unwrap()
+                .unwrap(),
+            1,
+        )
+        .await
+        .unwrap();
+        PgStore::from_pool_unchecked(owner.clone())
+            .migrate()
             .await
             .unwrap();
-        PgStore::from_pool_unchecked(owner.clone()).migrate().await.unwrap();
         sqlx::raw_sql(
             "GRANT USAGE ON SCHEMA dataroom TO split_app;
              GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA dataroom TO split_app;",
@@ -819,9 +846,15 @@ mod tests {
         let before = PgStore::connect_and_verify(app.clone()).await.unwrap();
         for org in &organizations {
             let cat = CatalogueId::parse_verified(&org.catalogue_id).unwrap();
-            dataroom_server::ensure_catalogue(&before, installation, cat, &org.name, &org.hosts.opendata)
-                .await
-                .unwrap();
+            dataroom_server::ensure_catalogue(
+                &before,
+                installation,
+                cat,
+                &org.name,
+                &org.hosts.opendata,
+            )
+            .await
+            .unwrap();
             let ctx = RequestCtx::new(installation, cat, Subject::anonymous());
             before
                 .upsert_publisher(&ctx, serde_json::from_value(serde_json::json!({
@@ -833,31 +866,55 @@ mod tests {
                 .await
                 .unwrap();
             before
-                .upsert_dataset(&ctx, serde_json::from_value(serde_json::json!({
-                    "orgId": installation, "catalogueId": cat, "id": "",
-                    "name": format!("air-{}", org.name), "title": {"sk": "Ovzdušie"},
-                    "description": {"sk": "Popis"}, "publisherId": "city",
-                    "visibility": "public", "state": "active", "tags": [], "distributions": [],
-                    "issued": "2026-11-01T10:00:00Z", "modified": "2026-11-02T10:00:00Z"
-                })).unwrap())
+                .upsert_dataset(
+                    &ctx,
+                    serde_json::from_value(serde_json::json!({
+                        "orgId": installation, "catalogueId": cat, "id": "",
+                        "name": format!("air-{}", org.name), "title": {"sk": "Ovzdušie"},
+                        "description": {"sk": "Popis"}, "publisherId": "city",
+                        "visibility": "public", "state": "active", "tags": [], "distributions": [],
+                        "issued": "2026-11-01T10:00:00Z", "modified": "2026-11-02T10:00:00Z"
+                    }))
+                    .unwrap(),
+                )
                 .await
                 .unwrap();
         }
 
-        let (setup, secrets) = (crate::setup::Setup::default(), crate::config::Secrets::default());
+        let (setup, secrets) = (
+            crate::setup::Setup::default(),
+            crate::config::Secrets::default(),
+        );
         let siblings = crate::siblings::Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
-        let ctx = crate::modules::BuildCtx { setup: &setup, siblings: &siblings, secrets: &secrets, door: None };
-        let (shutdown, tasks) = (tokio_util::sync::CancellationToken::new(), tokio_util::task::TaskTracker::new());
-        let router = build(&cfg, &organizations, ctx, Mount::default(), None, &shutdown, &tasks)
-            .await
-            .expect("the module starts and moves both catalogues");
+        let ctx = crate::modules::BuildCtx {
+            setup: &setup,
+            siblings: &siblings,
+            secrets: &secrets,
+            door: None,
+        };
+        let (shutdown, tasks) = (
+            tokio_util::sync::CancellationToken::new(),
+            tokio_util::task::TaskTracker::new(),
+        );
+        let router = build(
+            &cfg,
+            &organizations,
+            ctx,
+            Mount::default(),
+            None,
+            &shutdown,
+            &tasks,
+        )
+        .await
+        .expect("the module starts and moves both catalogues");
         shutdown.cancel();
 
         for org in &organizations {
-            let request = axum::http::Request::get(format!("/api/3/action/package_show?id=air-{}", org.name))
-                .header("host", &org.hosts.opendata)
-                .body(axum::body::Body::empty())
-                .unwrap();
+            let request =
+                axum::http::Request::get(format!("/api/3/action/package_show?id=air-{}", org.name))
+                    .header("host", &org.hosts.opendata)
+                    .body(axum::body::Body::empty())
+                    .unwrap();
             let answer = router.clone().oneshot(request).await.unwrap();
             assert_eq!(answer.status(), axum::http::StatusCode::OK, "{}", org.name);
         }
@@ -865,17 +922,44 @@ mod tests {
         let cat = |n: usize| CatalogueId::parse_verified(&organizations[n].catalogue_id).unwrap();
         assert_ne!(own(0), own(1));
         for n in 0..2 {
-            assert!(before.get_catalogue(installation, cat(n)).await.unwrap().is_none(), "moved");
-            assert!(before.get_catalogue(own(n), cat(n)).await.unwrap().is_some());
+            assert!(
+                before
+                    .get_catalogue(installation, cat(n))
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "moved"
+            );
+            assert!(
+                before
+                    .get_catalogue(own(n), cat(n))
+                    .await
+                    .unwrap()
+                    .is_some()
+            );
         }
         let a_on_b = RequestCtx::new(own(0), cat(1), Subject::anonymous());
-        assert!(before.get_dataset(&a_on_b, "air-city-b").await.unwrap().is_none());
-        assert!(before.get_catalogue(own(0), cat(1)).await.unwrap().is_none());
+        assert!(
+            before
+                .get_dataset(&a_on_b, "air-city-b")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            before
+                .get_catalogue(own(0), cat(1))
+                .await
+                .unwrap()
+                .is_none()
+        );
         app.close().await;
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE IF EXISTS {db} WITH (FORCE)"
+        )))
+        .execute(&admin)
+        .await
+        .unwrap();
     }
 
     /// prod's open data catalogue: the base its datasets' `isPartOf` names.

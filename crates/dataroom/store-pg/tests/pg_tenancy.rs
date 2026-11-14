@@ -354,17 +354,25 @@ async fn a_catalogue_of_one_organization_is_invisible_to_another() {
     for (org, cat) in [(org_a, cat_a), (org_b, cat_b)] {
         let ctx = member_ctx(org, cat);
         let air = store.get_dataset(&ctx, "air").await.unwrap().expect("kept");
-        assert_eq!(air.org_id, org, "the stored record names its new tenant too");
+        assert_eq!(
+            air.org_id, org,
+            "the stored record names its new tenant too"
+        );
         assert_eq!(store.list_harvest_sources(&ctx).await.unwrap().len(), 1);
         let listed = store.list_catalogues(org).await.unwrap();
-        assert_eq!(listed.iter().map(|c| (c.org_id, c.id)).collect::<Vec<_>>(), [(org, cat)]);
+        assert_eq!(
+            listed.iter().map(|c| (c.org_id, c.id)).collect::<Vec<_>>(),
+            [(org, cat)]
+        );
     }
 
     // Organization A, naming B's catalogue, sees none of B's rows in any table (the request
     // role is NOSUPERUSER NOBYPASSRLS, so this is the database's row level security).
     let mut conn = pg.app.acquire().await.unwrap();
     let mut tx = sqlx::Connection::begin(&mut *conn).await.unwrap();
-    set_tenant_config(&mut tx, org_a, Some(cat_b)).await.unwrap();
+    set_tenant_config(&mut tx, org_a, Some(cat_b))
+        .await
+        .unwrap();
     for table in REQUIRED_RLS_TABLES {
         assert_eq!(org_rows(&mut tx, table, org_b).await, 0, "{table}");
     }
@@ -388,7 +396,9 @@ async fn a_harvest_run_cannot_write_into_another_organizations_catalogue() {
 
     // A run of A's harvest that names B's tenant is refused by WITH CHECK.
     let mut tx = pg.app.begin().await.unwrap();
-    set_tenant_config(&mut tx, org_a, Some(cat_a)).await.unwrap();
+    set_tenant_config(&mut tx, org_a, Some(cat_a))
+        .await
+        .unwrap();
     let err = sqlx::query(
         "INSERT INTO dataroom.cat_dataset (org_id, catalogue_id, id, name, title, publisher_id,
                                            visibility, doc)
@@ -413,7 +423,10 @@ async fn a_harvest_run_cannot_write_into_another_organizations_catalogue() {
         .upsert_dataset(&stray, dataset("evil", "city", "public"))
         .await;
     let _written_or_refused = store
-        .upsert_harvest_run(&stray, harvest_run("run-x", "hs-nkod", "2026-11-14T10:00:00Z"))
+        .upsert_harvest_run(
+            &stray,
+            harvest_run("run-x", "hs-nkod", "2026-11-14T10:00:00Z"),
+        )
         .await;
     let ctx_b = member_ctx(org_b, cat_b);
     assert!(store.get_dataset(&ctx_b, "evil").await.unwrap().is_none());
