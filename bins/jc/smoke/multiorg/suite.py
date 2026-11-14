@@ -240,6 +240,11 @@ class Suite:
     def expectations(self):
         m = json.loads((self.export / "manifest.json").read_text())["multiorg"]["organizations"]
         files = self.export / "gitea" / "files"
+        history_of: dict[str, set] = {}  # tenant -> the entity types the bundle holds history of
+        temporal = self.export / "antares" / "temporal.jsonl"
+        for line in temporal.open() if temporal.is_file() else ():
+            row = json.loads(line)
+            history_of.setdefault(row["tenant"], set()).add(row["type"])
         exp = {}
         for org, v in m.items():
             exp[org] = {"projects": {}}
@@ -252,14 +257,15 @@ class Suite:
                             n = re.search(r"^metadata:\s*\n(?:\s+.*\n)*?\s+name:\s*([\w.-]+)", text, re.M)
                             if n:
                                 kinds[kind].append(n.group(1))
-                slugs = {}  # name -> slug of every Endpoint
-                history = {}  # Endpoint name -> the entity type a Policy lets its role read history of
+                # space -> the types a Policy there grants retrieveTemporal of and the bundle holds
+                # history of (the tenant is the space), and space -> its Endpoints (name, slug)
+                history, endpoints = {}, {}
                 for q in (files / CONFIG[0] / p).glob("spaces/*/policies/*.yaml"):
                     text = q.read_text(errors="replace")
-                    who = re.search(rf"^\s*id:\s*endpoint:{re.escape(p)}/([\w.-]+)\s*$", text, re.M)
-                    kind = re.search(r"^\s*-\s*type:\s*([\w.-]+)", text, re.M)
-                    if who and kind and re.search(r"^\s*-\s*retrieveTemporal\s*$", text, re.M):
-                        history.setdefault(who.group(1), kind.group(1))
+                    if re.search(r"^\s*-\s*retrieveTemporal\s*$", text, re.M):
+                        kinds_q = re.findall(r"^\s*-\s*type:\s*([\w.-]+)", text, re.M)
+                        held = history_of.get(q.parent.parent.name, set())
+                        history.setdefault(q.parent.parent.name, set()).update(k for k in kinds_q if k in held)
                 closed = {}  # slug -> (name, audience) of every Endpoint that is not public
                 readable = []  # of them, those whose space has a Policy granting a read to anyone
                 for f in (files / CONFIG[0] / p).glob("spaces/*/endpoints/*.yaml"):
@@ -268,7 +274,7 @@ class Suite:
                     slug = re.search(r"^\s*slug:\s*([a-z2-7]+)", text, re.M)
                     name = re.search(r"^metadata:\s*\n(?:\s+.*\n)*?\s+name:\s*([\w.-]+)", text, re.M)
                     if slug and name:
-                        slugs[name.group(1)] = slug.group(1)
+                        endpoints.setdefault(f.parent.parent.name, []).append((name.group(1), slug.group(1)))
                     if aud and slug and name and aud.group(1) != "public":
                         closed[slug.group(1)] = (name.group(1), aud.group(1))
                         if any(re.search(r"^\s*-\s*retrieveOps\s*$", q.read_text(errors="replace"), re.M)
@@ -284,7 +290,8 @@ class Suite:
                                                                                           "closed": closed,
                                                                                           "readable": readable,
                                                                                           "spaces": spaces,
-                                                                                          "history": {n: (slugs[n], t) for n, t in history.items() if n in slugs}}
+                                                                                          "history": {sp: (sorted(t), sorted(endpoints.get(sp, [])))
+                                                                                                      for sp, t in sorted(history.items()) if t and endpoints.get(sp)}}
         self.exp = exp
         orgs = files / CONFIG[0] / CONFIG[1] / "organizations"
         self.installation = next((f.stem for f in orgs.glob("*.yaml")
@@ -418,7 +425,8 @@ class Suite:
                 dash = self.dashboards.get(org)
                 st_b = self.session("platform", org if self.hosts else None).json("GET", f"/api/v1/projects/{dash[0]}/dashboards/{dash[1]}")[0] if dash else 200
                 if st == 200 and st_d == 200 and st_b == 200 and \
-                        (not self.state or self.bound(org) >= {f"mo-{org}-admin", f"mo-{org}-member"}) and \
+                        (not self.state or not self.exp[org]["projects"]  # {org}_bound: Organizations with a project
+                         or self.bound(org) >= {f"mo-{org}-admin", f"mo-{org}-member"}) and \
                         set(self.exp[org]["projects"]) <= {i["name"] for i in body.get("items", [])}:
                     pending.discard(org)
                 else:
@@ -890,19 +898,24 @@ class Suite:
                              "control too: a refusal proves nothing")
 
     def check_temporal(self, key, org, foreign):
-        """History through the gateway (DAT-19): an own Endpoint whose role a Policy grants
-        retrieveTemporal answers its type's temporal and aggregated reads (present, the control);
-        the same token on another Organization's Endpoint answers nothing of it (absent)."""
-        held = next(((p, n, *v) for p, pe in sorted(self.exp[org]["projects"].items())
-                     for n, v in sorted(pe.get("history", {}).items())), None)
+        """History through the gateway (DAT-19): an own Endpoint of a space whose Policy grants
+        retrieveTemporal of a type the bundle holds history of answers that type's temporal and
+        aggregated reads (present, the control); the same token on another Organization's
+        Endpoint answers nothing of it (absent)."""
+        held = next(((p, sp, v) for p, pe in sorted(self.exp[org]["projects"].items())
+                     for sp, v in pe.get("history", {}).items()), None)
         if not held:
             return
-        project, endpoint, slug, kind = held
-        st_x, tok = self.exchange(key, slug)
+        project, space, (kinds, candidates) = held
+        kind, tok = kinds[0], None
+        for endpoint, slug in candidates[:4]:  # the first own Endpoint of the space the realm exchanges
+            st_x, tok = self.exchange(key, slug)
+            if tok:
+                break
         if not tok:
-            self.row(f"data.{key}.temporal.own", org, f"exchange endpoint:{slug} ({project}/{endpoint})",
-                     "a token for the own history Endpoint", f"exchange {st_x}", None if not self.exchange_ok else False,
-                     "the realm refuses every exchange here" if not self.exchange_ok else "")
+            self.row(f"data.{key}.temporal.own", org, f"exchange an Endpoint of {project}/{space}",
+                     "a token for an own Endpoint of the history space", f"exchange {st_x}",
+                     None if not self.exchange_ok else False, "the realm refuses every exchange here" if not self.exchange_ok else "")
             return
         api = self.client(self.home(key), "api")
         auth = {"Authorization": f"Bearer {tok}"}
@@ -916,7 +929,7 @@ class Suite:
             st, body = api.json("GET", base + q, headers=auth)
             n = len(body) if isinstance(body, list) else 0
             self.row(f"data.{key}.{name}.own", org, f"GET {base}{q} ({project}/{endpoint})",
-                     "200 with >= 1 entity (a Policy grants this Endpoint's role retrieveTemporal)",
+                     f"200 with >= 1 {kind} (a Policy of {space} grants retrieveTemporal)",
                      f"{st}, {n} entities" + ("" if st == 200 else f" {str(body)[:80]}"), st == 200 and n > 0)
             for fslug, (p, ename, _) in sorted(foreign.items())[:6]:
                 other = next(o for o, oe in self.exp.items() if p in oe["projects"])
