@@ -801,6 +801,50 @@ async fn a_rename_onto_a_taken_name_is_409_and_a_new_default_branch_moves_head()
 }
 
 #[tokio::test]
+async fn api_commits_count_against_the_quota_and_an_import_keeps_to_it() {
+    let w = world();
+    let (inst, org) = (InstanceId::from_u128(1), OrgId::from_u128(10));
+    create_repo(&w, "helsinki").await;
+    let usage = || async { w.state.store().get_quota_usage(inst, org).await.unwrap() };
+    let size = || async {
+        let (_, repo, _) = call(&w.app, "GET", R, Some("portal-token"), None).await;
+        repo["SizeBytes"].as_u64().unwrap()
+    };
+    assert_eq!(usage().await.git_bytes, size().await);
+    let big: String = (0..40_000u32)
+        .map(|i| format!("{:x}", i.wrapping_mul(2_654_435_761)))
+        .collect();
+    let (st, body) = commit(
+        &w,
+        R,
+        "main",
+        json!([{"operation": "create", "path": "data.txt", "content": b64(&big)}]),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let grown = size().await;
+    assert_eq!(usage().await.git_bytes, grown, "the commit's bytes count");
+
+    let mut limits = shako_core::InstanceRecord::default_for(inst, org, "localhost");
+    limits.max_repos = 1;
+    w.state.store().upsert_instance(limits).await.unwrap();
+    let (st, body, _) = call(
+        &w.app,
+        "POST",
+        "/odata/ImportRepository",
+        Some("portal-token"),
+        Some(json!({"SourceOwner": "joinedcontext", "SourceName": "helsinki", "RepoOwner": "joinedcontext", "RepoName": "helsinki-copy"})),
+    )
+    .await;
+    assert_eq!(
+        st,
+        StatusCode::FORBIDDEN,
+        "an import past max_repos: {body}"
+    );
+    assert_eq!(usage().await.repo_count, 1);
+}
+
+#[tokio::test]
 async fn a_navigated_collection_keeps_to_its_repository_whatever_the_filter() {
     let w = world();
     create_repo(&w, "helsinki").await;
