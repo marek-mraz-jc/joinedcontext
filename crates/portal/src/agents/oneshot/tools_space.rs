@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// The most entities one `compute_kpi` read folds (one NGSI-LD page).
+const KPI_ROWS: usize = 1000;
+
 impl Driver {
     /// The `propose_endpoint` tool: the manifests rendered and published as a step, then a
     /// `navigate` that opens the endpoint form with them (EP-72, UI-45). A request that cannot
@@ -171,7 +174,7 @@ impl Driver {
             }
         };
         let mut url = format!(
-            "{}/ngsi-ld/v1/entities?type={}&options=keyValues&limit=1000",
+            "{}/ngsi-ld/v1/entities?type={}&options=keyValues&limit={KPI_ROWS}",
             endpoints::data_base(&self.proxy_base, chosen, index),
             urlencoding(&params.entity_type)
         );
@@ -193,6 +196,21 @@ impl Driver {
                 return Ok(again(reason, prose));
             }
         };
+        // A full page may be part of the entities only: a value over it would be wrong and look
+        // right, so an indicator over more is a pipeline's, which reads them all.
+        if rows.len() >= KPI_ROWS {
+            let reason = format!(
+                "{} has {KPI_ROWS} or more entities, more than one read computes an indicator \
+                 over; draft it with draft_kpi_pipeline, which folds every entity",
+                params.entity_type
+            );
+            self.event("tool", failed(reason.clone())).await?;
+            let prose = format!("The indicator was not computed: {reason}.");
+            if last {
+                self.thought(&prose).await?;
+            }
+            return Ok(again(reason, prose));
+        }
         let (value, count) = kpi::compute(&rows, &params.attribute, params.agg);
         let Some(value) = value else {
             let reason = format!(
@@ -223,7 +241,7 @@ impl Driver {
         };
         let now = now_rfc3339();
         let provenance = kpi::Provenance {
-            org_domain: &crate::api::assistant::org_domain(&self.state, &self.project),
+            org_domain: &crate::api::assistant::project_org_domain(&self.state, &self.project),
             project: &self.project,
             endpoint_space: &endpoint_space,
             endpoint_name: &endpoint_name,
@@ -359,7 +377,7 @@ impl Driver {
             .filter_map(|env| serde_json::to_value(env).ok())
             .collect();
         let run_endpoint = chosen.first().map(|e| e.name.clone());
-        let org_domain = crate::api::assistant::org_domain(&self.state, &self.project);
+        let org_domain = crate::api::assistant::project_org_domain(&self.state, &self.project);
         let slug = share::slug();
         let world = kpi_pipeline::World {
             project: &self.project,
@@ -838,6 +856,46 @@ mod tests {
             "kinds": [{ "kind": "Pipeline", "verbs": ["read", "propose"] }],
         } }));
         (driver, state, source)
+    }
+
+    /// A value over the first page of many entities would be wrong and look right: `compute_kpi`
+    /// over a full page computes nothing and names the pipeline that folds every entity.
+    #[tokio::test]
+    async fn an_indicator_over_more_than_one_page_is_left_to_a_pipeline() {
+        let rows: Vec<serde_json::Value> = (0..super::KPI_ROWS)
+            .map(|i| json!({ "id": format!("urn:ngsi-ld:Bike:{i}"), "type": "Bike", "n": 1 }))
+            .collect();
+        let source = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(rows))
+            .mount(&source)
+            .await;
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let mut driver = super::Driver::for_tests(state, "helsinki");
+        driver.proxy_base = source.uri();
+        driver.identity.roles = vec![driver.state.config.bootstrap_admins.clone()];
+        let op = crate::ops::find("jc_kpi_compute").expect("registered");
+        driver.access = crate::agents::access::Access::from_spec(&json!({ "access": {
+            "operations": ["jc_kpi_compute"],
+            "kinds": [{ "kind": op.kind, "verbs": ["read", "propose"] }],
+        } }));
+        let call = serde_json::from_value(
+            json!({ "name": "bikes", "type": "Bike", "attribute": "n", "agg": "sum" }),
+        )
+        .expect("a call");
+        let mut chosen = vec![crate::agents::endpoints::RunEndpoint {
+            name: "bikes".into(),
+            slug: "bikes".into(),
+            space: "bikes".into(),
+        }];
+        let worked = driver
+            .kpi(Ok(call), "", &mut chosen, &mut vec![Vec::new()], true)
+            .await
+            .expect("an answer");
+        let super::Worked::Done(prose) = worked else {
+            panic!("the last step is done");
+        };
+        assert!(prose.contains("draft_kpi_pipeline"), "{prose}");
     }
 
     async fn tool_events(state: &crate::state::AppState) -> Vec<serde_json::Value> {

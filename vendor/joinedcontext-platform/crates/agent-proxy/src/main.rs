@@ -29,21 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runs = RunResolver::new(config.portal_base.clone(), credentials.clone());
     let limits = LimitManager::default();
     let state = Arc::new(ProxyState::new(config_arc, runs, credentials, limits));
-    // A run's grant and data credentials end with the run (ADR-N-038 §3.5, decision 6): once a
-    // minute every held one whose run the Portal no longer holds as active is revoked.
-    // The usage counted for such a run goes with it (F-PLT1-013).
-    let ending = (*state).clone();
-    tokio::spawn(async move {
-        let mut every = tokio::time::interval(std::time::Duration::from_secs(60));
-        loop {
-            every.tick().await;
-            ending.credentials.grants().end_finished(&ending.runs).await;
-            ending.data_credentials.end_finished(&ending.runs).await;
-            ending.limits.end_finished(&ending.runs).await;
-        }
-    });
-    // The model key's state reaches the Portal within a probe interval (AG-96).
-    tokio::spawn(agent_proxy::model_key::watch((*state).clone()));
+    tokio::spawn(agent_proxy::maintain((*state).clone()));
 
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
     axum::serve(listener, router(state))

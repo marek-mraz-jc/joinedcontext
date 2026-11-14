@@ -852,6 +852,10 @@ struct Streamed {
 /// counted before the stream closes, so a caller that read to the end finds the call charged; a
 /// stream without usage, or one the caller leaves, is counted as `uncounted` and the provider's
 /// request is dropped with it.
+/// How long a streamed answer may stay silent: providers send a keep-alive within seconds
+/// (OpenRouter's comment lines, Anthropic's `ping`), so this is a provider that hung.
+const STREAM_IDLE: std::time::Duration = std::time::Duration::from_secs(120);
+
 fn stream_through(
     state: ProxyState,
     call: Streamed,
@@ -875,7 +879,28 @@ fn stream_through(
         let mut usage = StreamUsage::default();
         let mut bytes = 0usize;
         let mut whole = true;
-        while let Some(chunk) = chunks.next().await {
+        loop {
+            // A caller gone or a provider silent past STREAM_IDLE ends the relay: neither the
+            // task nor the upstream socket outlives the call (the client has no total timeout).
+            let next = tokio::select! {
+                () = tx.closed() => {
+                    whole = false;
+                    break;
+                }
+                next = tokio::time::timeout(STREAM_IDLE, chunks.next()) => next,
+            };
+            let Ok(next) = next else {
+                whole = false;
+                let _ = tx
+                    .send(Err(std::io::Error::other(
+                        "the model provider sent nothing for 120 s",
+                    )))
+                    .await;
+                break;
+            };
+            let Some(chunk) = next else {
+                break;
+            };
             match chunk {
                 Ok(chunk) => {
                     bytes += chunk.len();

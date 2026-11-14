@@ -275,9 +275,16 @@ pub(crate) fn shared_endpoints(
                 }
                 _ => None,
             }?;
-            let foreign = endpoint.metadata.namespace.as_deref() != Some(project);
-            (foreign && endpoint_access(&endpoint.spec, project).is_allowed())
-                .then_some((reference, endpoint))
+            let owner = endpoint.metadata.namespace.as_deref()?;
+            // Audience organization admits the members of the Endpoint's own Organization only,
+            // as the gateway's door does (`endpoint_reach::not_admitted`).
+            let same_organization = || {
+                crate::permissions::organization_of(mirror, owner)
+                    == crate::permissions::organization_of(mirror, project)
+            };
+            let admitted = endpoint_access(&endpoint.spec, project).is_allowed()
+                && (endpoint.spec["audience"] != "organization" || same_organization());
+            (owner != project && admitted).then_some((reference, endpoint))
         })
         .collect()
 }
@@ -535,6 +542,13 @@ pub fn org_domain(state: &AppState, fallback: &str) -> String {
             .map(|settings| settings.org_domain.as_str()),
         fallback,
     )
+}
+
+/// The domain the URNs of `project`'s entities are minted under: its Organization's, as the
+/// gateway reads the owner of the project's URNs (ADR-N-068), else [`org_domain`].
+pub fn project_org_domain(state: &AppState, project: &str) -> String {
+    crate::permissions::organization_domain(&state.mirror, project)
+        .unwrap_or_else(|| org_domain(state, project))
 }
 
 /// [`org_domain`] over `mirror`, with the deployment's domain `configured` when no Organization
@@ -1201,6 +1215,44 @@ mod tests {
         );
     }
 
+    /// ADR-N-068: a project of another Organization mints its URNs under that Organization's
+    /// domain, which is the owner the gateway reads; a project naming none keeps the
+    /// installation's.
+    #[test]
+    fn a_projects_urns_are_minted_under_its_own_organizations_domain() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let org = crate::api::blueprints::ORG_NAMESPACE;
+        state.mirror.upsert(envelope(
+            "Organization",
+            org,
+            "city",
+            json!({ "domain": "hel.fi", "installation": true }),
+        ));
+        state.mirror.upsert(envelope(
+            "Organization",
+            org,
+            "bcn",
+            json!({ "domain": "barcelona.cat" }),
+        ));
+        state.mirror.upsert(envelope(
+            "Project",
+            org,
+            "mobility",
+            json!({ "organizationRef": "bcn" }),
+        ));
+        state
+            .mirror
+            .upsert(envelope("Project", org, "helsinki", json!({})));
+        assert_eq!(
+            crate::api::assistant::project_org_domain(&state, "mobility"),
+            "barcelona.cat"
+        );
+        assert_eq!(
+            crate::api::assistant::project_org_domain(&state, "helsinki"),
+            "hel.fi"
+        );
+    }
+
     /// T-6435: the gateway binds Policy URNs on the installation Organization, so the first by
     /// name must not stand in for it.
     #[test]
@@ -1455,6 +1507,37 @@ mod tests {
             &["app-banskabystrica-ovzdusie".to_owned()]
         )
         .is_err());
+    }
+
+    /// TEN-07: audience organization admits the Endpoint's own Organization; a reference from a
+    /// project of another Organization opens nothing, while one of the same Organization does.
+    #[test]
+    fn an_organization_endpoint_is_shared_only_inside_its_organization() {
+        let state = shared_world();
+        let org = crate::permissions::ORG_NAMESPACE;
+        for name in ["hel", "bb"] {
+            state
+                .mirror
+                .upsert(envelope("Organization", org, name, json!({})));
+        }
+        let project = |name: &str, organization: &str| {
+            envelope(
+                "Project",
+                org,
+                name,
+                json!({ "organizationRef": organization }),
+            )
+        };
+        state.mirror.upsert(project("helsinki", "hel"));
+        state.mirror.upsert(project("banskabystrica", "bb"));
+        assert!(crate::api::assistant::shared_endpoints(&state.mirror, "helsinki").is_empty());
+
+        state.mirror.upsert(project("banskabystrica", "hel"));
+        let shared: Vec<_> = crate::api::assistant::shared_endpoints(&state.mirror, "helsinki")
+            .into_iter()
+            .map(|(_, endpoint)| endpoint.metadata.name)
+            .collect();
+        assert_eq!(shared, ["app-banskabystrica-ovzdusie"]);
     }
 
     #[test]

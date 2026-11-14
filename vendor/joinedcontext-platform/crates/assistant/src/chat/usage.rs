@@ -50,8 +50,11 @@ impl Range {
 }
 
 /// The turns of a range: `$1` deployment, `$2` from, `$3` to, `$4` route; row security keeps them
-/// to the project in scope.
-const TURNS: &str = "SELECT * FROM turns WHERE ($1::text IS NULL OR deployment = $1) \
+/// to the project in scope. Only the columns a figure or an export row reads: a turn's answer,
+/// blocks and history are its largest values and none of them is counted.
+const TURNS: &str = "SELECT id, deployment, conversation, turn, at, route, question, \
+     first_token_ms, total_ms, error, timed_out, tokens_in, tokens_out, cost_micros, uncosted \
+     FROM turns WHERE ($1::text IS NULL OR deployment = $1) \
      AND ($2::timestamptz IS NULL OR at >= $2::timestamptz) \
      AND ($3::timestamptz IS NULL OR at < $3::timestamptz) \
      AND ($4::text IS NULL OR route = $4)";
