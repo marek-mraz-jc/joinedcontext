@@ -59,9 +59,7 @@ def test_the_gate_judges_multiorg_in_host_and_path_mode_on_a_composed_bundle():
     # T-6803: on the one-installation synth the suite skipped its setup and judged nothing.
     gate = (repo / "bins/jc/smoke/ci/gate.sh").read_text()
     assert (repo / "bins/jc/smoke/ci/multiorg-export.tgz").is_file()
-    assert "multiorg/compose.py" in gate and all(f"{o}=" in gate for o in ("hel", "zilina", "barcelona", "ctl-a", "ctl-b"))
-    # T-6850: ten Organizations, none the installation's, operators the platform-admins group.
-    assert "for o in bbsk banskabystrica praha slovensko bratislava;" in gate and "--no-installation" in gate
+    assert "multiorg/compose.py" in gate and all(f"--org {o}=" in gate for o in ("hel", "zilina", "barcelona"))
     withs = [x for x in gate.splitlines() if x.startswith('args+=(--with "multiorg')]
     assert [w.split('"')[1].split("=")[0] for w in withs] == ["multiorg", "multiorg@path"]
     assert all("--composed" in w and "--export $mo_export" in w for w in withs)

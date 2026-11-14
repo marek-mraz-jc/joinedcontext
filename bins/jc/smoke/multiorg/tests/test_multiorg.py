@@ -259,6 +259,9 @@ def test_compose_makes_organizations_of_named_projects_and_empty_controls_with_n
     assert not (cfg / "projects/praha.yaml").exists()
     assert sorted(f.name for f in (tmp_path / "out/gitea/files/joinedcontext/bbsk/spaces/s/endpoints").iterdir()) == ["a.yaml", "b.yaml"]
     assert summary["endpointsDropped"] == 2
+    # the installation's domain stays what {orgDomain} renders with: an overlay, no id changes
+    env = (cfg / "environments/rehearsal.yaml").read_text()
+    assert "kind: Environment" in env and "orgDomain: hel.fi" in env and summary["environment"]["orgDomain"] == "hel.fi"
 
 
 def test_compose_refuses_a_project_named_twice_or_missing_and_a_bad_name(tmp_path):
@@ -269,3 +272,103 @@ def test_compose_refuses_a_project_named_twice_or_missing_and_a_bad_name(tmp_pat
         compose.compose(src, compose.parse_orgs([f"praha={src}:praha"]), tmp_path / "o", 0)
     with pytest.raises(SystemExit, match="lower-case Organization name"):
         compose.parse_orgs(["Hel=x"])
+
+
+def live_allowlist(tmp_path):
+    g = suite.Allowlist(tmp_path / "requests.log", {"jc.jcdev.dev.joinedcontext.com"}, fixtures={"ctl-a-fixture"},
+                        personas={"u-1"})
+    g.learn({"result": {"tools": [{"name": "jc_resource_list", "annotations": {"readOnlyHint": True}},
+                                  {"name": "jc_resource_delete", "annotations": {"readOnlyHint": False}},
+                                  {"name": "jc_unannotated"}]}})
+    return g
+
+
+B = "https://jc.jcdev.dev.joinedcontext.com"
+
+
+def test_live_writes_outside_the_fixtures_are_refused_before_anything_is_sent(tmp_path, monkeypatch):
+    g = live_allowlist(tmp_path)
+    sent = []
+    monkeypatch.setattr(suite.R.Http, "call", lambda self, m, p, *a, **k: sent.append((m, p)) or (200, {}, b"{}"))
+    h = g.guard(suite.R.Http(B))
+    refused = [("DELETE", "/api/v1/projects/helsinki/endpoints/air"), ("PUT", "/api/v1/projects/helsinki/endpoints/air"),
+               ("PATCH", "/api/v1/projects/zilina/spaces/s"), ("POST", "/api/v1/connectors"),
+               ("POST", "/id/admin/realms/dev/users"), ("DELETE", "/id/admin/realms/dev/users/someone-else"),
+               ("POST", "/api/v1/projects/org/organizations?dryRun=All")]
+    for method, path in refused:
+        with pytest.raises(suite.Refused):
+            h.call(method, path, body={})
+    for name in ("jc_resource_delete", "jc_unannotated"):  # a write tool, and one that does not say
+        with pytest.raises(suite.Refused):
+            h.call("POST", "/api/v1/mcp", body={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": name}})
+    with pytest.raises(suite.Refused):  # another host, even with a GET
+        h.call("GET", "https://evil.example/api/v1/projects")
+    assert sent == []
+    allowed = [("GET", "/api/v1/projects/helsinki/endpoints", None),
+               ("POST", "/id/realms/dev/protocol/openid-connect/token", None),
+               ("POST", "/id/realms/dev/login-actions/authenticate?session_code=x", None),
+               ("POST", "/api/endpoint/abcd/ngsi-ld/v1/entityOperations/query", {}),
+               ("POST", "/api/v1/mcp", {"method": "tools/list"}),
+               ("POST", "/api/v1/mcp", {"method": "tools/call", "params": {"name": "jc_resource_list"}}),
+               ("DELETE", "/api/v1/projects/ctl-a-fixture/endpoints/e", None),
+               ("DELETE", "/id/admin/realms/dev/users/u-1", None)]
+    for method, path, body in allowed:
+        h.call(method, path, body=body)
+    assert len(sent) == len(allowed)
+    log = (tmp_path / "requests.log").read_text().splitlines()
+    assert sum(line.endswith("REFUSED") for line in log) == len(refused) + 3
+    assert not any("session_code" in line for line in log)  # paths without their query
+
+
+def test_live_mode_takes_only_the_live_hosts_or_loopback():
+    suite.live_base("https://smartcity.joinedcontext.com")
+    suite.live_base("http://127.0.0.1:42240")
+    for base in ("https://dev.joinedcontext.com", "http://smartcity.joinedcontext.com",
+                 "https://smartcity.joinedcontext.com.evil.example", "https://smartcity.joinedcontext.com:8443"):
+        with pytest.raises(SystemExit):
+            suite.live_base(base)
+    with pytest.raises(SystemExit, match="refusing"):  # without --live: loopback only, as before
+        suite.main(["--base-url", "https://smartcity.joinedcontext.com", "--out", "/nonexistent/x", "--export", "x"])
+
+
+def test_a_live_run_deletes_its_personas_and_their_credentials_also_after_a_crash(tmp_path, monkeypatch):
+    a = args(tmp_path, str(tmp_path))
+    exp = Path(a.export)
+    (exp / "manifest.json").write_text(json.dumps({"multiorg": {"organizations": {"ctl-a": {"projects": []}}}}))
+    (exp / "gitea/files/joinedcontext/configuration/organizations").mkdir(parents=True)
+    d = tmp_path / "personas"
+    d.mkdir(mode=0o700)
+    creds = d / "p.json"
+    creds.write_text(json.dumps({k: {"username": f"mo-{k}", "id": f"id-{k}", "password": "x"}
+                                 for k in ("platform", "ctl-a-admin", "ctl-a-member")}))
+    creds.chmod(0o600)
+    a.live, a.personas, a.out, a.only, a.make_personas = True, str(creds), tmp_path / "out", None, None
+    a.out.mkdir()
+    deleted = []
+
+    def call(self, method, path, *rest, **kw):
+        if method == "DELETE":
+            deleted.append(path.rsplit("/", 1)[1])
+            return 204, {}, b""
+        return 200, {}, b"{}"
+
+    monkeypatch.setattr(suite.R.Http, "call", call)
+    monkeypatch.setattr(suite.R, "admin_token", lambda h, state: "t")
+    s = suite.Suite(a)
+    s.synced = lambda: (_ for _ in ()).throw(RuntimeError("the deployment went away"))
+    s.run()
+    assert sorted(deleted) == ["id-ctl-a-admin", "id-ctl-a-member", "id-platform"]
+    assert not creds.exists()
+    assert json.loads((a.out / "cleanup.json").read_text()) == {"personas": [], "deleted": 3}
+    assert [r["result"] for r in s.rows if r["id"] in ("setup", "live.cleanup")] == ["fail", "pass"]
+    assert all(line.split()[-1] in ("read", "sign-in", "cleanup") for line in (a.out / "requests.log").read_text().splitlines())
+
+
+def test_a_personas_file_others_can_read_is_refused(tmp_path):
+    s = suite.Suite(args(tmp_path))
+    s.exp = {"ctl-a": {"projects": {}}}
+    f = tmp_path / "p.json"
+    f.write_text("{}")
+    f.chmod(0o644)
+    with pytest.raises(RuntimeError, match="readable by others"):
+        s.personas_from(f)

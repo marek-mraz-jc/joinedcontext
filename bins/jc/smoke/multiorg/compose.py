@@ -14,7 +14,9 @@ their Antares tenants (<project> and <project>-*) and their dashboards from EXPO
 they had (their organizationRef rewritten); its manifest is EXPORT's NAME or, when EXPORT has none,
 one written from P1's domain and title. `--org NAME=` is an Organization with no project (a control
 that makes an empty Organization's leak visible). `--no-installation` drops `spec.installation` from
-every Organization: operators are then the platform-admins group alone. `--endpoints-per-space N`
+every Organization: operators are then the platform-admins group alone, and the domain every
+`{orgDomain}` rendered with (the installation Organization's, CC-74) moves to the Environment
+overlay environments/rehearsal.yaml, so no id changes; jc runs with JC_ENVIRONMENT=rehearsal. `--endpoints-per-space N`
 keeps the first N Endpoints of each space by file name (bratislava's 453 hold the first reconciler
 pass for minutes). Every other Organization and project is left out. The output never holds more
 than the inputs: no people, no secret values (the inputs hold none, EXPORT.md)."""
@@ -25,6 +27,7 @@ import shutil
 from pathlib import Path
 
 CONFIG = ("joinedcontext", "configuration")
+ENVIRONMENT = "rehearsal"  # the overlay --no-installation writes (JC_ENVIRONMENT)
 
 
 def org_of_project(text: str) -> str | None:
@@ -127,6 +130,17 @@ def compose(base: Path, orgs: dict, out: Path, per_type: int, per_space: int = 0
         f.unlink()
     for f in (cfg_out / "projects").glob("*.yaml"):
         f.unlink()
+    held = [f for f in sorted((cfg_src / "organizations").glob("*.yaml"))
+            if re.search(r"^\s*installation:\s*true", f.read_text(), re.M)]
+    domain = re.search(r"^\s*domain:\s*([\w.-]+)", held[0].read_text(), re.M) if held else None
+    if not installation and domain:
+        (cfg_out / "environments").mkdir(exist_ok=True)
+        (cfg_out / "environments" / f"{ENVIRONMENT}.yaml").write_text(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Environment\nmetadata:\n"
+            f"  name: {ENVIRONMENT}\n  namespace: org\nspec:\n"
+            f"  # the installation Organization's ({held[0].stem}) domain: no id changes (CC-74)\n"
+            f"  orgDomain: {domain.group(1)}\n")
+        summary["environment"] = {"name": ENVIRONMENT, "orgDomain": domain.group(1)}
     for org, export in orgs.items():
         mine = projects_of(export, org, named[org])
         src = export / "gitea" / "files" / CONFIG[0] / CONFIG[1] / "organizations" / f"{org}.yaml" if export else None
