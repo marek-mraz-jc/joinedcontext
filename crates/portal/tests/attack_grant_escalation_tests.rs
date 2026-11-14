@@ -318,8 +318,16 @@ async fn a_member_is_added_to_a_group_only_within_what_its_bindings_grant() {
         json!({ "rules": [{ "kinds": ["Group"], "verbs": ["read", "propose", "approve"] }] }),
     ));
     for (name, subjects, role) in [
-        ("helpdesk", json!([{ "user": "steward@hel.fi" }]), "writes-groups"),
-        ("admins-own-everything", json!([{ "group": "admins" }]), "owns-everything"),
+        (
+            "helpdesk",
+            json!([{ "user": "steward@hel.fi" }]),
+            "writes-groups",
+        ),
+        (
+            "admins-own-everything",
+            json!([{ "group": "admins" }]),
+            "owns-everything",
+        ),
     ] {
         state.mirror.upsert(common::envelope(
             "RoleBinding",
@@ -349,14 +357,20 @@ async fn a_member_is_added_to_a_group_only_within_what_its_bindings_grant() {
         )
     };
     assert!(
-        matches!(within(&group("admins", joined.clone())), Err(ApiError::Denied(_))),
+        matches!(
+            within(&group("admins", joined.clone())),
+            Err(ApiError::Denied(_))
+        ),
         "joining a group bound to owns-everything passed"
     );
     assert!(
         within(&group("admins", json!([{ "user": "admin@hel.fi" }]))).is_ok(),
         "dropping a member was refused"
     );
-    assert!(within(&group("readers", joined)).is_ok(), "an unbound group was refused");
+    assert!(
+        within(&group("readers", joined)).is_ok(),
+        "an unbound group was refused"
+    );
 }
 
 /// The refusal carries nothing of the manifest it refused: a binding is a `users/` file and a

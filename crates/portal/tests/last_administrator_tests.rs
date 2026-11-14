@@ -153,7 +153,12 @@ fn the_administrators_group_is_not_emptied() {
     assert!(keeps_an_administrator(&mirror, AccessChange::Write(&handed_over)).is_ok());
 
     let emptied = organization(&[("admin", "org-admin")]);
-    emptied.upsert(envelope("Group", "admins", ORG_NAMESPACE, json!({ "members": [] })));
+    emptied.upsert(envelope(
+        "Group",
+        "admins",
+        ORG_NAMESPACE,
+        json!({ "members": [] }),
+    ));
     emptied.upsert(envelope(
         "RoleBinding",
         "admins-run-it",

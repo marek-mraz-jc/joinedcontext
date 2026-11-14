@@ -911,7 +911,10 @@ mod tests {
         };
         assert!(manifest(&ground, "ovzdusie", &space).is_err());
         let refused = manifest_at_approval(&ground, "ovzdusie", &space).expect_err("refused");
-        assert!(reason(&refused).contains("spec is not a valid ContextSpace"), "{refused:?}");
+        assert!(
+            reason(&refused).contains("spec is not a valid ContextSpace"),
+            "{refused:?}"
+        );
     }
 
     /// P-2: what reaches `main` past the propose door is judged as its proposals would be: of

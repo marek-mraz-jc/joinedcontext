@@ -1738,8 +1738,7 @@ pub fn keeps_an_administrator_after(
             None => table.remove(name),
         };
     }
-    if touched
-        && administrators(&roles, &bindings, &groups, installation.as_ref(), now).is_empty()
+    if touched && administrators(&roles, &bindings, &groups, installation.as_ref(), now).is_empty()
     {
         return Err(ApiError::Conflict(format!(
             "this change would leave the organization without an administrator: after it, no \
@@ -2561,14 +2560,23 @@ mod tests {
             second_factor: false,
         };
         for (who, administers) in [("here", false), ("space", false), ("everywhere", true)] {
-            let grants = effective(&mirror, "portal-approver", &person(who), "espoo", Utc::now());
+            let grants = effective(
+                &mirror,
+                "portal-approver",
+                &person(who),
+                "espoo",
+                Utc::now(),
+            );
             for kind in ["Group", "RoleBinding"] {
                 assert!(grants.may(kind, Verb::Read), "{who} reads {kind}");
                 for verb in [Verb::Propose, Verb::Approve] {
                     assert_eq!(grants.may(kind, verb), administers, "{who} {verb:?} {kind}");
                 }
             }
-            assert!(grants.may("Endpoint", Verb::Approve), "{who} approves Endpoint");
+            assert!(
+                grants.may("Endpoint", Verb::Approve),
+                "{who} approves Endpoint"
+            );
         }
     }
 

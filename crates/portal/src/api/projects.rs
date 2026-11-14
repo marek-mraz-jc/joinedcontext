@@ -1911,11 +1911,19 @@ mod tests {
             "bb",
             json!({ "domain": "bb.sk", "projects": { "creation": "group:openers" } }),
         ));
-        state.mirror.upsert(envelope("Role", "reader", json!({ "rules": [
-            { "kinds": ["Endpoint"], "verbs": ["read"] }] })));
-        state.mirror.upsert(envelope("RoleBinding", "bb-readers", json!({
+        state.mirror.upsert(envelope(
+            "Role",
+            "reader",
+            json!({ "rules": [
+            { "kinds": ["Endpoint"], "verbs": ["read"] }] }),
+        ));
+        state.mirror.upsert(envelope(
+            "RoleBinding",
+            "bb-readers",
+            json!({
             "subjects": [{ "user": "jana@hel.fi" }], "role": "reader",
-            "scope": { "organization": "bb" } })));
+            "scope": { "organization": "bb" } }),
+        ));
         let mut outsider = person("sub-outsider");
         outsider.username = "ota".into();
         outsider.email = Some("ota@aa.sk".into());

@@ -1212,8 +1212,18 @@ mod under_identity {
         let state = state_with(
             None,
             vec![
-                manifest("Endpoint", "feed", HERE, json!({ "contextSpaceRef": "mobility" })),
-                manifest("Mapping", "theirs", THERE, json!({ "contextSpaceRef": "mobility" })),
+                manifest(
+                    "Endpoint",
+                    "feed",
+                    HERE,
+                    json!({ "contextSpaceRef": "mobility" }),
+                ),
+                manifest(
+                    "Mapping",
+                    "theirs",
+                    THERE,
+                    json!({ "contextSpaceRef": "mobility" }),
+                ),
             ],
         );
         for dry_run in [true, false] {

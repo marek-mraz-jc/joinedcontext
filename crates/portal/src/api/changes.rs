@@ -2408,7 +2408,11 @@ pub(crate) fn publishes_publicly(envelope: &ResourceEnvelope) -> bool {
 /// the `{username}@{project}.local` it writes without one, whichever project it was proposed
 /// from, so an organization Change approved from another project's route is still its author's
 /// (T-6706). A head naming no e-mail cannot be told apart from theirs and counts as theirs.
-fn written_by(identity: &crate::auth::session::Identity, project: &str, email: Option<&str>) -> bool {
+fn written_by(
+    identity: &crate::auth::session::Identity,
+    project: &str,
+    email: Option<&str>,
+) -> bool {
     let Some(email) = email.map(str::trim).filter(|email| !email.is_empty()) else {
         return true;
     };
@@ -3685,13 +3689,28 @@ mod tests {
             let out = redact(vec![field(path, to)]);
             out[0].to == Some(json!("[REDACTED]")) && out[0].from == Some(json!("[REDACTED]"))
         };
-        assert!(hidden("spec.http.headers.Authorization", json!("Bearer abc123")));
+        assert!(hidden(
+            "spec.http.headers.Authorization",
+            json!("Bearer abc123")
+        ));
         assert!(hidden("spec.http.headers.X-Api-Key", json!("k-1")));
-        assert!(hidden("spec.http.headers", json!({ "Cookie": "session=1" })));
-        assert!(hidden("spec.url", json!("https://example.com/feed?api_key=f00dfeed1234")));
+        assert!(hidden(
+            "spec.http.headers",
+            json!({ "Cookie": "session=1" })
+        ));
+        assert!(hidden(
+            "spec.url",
+            json!("https://example.com/feed?api_key=f00dfeed1234")
+        ));
         assert!(hidden("spec.auth", json!({ "password": "hunter2" })));
-        assert!(!hidden("spec.http.headers.Authorization", json!("${FEED_TOKEN}")));
-        assert!(!hidden("spec.http.headers.Accept", json!("application/json")));
+        assert!(!hidden(
+            "spec.http.headers.Authorization",
+            json!("${FEED_TOKEN}")
+        ));
+        assert!(!hidden(
+            "spec.http.headers.Accept",
+            json!("application/json")
+        ));
         assert!(!hidden("spec.url", json!("https://example.com/feed")));
     }
 

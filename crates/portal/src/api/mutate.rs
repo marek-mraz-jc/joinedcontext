@@ -3720,8 +3720,16 @@ mod tests {
             "zzz",
             json!({ "policies": { "apps": { "public": "refused" } } }),
         ));
-        mirror.upsert(org("Project", "zproj", json!({ "organizationRef": { "name": "zzz" } })));
-        mirror.upsert(org("Project", "aproj", json!({ "organizationRef": { "name": "aaa" } })));
+        mirror.upsert(org(
+            "Project",
+            "zproj",
+            json!({ "organizationRef": { "name": "zzz" } }),
+        ));
+        mirror.upsert(org(
+            "Project",
+            "aproj",
+            json!({ "organizationRef": { "name": "aaa" } }),
+        ));
         assert!(public_apps_refused(&mirror, "zproj"));
         assert!(!public_apps_refused(&mirror, "aproj"));
         let quota = |name: &str, apps: u32| {
@@ -3733,8 +3741,14 @@ mod tests {
         };
         mirror.upsert(quota("aaa", 9));
         mirror.upsert(quota("zzz", 2));
-        assert_eq!(crate::quotas::organization_default(&mirror, "zproj").apps, Some(2));
-        assert_eq!(crate::quotas::organization_default(&mirror, "aproj").apps, Some(9));
+        assert_eq!(
+            crate::quotas::organization_default(&mirror, "zproj").apps,
+            Some(2)
+        );
+        assert_eq!(
+            crate::quotas::organization_default(&mirror, "aproj").apps,
+            Some(9)
+        );
     }
 
     /// T-2870 (PF-103): with public Apps refused, a Change that makes an App public is refused

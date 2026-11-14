@@ -1499,10 +1499,11 @@ async fn member_rows(read: &Read<'_>) -> Result<Vec<Value>, Refused> {
     let now = chrono::Utc::now();
     for binding in bindings {
         // A binding outside its validity makes nobody a member today (AUZ-02).
-        let lapsed = serde_json::from_value::<jc_core::kinds::RoleBindingSpec>(binding.spec.clone())
-            .ok()
-            .and_then(|spec| spec.validity)
-            .is_some_and(|validity| !validity.contains(now));
+        let lapsed =
+            serde_json::from_value::<jc_core::kinds::RoleBindingSpec>(binding.spec.clone())
+                .ok()
+                .and_then(|spec| spec.validity)
+                .is_some_and(|validity| !validity.contains(now));
         if lapsed {
             continue;
         }
