@@ -1014,6 +1014,7 @@ impl HarvestEngine {
                 other => other,
             };
             let gather_res = gather_res.and_then(|(kept, skipped)| {
+                over_budget(source, &kept, skipped.len())?;
                 if kept.is_empty() {
                     // An answer with nothing to keep is an outage, not a catalogue to empty.
                     Err(DataroomError::OutboundRefused(
@@ -1082,8 +1083,66 @@ impl HarvestEngine {
             let mut updated_count = 0usize;
             let mut unchanged_count = 0usize;
             let mut withdrawn_count = 0usize;
+            // ODP-14: each `dct:identifier` another source of this catalogue holds, by the
+            // place of that source; an earlier source keeps the record.
+            let place: BTreeMap<String, u32> = store
+                .list_harvest_sources(ctx)
+                .await?
+                .into_iter()
+                .map(|s| (s.name, s.position))
+                .collect();
+            let mut held_identifiers: BTreeMap<String, (u32, Dataset)> = BTreeMap::new();
+            for ds in store.list_datasets(ctx).await? {
+                let (Some(identifier), Some(holder)) =
+                    (ds.identifier.clone(), ds.harvest_source_id.clone())
+                else {
+                    continue;
+                };
+                if holder == source.name || ds.state != RecordState::Active {
+                    continue;
+                }
+                let at = place.get(&holder).copied().unwrap_or(u32::MAX);
+                held_identifiers.insert(identifier, (at, ds));
+            }
 
             for (item_id, mut incoming) in kept_items {
+                let title = dataroom_core::text_in_lang(&incoming.title, None)
+                    .unwrap_or(&incoming.name)
+                    .to_owned();
+                // ODP-13: no `javascript:` or `data:` link of a harvested record reaches a page.
+                if let Some(field) = non_http_link(&incoming) {
+                    skipped.push(HarvestSkippedItem {
+                        item_id,
+                        title,
+                        reason: format!("{field} is not an http(s) address; the record is refused"),
+                    });
+                    continue;
+                }
+                if let Some((at, held)) = incoming
+                    .identifier
+                    .as_ref()
+                    .and_then(|i| held_identifiers.get(i))
+                {
+                    if *at <= source.position {
+                        skipped.push(HarvestSkippedItem {
+                            item_id,
+                            title,
+                            reason: format!(
+                                "its identifier is dataset '{}' of an earlier source",
+                                held.name
+                            ),
+                        });
+                        continue;
+                    }
+                    // This source is listed first: it takes the record over, address and all.
+                    incoming.id = held.id.clone();
+                    incoming.name = held.name.clone();
+                    incoming.state = RecordState::Active;
+                    existing_by_item.remove(&item_id);
+                    store.upsert_dataset(ctx, incoming).await?;
+                    updated_count += 1;
+                    continue;
+                }
                 incoming.harvest_source_id = Some(source.name.clone());
                 incoming.harvest_source_item_id = Some(item_id.clone());
                 if let Some(old) = existing_by_item.remove(&item_id) {
@@ -1199,11 +1258,83 @@ impl HarvestEngine {
     }
 }
 
+/// A run past `source`'s budget fails before it writes or withdraws anything (ODP-13).
+fn over_budget(source: &HarvestSource, kept: &[(String, Dataset)], skipped: usize) -> Result<()> {
+    let Some(budget) = source.budget else {
+        return Ok(());
+    };
+    let records = (kept.len() + skipped) as u64;
+    if records > budget.records {
+        return Err(DataroomError::OutboundRefused(format!(
+            "the run read {records} records, past its budget of {}; nothing is written or withdrawn",
+            budget.records
+        )));
+    }
+    let bytes: u64 = kept
+        .iter()
+        .map(|(_, ds)| serde_json::to_vec(ds).map_or(0, |v| v.len() as u64))
+        .sum();
+    if bytes > budget.bytes {
+        return Err(DataroomError::OutboundRefused(format!(
+            "the run's records hold {bytes} bytes, past its budget of {}; nothing is written or \
+             withdrawn",
+            budget.bytes
+        )));
+    }
+    Ok(())
+}
+
+/// The first link of `ds` a page would put in an `href` with a scheme other than `http(s)` or
+/// `wss` (`javascript:`, `data:`, `vbscript:`, ...), by field. A browser drops whitespace and control
+/// characters inside a scheme, so they are dropped before it is read; a relative link has none.
+fn non_http_link(ds: &Dataset) -> Option<&'static str> {
+    let bad = |u: &str| {
+        let u: String = u
+            .chars()
+            .filter(|c| !c.is_whitespace() && !c.is_control())
+            .collect::<String>()
+            .to_ascii_lowercase();
+        let Some((scheme, _)) = u.split_once(':') else {
+            return false;
+        };
+        let is_scheme = scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+        // `wss:` is a live data stream's address (a converted dataset's subscription).
+        is_scheme && !matches!(scheme, "http" | "https" | "wss")
+    };
+    let one = |field: &'static str, u: Option<&String>| u.filter(|u| bad(u)).map(|_| field);
+    one("landing page", ds.landing_page.as_ref())
+        .or_else(|| one("licence", ds.licence_url.as_ref()))
+        .or_else(|| one("endpoint", ds.endpoint_url.as_ref()))
+        .or_else(|| {
+            ds.documentation
+                .iter()
+                .any(|u| bad(u))
+                .then_some("documentation")
+        })
+        .or_else(|| {
+            ds.distributions.iter().find_map(|d| {
+                one("download link", d.download_url.as_ref())
+                    .or_else(|| bad(&d.access_url).then_some("access link"))
+                    .or_else(|| {
+                        d.uri
+                            .as_deref()
+                            .filter(|u| bad(u))
+                            .map(|_| "distribution IRI")
+                    })
+            })
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::guard::validate_outbound_url;
-    use dataroom_core::{Catalogue, CatalogueId, OrgId, Publisher, Subject, ThemeTokens};
+    use dataroom_core::{
+        Catalogue, CatalogueId, HarvestBudget, OrgId, Publisher, Subject, ThemeTokens,
+    };
     use dataroom_store_memory::MemoryStore;
 
     fn test_setup() -> (OrgId, CatalogueId, RequestCtx, MemoryStore) {
@@ -1363,6 +1494,8 @@ mod tests {
             schedule: "23 3 * * *".into(),
             enabled: true,
             modified: Utc::now(),
+            budget: None,
+            position: 0,
         };
         store
             .upsert_harvest_source(&ctx, source.clone())
@@ -1481,6 +1614,276 @@ mod tests {
     /// The own gateway shortcut reaches the loopback listener for an Endpoint read alone: any
     /// other path under the origin (another module of the listener, an address a remote page or
     /// an editor wrote) stays with the guard, which refuses loopback.
+    /// The `bbsk` catalogue with its publisher, and an ArcGIS Hub source `name` at `hub`
+    /// listed at `position`, whose answer holds `items`: what a portal source becomes (ODP-10).
+    async fn hub_world(
+        store: &MemoryStore,
+        ctx: &RequestCtx,
+        sources: &[(&str, &str, u32)],
+        fetcher: &MapFetcher,
+        items: Value,
+    ) -> Vec<HarvestSource> {
+        let (org_id, catalogue_id) = (ctx.org_id, ctx.catalogue_id);
+        let mut cat = Catalogue {
+            org_id,
+            id: catalogue_id,
+            name: "bbsk".into(),
+            host: "opendata.bbsk.sk".into(),
+            title: BTreeMap::from([("sk".into(), "BBSK".into())]),
+            description: BTreeMap::new(),
+            homepage: None,
+            default_language: "sk".into(),
+            languages: vec!["sk".into()],
+            main_profile: "dcat-ap-sk-2.0".into(),
+            active_profiles: Vec::new(),
+            default_licence: None,
+            publisher_uri: None,
+            publisher_name: None,
+            contact_point: None,
+            theme: ThemeTokens::default(),
+            branding: None,
+            hidden_datasets: Default::default(),
+            allow_cross_org_harvest: true,
+            allowed_outbound_hosts: Vec::new(),
+            applicable_legislation: Vec::new(),
+            modified: Utc::now(),
+            deleted: None,
+            public_base: None,
+        };
+        cat.allowed_outbound_hosts = sources.iter().map(|(_, h, _)| (*h).to_owned()).collect();
+        store.upsert_catalogue(cat).await.unwrap();
+        let publisher: Publisher = serde_json::from_value(json!({
+            "orgId": org_id, "catalogueId": catalogue_id, "id": "pub-bbsk", "name": "bbsk",
+            "title": {"sk": "BBSK"}, "description": {}, "uri": "https://data.gov.sk/id/bbsk",
+            "state": "active", "editorGrants": [],
+            "created": "2026-11-14T10:00:00Z", "modified": "2026-11-14T10:00:00Z"
+        }))
+        .unwrap();
+        store.upsert_publisher(ctx, publisher).await.unwrap();
+        let mut out = Vec::new();
+        for (name, hub, position) in sources {
+            let source = HarvestSource {
+                org_id,
+                catalogue_id,
+                id: format!("hs-{name}"),
+                name: (*name).to_owned(),
+                kind: HarvestSourceKind::ArcGisHub,
+                url: format!("https://{hub}"),
+                publisher_id: "bbsk".into(),
+                target_publisher_iri: None,
+                spatial_uri: None,
+                name_prefix: format!("{name}-"),
+                allowed_hosts: sources.iter().map(|(_, h, _)| (*h).to_owned()).collect(),
+                rewrite_hosts: BTreeMap::new(),
+                skip_items: BTreeMap::new(),
+                title_overrides: BTreeMap::new(),
+                spelling_fixes: BTreeMap::new(),
+                require_column: BTreeMap::new(),
+                converted: BTreeMap::new(),
+                gateway: None,
+                schedule: "23 3 * * *".into(),
+                enabled: true,
+                modified: Utc::now(),
+                budget: None,
+                position: *position,
+            };
+            store
+                .upsert_harvest_source(ctx, source.clone())
+                .await
+                .unwrap();
+            fetcher.insert(
+                format!(
+                    "https://{hub}/api/search/v1/collections/dataset/items?limit=100&sortBy=properties.created"
+                ),
+                Some("application/json"),
+                items.to_string(),
+            );
+            out.push(source);
+        }
+        out
+    }
+
+    fn hub_item(id: &str, title: &str, url: &str) -> Value {
+        json!({ "properties": { "id": id, "title": title, "type": "Feature Service",
+            "license": "CC-BY-4.0", "url": url, "description": "Popis",
+            "created": 1700000000000i64, "modified": 1700000000000i64, "tags": ["doprava"] } })
+    }
+
+    #[tokio::test]
+    async fn a_javascript_url_in_a_harvested_record_is_refused() {
+        let (_, _, ctx, store) = test_setup();
+        let fetcher = MapFetcher::new();
+        let mut feed = hub_world(
+            &store,
+            &ctx,
+            &[("feed", "feeds.bbsk.sk", 0)],
+            &fetcher,
+            json!({}),
+        )
+        .await
+        .remove(0);
+        feed.kind = HarvestSourceKind::DcatAp;
+        feed.url = "https://feeds.bbsk.sk/catalog.ttl".into();
+        store
+            .upsert_harvest_source(&ctx, feed.clone())
+            .await
+            .unwrap();
+        let ttl = "@prefix dcat: <http://www.w3.org/ns/dcat#> .\n\
+                   @prefix dct: <http://purl.org/dc/terms/> .\n\
+                   <https://feeds.bbsk.sk/ds/ok> a dcat:Dataset ; dct:title \"Dobré\"@sk ;\n\
+                     dct:identifier \"ok\" ; dcat:landingPage <https://feeds.bbsk.sk/ok> .\n\
+                   <https://feeds.bbsk.sk/ds/bad> a dcat:Dataset ; dct:title \"Zlé\"@sk ;\n\
+                     dct:identifier \"bad\" ; dcat:landingPage <javascript:alert(document.cookie)> .\n\
+                   <https://feeds.bbsk.sk/ds/data> a dcat:Dataset ; dct:title \"Dáta\"@sk ;\n\
+                     dct:identifier \"data\" ; dcat:distribution [ a dcat:Distribution ;\n\
+                     dcat:accessURL <https://feeds.bbsk.sk/d> ;\n\
+                     dcat:downloadURL <data:text/html,x> ] .\n";
+        fetcher.insert(&feed.url, Some("text/turtle"), ttl.to_owned());
+        let engine = HarvestEngine::new(Arc::new(fetcher)).with_dns_resolution(false);
+        let run = engine.run_source(&ctx, &store, &feed).await.unwrap();
+        let refused: Vec<&str> = run.skipped.iter().map(|s| s.reason.as_str()).collect();
+        assert_eq!(run.created_count, 1, "only the http(s) record: {refused:?}");
+        assert_eq!(refused.len(), 2, "{refused:?}");
+        assert!(
+            refused
+                .iter()
+                .all(|r| r.contains("is not an http(s) address")),
+            "{refused:?}"
+        );
+        assert!(refused
+            .iter()
+            .all(|r| !r.contains("javascript") && !r.contains("data:")));
+        for ds in store.list_datasets(&ctx).await.unwrap() {
+            assert!(
+                non_http_link(&ds).is_none(),
+                "{} kept a non-http link",
+                ds.name
+            );
+        }
+    }
+
+    #[test]
+    fn a_link_is_refused_by_its_scheme_however_it_is_spelled() {
+        let mut ds: Dataset = serde_json::from_value(json!({
+            "orgId": Uuid::nil(), "catalogueId": Uuid::nil(), "id": "x", "name": "x",
+            "title": {}, "description": {}, "publisherId": "p", "visibility": "public",
+            "state": "active", "issued": "2026-11-14T10:00:00Z", "modified": "2026-11-14T10:00:00Z"
+        }))
+        .unwrap();
+        for bad in [
+            " JavaScript:alert(1)",
+            "java\tscript:alert(1)",
+            "data:text/html,x",
+            "vbscript:x",
+        ] {
+            ds.landing_page = Some(bad.to_owned());
+            assert_eq!(non_http_link(&ds), Some("landing page"), "{bad:?}");
+        }
+        for fine in [
+            "https://a.sk/x",
+            "HTTP://a.sk",
+            "wss://a.sk/s",
+            "/odata/v4/x:y",
+            "dataset/x",
+            "",
+        ] {
+            ds.landing_page = Some(fine.to_owned());
+            assert_eq!(non_http_link(&ds), None, "{fine:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_run_over_budget_changes_nothing() {
+        let (_, _, ctx, store) = test_setup();
+        let fetcher = MapFetcher::new();
+        let items = json!({ "numberMatched": 2, "features": [
+            hub_item("item1", "Cesty", "https://hub.bbsk.sk/a"),
+            hub_item("item2", "Mosty", "https://hub.bbsk.sk/b"),
+        ] });
+        let mut sources =
+            hub_world(&store, &ctx, &[("hub", "hub.bbsk.sk", 0)], &fetcher, items).await;
+        let engine = HarvestEngine::new(Arc::new(fetcher)).with_dns_resolution(false);
+        let first = engine.run_source(&ctx, &store, &sources[0]).await.unwrap();
+        assert_eq!(first.created_count, 2);
+        let before = store.list_datasets(&ctx).await.unwrap();
+        for budget in [
+            HarvestBudget {
+                records: 1,
+                bytes: u64::MAX,
+            },
+            HarvestBudget {
+                records: 100,
+                bytes: 10,
+            },
+        ] {
+            sources[0].budget = Some(budget);
+            let err = engine
+                .run_source(&ctx, &store, &sources[0])
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("past its budget"), "{err}");
+            assert_eq!(
+                store.list_datasets(&ctx).await.unwrap(),
+                before,
+                "nothing written or withdrawn"
+            );
+        }
+        let runs = store
+            .list_harvest_runs(&ctx, Some(&sources[0].id))
+            .await
+            .unwrap();
+        assert!(runs.iter().any(|r| r
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("past its budget"))));
+    }
+
+    #[tokio::test]
+    async fn two_sources_with_one_identifier_yield_one_record() {
+        let (_, _, ctx, store) = test_setup();
+        let fetcher = MapFetcher::new();
+        let items = json!({ "numberMatched": 1, "features": [
+            hub_item("item1", "Cesty", "https://hub.bbsk.sk/a"),
+        ] });
+        let sources = hub_world(
+            &store,
+            &ctx,
+            &[("first", "hub.bbsk.sk", 0), ("second", "mirror.bbsk.sk", 1)],
+            &fetcher,
+            items,
+        )
+        .await;
+        let engine = HarvestEngine::new(Arc::new(fetcher)).with_dns_resolution(false);
+        // The later source runs first: the earlier one takes the record over when it runs.
+        let later = engine.run_source(&ctx, &store, &sources[1]).await.unwrap();
+        assert_eq!(later.created_count, 1);
+        let earlier = engine.run_source(&ctx, &store, &sources[0]).await.unwrap();
+        assert_eq!(
+            earlier.updated_count, 1,
+            "takes it over: {:?}",
+            earlier.skipped
+        );
+        let again = engine.run_source(&ctx, &store, &sources[1]).await.unwrap();
+        assert_eq!(again.created_count + again.updated_count, 0);
+        assert!(
+            again
+                .skipped
+                .iter()
+                .any(|s| s.reason.contains("of an earlier source")),
+            "{:?}",
+            again.skipped
+        );
+        let active: Vec<Dataset> = store
+            .list_datasets(&ctx)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|d| d.state == RecordState::Active)
+            .collect();
+        assert_eq!(active.len(), 1, "one record per identifier");
+        assert_eq!(active[0].harvest_source_id.as_deref(), Some("first"));
+    }
+
     #[test]
     fn the_own_gateway_reaches_only_endpoint_reads_on_the_loopback_listener() {
         let internal: SocketAddr = "127.0.0.1:42102".parse().unwrap();
@@ -1606,6 +2009,8 @@ mod tests {
             schedule: "23 3 * * *".into(),
             enabled: true,
             modified: Utc::now(),
+            budget: None,
+            position: 0,
         };
 
         let fetcher = MapFetcher::new();

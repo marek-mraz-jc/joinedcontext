@@ -83,6 +83,13 @@ impl fmt::Display for OrgId {
 pub struct CatalogueId(Uuid);
 
 impl CatalogueId {
+    /// The catalogue of the further portal `path` of the Organization `org` (ODP-08): a UUID v5
+    /// under the Organization's id, so a portal deleted and made again on the same address gets
+    /// its catalogue (and tombstone) back, and no two portals share one.
+    pub fn of_portal(org: OrgId, path: &str) -> Self {
+        Self(Uuid::new_v5(&org.0, format!("portal:{path}").as_bytes()))
+    }
+
     /// Creates a `CatalogueId` from a verified `Uuid`.
     pub const fn from_uuid(id: Uuid) -> Self {
         Self(id)
@@ -820,7 +827,21 @@ pub struct HarvestSource {
     /// `schema/index.json` is read from it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway: Option<String>,
+    /// The most one run reads before it fails and changes nothing (ODP-13); `None`, no budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<HarvestBudget>,
+    /// Its place in its portal's source list: of two sources harvesting one `dct:identifier`,
+    /// the one listed first keeps the record (ODP-14).
+    #[serde(default)]
+    pub position: u32,
     pub modified: DateTime<Utc>,
+}
+
+/// A harvest run's budget (ODP-13): records gathered and bytes of the records kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct HarvestBudget {
+    pub records: u64,
+    pub bytes: u64,
 }
 
 /// One converted dataset of `od-datasets.json`: its open-data Endpoint, the entity type its
