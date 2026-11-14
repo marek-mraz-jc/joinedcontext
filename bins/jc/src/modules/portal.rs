@@ -234,13 +234,22 @@ pub(crate) fn apps_vars(cfg: &crate::config::Config) -> BTreeMap<String, String>
 /// `JC_PORTAL_ORGANIZATION_BOUNDS`, the deployment's limit ceilings of `[portal.limits]` as JSON
 /// (LIM-01, T-6716); empty without the section, so the Portal keeps its built-in ceilings. An
 /// environment value still wins, and the Portal refuses to start when the bounds file is set too.
+/// With `[kaisatsu] second_factor = "required"` also `JC_PORTAL_SECOND_FACTOR_FLOOR`, so
+/// Organization settings shows the floor every Organization inherits (T-6895).
 pub(crate) fn limits_vars(cfg: &crate::config::Config) -> BTreeMap<String, String> {
-    if cfg.portal.limits.is_empty() {
-        return BTreeMap::new();
+    let mut vars = BTreeMap::new();
+    if cfg.kaisatsu.second_factor == crate::config::SecondFactorFloor::Required {
+        vars.insert(
+            "JC_PORTAL_SECOND_FACTOR_FLOOR".to_owned(),
+            "required".to_owned(),
+        );
     }
-    // A map of strings to two optional integers always serializes.
-    let json = serde_json::to_string(&cfg.portal.limits).unwrap_or_default();
-    BTreeMap::from([("JC_PORTAL_ORGANIZATION_BOUNDS".to_owned(), json)])
+    if !cfg.portal.limits.is_empty() {
+        // A map of strings to two optional integers always serializes.
+        let json = serde_json::to_string(&cfg.portal.limits).unwrap_or_default();
+        vars.insert("JC_PORTAL_ORGANIZATION_BOUNDS".to_owned(), json);
+    }
+    vars
 }
 
 /// The Portal's router behind the host jc placed the request on (`Mount`, a trusted proxy's

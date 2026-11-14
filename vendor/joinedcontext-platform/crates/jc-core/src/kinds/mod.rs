@@ -120,7 +120,9 @@ pub use mqtt_allowance::{MqttAllowance, MqttHostname, MqttUsage};
 pub use mqtt_broker::{
     MqttAddress, MqttBrokerSpec, MqttCapture, MqttDeviceAuth, MqttLimits, MqttMode, MqttRole,
 };
-pub use org_settings::{OrganizationBounds, OrganizationLimits, OrganizationPolicies, PublicApps};
+pub use org_settings::{
+    OrganizationBounds, OrganizationLimits, OrganizationPolicies, PublicApps, SecondFactor,
+};
 pub use organization::{
     Contact, ContactRole, DcatProfile, OrganizationSpec, ProjectsPolicy,
     DEFAULT_NAME_COOLDOWN_DAYS, LEGACY_ORGANIZATION_PATH,

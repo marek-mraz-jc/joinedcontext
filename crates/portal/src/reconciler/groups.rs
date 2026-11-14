@@ -30,6 +30,11 @@ pub const MANAGED_VALUE: &str = "joinedcontext";
 const ORGANIZATION_ATTRIBUTE: &str = "jc_org";
 const GROUPS_ATTRIBUTE: &str = "jc_groups";
 
+/// The attribute kaisatsu reads on a person's groups to ask them for a second factor
+/// (`kaisatsu_oidc::ORG_SECOND_FACTOR_ATTRIBUTE`, T-6894): written `required` on an
+/// Organization's group while its manifest sets `spec.policies.signIn.secondFactor: required`.
+pub const SECOND_FACTOR_ATTRIBUTE: &str = "jc.secondFactor";
+
 /// The ending of an Organization's group of bound people, [`organization_group`]. A project,
 /// Group or Organization name is DNS-1123, so no name of those can end in it.
 const ORGANIZATION_GROUP_ENDING: &str = "_bound";
@@ -57,6 +62,20 @@ pub struct DerivedGroup {
     pub members: BTreeSet<String>,
     pub jc_org: Option<String>,
     pub jc_groups: Option<String>,
+    /// The Organization in `jc_org` asks every member for a second factor (T-6895).
+    pub second_factor: bool,
+}
+
+/// Whether the Organization manifest `organization` sets `spec.policies.signIn.secondFactor:
+/// required`. Only `spec.policies` is read, as the propose check already parsed it.
+fn requires_second_factor(mirror: &Mirror, organization: &str) -> bool {
+    use jc_core::kinds::{OrganizationPolicies, SecondFactor};
+    mirror
+        .get(ORG_NAMESPACE, "Organization", organization)
+        .and_then(|org| {
+            serde_json::from_value::<OrganizationPolicies>(org.spec.get("policies")?.clone()).ok()
+        })
+        .is_some_and(|policies| policies.sign_in.second_factor == Some(SecondFactor::Required))
 }
 
 /// The two groups of a project: who reads it and who writes it.
@@ -84,16 +103,28 @@ pub fn derived_groups(
                 members: people_only(members),
                 jc_org: None,
                 jc_groups,
+                second_factor: false,
             }
         })
     });
+    // An Organization that asks for a second factor has its group even before its first
+    // project, so its members are asked from their first binding on (T-6895).
     let organizations: BTreeSet<String> = projects
         .keys()
         .filter_map(|slug| organization_of(mirror, slug))
+        .chain(
+            mirror
+                .list(ORG_NAMESPACE, "Organization", &ListOptions::default())
+                .items
+                .into_iter()
+                .map(|org| org.metadata.name)
+                .filter(|name| requires_second_factor(mirror, name)),
+        )
         .collect();
     let of_organizations = organizations.into_iter().map(|organization| DerivedGroup {
         name: organization_group(&organization),
         members: people_only(organization_scoped_people(mirror, &organization, now)),
+        second_factor: requires_second_factor(mirror, &organization),
         jc_org: Some(organization),
         jc_groups: None,
     });
@@ -471,9 +502,13 @@ impl GroupSync {
         };
         let attributes = attributes_of(Some(derived));
         let says = |key: &str| group.attributes.get(key).map(|values| json!(values));
-        if [ORGANIZATION_ATTRIBUTE, GROUPS_ATTRIBUTE]
-            .iter()
-            .all(|key| says(key).as_ref() == attributes.get(*key))
+        if [
+            ORGANIZATION_ATTRIBUTE,
+            GROUPS_ATTRIBUTE,
+            SECOND_FACTOR_ATTRIBUTE,
+        ]
+        .iter()
+        .all(|key| says(key).as_ref() == attributes.get(*key))
         {
             return;
         }
@@ -489,7 +524,8 @@ impl GroupSync {
             .await;
         match sent {
             Ok(_) => outcome.drift.push(
-                "the group's Organization claims were not what its project says; they are now"
+                "the group's Organization claims or sign-in rule were not what its project and \
+                 Organization say; they are now"
                     .to_owned(),
             ),
             Err(err) => outcome.error = Some(err),
@@ -525,6 +561,9 @@ fn attributes_of(derived: Option<&DerivedGroup>) -> Value {
     }
     if let Some(path) = derived.and_then(|group| group.jc_groups.as_ref()) {
         attributes[GROUPS_ATTRIBUTE] = json!([path]);
+    }
+    if derived.is_some_and(|group| group.second_factor) {
+        attributes[SECOND_FACTOR_ATTRIBUTE] = json!(["required"]);
     }
     attributes
 }

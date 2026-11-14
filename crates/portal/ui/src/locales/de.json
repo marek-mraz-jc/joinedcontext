@@ -8367,7 +8367,14 @@
       "publicApps_refused": "Abgelehnt",
       "models": "Modelle, die der Assistent nutzen darf",
       "modelsHint": "Leer lassen, um jedes Modell der Installation zu erlauben.",
-      "everyModel": "Jedes Modell der Installation"
+      "everyModel": "Jedes Modell der Installation",
+      "secondFactor": "Zweiter Faktor bei der Anmeldung",
+      "secondFactorHint": "Erforderlich: Mitglieder richten bei der nächsten Anmeldung eine Authenticator-App ein und nutzen sie bei jeder Anmeldung. Beispiel: required. Leer lassen, damit die Einstellung der Installation gilt.",
+      "secondFactor_required": "Erforderlich",
+      "secondFactor_optional": "Optional",
+      "secondFactorInherited": "Erforderlich (von der Installation geerbt)",
+      "secondFactorInheritedHint": "Geerbt: erforderlich (Installation). Jedes Mitglied meldet sich bereits mit einer Authenticator-App an, Optional hat hier keine Wirkung.",
+      "secondFactorByDefault": "Optional (Standard der Installation)"
     },
     "brokers": {
       "title": "Context-Broker",

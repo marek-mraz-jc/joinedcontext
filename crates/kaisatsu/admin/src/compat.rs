@@ -1546,8 +1546,13 @@ async fn compat_list_groups(
 }
 
 /// Group attributes the token mappers read as organization membership (`jc_org`) and groups
-/// (`jc_groups`).
-const MEMBERSHIP_ATTRIBUTES: [&str; 2] = ["jc_org", "jc_groups"];
+/// (`jc_groups`), and the sign-in rule the Portal writes from an Organization's manifest
+/// (`jc.secondFactor`): an organization admin dropping it would lower the rule outside its Change.
+const MEMBERSHIP_ATTRIBUTES: [&str; 3] = [
+    "jc_org",
+    "jc_groups",
+    kaisatsu_oidc::ORG_SECOND_FACTOR_ATTRIBUTE,
+];
 
 /// What a group create or update may carry, as Keycloak's REST group representation:
 /// - role grants (`realmRoles`, `clientRoles`) and `subGroups` are not written through it; roles

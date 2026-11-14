@@ -126,6 +126,30 @@ async fn every_entry_carries_its_bound_its_value_and_where_the_value_comes_from(
     );
 }
 
+/// T-6895: the page reads the deployment's second-factor floor beside the catalog, so an
+/// Organization under a `required` floor shows it as inherited and its own `optional` as no effect.
+#[tokio::test]
+async fn the_second_factor_floor_the_organization_inherits_is_shown() {
+    let (status, body) = limits(administrator()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["secondFactorFloor"], "optional", "{body}");
+
+    let mut config = Config::for_tests();
+    config.second_factor_floor = true;
+    let state = AppState::new(config, None);
+    let answer = send(
+        &state,
+        person("member"),
+        "GET",
+        "/api/v1/organization/limits",
+        None,
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let body: Value = serde_json::from_str(&answer.text).expect("json");
+    assert_eq!(body["secondFactorFloor"], "required", "{body}");
+}
+
 #[tokio::test]
 async fn each_project_shows_whose_quota_is_in_force_and_what_it_uses() {
     let (_, body) = limits(administrator()).await;
