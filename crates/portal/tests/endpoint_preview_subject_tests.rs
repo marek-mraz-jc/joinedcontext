@@ -534,6 +534,7 @@ async fn a_person_the_gateways_door_refuses_is_refused_the_preview() {
         &groups,
         false,
         |_| Some("hel".to_owned()),
+        None,
     )
     .is_err());
 }
