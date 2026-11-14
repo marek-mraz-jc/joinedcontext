@@ -61,4 +61,14 @@ describe("matchesQ", () => {
     // An optional group or a bounded count is no such pattern.
     expect(boundedPattern("^(\\d{2})?[a-z]+$").test("12ab")).toBe(true);
   });
+
+  it("refuses a quantified group whose quantifier sits in a group nested inside it", () => {
+    for (const pattern of ["((a+))+$", "(?:(a+))+$", "(a|(b+))*$", "((?<x>a*)){2,}", "((a+)?)+", "([)]|(a+))+"]) {
+      expect(() => boundedPattern(pattern), pattern).toThrow();
+    }
+    // Quantifiers outside the quantified group, escaped or inside a class are no nesting.
+    for (const pattern of ["(?:ab)+c*", "(a)+(b+)", "(\\+)+", "([+*]x)+", "(?<name>ab)?"]) {
+      expect(() => boundedPattern(pattern), pattern).not.toThrow();
+    }
+  });
 });

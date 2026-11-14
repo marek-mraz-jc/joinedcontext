@@ -127,8 +127,35 @@ function compare(actual: unknown, op: Op, expected: string | number | boolean): 
 
 /** The longest pattern a colour rule may test, in characters. */
 const MAX_PATTERN = 256;
-/** A quantified group that holds a quantifier itself (`(a+)+`, `(a*)*`, `(a|b?){2,}`). */
-const NESTED_QUANTIFIER = /\((?:[^()\\]|\\.)*[*+?}](?:[^()\\]|\\.)*\)[*+{]/;
+
+/**
+ * Whether a quantified group holds a quantifier at any depth (`(a+)+`, `((a*))*`, `(a|b?){2,}`).
+ * Escapes and character classes hold none; `?` opening a group (`(?:`, `(?<name>`) is no quantifier.
+ */
+function nestedQuantifier(source: string): boolean {
+  const groups: boolean[] = [];
+  const quantifier = (at: number) => at < source.length && "*+?{".includes(source[at]);
+  for (let at = 0; at < source.length; at++) {
+    const char = source[at];
+    if (char === "\\") {
+      at++;
+    } else if (char === "[") {
+      for (at++; at < source.length && source[at] !== "]"; at++) if (source[at] === "\\") at++;
+    } else if (char === "(") {
+      groups.push(false);
+      if (source[at + 1] === "?") at++;
+    } else if (char === ")") {
+      const holds = groups.pop() ?? false;
+      const quantified = quantifier(at + 1);
+      // An optional group runs once at most; a repeated one holding a quantifier backtracks.
+      if (holds && quantified && source[at + 1] !== "?") return true;
+      if (groups.length > 0 && (holds || quantified)) groups[groups.length - 1] = true;
+    } else if (quantifier(at) && groups.length > 0) {
+      groups[groups.length - 1] = true;
+    }
+  }
+  return false;
+}
 
 /**
  * A saved view's pattern compiled for this browser, whose regular expressions backtrack: a long
@@ -137,7 +164,7 @@ const NESTED_QUANTIFIER = /\((?:[^()\\]|\\.)*[*+?}](?:[^()\\]|\\.)*\)[*+{]/;
  */
 // ponytail: catches nested quantifiers, not overlapping alternations such as (a|a)+.
 export function boundedPattern(source: string): RegExp {
-  if (source.length > MAX_PATTERN || NESTED_QUANTIFIER.test(source)) {
+  if (source.length > MAX_PATTERN || nestedQuantifier(source)) {
     throw new SyntaxError("pattern too costly to test in the browser");
   }
   return new RegExp(source, "u");
