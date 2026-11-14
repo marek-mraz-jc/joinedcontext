@@ -20,6 +20,7 @@ import {
 import type { components } from "../api/schema";
 import { ProjectHidden, projectOutOfReach } from "../components/ProjectHidden";
 import { PageFailed } from "../components/ui/PageState";
+import { isWorkspaceOwner } from "../pages/workspaces/owner";
 
 type WorkspaceView = components["schemas"]["WorkspaceView"];
 
@@ -71,8 +72,7 @@ export function WorkspacesPage({
 
   const items = list.data?.items ?? [];
   // The owner is who opened it, by the address commits are signed with, or the username.
-  const isMine = (w: WorkspaceView) =>
-    !!identity && (w.owner === identity.email || w.owner === identity.username);
+  const isMine = (w: WorkspaceView) => isWorkspaceOwner(identity, w.owner);
   const mine = items.filter(isMine);
   const others = items.filter((w) => !isMine(w));
 
