@@ -109,3 +109,25 @@ async fn parse_log_errors_and_config_refusals() {
         assert!(err.contains(want), "{yaml}: {err}");
     }
 }
+
+#[tokio::test]
+async fn parse_log_long_escaped_param_is_linear() {
+    // 512k escaped backslashes in one param value: Go's RemoveBytes is O(k*n) here.
+    let value = "\\\\".repeat(512 * 1024);
+    let input = format!(r#"<12>1 2003-02-03T05:14:15Z h a p m [id k="{value}"] msg"#);
+    let started = std::time::Instant::now();
+    let mut out = run(
+        "parse_log:\n  format: syslog_rfc5424\n",
+        &[input.as_str()],
+    )
+    .await;
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "{:?}",
+        started.elapsed()
+    );
+    let doc = out[0][0].as_structured().expect("structured").to_json_value();
+    let k = doc["structureddata"]["id"]["k"].as_str().expect("param k");
+    assert_eq!(k.len(), 512 * 1024);
+    assert!(k.bytes().all(|b| b == b'\\'));
+}

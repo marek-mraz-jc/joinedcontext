@@ -21,14 +21,18 @@ pub fn decimal(chars: &[u8]) -> i64 {
 }
 
 /// `common.RemoveBytes`: drops the bytes at absolute `positions` from `data`, which starts at `offset`.
+/// Go removes them one by one (O(k*n)); the machines collect `positions` in ascending order, so one
+/// pass that skips each listed index gives the same bytes in O(n + k).
 pub fn remove_bytes(data: &[u8], positions: &[isize], offset: isize) -> Vec<u8> {
-    let mut cp = data.to_vec();
-    for (i, pos) in positions.iter().enumerate() {
-        let at = pos - i as isize - offset;
-        if let Ok(at) = usize::try_from(at) {
-            if at < cp.len() {
-                cp.remove(at);
-            }
+    let mut drop = positions
+        .iter()
+        .filter_map(|p| usize::try_from(p - offset).ok())
+        .peekable();
+    let mut cp = Vec::with_capacity(data.len());
+    for (j, b) in data.iter().enumerate() {
+        while drop.next_if(|d| *d < j).is_some() {}
+        if drop.next_if_eq(&j).is_none() {
+            cp.push(*b);
         }
     }
     cp
@@ -241,5 +245,6 @@ mod tests {
         );
         assert_eq!(go_string(b"a\xe0\xa0b"), "a\u{FFFD}\u{FFFD}b");
         assert_eq!(remove_bytes(b"a\\]b", &[11], 10), b"a]b");
+        assert_eq!(remove_bytes(b"x\\\\y\\]z", &[11, 14], 10), b"x\\y]z");
     }
 }
