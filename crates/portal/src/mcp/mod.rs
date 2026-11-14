@@ -43,7 +43,7 @@ use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -352,7 +352,7 @@ async fn dispatch(state: AppState, caller: crate::ops::Caller, body: Bytes) -> R
             if !may_read(&state, &caller, &project) {
                 return json_response(StatusCode::OK, &result(id, json!({ "resources": [] })));
             }
-            let mut resources = vec![app_view::listed()];
+            let mut resources = app_view::listed();
             // Item by item: a grant bound to one context space lists that space's manifests
             // alone, as the REST list does (T-5698).
             let effective = crate::permissions::for_request(&state, &caller.identity, &project);
@@ -491,8 +491,7 @@ async fn dispatch(state: AppState, caller: crate::ops::Caller, body: Bytes) -> R
         }
         "resources/read" => {
             let uri = params.get("uri").and_then(Value::as_str).unwrap_or("");
-            if uri == app_view::URI {
-                let contents = app_view::contents(&state.config.public_base());
+            if let Some(contents) = app_view::contents(uri, &state.config.public_base()) {
                 return json_response(StatusCode::OK, &result(id, json!({ "contents": contents })));
             }
             match read_resource(&state, &caller, uri).await {
@@ -1095,15 +1094,15 @@ pub fn tool_definition(op: &crate::ops::OperationSummary) -> Value {
             "taskSupport": if tasks::is_long(&op.name) { "optional" } else { "forbidden" }
         },
         // The rule the door applies to the call, as `GET …/ops` names it; a tool whose answer
-        // renders in the plan view names it (MCP Apps, T-5960), under the current key and the
+        // renders in a view names it (MCP Apps, T-5960, T-6866), under the current key and the
         // flat one older hosts read.
-        "_meta": match app_view::tool_meta(&op.name) {
-            Some(ui) => json!({
+        "_meta": match (app_view::tool_meta(&op.name), app_view::view_of(&op.name)) {
+            (Some(ui), Some(uri)) => json!({
                 "joinedcontext.com/requires": op.requires,
-                "ui/resourceUri": app_view::URI,
+                "ui/resourceUri": uri,
                 "ui": ui,
             }),
-            None => json!({ "joinedcontext.com/requires": op.requires }),
+            _ => json!({ "joinedcontext.com/requires": op.requires }),
         }
     })
 }
@@ -1425,8 +1424,17 @@ fn image_result(output: &Value) -> Option<Value> {
         return None;
     }
     let mut rest = output.clone();
-    rest.as_object_mut()?.remove("image");
+    let fields = rest.as_object_mut()?;
+    fields.remove("image");
+    // The chart view's spec and points (T-6866) go to the view through `_meta` alone: the model
+    // reads the PNG and the rest, not 2,000 points twice.
+    let view = fields.remove("view");
     let text = serde_json::to_string(&rest).unwrap_or_else(|_| "null".to_string());
+    let mut meta = Map::new();
+    if let Some(Value::Object(view)) = view {
+        meta.extend(view);
+    }
+    meta.insert(UNTRUSTED_META.to_owned(), json!(true));
     Some(json!({
         "isError": false,
         "content": [
@@ -1434,7 +1442,7 @@ fn image_result(output: &Value) -> Option<Value> {
             { "type": "text", "text": fenced(&text) }
         ],
         "structuredContent": rest,
-        "_meta": { UNTRUSTED_META: true }
+        "_meta": meta
     }))
 }
 

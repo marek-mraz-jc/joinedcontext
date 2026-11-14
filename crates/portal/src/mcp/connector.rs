@@ -314,8 +314,11 @@ fn answered_here(
     id: &Value,
     message: &Value,
 ) -> Option<(Response, String)> {
-    if method == "resources/read" && message["params"]["uri"] == super::app_view::URI {
-        let contents = super::app_view::contents(&state.config.public_base());
+    let uri = message["params"]["uri"].as_str().unwrap_or_default();
+    if let Some(contents) = (method == "resources/read")
+        .then(|| super::app_view::contents(uri, &state.config.public_base()))
+        .flatten()
+    {
         let answer = result(id.clone(), json!({ "contents": contents }));
         return Some((json_response(StatusCode::OK, &answer), "allowed".to_owned()));
     }
@@ -323,7 +326,7 @@ fn answered_here(
         let answer = error(
             id.clone(),
             -32601,
-            "a connector serves initialize, ping, tools/list, tools/call and its plan view",
+            "a connector serves initialize, ping, tools/list, tools/call and its plan and chart views",
         );
         return Some((
             json_response(StatusCode::OK, &answer),

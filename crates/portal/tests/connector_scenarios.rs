@@ -2534,24 +2534,31 @@ async fn the_connector_door_refuses_in_order_and_audits_without_secrets() {
         refused["error"].is_object() || refused["result"]["isError"] == json!(true),
         "a tool outside the segment ran: {refused}"
     );
-    // The plan view is the one resource it reads: a static MCP App page (T-5960), which the
-    // plan and mapping tools name.
-    let view = json!({ "jsonrpc": "2.0", "id": 3, "method": "resources/read",
-                       "params": { "uri": "ui://joinedcontext/plan-view.html" } });
-    let (status, answer) = harness
-        .send("POST", &door(a), token_a.clone(), Some(view))
-        .await;
-    let page = &answer["result"]["contents"][0];
-    assert_eq!(status, StatusCode::OK, "{answer}");
-    assert_eq!(page["mimeType"], "text/html;profile=mcp-app", "{answer}");
-    assert_eq!(page["_meta"]["ui"]["csp"]["connectDomains"], json!([]));
-    assert!(
-        !page["text"]
-            .as_str()
-            .unwrap_or("")
-            .contains(token_a.as_deref().expect("a token")),
-        "{answer}"
-    );
+    // The plan and chart views are the resources it reads: static MCP App pages (T-5960,
+    // T-6866) that connect nowhere, which the plan, mapping and render tools name.
+    for uri in [
+        "ui://joinedcontext/plan-view.html",
+        "ui://joinedcontext/chart-view.html",
+    ] {
+        let view = json!({ "jsonrpc": "2.0", "id": 3, "method": "resources/read",
+                           "params": { "uri": uri } });
+        let (status, answer) = harness
+            .send("POST", &door(a), token_a.clone(), Some(view))
+            .await;
+        let page = &answer["result"]["contents"][0];
+        assert_eq!(status, StatusCode::OK, "{answer}");
+        assert_eq!(page["uri"], uri, "{answer}");
+        assert_eq!(page["mimeType"], "text/html;profile=mcp-app", "{answer}");
+        assert_eq!(page["_meta"]["ui"]["csp"]["connectDomains"], json!([]));
+        assert_eq!(page["_meta"]["ui"]["csp"]["resourceDomains"], json!([]));
+        assert!(
+            !page["text"]
+                .as_str()
+                .unwrap_or("")
+                .contains(token_a.as_deref().expect("a token")),
+            "{answer}"
+        );
+    }
 
     // The audit names who, which client, what and the verdict; never the token.
     let (status, calls) = harness
@@ -3751,7 +3758,7 @@ fn the_plan_view_links_only_to_the_portal_and_connects_nowhere() {
     use joinedcontext_portal::ops;
 
     let base = url::Url::parse("https://portal.example.org/some/path").expect("url");
-    let contents = app_view::contents(&base);
+    let contents = app_view::contents(app_view::URI, &base).expect("the plan view");
     let item = &contents[0];
     assert_eq!(item["uri"], app_view::URI);
     assert_eq!(item["mimeType"], "text/html;profile=mcp-app");
@@ -3785,6 +3792,100 @@ fn the_plan_view_links_only_to_the_portal_and_connects_nowhere() {
         assert_eq!(listed["_meta"]["ui"]["resourceUri"].as_str(), uri, "{tool}");
         assert_eq!(listed["_meta"]["ui/resourceUri"].as_str(), uri, "{tool}");
     }
+}
+
+/// The chart view (T-6866): listed beside the plan view, named by `jc_render` alone, read with
+/// the same CSP that connects and loads nowhere.
+#[test]
+fn chart_view_is_listed_and_named_by_jc_render() {
+    use joinedcontext_portal::mcp::{app_view, tool_definition};
+    use joinedcontext_portal::ops;
+
+    let listed: Vec<Value> = app_view::listed();
+    let uris: Vec<&str> = listed.iter().filter_map(|r| r["uri"].as_str()).collect();
+    assert_eq!(uris, [app_view::URI, app_view::CHART_URI]);
+    assert_eq!(app_view::CHART_URI, "ui://joinedcontext/chart-view.html");
+    for (tool, uri) in [
+        ("jc_render", Some(app_view::CHART_URI)),
+        ("jc_change_plan", Some(app_view::URI)),
+        ("jc_data_query", None),
+    ] {
+        let op = ops::find(tool).expect("a registry op");
+        let definition = tool_definition(&ops::summary(op));
+        assert_eq!(
+            definition["_meta"]["ui"]["resourceUri"].as_str(),
+            uri,
+            "{tool}"
+        );
+        assert_eq!(
+            definition["_meta"]["ui/resourceUri"].as_str(),
+            uri,
+            "{tool}"
+        );
+    }
+    let base = url::Url::parse("https://portal.example.org/x").expect("url");
+    assert!(app_view::contents("ui://joinedcontext/other.html", &base).is_none());
+}
+
+/// Both doors read the chart view with a CSP that connects and loads nowhere; the Portal door
+/// lists it, and its page holds no token (T-6866).
+#[tokio::test]
+async fn chart_view_csp_connects_nowhere() {
+    let harness = Harness::start(1).await;
+    let own = project_of(1);
+    let list = json!({ "jsonrpc": "2.0", "id": 1, "method": "resources/list",
+                       "params": { "project": own } });
+    let (status, answer) = harness.rpc("viewer", list).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let listed = answer["result"]["resources"]
+        .as_array()
+        .and_then(|all| {
+            all.iter()
+                .find(|r| r["uri"] == "ui://joinedcontext/chart-view.html")
+        })
+        .cloned()
+        .unwrap_or_else(|| panic!("the chart view is not listed: {answer}"));
+    assert_eq!(listed["_meta"]["ui"]["csp"]["connectDomains"], json!([]));
+    let read = json!({ "jsonrpc": "2.0", "id": 2, "method": "resources/read",
+                       "params": { "uri": "ui://joinedcontext/chart-view.html" } });
+    let (status, answer) = harness.rpc("viewer", read.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let page = &answer["result"]["contents"][0];
+    assert_eq!(page["mimeType"], "text/html;profile=mcp-app", "{answer}");
+    assert_eq!(page["_meta"]["ui"]["csp"]["connectDomains"], json!([]));
+    assert_eq!(page["_meta"]["ui"]["csp"]["resourceDomains"], json!([]));
+    let text = page["text"].as_str().unwrap_or_default();
+    assert!(text.contains("createElementNS"), "{answer}");
+    assert!(!text.contains("__PORTAL_ORIGIN__"));
+    let token = harness.token("viewer").expect("a token");
+    assert!(!text.contains(&token));
+    // The connector door reads the same page under the same CSP; it lists no resources.
+    let expires = (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339();
+    let (status, created) = harness
+        .send_edge(
+            "POST",
+            "/api/v1/connectors",
+            harness.token_for("viewer", AUDIENCE, AUDIENCE),
+            Some(json!({ "name": "chart", "segments": ["data-read"],
+                         "scope": [{ "project": own, "access": "read" }], "expiresAt": expires })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let id = created["id"].as_str().expect("id");
+    let through = harness.token_for("viewer", &format!("https://portal.test/c/{id}"), CLIENT);
+    let (status, answer) = harness
+        .send("POST", &format!("/c/{id}"), through.clone(), Some(read))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let page = &answer["result"]["contents"][0];
+    assert_eq!(
+        page["uri"], "ui://joinedcontext/chart-view.html",
+        "{answer}"
+    );
+    assert_eq!(page["_meta"]["ui"]["csp"]["connectDomains"], json!([]));
+    assert_eq!(page["_meta"]["ui"]["csp"]["resourceDomains"], json!([]));
+    let text = page["text"].as_str().unwrap_or_default();
+    assert!(!text.contains(through.as_deref().expect("a token")));
 }
 
 /// Who may write to an Endpoint is answered only to whoever reads the space's Policies (EP-103,
