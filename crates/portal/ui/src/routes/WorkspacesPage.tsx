@@ -9,6 +9,7 @@ import { api, queryKeys, unwrap } from "../api/client";
 import { useAuth } from "../auth/AuthProvider";
 import { WorkOnCopyAction } from "../components/WorkOnCopyDialog";
 import {
+  Alert,
   Badge,
   Button,
   buttonClass,
@@ -80,18 +81,28 @@ export function WorkspacesPage({
     <ConfirmDialog
       open
       onOpenChange={(next) => {
-        if (!next) setDiscarding(null);
+        if (!next) {
+          setDiscarding(null);
+          discard.reset();
+        }
       }}
       title={t("workspaces.discard")}
       description={t("workspaces.discardConfirm", { name: discarding })}
       confirmLabel={t("workspaces.discard")}
       pending={discard.isPending}
+      // Open until the copy is gone: a refusal is said here, in the server's words, and can be retried.
       onConfirm={() =>
         discard.mutate(discarding, {
-          onSettled: () => setDiscarding(null),
+          onSuccess: () => setDiscarding(null),
         })
       }
-    />
+    >
+      {discard.error ? (
+        <Alert tone="danger" role="alert">
+          {discard.error.message}
+        </Alert>
+      ) : null}
+    </ConfirmDialog>
   ) : null;
 
   return (
