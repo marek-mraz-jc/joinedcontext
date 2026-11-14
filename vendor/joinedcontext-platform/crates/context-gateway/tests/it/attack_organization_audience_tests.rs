@@ -312,20 +312,25 @@ async fn an_organization_scoped_role_reaches_no_endpoint_of_another_organization
     let outsider = fixture
         .realm
         .workload_token(&client_id(OUTSIDER, "senzory"), json!(SLUG));
-    // Without `member` no permission reaches the account: answered empty, the broker unasked.
+    // The broker's view decides a public Endpoint's read from the roles the hop carries.
+    let roles = |fixture: &Fixture| {
+        let hops = fixture.broker.hops();
+        let hop = hops.last().expect("the read reached the broker");
+        hop.headers
+            .get("x-jc-roles")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned()
+    };
     let (status, body) = read(&fixture, SLUG, &outsider).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(fixture.broker.hops().len(), 0, "the broker was never asked");
+    assert!(!roles(&fixture).contains("member"), "{}", roles(&fixture));
     let member = fixture
         .realm
         .workload_token(&client_id(PROJECT, "senzory"), json!(SLUG));
     let (status, body) = read(&fixture, SLUG, &member).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(
-        fixture.broker.hops().len(),
-        1,
-        "the member's read reached the broker"
-    );
+    assert!(roles(&fixture).contains("member"), "{}", roles(&fixture));
 }
 
 /// F-SEC1-009: while the gateway holds no Organization for the Endpoint's project (one
