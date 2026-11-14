@@ -222,7 +222,8 @@ export function EditResourceDialogBody({
         ? t("app.error.generic")
         : null);
   const failureAlert = failure ? (
-    <div ref={showFailure}>
+    // The margin keeps the Propose button under the refusal in view too.
+    <div ref={showFailure} className="scroll-mb-24">
       <Alert tone="danger" role="alert">
         {failure}
       </Alert>

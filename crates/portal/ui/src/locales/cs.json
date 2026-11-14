@@ -8312,6 +8312,8 @@
       "signIn": "Přihlášení",
       "signInHint": "Relace a hesla.",
       "signInPoliciesHint": "Druhý faktor a jaké musí být heslo.",
+      "sessions": "Relace",
+      "sessionsHint": "Kdy přihlášení skončí.",
       "password": "Hesla",
       "passwordHint": "Jaké musí být heslo.",
       "people": "Lidé",

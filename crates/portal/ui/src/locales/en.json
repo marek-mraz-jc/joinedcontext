@@ -8312,6 +8312,8 @@
       "signIn": "Sign-in",
       "signInHint": "Sessions and passwords.",
       "signInPoliciesHint": "The second factor and what a password must be.",
+      "sessions": "Sessions",
+      "sessionsHint": "When a sign-in ends.",
       "password": "Passwords",
       "passwordHint": "What a password must be.",
       "people": "People",

@@ -8312,6 +8312,8 @@
       "signIn": "Prihlásenie",
       "signInHint": "Relácie a heslá.",
       "signInPoliciesHint": "Druhý faktor a aké musí byť heslo.",
+      "sessions": "Relácie",
+      "sessionsHint": "Kedy prihlásenie skončí.",
       "password": "Heslá",
       "passwordHint": "Aké musí byť heslo.",
       "people": "Ľudia",

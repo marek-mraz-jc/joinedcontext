@@ -8312,6 +8312,8 @@
       "signIn": "Anmeldung",
       "signInHint": "Sitzungen und Passwörter.",
       "signInPoliciesHint": "Der zweite Faktor und was ein Passwort erfüllen muss.",
+      "sessions": "Sitzungen",
+      "sessionsHint": "Wann eine Anmeldung endet.",
       "password": "Passwörter",
       "passwordHint": "Wie ein Passwort sein muss.",
       "people": "Personen",

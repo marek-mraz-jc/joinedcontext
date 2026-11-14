@@ -3081,7 +3081,16 @@ export function organizationSchema(
         type: "object",
         title: t("organization.limitGroup.limits"),
         description: t("organization.limitGroup.limitsHint"),
-        properties: {},
+        // Named apart from Policies → Sign-in, which holds the second factor and the passwords.
+        properties: entries.some((entry) => entry.path.startsWith("spec.limits.signIn."))
+          ? {
+              signIn: {
+                type: "object",
+                title: t("organization.limitGroup.sessions"),
+                description: t("organization.limitGroup.sessionsHint"),
+              },
+            }
+          : {},
       },
       // The two policies that are no number; every numeric one comes from the catalog below.
       policies: {
