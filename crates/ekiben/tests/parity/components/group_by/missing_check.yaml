@@ -1,0 +1,11 @@
+input:
+  stdin: {}
+pipeline:
+  threads: 1
+  processors:
+    - group_by:
+      - processors:
+          - archive:
+              format: lines
+output:
+  stdout: {}

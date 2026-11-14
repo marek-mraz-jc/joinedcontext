@@ -2,6 +2,7 @@
 //! `ekiben-core` — Core message, batch, transaction, pipeline, resource,
 //! configuration interpolation, and multi-organization quota engine for `ekiben`.
 
+pub mod buffer;
 pub mod config;
 pub mod error;
 pub mod interpolate;

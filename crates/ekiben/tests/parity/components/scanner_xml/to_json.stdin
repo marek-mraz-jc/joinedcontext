@@ -1,0 +1,6 @@
+<a><b>ab0</b></a>invalid
+<a id="1">
+	<b>ab1</b>
+	<b>ab2</b>
+</a>
+<c/>

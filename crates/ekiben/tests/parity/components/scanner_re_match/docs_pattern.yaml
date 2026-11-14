@@ -1,0 +1,11 @@
+input:
+  stdin:
+    scanner:
+      re_match:
+        pattern: (?m)^\d\d:\d\d:\d\d
+pipeline:
+  threads: 1
+  processors:
+    - mapping: 'root = {"b": content().string(), "m": @, "i": batch_index(), "n": batch_size()}'
+output:
+  stdout: {}

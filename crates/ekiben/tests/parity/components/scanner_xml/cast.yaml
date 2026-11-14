@@ -1,0 +1,12 @@
+input:
+  stdin:
+    scanner:
+      xml_documents:
+        operator: to_json
+        cast: true
+pipeline:
+  threads: 1
+  processors:
+    - mapping: 'root = {"b": content().string(), "m": @, "i": batch_index(), "n": batch_size()}'
+output:
+  stdout: {}
