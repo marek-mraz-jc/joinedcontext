@@ -431,6 +431,24 @@ fn seed_project(mirror: &Mirror, project: &str, catalogue: &str) {
             "enabledRepresentations": ["ngsi-ld"]
         }),
     ));
+    // A Dashboard of two vega-lite widgets (S-93, T-6864): the counters' hourly average, and the
+    // reports drawn by contactEmail, which the models mark personal.
+    mirror.upsert(envelope(
+        "Dashboard",
+        "counters-board",
+        project,
+        json!({ "title": "Bike counters", "pages": [{ "title": "Overview", "widgets": [
+            { "widgetType": "vega-lite", "endpointRef": format!("{project}-counters"),
+              "data": { "source": "temporal", "type": "BikeCounter", "attrs": ["count"], "last": "P7D", "aggrMethod": "avg", "aggrPeriod": "PT1H" },
+              "spec": { "mark": "line", "data": { "name": "source" }, "encoding": {
+                  "x": { "field": "observedAt", "type": "temporal" },
+                  "y": { "field": "value", "type": "quantitative" } } } },
+            { "widgetType": "vega-lite", "endpointRef": format!("{project}-reports"),
+              "data": { "source": "csv", "type": "PotholeReport" },
+              "spec": { "mark": "bar", "data": { "name": "source" }, "encoding": {
+                  "x": { "field": "contactEmail", "type": "nominal" } } } }
+        ] }] }),
+    ));
     // The Pipelines' write target: a valid Endpoint manifest the write checks can read (PL-111).
     mirror.upsert(envelope(
         "Endpoint",

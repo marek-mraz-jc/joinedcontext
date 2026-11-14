@@ -799,6 +799,31 @@ fn widget_of(
     Ok((dashboard, widget))
 }
 
+/// What a connector door checks for a call that draws a saved widget (AG-158): the widget's
+/// Endpoint as `data.query.endpoint`, its channels as `encoding` and its source, every name it
+/// reads, as `data.query.q`, so the scope, ceiling and personal-data checks see the read the
+/// render makes, not the reference. `None` for a call that names no widget; a widget the caller
+/// cannot read names no Endpoint, which the render answers as missing.
+pub(crate) fn door_args(
+    caller: &Caller,
+    state: &AppState,
+    project: &str,
+    args: &Value,
+) -> Option<Value> {
+    let at = widget_ref(args.pointer("/data/widget")?).ok()?;
+    let Ok((_, widget)) = widget_of(caller, state, project, &at) else {
+        return Some(json!({ "data": { "query": {} } }));
+    };
+    let source = widget
+        .data
+        .as_ref()
+        .and_then(|data| serde_json::to_string(data).ok());
+    Some(json!({
+        "encoding": widget.spec.as_ref().and_then(|spec| spec.get("encoding")),
+        "data": { "query": { "endpoint": widget.endpoint_ref, "q": source } },
+    }))
+}
+
 /// A widget's saved spec through the same subset as a typed one; its `data` names the rows of
 /// its source, `{"name": "source"}`, and nothing else.
 fn widget_look(spec: Option<&Value>) -> Result<Spec, OpError> {

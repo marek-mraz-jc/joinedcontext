@@ -2216,3 +2216,27 @@
       refused: true
       contains: ['/data/url']
       absent: ['image/png']
+    # A saved widget drawn by reference (T-6864): its rows are read as the viewer, and through a
+    # connector the door checks the widget's own channels and source, not the reference (AG-158).
+    - proves: expect
+      call: jc_render
+      args: { data: { widget: { dashboard: counters-board, page: 0, widget: 0 } } }
+      contains: ['"mimeType":"image/png"', '"untrusted":true', '"dashboard":"counters-board"']
+    - proves: expect
+      rest:
+        method: POST
+        path: /connectors
+        body: { name: s93-whole, segments: [data-read], scope: [{ project: '{project}', access: read }], expiresAt: '{in7days}' }
+      contains: ['"state":"active"']
+    - proves: expect
+      via: connector
+      call: jc_render
+      args: { data: { widget: { dashboard: counters-board, page: 0, widget: 0 } } }
+      contains: ['"mimeType":"image/png"', '"untrusted":true']
+    - proves: deny
+      via: connector
+      call: jc_render
+      args: { data: { widget: { dashboard: counters-board, page: 0, widget: 1 } } }
+      refused: true
+      contains: ['contactEmail personal']
+      absent: ['jana@example.org', 'image/png']
