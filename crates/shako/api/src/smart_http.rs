@@ -338,6 +338,7 @@ pub async fn sync_repo_mirrors_on_commit(
             pass,
             &state.outbound_guard,
             None,
+            Some(m.branch.as_str()).filter(|b| !b.is_empty()),
         )
         .await
         {
