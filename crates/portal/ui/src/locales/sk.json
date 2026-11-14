@@ -8311,6 +8311,9 @@
       "gatewayHint": "Čo môže niesť jeden zápis cez endpoint.",
       "signIn": "Prihlásenie",
       "signInHint": "Relácie a heslá.",
+      "signInPoliciesHint": "Druhý faktor a aké musí byť heslo.",
+      "sessions": "Relácie",
+      "sessionsHint": "Kedy prihlásenie skončí.",
       "password": "Heslá",
       "passwordHint": "Aké musí byť heslo.",
       "people": "Ľudia",
@@ -8367,7 +8370,17 @@
       "publicApps_refused": "Zakázané",
       "models": "Modely, ktoré môže asistent používať",
       "modelsHint": "Nechajte prázdne, aby boli povolené všetky modely inštalácie.",
-      "everyModel": "Všetky modely inštalácie"
+      "everyModel": "Všetky modely inštalácie",
+      "secondFactor": "Druhý faktor pri prihlásení",
+      "secondFactorHint": "Povinný požiada ľudí s rolou v celej organizácii, aby si pri najbližšom prihlásení nastavili overovaciu aplikáciu, napríklad ak pracujú s osobnými údajmi.",
+      "secondFactor_required": "Povinný",
+      "secondFactor_optional": "Voliteľný",
+      "secondFactor_optionalUnderFloor": "Voliteľný (bez účinku: nasadenie ho vyžaduje)",
+      "secondFactorInherited": "Povinný (zdedené z nasadenia)",
+      "secondFactorInheritedHint": "Zdedené: povinný (nasadenie). Každý člen sa už prihlasuje s overovacou aplikáciou, takže Voliteľný tu nemá účinok.",
+      "secondFactorByDefault": "Voliteľný (predvolené nasadením)",
+      "secondFactorFixed": "Určené nasadením",
+      "secondFactorChoice": "Povinný alebo Voliteľný"
     },
     "brokers": {
       "title": "Kontextové brokery",

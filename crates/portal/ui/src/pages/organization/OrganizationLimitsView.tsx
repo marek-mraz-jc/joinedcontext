@@ -38,6 +38,7 @@ export function OrganizationLimitsView({
   publicApps,
   services,
   models,
+  secondFactor,
 }: {
   limits: OrganizationLimits;
   /** `spec.policies.apps.public`; absent is `allowed`. */
@@ -46,8 +47,19 @@ export function OrganizationLimitsView({
   services?: string[];
   /** `spec.policies.agents.models`; absent is every model of the installation. */
   models?: string[];
+  /** `spec.policies.signIn.secondFactor`; absent keeps the deployment's floor (T-6895). */
+  secondFactor?: string;
 }): JSX.Element {
   const { t } = useTranslation();
+  // Tighten only: a `required` floor holds whatever the Organization says.
+  const secondFactorInForce =
+    limits.secondFactorFloor === "required"
+      ? t("organization.policy.secondFactorInherited")
+      : secondFactor === "required"
+        ? t("organization.policy.secondFactor_required")
+        : secondFactor === "optional"
+          ? t("organization.policy.secondFactor_optional")
+          : t("organization.policy.secondFactorByDefault");
   const quotaCell = (used: number | null | undefined, limit: number | null | undefined) => {
     const allowed = limit === null || limit === undefined ? t("organization.limits.noLimit") : String(limit);
     return used === null || used === undefined ? allowed : t("organization.limits.usedOf", { used, limit: allowed });
@@ -111,6 +123,23 @@ export function OrganizationLimitsView({
                       .map((service) => t(`appServices.service.${service}.label`))
                       .join(", ") + (services ? "" : ` ${t("appServices.byDefault")}`),
                   range: "—",
+                },
+              ]
+            : []),
+          ...(section === "signIn"
+            ? [
+                {
+                  key: "secondFactor",
+                  label: t("organization.policy.secondFactor"),
+                  hint:
+                    limits.secondFactorFloor === "required"
+                      ? t("organization.policy.secondFactorInheritedHint")
+                      : t("organization.policy.secondFactorHint"),
+                  value: secondFactorInForce,
+                  range:
+                    limits.secondFactorFloor === "required"
+                      ? t("organization.policy.secondFactorFixed")
+                      : t("organization.policy.secondFactorChoice"),
                 },
               ]
             : []),

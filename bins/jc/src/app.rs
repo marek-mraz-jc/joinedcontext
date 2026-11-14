@@ -1784,6 +1784,19 @@ mod tests {
         .expect("the Portal accepts them");
         assert_eq!(bounds.quota_ceiling().apps, Some(250));
         assert!(modules::portal::limits_vars(&dev_config("portal", "")).is_empty());
+        // T-6895: the kaisatsu floor reaches the Portal, which shows it as inherited.
+        let floor = dev_config("portal", "[kaisatsu]\nsecond_factor = \"required\"\n");
+        let vars = modules::portal::limits_vars(&floor);
+        assert_eq!(
+            vars.get("JC_PORTAL_SECOND_FACTOR_FLOOR")
+                .map(String::as_str),
+            Some("required")
+        );
+        let floor =
+            joinedcontext_portal::config::Config::from_vars(|key: &str| vars.get(key).cloned())
+                .expect("the Portal accepts it")
+                .second_factor_floor;
+        assert!(floor);
         let typo = Config::parse_file(
             std::path::Path::new("jc.toml"),
             "[portal.limits]\n\"spec.projects.quota.apps\" = { maximum = 5 }\n",

@@ -257,6 +257,7 @@ The per-App quotas of the platform services an Organization (`spec.limits.apps`)
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `password` | [PasswordPolicy](#passwordpolicy) | no | The realm's password policy. |
+| `secondFactor` | [SecondFactor](#secondfactor) | no | Whether every member must sign in with an authenticator app: `required` asks each one to set it up at their next sign-in; `optional` or absent keeps the deployment's floor. It only raises that floor: under a `required` deployment, `optional` has no effect. Service accounts are never asked. |
 
 ## ProjectCreation
 
@@ -360,3 +361,9 @@ Type: one of `"identity"`, `"data"`, `"files"`, `"email"`, `"jobs"`, `"ai"`
 |---|---|---|---|
 | `history` | integer (uint32) | no | How many earlier passwords a new one may not repeat; 0 to 24. |
 | `minLength` | integer (uint32) | no | The shortest password the realm accepts; at least 12. |
+
+## SecondFactor
+
+`spec.policies.signIn.secondFactor`.
+
+Type: one of `"required"`, `"optional"`
