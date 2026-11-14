@@ -1320,9 +1320,11 @@ class Suite:
             h = self.session(f"{org}-admin")
             st, body = h.json("GET", "/api/v1/projects/org/portals")
             names = {i.get("metadata", {}).get("name") or i.get("name") for i in (body or {}).get("items", [])} if st == 200 else set()
-            foreign = sorted(f"multiorg-{o}" for o in self.exp if o != org and f"multiorg-{o}" in names)
+            # the installation's Organization holds no data: its admin is an operator, who sees all
+            operator = org == self.installation and not self.exp[org]["projects"]
+            foreign = [] if operator else sorted(f"multiorg-{o}" for o in self.exp if o != org and f"multiorg-{o}" in names)
             self.row(f"portals.{org}-admin.list", org, "GET /api/v1/projects/org/portals",
-                     f"200 with multiorg-{org}, no portal of another Organization",
+                     f"200 with multiorg-{org}, no portal of another Organization (an operator: every one)",
                      f"{st}, own {f'multiorg-{org}' in names}, foreign {foreign[:3]}",
                      st == 200 and f"multiorg-{org}" in names and not foreign)
             st, _, _ = h.call("GET", f"/api/v1/projects/org/portals/multiorg-{org}")
@@ -1330,6 +1332,8 @@ class Suite:
             self.row(f"portals.{org}-admin.read.own", org, f"GET /api/v1/projects/org/portals/multiorg-{org}",
                      "200", str(st), st == 200)
         for org in self.exp:
+            if org == self.installation and not self.exp[org]["projects"]:
+                continue  # an operator (check_operators): no refusal rows
             h = self.session(f"{org}-admin")
             for other in self.exp:
                 if other == org:
@@ -1365,7 +1369,8 @@ class Suite:
         def propose(sources):
             body = json.loads(portal_manifest(f"{tag}-{org}", org, sources, path=tag))
             return h.json("POST", "/api/v1/projects/org/portals?dryRun=All", body=body)
-        control, _ = propose([])
+        st_c, body_c = propose([])
+        control = st_c if (body_c or {}).get("valid", True) else f"{st_c} invalid"
         projects = sorted(self.exp[other]["projects"])
         closed = sorted(s for p in self.exp[other]["projects"].values() for s in p["closed"])
         api = self.hosts[other]["api"] if self.hosts else urllib.parse.urlparse(self.base).hostname
@@ -1379,10 +1384,13 @@ class Suite:
                          f"{other} has no {'project' if case == 'foreign-project' else 'private Endpoint'}")
                 continue
             st, raw = propose(sources)
-            text = json.dumps(raw)
+            # refused at the door (422) or by the dry run's verdict (200, valid false, a finding)
+            refusal = json.dumps(raw if st == 422 else (raw or {}).get("verdict", {}).get("findings", []))
+            refused = st == 422 or (st == 200 and (raw or {}).get("valid") is False)
             self.row(rid, f"{org}->{other}", f"POST /api/v1/projects/org/portals?dryRun=All ({case} of {other})",
-                     "422 naming spec.sources[0] (the Portal without it 200)", f"{st} {text[:140]}, control {control}",
-                     (st == 422 and "spec.sources[0]" in text) if control == 200 else None,
+                     "refused naming spec.sources[0]: 422, or a dry run valid false (the Portal without it valid)",
+                     f"{st} {refusal[:200]}, control {control}",
+                     (refused and "spec.sources[0]" in refusal) if control == 200 else None,
                      "" if control == 200 else f"no control: the Portal without sources answered {control}")
 
     def check_portal_addresses(self):
@@ -1427,7 +1435,8 @@ class Suite:
                    "params": {"name": "jc_dataset_search", "arguments": {}}}
             st, body = h.json("POST", f"{base}/mcp", body=rpc)
             text = json.dumps(body, ensure_ascii=False)
-            names = {n for n in [*others, *listed[org]] if n and re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", text)}
+            # a dataset by its `name` member (the tool's text is JSON inside JSON), never a bare word
+            names = {n for n in [*others, *listed[org]] if n and re.search(rf'\\?"name\\?":\s*\\?"{re.escape(n)}\\?"', text)}
             leaked = sorted(others & names)
             own = not listed[org] or bool(listed[org] & names)
             self.row(f"portals.{org}.mcp.no-foreign", org, f"POST {{opendata}}{base}/mcp tools/call jc_dataset_search",

@@ -347,7 +347,8 @@ class PortalJc:
                 if not jc.ours(org, spec["organizationRef"]):
                     return 403, {"detail": "not yours"}
                 if spec["sources"] and not jc.leaky:
-                    return 422, {"detail": "spec.sources[0].projects: no project of yours"}
+                    return 200, {"valid": False, "verdict": {"ok": False, "findings": [
+                        {"level": "error", "path": "spec.sources[0].projects", "message": "no project of yours"}]}}
                 return 200, {}
 
             def call(self, method, path, headers=None):
