@@ -79,8 +79,8 @@ export interface SameSection {
  * declare in any case.
  */
 export function sameSection(pathname: string): SameSection {
-  const [, , section] = pathname.split("/").filter(Boolean);
+  const [root, , section] = pathname.split("/").filter(Boolean);
   // A segment that is not a plural is not a section: a stray path lands on Spaces rather than
   // building `/projects/other/%2E%2E`.
-  return { plural: section && /^[a-z][a-z0-9-]*$/.test(section) ? section : "spaces" };
+  return { plural: root === "projects" && section && /^[a-z][a-z0-9-]*$/.test(section) ? section : "spaces" };
 }
