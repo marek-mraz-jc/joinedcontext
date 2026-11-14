@@ -207,6 +207,41 @@ async fn another_organizations_portal_is_not_there() {
     assert_eq!(gone.status, StatusCode::NOT_FOUND, "{}", gone.body);
 }
 
+/// The editor's host dropdown (ODP-15, T-6875): each admin reads only its own Organization's
+/// listed hosts, somebody who makes no portal is refused, and nobody signed in is 401.
+#[tokio::test]
+async fn portal_hosts_lists_only_the_callers_organizations() {
+    let state = world();
+    let hosts = "/api/v1/organization/portal-hosts";
+    let own = http(&state, admin("bbadmin"), "GET", hosts, None).await;
+    assert_eq!(own.status, StatusCode::OK, "{}", own.body);
+    assert_eq!(
+        own.body["items"],
+        json!([{ "organization": "bbsk", "hosts": ["doprava.bbsk.sk"] }]),
+        "{}",
+        own.body
+    );
+    let theirs = http(&state, admin("prahaadmin"), "GET", hosts, None).await;
+    assert_eq!(
+        theirs.body["items"],
+        json!([{ "organization": "praha", "hosts": [] }]),
+        "{}",
+        theirs.body
+    );
+    let nobody = http(&state, admin("stranger"), "GET", hosts, None).await;
+    assert_eq!(nobody.status, StatusCode::FORBIDDEN, "{}", nobody.body);
+    let anonymous = joinedcontext_portal::server::app(state.clone())
+        .oneshot(
+            Request::builder()
+                .uri(hosts)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+}
+
 #[tokio::test]
 async fn deleting_the_default_portal_is_refused_and_a_further_one_is_not() {
     let state = world();

@@ -14,16 +14,16 @@ Every Organization has the portal `default`. The platform creates it the first t
 
 A further portal serves a theme or an audience of its own, for example `mobility` for transport data or `education` for the schools of a region (ODP-08). It answers at:
 
-- `/{org}/opendata/-/{name}/` on the platform's shared host, for example `/bratislava/opendata/-/mobility/`. The `-` segment is never a dataset, group or page name, so a portal can never take over an address of `default`.
+- `/{org}/opendata/-/{path}/` on the platform's shared host, for example `/bratislava/opendata/-/mobility/`. The `-` segment is never a dataset, group or page name, so a portal can never take over an address of `default`.
 - or its own host, for example `mobility.bratislava.sk`, when the operator of the deployment has listed that host for your Organization. A host nobody listed is refused when the Change is proposed (section 4).
 
-A portal on its own host chooses what its path address does with `spec.slug`. `redirect`, the default, answers every request on the path address `/{org}/opendata/[-/{name}/]...` with `308` to the same path and query on the host. `keep` answers on both, and every page and feed names the host as the canonical address.
+A portal on its own host chooses what its path address does with `spec.slug`. `redirect`, the default, answers every request on the path address `/{org}/opendata/[-/{path}/]...` with `308` to the same path and query on the host. `keep` answers on both, and every page and feed names the host as the canonical address.
 
 Changing a portal's address never changes a dataset IRI: an IRI keeps the address the dataset was first published under, and that first address redirects to the new one (ODP-08).
 
-A portal's `name` is a DNS label: lower-case letters, digits and hyphens, at most 63 characters, starting and ending with a letter or digit, and unique in the Organization. Example: `mobility`.
+A portal's `path` is a DNS label: lower-case letters, digits and hyphens, at most 63 characters, starting and ending with a letter or digit, and unique in the Organization. Example: `mobility`. Its manifest's `metadata.name` is the file's key among the manifests of every Organization, so it carries the Organization in front, for example `bratislava-mobility`; the `default` portal of an Organization needs no manifest until you describe it.
 
-The deployment caps how many portals all its Organizations hold together: `portals.max` in the deployment configuration, by default three per Organization the deployment is sized for. Every `default` portal counts toward it and is always created.
+The deployment caps how many portals all its Organizations hold together: `portals.max` in the deployment configuration (`[dataroom] portals_max` in `jc.toml`), by default three per Organization the deployment serves. The operator lists the hosts an Organization's portals may take under that Organization's `hosts.portals`. Every `default` portal counts toward it and is always created.
 
 ## 2. Describe a Portal
 
@@ -31,11 +31,13 @@ A portal is configuration as code: one manifest in the Organization's repository
 
 | Field | What it holds | Example |
 |---|---|---|
-| `metadata.name` | the portal's name (section 1) | `mobility` |
+| `metadata.name` | the manifest's key, unique in the deployment | `bratislava-mobility` |
+| `spec.organizationRef` | the Organization the portal belongs to; it never changes | `bratislava` |
+| `spec.path` | the portal's name in the Organization (section 1); `default` is the Organization's own portal | `mobility` |
 | `spec.title` | the title on every page of the portal, per language | `{sk: "Doprava", en: "Mobility"}` |
 | `spec.languages` | the languages the portal is shown in, the first one the default | `[sk, en]` |
 | `spec.host` | its own host, one the operator listed for the Organization; absent means the path address | `mobility.bratislava.sk` |
-| `spec.slug` | with `spec.host`: `redirect` (the default) sends the path address to the host with `308`, `keep` serves both with the host canonical | `keep` |
+| `spec.slug` | with a `host`: `redirect` (the default) answers the path address with `308` to the same page on the host; `keep` answers both and names the host in every link and identifier | `keep` |
 | `spec.appearance` | overrides of the Organization's appearance (logo, colours) for this portal only | `{accent: "#0b6e4f"}` |
 | `spec.profiles` | the DCAT-AP profiles the portal's feeds serve | `[dcat-ap-3.0.1, dcat-ap-sk]` |
 | `spec.sources` | where its datasets come from (section 3) | |
@@ -47,25 +49,24 @@ A second portal for a theme:
 apiVersion: joinedcontext.com/v1alpha1
 kind: Portal
 metadata:
-  name: mobility
+  name: bratislava-mobility
+  namespace: org
 spec:
+  organizationRef: bratislava
+  path: mobility
   title:
     sk: Doprava v Bratislave
     en: Mobility in Bratislava
   languages: [sk, en]
   profiles: [dcat-ap-3.0.1]
-  sources:
-    - name: transport-endpoints
-      type: endpoints
-      projects: [transport]
 ```
 
 ## 3. Sources
 
 A source tells the portal where its datasets come from (ODP-10). Each source has a `name`, unique in the portal, and a `type`:
 
-- `endpoints`: this Organization's Endpoints that are already published, narrowed by `projects`, `spaces`, `tags` or `names`. A source never publishes anything by itself: an Endpoint appears only when it has opted in to publishing and carries a `public` Policy, or is listed as `public` (see [Endpoints and Sharing](05-endpoints-and-sharing.md)).
-- `dcat-ap`, `ckan-action`, `nkod-sparql`, `arcgis-hub`: a catalogue elsewhere that the portal harvests on a `schedule`. Each takes the catalogue's `url`, `allowedHosts` (each inside the deployment's harvest allow-list), a `budget` of records and bytes per run, and the harvest options the deployment already knows (publisher, rewrite_hosts, skip, titles, spelling, require_column, converted_file, gateway, name_prefix).
+- `endpoints`: this Organization's Endpoints that are already published in its `default` portal, narrowed by `projects`, `spaces`, `tags` (the keywords of the published dataset) or `names`; each list keeps the Endpoints that match one of its values, and the lists narrow together. A source never publishes anything by itself: an Endpoint appears only when it has opted in to publishing and carries a `public` Policy (see [Endpoints and Sharing](05-endpoints-and-sharing.md)). The portal shows the dataset under the `default` portal's IRI, and a dataset that leaves the selection leaves the portal within a minute. A project of another Organization is refused with `422` naming `spec.sources[i].projects`.
+- `dcat-ap`, `ckan-action`, `nkod-sparql`, `arcgis-hub`: a catalogue elsewhere that the portal harvests on a `schedule`. Each takes the catalogue's `url` (`https://` only), `allowedHosts` (each inside the deployment's harvest allow-list), a `budget` of records and bytes per run, and the harvest options the deployment already knows: `publisher`, `publisherTitle`, `publisherUri`, `publisherDescription`, `spatialUri`, `namePrefix`, `rewriteHosts`, `skip`, `titles`, `spelling`, `requireColumn` and `gateway`.
 
 Federation with another deployment, of this platform or of any DCAT-AP catalogue, is a `dcat-ap` source at that catalogue's public address:
 
@@ -73,8 +74,11 @@ Federation with another deployment, of this platform or of any DCAT-AP catalogue
 apiVersion: joinedcontext.com/v1alpha1
 kind: Portal
 metadata:
-  name: region
+  name: bratislava-region
+  namespace: org
 spec:
+  organizationRef: bratislava
+  path: region
   title:
     en: Open data of the region
   languages: [en]

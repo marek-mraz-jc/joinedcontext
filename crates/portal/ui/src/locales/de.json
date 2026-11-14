@@ -8420,7 +8420,8 @@
       "back": "Zurück zu den Projekten",
       "notAdmin": "Die Verwaltung ist für Administratoren der Organisation. Ihre Projekte sind einen Schritt zurück.",
       "notAdminCatalogue": "Die Verwaltung ist für Administratoren der Organisation. Der Katalog ist einen Schritt zurück.",
-      "toCatalogue": "Zurück zum Katalog"
+      "toCatalogue": "Zurück zum Katalog",
+      "portals": "Open-Data-Portale"
     },
     "group": {
       "access": "Personen und Zugriff",
@@ -12594,5 +12595,91 @@
     "searchRowsHint": "Geben Sie einen Teil eines Werts ein, z. B. einen Namen oder einen Bereich.",
     "noMatch": "Keine Zeile passt zur Suche oder zu den Filtern.",
     "rowCount": "{n} Zeilen"
+  },
+  "portals": {
+    "nav": {
+      "back": "Zurück zur Verwaltung",
+      "title": "Open-Data-Portale",
+      "list": "Alle Portale",
+      "new": "Neues Portal"
+    },
+    "notAdmin": "Open-Data-Portale legen die Administratoren einer Organisation an. Bitten Sie einen von ihnen oder den Betreiber um Zugang.",
+    "list": {
+      "title": "Open-Data-Portale",
+      "description": "Jedes Portal Ihrer Organisationen, wo es antwortet und wie viele Quellen es füllen.",
+      "new": "Neues Portal",
+      "empty": "Noch kein Portal",
+      "emptyHint": "Das Standardportal Ihrer Organisation erscheint hier, sobald der Betreiber es einrichtet. Ein weiteres, zum Beispiel für Mobilitätsdaten, legen Sie mit Neues Portal an.",
+      "sources": "Quellen",
+      "default": "Standard",
+      "noBase": "Adresse …/-/{path}/ (Basis des Portals hier unbekannt)"
+    },
+    "field": {
+      "title": "Titel",
+      "organization": "Organisation",
+      "organizationPick": "Organisation wählen",
+      "path": "Name in der Adresse",
+      "languages": "Sprachen",
+      "titleIn": "Titel ({language})",
+      "address": "Adresse",
+      "host": "Domain",
+      "hostPick": "Domain wählen",
+      "keepSlug": "Die übliche Adresse ebenfalls behalten",
+      "instanceName": "Name in der Kopfzeile",
+      "primary": "Hauptfarbe",
+      "profiles": "DCAT-AP-Profile"
+    },
+    "hint": {
+      "organization": "Die Organisation, der das Portal gehört; es zieht nie zu einer anderen um. Zum Beispiel berlin.",
+      "path": "Kleinbuchstaben, Ziffern und Bindestriche, eindeutig in der Organisation, zum Beispiel mobility: das Portal antwortet unter …/opendata/-/mobility/. Einmal gewählt: der Pfad ändert sich nie, damit Datensatzadressen stabil bleiben.",
+      "languages": "Die Sprachen des Portals; die erste angehakte ist die Standardsprache, zum Beispiel Deutsch und Englisch.",
+      "title": "Steht auf jeder Seite des Portals, zum Beispiel Mobilität.",
+      "address": "Die übliche Adresse liegt unter dem Open-Data-Portal der Organisation; eine Domain ist eine, die der Betreiber für die Organisation eingetragen hat.",
+      "host": "Nur die Domains, die der Betreiber für diese Organisation eingetragen hat, zum Beispiel mobility.berlin.de.",
+      "keepSlug": "Aus: die übliche Adresse leitet zur Domain weiter. An: beide antworten, die Domain gilt als kanonisch.",
+      "instanceName": "Ersetzt den Namen der Organisation in der Kopfzeile dieses Portals, zum Beispiel Mobilität Berlin. Leer behält den der Organisation.",
+      "primary": "Eine Hex-Farbe für Schaltflächen und Links des Portals, zum Beispiel #0b5394. Leer behält die der Organisation.",
+      "profiles": "Die Profile, in denen das Portal seine DCAT-AP-Feeds anbietet, zum Beispiel dcat-ap-3.0.1."
+    },
+    "mode": {
+      "slug": "Übliche Adresse unter dem Open-Data-Portal der Organisation",
+      "domain": "Eine eigene Domain"
+    },
+    "language": {
+      "sk": "Slowakisch",
+      "en": "Englisch",
+      "cs": "Tschechisch",
+      "de": "Deutsch"
+    },
+    "fault": {
+      "organization": "Wählen Sie die Organisation, der das Portal gehört.",
+      "path": "Verwenden Sie Kleinbuchstaben, Ziffern und Bindestriche, zum Beispiel mobility.",
+      "pathDefault": "default ist das eigene Portal der Organisation; wählen Sie einen anderen Namen.",
+      "pathTaken": "Diese Organisation hat schon ein Portal dieses Namens; wählen Sie einen anderen.",
+      "languages": "Haken Sie mindestens eine Sprache an.",
+      "title": "Schreiben Sie den Titel in der ersten Sprache.",
+      "host": "Wählen Sie eine Domain oder wechseln Sie zur üblichen Adresse.",
+      "primary": "Schreiben Sie die Farbe als # und sechs Hex-Ziffern."
+    },
+    "editor": {
+      "newTitle": "Neues Portal",
+      "editTitle": "Portal {name} bearbeiten",
+      "description": "Titel, Adresse, Sprachen und Aussehen des Portals. Speichern schlägt eine Änderung zur Freigabe vor.",
+      "missing": "Kein Portal {name} in Ihren Organisationen",
+      "missingHint": "Es wurde entfernt oder gehört einer Organisation, die Sie nicht verwalten. Alle Portale listet Ihre.",
+      "refused": "Das Portal wurde nicht vorgeschlagen",
+      "backToList": "Zurück zu allen Portalen",
+      "noHosts": "Der Betreiber hat für {organization} noch keine Domain eingetragen.",
+      "proposeDomain": "Eine Domain, die nicht in der Liste steht, beginnt mit der Domainprüfung der Organisation; wenn sie besteht, bitten Sie den Betreiber, sie einzutragen.",
+      "proposeDomainLink": "Neue Domain vorschlagen",
+      "addressWill": "Das Portal wird unter {address} antworten",
+      "addressUnknown": "Die Adresse erscheint, sobald Organisation und Name gewählt sind.",
+      "create": "Portal vorschlagen",
+      "save": "Änderungen vorschlagen",
+      "open": "Portal öffnen",
+      "delete": "Portal entfernen",
+      "defaultKept": "Das Standardportal bleibt: es ist der eigene Katalog der Organisation.",
+      "fixed": "Fest, sobald das Portal besteht: ein Portal zieht nie zu einer anderen Organisation, einem anderen Namen oder Pfad um."
+    }
   }
 }

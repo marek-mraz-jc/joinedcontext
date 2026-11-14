@@ -81,6 +81,7 @@ const ROUTE_COVERAGE: &[(&str, &str, &str)] = &[
 ("GET", "/metrics", "the Prometheus scrape"),
 ("POST", "/live-notify/{key}", "the gateway's delivery of the Portal's own live-update notifications: a broker calls it, nobody else (API/01 §32)"),
 ("GET", "/openapi.json", "the API document"),
+("GET", "/organization/portal-hosts", "the Portals editor's Domain dropdown: the hosts the operator listed per Organization the caller makes portals in (T-6875); an agent proposes a Portal through jc_resource_propose and the judge checks the host"),
 ("GET", "/organization/health-checks", "the administrator's Health page across projects (T-5067); an agent reads one resource's status with jc_resource_get"),
 ("GET", "/organization/health", "the validation checks' published results, about the installation and not a project's data (OPS-53)"),
 ("GET", "/organization/agents", "a summary for the Agents page, read from the manifests jc_resource_list already reaches and the caller's own run list; it writes nothing (T-4849, API/01 §48)"),

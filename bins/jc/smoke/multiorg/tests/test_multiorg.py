@@ -326,6 +326,100 @@ def test_an_operators_installation_organization_gets_operator_rows_and_no_refusa
     assert s.rows == []
 
 
+class PortalJc:
+    """A jc answering the Portal rows (check_portals): `leaky`, it answers as if isolation were
+    broken: every Organization's Portals readable, writable and listing each other's datasets."""
+
+    def __init__(self, orgs, leaky, wrong_reason=False):
+        self.orgs, self.leaky, self.wrong_reason = orgs, leaky, wrong_reason
+
+    def ours(self, org, other):
+        return self.leaky or org == other
+
+    def session(self, key, on=None):
+        jc, org = self, key.rsplit("-", 1)[0]
+
+        class Session:
+            def json(self, method, path, body=None, headers=None):
+                if method == "GET" and path == "/api/v1/projects/org/portals":
+                    return 200, {"items": [{"metadata": {"name": f"multiorg-{o}"}} for o in jc.orgs if jc.ours(org, o)]}
+                spec = body["spec"]
+                if not jc.ours(org, spec["organizationRef"]):
+                    return 403, {"detail": "not yours"}
+                if spec["sources"] and jc.wrong_reason:
+                    # refused for a reason that is not the isolation rule (a loopback guard)
+                    return 422, {"detail": "spec.sources[0].url: loopback address refused"}
+                if spec["sources"] and not jc.leaky:
+                    finding = ({"path": "spec.sources[0].projects", "message": "x is no project of yours"}
+                               if spec["sources"][0]["type"] == "endpoints" else
+                               {"path": "spec.sources[0].allowedHosts", "message": "x is not in the deployment's harvest allow-list"})
+                    return 200, {"valid": False, "verdict": {"ok": False, "findings": [{"level": "error", **finding}]}}
+                return 200, {}
+
+            def call(self, method, path, headers=None):
+                other = path.split("?")[0].rsplit("multiorg-", 1)[1]
+                return (200, {}, b"{}") if jc.ours(org, other) else ((404 if method == "GET" else 403), {}, b"{}")
+        return Session()
+
+    def client(self, org=None, kind="portal"):
+        jc = self
+
+        class Data:
+            def names(self, path):
+                return [f"{o}-air" for o in jc.orgs if o == org or (jc.leaky and path.startswith("/-/"))]
+
+            def json(self, method, path, body=None, headers=None):
+                if path.endswith("/mcp"):
+                    return 200, {"result": {"content": [{"text": json.dumps({"datasets": [{"name": n} for n in self.names(path)]})}]}}
+                return 200, {"result": {"results": [{"name": n} for n in self.names(path)]}}
+
+            def call(self, method, path, headers=None):
+                if "package_list" in path:
+                    return 200, {}, json.dumps({"result": self.names(path)}).encode()
+                if "package_search" in path:
+                    return 200, {}, json.dumps(self.json(method, path)[1]).encode()
+                return 200, {}, " ".join(f"https://x/dataset/{n}" for n in self.names(path)).encode()
+        return Data()
+
+
+@pytest.mark.parametrize("leaky", [False, True])
+def test_the_portal_rows_pass_on_an_isolated_jc_and_each_fails_where_isolation_breaks(tmp_path, leaky):
+    # T-6877 (ODP-12): the red proof is the same jc with isolation broken.
+    s = suite.Suite(args(tmp_path))
+    s.a.sync_timeout = 0
+    orgs = ("hel", "zilina")
+    s.exp = {"hel": {"projects": {"helsinki": EMPTY | {"closed": {"hslug": ("bikes", "organization")}}}},
+             "zilina": {"projects": {"zilina": EMPTY | {"closed": {"zslug": ("air", "organization")}}}}}
+    s.hosts = {o: {k: f"{k}.{o}.localhost" for k in ("portal", "opendata", "api", "mcp")} for o in orgs}
+    jc = PortalJc(orgs, leaky)
+    s.session, s.client = jc.session, jc.client
+    s.check_portals()
+    got = {r["id"]: r["result"] for r in s.rows}
+    isolation = [r for r in got if ".own" not in r and not r.endswith(".listed")]
+    assert len(isolation) == 2 * 6 + 2 * 6, sorted(got)
+    assert {got[r] for r in isolation} == {"fail" if leaky else "pass"}, got
+    assert got["portals.hel-admin.read.own"] == got["portals.hel.listed"] == "pass"
+    assert next(r for r in s.rows if r["id"] == "portals.hel-admin.read.zilina")["target"] == "hel->zilina"
+
+
+def test_a_source_refused_for_another_reason_does_not_pass_the_source_rows(tmp_path):
+    # T-6877 review: a refusal naming spec.sources[0] for a reason other than the isolation rule
+    # (a loopback guard, a malformed url) proves nothing about ODP-12.
+    s = suite.Suite(args(tmp_path))
+    s.a.sync_timeout = 0
+    orgs = ("hel", "zilina")
+    s.exp = {"hel": {"projects": {"helsinki": EMPTY | {"closed": {"hslug": ("bikes", "organization")}}}},
+             "zilina": {"projects": {"zilina": EMPTY | {"closed": {"zslug": ("air", "organization")}}}}}
+    s.hosts = {o: {k: f"{k}.{o}.localhost" for k in ("portal", "opendata", "api", "mcp")} for o in orgs}
+    jc = PortalJc(orgs, False, wrong_reason=True)
+    s.session, s.client = jc.session, jc.client
+    s.check_portals()
+    got = {r["id"]: r["result"] for r in s.rows}
+    sources = [r for r in got if ".source." in r]
+    assert len(sources) == 4 and {got[r] for r in sources} == {"fail"}, got
+    assert {got[r] for r in got if ".source." not in r} == {"pass"}, got
+
+
 _cspec = importlib.util.spec_from_file_location("smoke_multiorg_compose", HERE.parent / "compose.py")
 compose = importlib.util.module_from_spec(_cspec)
 _cspec.loader.exec_module(compose)

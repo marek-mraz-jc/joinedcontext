@@ -6,8 +6,8 @@
 use dataroom_api::{portal_publisher_on, DataroomState, PortalAddress};
 use dataroom_core::auth::constant_time_eq;
 use dataroom_core::{
-    Catalogue, CatalogueId, DataroomError, HarvestSource, LiveAuthorizer, OrgId, Publisher,
-    RequestCtx, Result, Subject,
+    Catalogue, CatalogueId, DataroomError, Dataset, HarvestSource, LiveAuthorizer, OrgId,
+    Publisher, RecordState, RequestCtx, Result, Subject,
 };
 use dataroom_harvest::harvest_principal;
 use std::sync::{Arc, PoisonError, RwLock};
@@ -250,6 +250,74 @@ impl CatalogueWriter {
             .store
             .delete_harvest_source(&ctx, id_or_name)
             .await
+    }
+
+    /// Lists in catalogue `to` the active datasets of catalogue `from` (whose public base is
+    /// `from_base`) that `keep` selects, an `endpoints` source of a Portal (ODP-10): each a copy
+    /// under its own name whose IRI stays `from`'s (ODP-14), marked `generated_by = marker`, its
+    /// publisher copied when `to` lacks it. A name `to` holds for anything else (a harvested
+    /// record) is left alone; a copy `keep` no longer selects is withdrawn. Answers the names
+    /// `to` lists.
+    pub async fn list_from(
+        &self,
+        org: OrgId,
+        (from, from_base): (CatalogueId, &str),
+        to: CatalogueId,
+        marker: &str,
+        keep: impl Fn(&Dataset) -> bool,
+    ) -> Result<Vec<String>> {
+        let _serial = self.serial.lock().await;
+        let (source, target) = (self.live(org, from)?, self.live(org, to)?);
+        let store = self.state.store.as_ref();
+        let mut listed = Vec::new();
+        for ds in store.list_datasets(&source).await? {
+            if ds.state != RecordState::Active || !keep(&ds) {
+                continue;
+            }
+            let held = store.get_dataset(&target, &ds.name).await?;
+            if held
+                .as_ref()
+                .is_some_and(|h| h.generated_by.as_deref() != Some(marker))
+            {
+                continue;
+            }
+            listed.push(ds.name.clone());
+            let copy = Dataset {
+                org_id: org,
+                catalogue_id: to,
+                uri: Some(ds.canonical_uri(from_base)),
+                generated_by: Some(marker.to_owned()),
+                ..ds
+            };
+            if held.as_ref() == Some(&copy) {
+                continue;
+            }
+            if store
+                .get_publisher(&target, &copy.publisher_id)
+                .await?
+                .is_none()
+            {
+                if let Some(publisher) = store.get_publisher(&source, &copy.publisher_id).await? {
+                    let publisher = Publisher {
+                        org_id: org,
+                        catalogue_id: to,
+                        id: String::new(),
+                        ..publisher
+                    };
+                    store.upsert_publisher(&target, publisher).await?;
+                }
+            }
+            store.upsert_dataset(&target, copy).await?;
+        }
+        for ds in store.list_datasets(&target).await? {
+            if ds.generated_by.as_deref() == Some(marker)
+                && ds.state == RecordState::Active
+                && !listed.contains(&ds.name)
+            {
+                store.withdraw_dataset(&target, &ds.id).await?;
+            }
+        }
+        Ok(listed)
     }
 
     /// The context of a catalogue this writer serves; another one is not found.

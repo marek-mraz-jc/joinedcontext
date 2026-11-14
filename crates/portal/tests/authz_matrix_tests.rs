@@ -130,7 +130,7 @@ const EDITOR_KINDS: [&str; 8] = [
     "DataSource",
 ];
 /// What the org-admin proposes, approves and deletes (helsinki-role-org-admin.yaml).
-const ADMIN_KINDS: [&str; 34] = [
+const ADMIN_KINDS: [&str; 35] = [
     "Organization",
     "Project",
     "ContextSpace",
@@ -165,6 +165,7 @@ const ADMIN_KINDS: [&str; 34] = [
     "Entity",
     "Dashboard",
     "Layer",
+    "Portal",
 ];
 
 /// What a cell may say: allowed, or the status the caller gets instead.
@@ -516,6 +517,14 @@ async fn fixture() -> AppState {
                     "quotas": { "mqtt": { "enabled": true, "brokers": 2, "connections": 2000 } } }),
         ));
     }
+    // The projects' Organization, so the org-admin's own-settings rules (Portal among them)
+    // have an Organization to narrow to: one not in the repository is given nothing.
+    state.mirror.upsert(envelope(
+        "Organization",
+        "hel",
+        ORG_NAMESPACE,
+        json!({ "domain": "hel.fi" }),
+    ));
     state
 }
 
