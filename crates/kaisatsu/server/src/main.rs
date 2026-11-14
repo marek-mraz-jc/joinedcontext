@@ -68,8 +68,12 @@ enum Commands {
         sweep_interval_secs: u64,
         /// File in the secrets mount holding the SMTP password used with each realm's
         /// `smtpServer`. Without it queued e-mails stay pending (K9).
-        #[arg(long)]
+        #[arg(long, requires = "smtp_host")]
         smtp_password_file: Option<PathBuf>,
+        /// The SMTP host that password belongs to (`smtp.example.org`): e-mail goes out only for
+        /// a realm whose `smtpServer.host` names this host.
+        #[arg(long, requires = "smtp_password_file")]
+        smtp_host: Option<String>,
         /// Seconds between e-mail outbox dispatch passes (K9).
         #[arg(long, default_value_t = 10)]
         outbox_interval_secs: u64,
@@ -380,6 +384,7 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
             trusted_proxy,
             sweep_interval_secs,
             smtp_password_file,
+            smtp_host,
             outbox_interval_secs,
             branding_file,
             second_factor,
@@ -456,8 +461,12 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
                     }
                 });
             }
-            if let Some(pw_file) = smtp_password_file {
-                let sender = Arc::new(kaisatsu_login::RealmSmtpSender::new(store.clone(), pw_file));
+            if let (Some(pw_file), Some(smtp_host)) = (smtp_password_file, smtp_host) {
+                let sender = Arc::new(kaisatsu_login::RealmSmtpSender::new(
+                    store.clone(),
+                    pw_file,
+                    smtp_host,
+                ));
                 let dispatcher =
                     kaisatsu_login::OutboxDispatcher::new(store.clone(), kek.clone(), sender);
                 let mail_mount = mount.clone();

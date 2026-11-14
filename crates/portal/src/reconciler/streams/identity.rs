@@ -104,10 +104,14 @@ pub enum PipelineCredential {
 /// `[ekiben] client_secrets_dir` loader names it the same. An author cannot name it: jc-core lets
 /// a step read only `STEP_VARIABLES` and a `secretRef` no `JC_` variable.
 pub fn pipeline_secret_var(project: &str, pipeline: &str) -> String {
-    let client = jc_core::kinds::service_account::keycloak_client_id(
+    own_client_secret_var(&jc_core::kinds::service_account::keycloak_client_id(
         project,
         &jc_core::kinds::pipeline_identity::account_name(pipeline),
-    );
+    ))
+}
+
+/// [`pipeline_secret_var`] of a pipeline's client id, `{project}-pl-{pipeline}`.
+pub(crate) fn own_client_secret_var(client: &str) -> String {
     let mut name = String::from("JC_PIPELINE_SECRET_");
     name.extend(client.chars().map(|ch| {
         if ch.is_ascii_alphanumeric() {

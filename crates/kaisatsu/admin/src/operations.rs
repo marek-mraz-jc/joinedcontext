@@ -71,6 +71,51 @@ pub(crate) fn person_target(ctx: &RequestCtx, user: &UserRepresentation) -> Obje
     }
 }
 
+/// Refuses a write on a person who holds realm-wide authority (`realm-admin`, `realm-apply` or
+/// any `realm-management` role, directly, through a group or a composite) unless the caller
+/// manages people realm-wide itself. An Organization's admins and people managers manage the
+/// people of their Organization; resetting a realm administrator's credentials would hand them
+/// the realm. The own account stays the caller's own business.
+pub(crate) async fn ensure_person_ceiling(
+    state: &AdminState,
+    ctx: &RequestCtx,
+    user: &UserRepresentation,
+) -> Result<()> {
+    let caller = &ctx.principal;
+    if caller.has_realm_mgmt_role("manage-users")
+        || caller.has_realm_mgmt_role("scim")
+        || caller.subject.as_deref() == Some(user.id.as_str())
+    {
+        return Ok(());
+    }
+    let store = &state.oidc.store;
+    let groups = store.list_user_groups(&ctx.realm_id, &user.id).await?;
+    let group_roles: Vec<String> = groups
+        .iter()
+        .flat_map(|g| g.realm_roles.iter().cloned())
+        .collect();
+    let all_roles = store.list_roles(&ctx.realm_id, None).await?;
+    let realm_roles = kaisatsu_core::claims::resolve_effective_realm_roles(
+        &user.realm_roles,
+        &group_roles,
+        &all_roles,
+    );
+    let management = |roles: &std::collections::HashMap<String, Vec<String>>| {
+        roles.get("realm-management").is_some_and(|r| !r.is_empty())
+    };
+    let privileged = realm_roles
+        .iter()
+        .any(|r| r == "realm-admin" || r == "realm-apply")
+        || management(&user.client_roles)
+        || groups.iter().any(|g| management(&g.client_roles));
+    if privileged {
+        return Err(KaisatsuError::Forbidden(
+            "this person holds realm-wide rights: only a realm administrator or user manager changes them".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Runs registry operation `op` for `ctx`. `key` is the bound entity's key (or `None`),
 /// `params` the action/function parameters (or the entity body of a set write). `Ok(None)` is
 /// an operation without a result (OData answers 204).
@@ -138,6 +183,7 @@ pub async fn execute(
         "person_update" => {
             let existing = visible_person(state, ctx, required_key(key)?).await?;
             check_decision(authz.check(ctx, Action::Update, &person_target(ctx, &existing)))?;
+            ensure_person_ceiling(state, ctx, &existing).await?;
             let mut incoming = serde_json::to_value(&existing).unwrap_or(Value::Null);
             if let (Some(base), Some(patch)) = (incoming.as_object_mut(), params.as_object()) {
                 for (k, v) in patch {
@@ -162,6 +208,7 @@ pub async fn execute(
         "person_delete" => {
             let existing = visible_person(state, ctx, required_key(key)?).await?;
             check_decision(authz.check(ctx, Action::Delete, &person_target(ctx, &existing)))?;
+            ensure_person_ceiling(state, ctx, &existing).await?;
             let allowed = ctx.allowed_orgs();
             store
                 .delete_user(realm, allowed.as_deref(), &existing.id)
@@ -211,6 +258,7 @@ pub async fn execute(
         "role_map" => {
             let user = visible_person(state, ctx, required_key(key)?).await?;
             check_decision(authz.check(ctx, Action::Update, &person_target(ctx, &user)))?;
+            ensure_person_ceiling(state, ctx, &user).await?;
             let client_uuid = str_param(params, "clientUuid")
                 .ok_or_else(|| KaisatsuError::BadRequest("clientUuid is required".into()))?;
             ensure_may_map_client_roles(state, ctx, realm, client_uuid).await?;
@@ -242,6 +290,7 @@ pub async fn execute(
         "credential_reset" => {
             let user = visible_person(state, ctx, required_key(key)?).await?;
             check_decision(authz.check(ctx, Action::Update, &person_target(ctx, &user)))?;
+            ensure_person_ceiling(state, ctx, &user).await?;
             let value = str_param(params, "value").unwrap_or_default();
             let temporary = bool_param(params, "temporary").unwrap_or(false);
             let realm_cfg = store.get_realm(realm).await?.unwrap_or_default();
@@ -286,6 +335,7 @@ pub async fn execute(
         "send_required_actions" => {
             let mut user = visible_person(state, ctx, required_key(key)?).await?;
             check_decision(authz.check(ctx, Action::Update, &person_target(ctx, &user)))?;
+            ensure_person_ceiling(state, ctx, &user).await?;
             let actions = str_list(params, "actions")?;
             let realm_cfg = store
                 .get_realm(realm)
