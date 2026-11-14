@@ -16,10 +16,9 @@ use jc_router::Mount;
 use kaisatsu_core::page::{self, Page};
 use kaisatsu_core::*;
 use kaisatsu_crypto::*;
-use kaisatsu_oidc::{ClientIp, OidcState};
+use kaisatsu_oidc::{ClientIp, OidcState, second_factor_required};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
 
 pub fn login_router(state: OidcState) -> Router {
     Router::new()
@@ -300,18 +299,19 @@ fn page_id_of(login_state: &LoginState) -> &'static str {
 }
 
 async fn build_policy_context(
-    store: &Arc<dyn Store>,
+    state: &OidcState,
     realm: &RealmConfig,
     auth_session: &AuthSession,
     user: &UserRepresentation,
 ) -> Result<LoginPolicyContext> {
+    let store = &state.store;
     let creds = store.list_credentials(&realm.id, &user.id).await?;
     let has_totp = creds.iter().any(|c| c.credential_type == "otp");
     let has_webauthn = creds
         .iter()
         .any(|c| c.credential_type.starts_with("webauthn"));
     let user_groups = store.list_user_groups(&realm.id, &user.id).await?;
-    let realm_requires = second_factor_required(store, realm, user).await?;
+    let realm_requires = second_factor_required(state, realm, user).await?;
     let step_up = auth_session.acr_requested.as_deref() == Some("mfa");
 
     let memberships = store
@@ -386,30 +386,6 @@ async fn build_policy_context(
             .clone()
             .filter(|_| !auth_session.kc_action_done),
     })
-}
-
-/// True when the realm requires a second factor of this person at every sign-in: the
-/// `master` realm, or the effective realm role `mfa-required` (direct, composite or by group).
-pub(crate) async fn second_factor_required(
-    store: &Arc<dyn Store>,
-    realm: &RealmConfig,
-    user: &UserRepresentation,
-) -> Result<bool> {
-    if realm.realm == "master" {
-        return Ok(true);
-    }
-    let user_groups = store.list_user_groups(&realm.id, &user.id).await?;
-    let all_roles = store.list_roles(&realm.id, None).await?;
-    let group_roles: Vec<String> = user_groups
-        .iter()
-        .flat_map(|g| g.realm_roles.iter().cloned())
-        .collect();
-    let eff_roles = kaisatsu_core::claims::resolve_effective_realm_roles(
-        &user.realm_roles,
-        &group_roles,
-        &all_roles,
-    );
-    Ok(eff_roles.iter().any(|r| r == "mfa-required"))
 }
 
 async fn render_state_page(
@@ -804,6 +780,25 @@ fn totp_setup(
     }
 }
 
+/// The `otpauth://` URI of a new authenticator (Key Uri Format): the realm's algorithm without
+/// the `Hmac` prefix, its digits and period, every value percent-encoded.
+fn otpauth_uri(realm: &RealmConfig, issuer: &str, account: &str, secret: &str) -> String {
+    let enc = |s: &str| url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>();
+    let algorithm = realm
+        .otp_policy_algorithm
+        .trim_start_matches("Hmac")
+        .to_ascii_uppercase();
+    format!(
+        "otpauth://totp/{}:{}?secret={}&issuer={}&algorithm={algorithm}&digits={}&period={}",
+        enc(issuer),
+        enc(account),
+        enc(secret),
+        enc(issuer),
+        realm.otp_policy_digits,
+        realm.otp_policy_period,
+    )
+}
+
 /// The `otpauth://` URI of a new authenticator as an inline SVG QR code (Keycloak shows one on
 /// its set-up page). Every value is percent-encoded into the URI; the SVG holds only rects.
 fn totp_qr_svg(
@@ -813,20 +808,7 @@ fn totp_qr_svg(
     secret: &str,
     title: &str,
 ) -> String {
-    let enc = |s: &str| url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>();
-    let algorithm = realm
-        .otp_policy_algorithm
-        .trim_start_matches("Hmac")
-        .to_ascii_uppercase();
-    let uri = format!(
-        "otpauth://totp/{}:{}?secret={}&issuer={}&algorithm={algorithm}&digits={}&period={}",
-        enc(issuer),
-        enc(account),
-        enc(secret),
-        enc(issuer),
-        realm.otp_policy_digits,
-        realm.otp_policy_period,
-    );
+    let uri = otpauth_uri(realm, issuer, account, secret);
     let Ok(qr) = qrcodegen::QrCode::encode_text(&uri, qrcodegen::QrCodeEcc::Medium) else {
         return String::new();
     };
@@ -1326,7 +1308,7 @@ async fn authenticate_page_post(
             true,
         )
         .await?;
-        let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
+        let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
         let next = transition(
             LoginState::Passkey {
                 user_id: Some(user.id.clone()),
@@ -1471,7 +1453,7 @@ async fn authenticate_page_post(
             state.store.upsert_credential(updated).await?;
         }
 
-        let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
+        let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
         let s1 = transition(
             LoginState::IdentityFirst,
             LoginInput::SubmitIdentifier {
@@ -1596,7 +1578,7 @@ async fn authenticate_page_post(
             if auth_session.kc_action.as_deref() == Some("CONFIGURE_TOTP") {
                 auth_session.kc_action_done = true;
             }
-            let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
+            let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
             let next = transition(current_state, LoginInput::CompleteEnrolTotpOk, &ctx)
                 .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
             return advance_or_render(
@@ -1685,7 +1667,7 @@ async fn authenticate_page_post(
             .await;
         }
 
-        let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
+        let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
         let next = transition(current_state, LoginInput::VerifyOtpOk, &ctx)
             .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
         return advance_or_render(
@@ -1777,7 +1759,7 @@ async fn authenticate_page_post(
         if auth_session.kc_action.as_deref() == Some("UPDATE_PASSWORD") {
             auth_session.kc_action_done = true;
         }
-        let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
+        let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
         let next = transition(current_state, LoginInput::CompleteUpdatePasswordOk, &ctx)
             .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
         return advance_or_render(
@@ -1801,7 +1783,7 @@ async fn authenticate_page_post(
         user.required_actions
             .retain(|a| a != "TERMS_AND_CONDITIONS");
         let user = state.store.update_user(user).await?;
-        let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
+        let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
         let next = transition(current_state, LoginInput::AcceptTermsOk, &ctx)
             .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
         return advance_or_render(
@@ -1840,7 +1822,7 @@ async fn authenticate_page_post(
                 last_updated_date: now_ms,
             })
             .await?;
-        let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
+        let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
         let next = transition(current_state, LoginInput::GrantConsent, &ctx)
             .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
         return advance_or_render(
@@ -1958,7 +1940,7 @@ async fn authenticate_page_post(
             serde_json::json!({ "remaining": stored_hashes.len() }).to_string();
         state.store.upsert_credential(updated_cred).await?;
 
-        let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
+        let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
         let next = transition(current_state, LoginInput::VerifyRecoveryCodeOk, &ctx)
             .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
         return advance_or_render(
@@ -2009,7 +1991,7 @@ async fn authenticate_page_post(
         let user = state.store.update_user(user).await?;
         let mut auth_session = auth_session;
         auth_session.pending_email_code_hash = None;
-        let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
+        let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
         let next = transition(current_state, LoginInput::CompleteVerifyEmailOk, &ctx)
             .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
         return advance_or_render(
@@ -2066,7 +2048,7 @@ async fn authenticate_page_post(
         user.required_actions
             .retain(|a| a != "webauthn-register" && a != "CONFIGURE_PASSKEY");
         let user = state.store.update_user(user).await?;
-        let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
+        let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
         let next = transition(current_state, LoginInput::CompleteRegisterWebAuthnOk, &ctx)
             .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
         return advance_or_render(
@@ -2115,7 +2097,7 @@ async fn authenticate_page_post(
             false,
         )
         .await?;
-        let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
+        let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
         let next = transition(current_state, LoginInput::VerifyWebAuthn2faOk, &ctx)
             .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
         return advance_or_render(
@@ -2137,7 +2119,7 @@ async fn authenticate_page_post(
             .await?
             .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
         let chosen = form.get("org_id").cloned().unwrap_or_default();
-        let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
+        let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
         let next = transition(
             current_state,
             LoginInput::SelectOrganization { org_id: chosen },
@@ -3077,5 +3059,20 @@ fn policy_message(bundle: &Bundle, violation: &PolicyViolation) -> String {
         PolicyViolation::History(n) => {
             bundle.format("invalidPasswordHistoryMessage", &[&n.to_string()])
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_enrolment_uri_says_sha1() {
+        let realm = RealmConfig::default();
+        let uri = otpauth_uri(&realm, "Helsinki", "ana@hel.fi", "JBSWY3DPEHPK3PXP");
+        assert_eq!(
+            uri,
+            "otpauth://totp/Helsinki:ana%40hel.fi?secret=JBSWY3DPEHPK3PXP&issuer=Helsinki&algorithm=SHA1&digits=6&period=30"
+        );
     }
 }

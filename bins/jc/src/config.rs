@@ -249,6 +249,20 @@ pub struct KaisatsuSection {
     /// The installation's branding (the deployment's `global.branding` as YAML, the Portal's
     /// `JC_BRANDING_FILE`, its logo file beside it): every realm's login pages wear it.
     pub branding_file: Option<PathBuf>,
+    /// The sign-in second-factor floor for every person of every realm: `required` asks each
+    /// one for an authenticator app (enrolment at the next sign-in), `optional` (the default)
+    /// keeps the per-person rules (role `mfa-required`, an Organization's setting).
+    #[serde(default)]
+    pub second_factor: SecondFactorFloor,
+}
+
+/// `[kaisatsu] second_factor`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SecondFactorFloor {
+    #[default]
+    Optional,
+    Required,
 }
 
 /// `[ekiben]` section.
@@ -1013,6 +1027,7 @@ impl Config {
                 .or(file.kaisatsu.db_max_connections),
             database: file.kaisatsu.database,
             branding_file: file.kaisatsu.branding_file,
+            second_factor: file.kaisatsu.second_factor,
         };
         if kaisatsu.database.is_some() && kaisatsu.database_url_file.is_some() {
             return Err(ConfigError::Database {
@@ -2472,6 +2487,26 @@ path_prefix = "/api/endpoint"
         .unwrap_err();
         assert!(matches!(err, ConfigError::Read { .. }), "{err}");
         assert!(err.to_string().contains("missing.toml"));
+    }
+
+    #[test]
+    fn the_kaisatsu_section_sets_the_second_factor_floor() {
+        let cfg = Config::parse_file(
+            Path::new("jc.toml"),
+            "profile = \"development\"\n[kaisatsu]\nsecond_factor = \"required\"\n",
+        )
+        .expect("parses");
+        assert_eq!(cfg.kaisatsu.second_factor, SecondFactorFloor::Required);
+        let unset = Config::parse_file(Path::new("jc.toml"), "profile = \"development\"\n")
+            .expect("parses");
+        assert_eq!(unset.kaisatsu.second_factor, SecondFactorFloor::Optional);
+        assert!(
+            Config::parse_file(
+                Path::new("jc.toml"),
+                "[kaisatsu]\nsecond_factor = \"sometimes\"\n"
+            )
+            .is_err()
+        );
     }
 
     #[test]

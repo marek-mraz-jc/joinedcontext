@@ -14,7 +14,7 @@ use jc_router::Mount;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use kaisatsu_core::*;
 use kaisatsu_crypto::*;
-use kaisatsu_server::router;
+use kaisatsu_server::{KaisatsuState, SecondFactor, router};
 use kaisatsu_store_memory::MemoryStore;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -40,6 +40,7 @@ const EXCHANGER: &str = "tx";
 struct World {
     app: Router,
     store: Arc<dyn Store>,
+    state: KaisatsuState,
 }
 
 fn mount() -> Mount {
@@ -83,8 +84,9 @@ async fn world_on(store: Arc<dyn Store>, kek: Kek) -> World {
         store.upsert_client(c).await.unwrap();
     }
     World {
-        app: router(state, mount()),
+        app: router(state.clone(), mount()),
         store,
+        state,
     }
 }
 
@@ -506,6 +508,33 @@ async fn reuse_refused_at_exchange(w: World) {
 on_both_stores!(
     an_access_token_of_a_reused_family_is_refused_at_token_exchange,
     reuse_refused_at_exchange
+);
+
+async fn exchange_under_the_floor(w: World) {
+    let s = sign_in(&w.app, Who::Edge).await;
+    let at = str_of(&s.tokens, "access_token").to_owned();
+    let after = World {
+        app: router(
+            w.state.clone().with_second_factor(SecondFactor::Required),
+            mount(),
+        ),
+        store: w.store.clone(),
+        state: w.state.clone(),
+    };
+    // A password-only sign-in from before the floor exchanges for nothing once it is on.
+    let (st, body) = exchange(&after, &at).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "invalid_grant", "{body}");
+    let (st, body) = exchange(&w, &at).await;
+    assert_eq!(
+        st,
+        StatusCode::OK,
+        "the control exchange without the floor: {body}"
+    );
+}
+on_both_stores!(
+    token_exchange_refuses_a_subject_token_from_before_the_floor,
+    exchange_under_the_floor
 );
 
 async fn two_rotations_old(w: World) {
