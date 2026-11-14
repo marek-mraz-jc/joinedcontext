@@ -281,12 +281,32 @@ pub fn is_sensitive_path(path: &str) -> bool {
     crate::api::mutate::SECRET_KEYS.contains(&clean)
 }
 
-/// Replaces sensitive field values with `"[REDACTED]"` (CC-06).
+/// Whether `value`, written at `path`, holds what the propose door refuses as a literal secret
+/// (`mutate::find_literal_secret`): a credential's field, a request header holding one, a token
+/// or a URL with a password, at any depth of an object it replaces (CC-06, SEC-02).
+fn holds_a_secret(path: &str, value: Option<&Value>) -> bool {
+    let Some(value) = value else {
+        return false;
+    };
+    let leaf = path.rsplit('.').next().unwrap_or(path);
+    let leaf = leaf.split('[').next().unwrap_or(leaf);
+    let mut wrapped = serde_json::json!({ leaf: value });
+    if path.rsplit('.').nth(1) == Some("headers") {
+        wrapped = serde_json::json!({ "headers": wrapped });
+    }
+    crate::api::mutate::find_literal_secret(&wrapped).is_some()
+}
+
+/// Replaces sensitive field values with `"[REDACTED]"` (CC-06): a credential's field by name,
+/// and any value the propose door would refuse as a literal secret, in the old and the new.
 pub fn redact(fields: Vec<FieldChange>) -> Vec<FieldChange> {
     fields
         .into_iter()
         .map(|mut f| {
-            if is_sensitive_path(&f.path) {
+            if is_sensitive_path(&f.path)
+                || holds_a_secret(&f.path, f.from.as_ref())
+                || holds_a_secret(&f.path, f.to.as_ref())
+            {
                 if f.from.is_some() {
                     f.from = Some(Value::String("[REDACTED]".to_string()));
                 }
@@ -2243,7 +2263,7 @@ async fn approve_every_file(
             .is_ok();
         let access = matches!(
             envelope.kind.as_str(),
-            "Role" | "RoleBinding" | "ServiceAccount"
+            "Role" | "RoleBinding" | "ServiceAccount" | "Group"
         );
         let namespace = envelope.metadata.namespace.as_deref().unwrap_or(&home);
         let was_public = state
@@ -2384,6 +2404,25 @@ pub(crate) fn publishes_publicly(envelope: &ResourceEnvelope) -> bool {
             .is_some_and(|ckan| !ckan.is_null())
 }
 
+/// Whether a head commit naming `email` is one the Portal wrote for `identity`: their e-mail, or
+/// the `{username}@{project}.local` it writes without one, whichever project it was proposed
+/// from, so an organization Change approved from another project's route is still its author's
+/// (T-6706). A head naming no e-mail cannot be told apart from theirs and counts as theirs.
+fn written_by(
+    identity: &crate::auth::session::Identity,
+    project: &str,
+    email: Option<&str>,
+) -> bool {
+    let Some(email) = email.map(str::trim).filter(|email| !email.is_empty()) else {
+        return true;
+    };
+    let (_, own) = crate::api::mutate::author_credentials(identity, project);
+    email.eq_ignore_ascii_case(own.trim())
+        || email.rsplit_once('@').is_some_and(|(user, domain)| {
+            user.eq_ignore_ascii_case(&identity.username) && domain.ends_with(".local")
+        })
+}
+
 /// Who may do what: a change to one of these kinds is approved by a second person, never by
 /// the one who proposed it, administrator or not (PF-58, T-4833).
 pub(crate) fn is_access_kind(kind: &str) -> bool {
@@ -2514,7 +2553,7 @@ pub async fn approve_change_for(
     // Access changes hold the approver to what they grant, and a removal to `delete` (PF-52).
     if matches!(
         data.kind.as_str(),
-        "Role" | "RoleBinding" | "ServiceAccount"
+        "Role" | "RoleBinding" | "ServiceAccount" | "Group"
     ) {
         match (data.operation, &data.head_envelope) {
             (Operation::Delete, _) => {
@@ -2597,13 +2636,7 @@ pub async fn approve_change_for(
     // `{username}@{project}.local` without one) against the head commit's: never a display name,
     // which a namesake shares and a rename changes. A head that names no e-mail cannot be told
     // apart from the approver's own, so it counts as theirs (T-6706).
-    let (_, approver_email) = crate::api::mutate::author_credentials(identity, project);
-    let is_author = match author.email.as_deref().map(str::trim) {
-        Some(pr_email) if !pr_email.is_empty() => {
-            pr_email.eq_ignore_ascii_case(approver_email.trim())
-        }
-        _ => true,
-    };
+    let is_author = written_by(identity, project, author.email.as_deref());
 
     // Nobody grants themselves access alone: a Policy naming its author, a Group they are in or
     // a role they hold, or a Group change adding them, waits for someone else, an administrator
@@ -3640,6 +3673,45 @@ mod tests {
         assert_eq!(redacted[3].to, None);
         assert_eq!(redacted[4].from, Some(json!("[REDACTED]")));
         assert_eq!(redacted[4].to, Some(json!("[REDACTED]")));
+    }
+
+    /// SEC-02, CC-06: a credential the propose door would refuse is redacted in a diff too: a
+    /// request header holding one, a URL carrying a key, an object replaced whole; a header
+    /// naming a `${VAR}` and a plain address stay the review.
+    #[test]
+    fn a_literal_secret_by_value_is_redacted() {
+        let field = |path: &str, to: Value| FieldChange {
+            path: path.to_string(),
+            from: Some(to.clone()),
+            to: Some(to),
+        };
+        let hidden = |path: &str, to: Value| {
+            let out = redact(vec![field(path, to)]);
+            out[0].to == Some(json!("[REDACTED]")) && out[0].from == Some(json!("[REDACTED]"))
+        };
+        assert!(hidden(
+            "spec.http.headers.Authorization",
+            json!("Bearer abc123")
+        ));
+        assert!(hidden("spec.http.headers.X-Api-Key", json!("k-1")));
+        assert!(hidden(
+            "spec.http.headers",
+            json!({ "Cookie": "session=1" })
+        ));
+        assert!(hidden(
+            "spec.url",
+            json!("https://example.com/feed?api_key=f00dfeed1234")
+        ));
+        assert!(hidden("spec.auth", json!({ "password": "hunter2" })));
+        assert!(!hidden(
+            "spec.http.headers.Authorization",
+            json!("${FEED_TOKEN}")
+        ));
+        assert!(!hidden(
+            "spec.http.headers.Accept",
+            json!("application/json")
+        ));
+        assert!(!hidden("spec.url", json!("https://example.com/feed")));
     }
 
     /// T-1142, CC-06: the rule is the path's last segment, which is what makes it predictable.
@@ -4688,6 +4760,22 @@ mod tests {
             username: email.into(),
             ..test_user(email, vec![]).0.identity
         }
+    }
+
+    /// PF-58: a person without an e-mail proposes as `{username}@{project}.local`; approving the
+    /// organization Change from another project's route still finds them its author.
+    #[test]
+    fn an_email_less_author_is_found_from_any_project_route() {
+        let mut ana = person("ana");
+        ana.email = None;
+        assert!(written_by(&ana, "doprava", Some("ana@ovzdusie.local")));
+        assert!(written_by(&ana, "doprava", Some("ANA@org.local")));
+        assert!(written_by(&ana, "doprava", None));
+        assert!(!written_by(&ana, "doprava", Some("bo@doprava.local")));
+        assert!(!written_by(&ana, "doprava", Some("ana@hel.fi")));
+        let bo = person("bo@hel.fi");
+        assert!(written_by(&bo, "doprava", Some("bo@hel.fi")));
+        assert!(!written_by(&bo, "doprava", Some("ana@hel.fi")));
     }
 
     /// JC2-01 (T-6359): the secret form's change was Unlisted, so no list showed it and every

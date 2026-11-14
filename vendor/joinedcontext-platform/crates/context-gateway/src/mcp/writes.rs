@@ -15,6 +15,9 @@ use crate::{mcp, operations, query};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderMap, HeaderValue, Method};
 use serde_json::{Map, Value};
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 /// A create the call holds of a form's daily quota, released when the broker does not take it.
 pub(crate) struct Reserved {
@@ -49,8 +52,14 @@ pub(crate) async fn guarded(
     }
     let refuse =
         |why: &str| mcp::jsonrpc::result(id.clone(), mcp::jsonrpc::refused(why, &Value::Null));
+    // The broker runs a write only on the retry that carries the `requestState` it sealed when
+    // it asked the person (antares-mcp `Server::write`); the call before it creates nothing.
+    let confirmed = message["params"]["requestState"]
+        .as_str()
+        .is_some_and(|state| !state.is_empty());
     let empty = Map::new();
     let arguments = message["params"]["arguments"].as_object().unwrap_or(&empty);
+    let asked = asked_key(&endpoint.slug, caller, &tool, arguments);
     // A write the gateway cannot name as an NGSI-LD request is one it cannot guard: refused,
     // as an unknown tool is to an anonymous caller.
     let Some((method, path, body)) = request_of(&tool, arguments) else {
@@ -82,6 +91,7 @@ pub(crate) async fn guarded(
         &mut headers,
         &mut sent,
         &mut divided,
+        confirmed,
     )
     .await
     {
@@ -100,22 +110,93 @@ pub(crate) async fn guarded(
             refused.len()
         )));
     }
+    if operation == jc_core::kinds::Operation::CreateEntity
+        && endpoint
+            .creates
+            .as_ref()
+            .is_some_and(|creates| creates.mint_ids)
+    {
+        same_minted_id(asked, confirmed, &mut sent, Instant::now());
+    }
     if let (Some(name), Ok(kept)) = (body, serde_json::from_slice::<Value>(&sent)) {
         if let Some(arguments) = message["params"]["arguments"].as_object_mut() {
             arguments.insert(name.to_owned(), kept);
         }
     }
     match reserve_create(gateway, endpoint, caller, operation) {
-        Ok(at) => Ok(at.map(|at| Reserved {
-            caller: caller.to_owned(),
-            at,
-        })),
+        Ok(at) => {
+            let reserved = at.map(|at| Reserved {
+                caller: caller.to_owned(),
+                at,
+            });
+            // The call before the person's answer only learns a slot is free; the confirmed
+            // retry takes it.
+            if confirmed {
+                return Ok(reserved);
+            }
+            if let Some(reserved) = reserved {
+                reserved.release(gateway, endpoint);
+            }
+            Ok(None)
+        }
         Err(refusal) => {
             let held = axum::body::to_bytes(refusal.into_body(), MAX_BODY)
                 .await
                 .unwrap_or_default();
             Err(refuse(&refusal_text(&held)))
         }
+    }
+}
+
+/// How long a form's minted id waits for the confirmed retry: the broker's question lifetime
+/// (antares-mcp `confirm::TTL`).
+const MINTED_FOR: Duration = Duration::from_secs(600);
+
+/// The most questions whose minted ids are kept at once; past it a retry gets a fresh id, which
+/// the broker refuses as a stale confirmation.
+const MINTED_MAX: usize = 4_096;
+
+/// Per question, the id minted for it and until when it waits.
+type Minted = HashMap<Vec<u8>, (String, Instant)>;
+
+/// The id a form minted for a create the person is asked about, by [`asked_key`]: the broker
+/// binds its question to the arguments, so the confirmed retry must send the same id.
+static MINTED: LazyLock<Mutex<Minted>> = LazyLock::new(Mutex::default);
+
+/// One caller's call of one tool with these arguments on one Endpoint.
+fn asked_key(slug: &str, caller: &str, tool: &str, arguments: &Map<String, Value>) -> Vec<u8> {
+    let asked = serde_json::to_string(&(slug, caller, tool, arguments)).unwrap_or_default();
+    ring::digest::digest(&ring::digest::SHA256, asked.as_bytes())
+        .as_ref()
+        .to_vec()
+}
+
+/// Keeps the id minted into `sent` for the question `asked`, or on the confirmed retry puts the
+/// one kept for it back.
+fn same_minted_id(asked: Vec<u8>, confirmed: bool, sent: &mut Vec<u8>, now: Instant) {
+    let Ok(mut entity) = serde_json::from_slice::<Value>(sent) else {
+        return;
+    };
+    let mut minted = MINTED.lock().unwrap_or_else(|e| e.into_inner());
+    if confirmed {
+        // Kept until it expires: a decision page answers a retry made before the person decided
+        // with "still open", and the next retry needs the same id.
+        if let Some((id, _)) = minted.get(&asked).filter(|(_, until)| *until > now) {
+            entity["id"] = Value::String(id.clone());
+            if let Ok(kept) = serde_json::to_vec(&entity) {
+                *sent = kept;
+            }
+        }
+        return;
+    }
+    let Some(id) = entity["id"].as_str() else {
+        return;
+    };
+    if minted.len() >= MINTED_MAX {
+        minted.retain(|_, (_, until)| *until > now);
+    }
+    if minted.len() < MINTED_MAX || minted.contains_key(&asked) {
+        minted.insert(asked, (id.to_owned(), now + MINTED_FOR));
     }
 }
 

@@ -102,16 +102,46 @@ function apply(settings: FieldSettings, id: string, value: unknown): void {
 const compiled = new Map<string, RegExp | null>();
 
 /**
+ * Whether a group repeated by `*`, `+` or `{` holds a quantifier or a `|` at any depth (`(a+)+`,
+ * `((a)+)+`, `(a|aa)+`): the shapes whose backtracking grows exponentially with the text.
+ */
+function nestedRepeat(pattern: string): boolean {
+  // Per open group: whether it holds a quantifier or a `|` so far.
+  const open: boolean[] = [];
+  let closed = false;
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === "\\") {
+      i++;
+    } else if (c === "[") {
+      for (i++; i < pattern.length && pattern[i] !== "]"; i++) if (pattern[i] === "\\") i++;
+    } else if (c === "(") {
+      open.push(false);
+    } else if (c === ")") {
+      const held = open.pop() ?? false;
+      if (held && open.length) open[open.length - 1] = true;
+      closed = held;
+      continue;
+    } else if (c === "*" || c === "+" || c === "{" || c === "|") {
+      if (closed && c !== "|") return true;
+      if (open.length) open[open.length - 1] = true;
+    }
+    closed = false;
+  }
+  return false;
+}
+
+/**
  * A dashboard's pattern compiled once, or null for one this browser refuses, one over 256
- * characters, or a quantified group that is itself quantified (`(a+)+`): such a pattern can hold
- * the page for minutes on one cell, and JavaScript cannot stop a running match.
- * ponytail: a syntactic check, not a proof of linear time; a pattern engine with a step limit is the upgrade.
+ * characters, a backreference, or a repeated group that nests a quantifier or a choice: such a
+ * pattern can hold the page for minutes on one cell, and JavaScript cannot stop a running match.
+ * ponytail: a syntactic check, not a proof of linear time (`.*.*.*x` stays polynomial); a pattern engine with a step limit is the upgrade.
  */
 export function safeRegExp(pattern: string): RegExp | null {
   let regex = compiled.get(pattern);
   if (regex === undefined) {
     regex = null;
-    if (pattern.length <= 256 && !/\([^()]*[*+}][^()]*\)[*+{]|\\\d/.test(pattern)) {
+    if (pattern.length <= 256 && !/\\(\d|k<)/.test(pattern) && !nestedRepeat(pattern)) {
       try {
         regex = new RegExp(pattern);
       } catch {

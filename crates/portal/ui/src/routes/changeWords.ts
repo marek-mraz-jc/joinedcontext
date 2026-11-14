@@ -6,6 +6,9 @@ import { humanize } from "../components/diff/PlanDiffViewer";
 
 type T = (key: string, options?: Record<string, unknown>) => string;
 
+/** Merged, or merged and live since: the server restores and undoes either (api/restore.rs checks the merge). */
+export const landed = (change: { status: { phase: string } }): boolean => change.status.phase === "Merged" || change.status.phase === "Applied";
+
 /** One field the plan lists. */
 export interface PlannedField {
   path: string;

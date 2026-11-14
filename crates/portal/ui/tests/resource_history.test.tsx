@@ -65,7 +65,7 @@ function change(id: string, phase: string, name: string, at: string) {
 }
 
 const requests: string[] = [];
-function stubApi() {
+function stubApi(phase = "Merged") {
   requests.length = 0;
   vi.stubGlobal(
     "fetch",
@@ -79,7 +79,7 @@ function stubApi() {
           apiVersion: "joinedcontext.com/v1alpha1",
           kind: "ChangeList",
           items: [
-            change("chg-00000009", "Merged", "air", "2026-10-11T10:00:00Z"),
+            change("chg-00000009", phase, "air", "2026-10-11T10:00:00Z"),
             change("chg-00000008", "Rejected", "air", "2026-10-10T10:00:00Z"),
             // The API matches names containing the one asked; this one is another pipeline.
             change("chg-00000007", "Merged", "air-archive", "2026-10-09T10:00:00Z"),
@@ -161,6 +161,16 @@ describe("a resource's own history in its editor", () => {
     await waitFor(() => expect(seen).toHaveBeenLastCalledWith({ name: "air", mapping: "root = this.old" }));
     expect(screen.getByRole("tab", { name: en.form.view.form })).toHaveAttribute("aria-selected", "true");
     expect(requests.filter((r) => !r.startsWith("GET "))).toEqual([]);
+  });
+
+  it("loads the version of a change that went live since it merged", async () => {
+    stubApi("Applied");
+    const seen = vi.fn();
+    open(seen);
+    await userEvent.click(screen.getByRole("tab", { name: en.form.view.history }));
+    const rows = await screen.findAllByTestId("resource-history-item");
+    await userEvent.click(within(rows[0]).getByTestId("resource-history-restore"));
+    await waitFor(() => expect(seen).toHaveBeenLastCalledWith({ name: "air", mapping: "root = this.old" }));
   });
 
   it("shows a viewer the history and no restore", async () => {

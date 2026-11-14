@@ -4,7 +4,7 @@ import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, queryKeys, unwrap } from "../api/client";
 import { usePermissions } from "../api/permissions";
-import { changeSentence, fieldSentence } from "../routes/changeWords";
+import { changeSentence, fieldSentence, landed } from "../routes/changeWords";
 import type { PlannedField } from "../routes/changeWords";
 import { LifecycleBadge } from "./status/LifecycleBadge";
 import { Alert, Button } from "./ui";
@@ -133,7 +133,7 @@ export function ResourceHistory({
                 >
                   {t("approvals.history.whatChanged")}
                 </Button>
-                {onRestore && change.status.phase === "Merged" && can(kind, "propose") ? (
+                {onRestore && landed(change) && can(kind, "propose") ? (
                   <Button
                     size="sm"
                     variant="secondary"
