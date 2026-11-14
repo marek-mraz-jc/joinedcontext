@@ -409,7 +409,10 @@ mod tests {
         for text in [serialize_turtle(&g), serialize_ntriples(&g)] {
             let back = parse_turtle(&text, &RdfLimits::default()).expect(&text);
             assert_eq!(back.len(), 2, "{text}");
-            assert!(text.contains("\"text\"@sk-latn"), "a valid tag stays: {text}");
+            assert!(
+                text.contains("\"text\"@sk-latn"),
+                "a valid tag stays: {text}"
+            );
             assert!(!text.contains("http://x/s"), "{text}");
         }
     }
