@@ -46,15 +46,7 @@ An Endpoint that does not serve the WebSocket has no `liveUpdates`, and its `/ws
 
 The connection's identity is fixed when it opens. A connection opened with a token ends when the token expires (its `exp`), and after 300 seconds at the latest: reconnect with a fresh token and resume (§4). An anonymous connection to a public Endpoint has no token to expire and lasts up to 24 hours.
 
-A connection never outlives a change to what admitted it. When the Endpoint's admission changes (its audience or allowed projects, its roles, its served standards, its model or mapping, or any field other than the four below), the Policies no longer let the caller read anything, or the App client the token was issued to loses the Endpoint, every affected connection gets `x-closing` with `x-reason: endpoint-changed` and closes with code `1000` as soon as the gateway loads the change; nothing queued behind the close is sent. A deleted Endpoint, or one that stops serving the WebSocket, closes its connections the same way with `x-reason: view-removed`. The reason names no detail of the change. Reconnect: the new connection is admitted, or refused, under the Endpoint as it is now; a resume (§4) of the closed connection restores no Subscription, so subscribe again.
-
-A change of only what the caller reads keeps the connection: its Policies, its hidden attributes or its projection, while the caller is still admitted and still reads something. The gateway then reads the Endpoint's entities again under the new record and compares them with what it held (T-6776):
-
-- An entity you may no longer read arrives as one `x-out-of-scope` message per connection, naming its id and the subscriptions it matched. Nothing about it follows, and a notification of it still queued for you is dropped. It was not deleted: never read it as `entityDeleted`.
-- An entity whose readable attributes changed arrives again as an `x-notification`, normalized, without the attributes you may no longer read.
-- An entity you may now read arrives as an `x-notification`, as if it was created.
-
-The gateway reads the entities at its first 5-second tick after it loads the change and once more at the next tick, so the last `x-out-of-scope` reaches you at most 10 seconds after both the gateway and the context broker load the change. In that window no notification carries an entity or attribute the new Policy hides: the broker decides each notification under the Policy it holds at that moment (Antares ADR-0023 rule 9, ADR-0020). A read that fails closes the connection with `endpoint-changed`, as before.
+A connection never outlives a change to what admitted it. When the Endpoint is changed in any way (its audience, roles, Policies, hidden attributes or projection, a Policy granted or withdrawn) or the App client the token was issued to loses the Endpoint, every open connection of the Endpoint gets `x-closing` with `x-reason: endpoint-changed` and closes with code `1000` as soon as the gateway loads the change; nothing queued behind the close is sent. A deleted Endpoint, or one that stops serving the WebSocket, closes its connections the same way with `x-reason: view-removed`. The reason names no detail of the change. Reconnect: the new connection is admitted, or refused, under the Endpoint as it is now; a resume (§4) of the closed connection restores no Subscription, so subscribe again. A change that widens access never reaches an open connection.
 
 ## 2. Messages
 
@@ -70,12 +62,11 @@ Every message, in both directions, is one text frame holding one JSON object wit
 | `x-result` | server | the created or updated Subscription, or a ProblemDetails; `metadata.x-status` is the HTTP status the same request would get over REST, `x-id` echoes yours |
 | `x-notification` | server | the NGSI-LD Notification (TS 104 175 §5.2.6.9.1), the same body an HTTP subscriber would receive; `metadata.x-seq` counts from 1 per connection |
 | `x-gap` | server | none; notifications `x-from` to `x-to` were lost, so read the entities again over REST |
-| `x-out-of-scope` | server | `{"id": "<entity id>", "subscriptionIds": [...]}`: after a change of the Endpoint's Policies, hidden attributes or projection you may no longer read this entity (§1); `metadata.x-seq` counts with the notifications |
 | `x-closing` | server, before it closes | none; `x-reason` is `lifetime`, `overflow`, `view-removed`, `endpoint-changed`, `shutdown`, `idle` or `rate` |
 
 A Subscription made over the socket lives on that connection only. The gateway serves your sockets of an Endpoint from one broker subscription made as you, which the Endpoint's Policy decides as a read, and matches your filters itself ([ADR-N-049](../Decisions/adr-n-049-websocket-fan-out-per-endpoint.md)), so `GET {endpointUrl}/ngsi-ld/v1/subscriptions` does not list it. It ends 30 seconds after the connection closes unless you resume. Keep its id from `x-result`; it is the `x-subscription` of every `x-update` and `x-unsubscribe`.
 
-A notification carries only the attributes your grant reads. A change to an attribute you cannot read sends nothing. When a change of the data moves an entity out of what you may read, no message tells you, because that message would itself reveal a hidden change; only a change of the Endpoint's Policy sends `x-out-of-scope` (§1). On `x-gap`, and on your own schedule, read the subscribed types again over REST: `GET {endpointUrl}/ngsi-ld/v1/entities?type=Vehicle` for the examples below.
+A notification carries only the attributes your grant reads. A change to an attribute you cannot read sends nothing. No message tells you that an entity left what you may read, because that message would itself reveal a hidden change. On `x-gap`, and on your own schedule, read the subscribed types again over REST: `GET {endpointUrl}/ngsi-ld/v1/entities?type=Vehicle` for the examples below.
 
 ## 3. Limits
 

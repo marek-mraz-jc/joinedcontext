@@ -48,9 +48,9 @@ What to do: Correct the attribute the detail names: a quality rule of the space 
 
 **Reason Required**, status 400.
 
-A delete through an Endpoint, a correction or a write from the Portal UI names no reason in `JC-Reason` (DM-113, ADR-N-054), so nothing was changed. The gateway asks it of every delete, whoever sends it.
+A delete through an Endpoint names no reason in `JC-Reason` (DM-113, ADR-N-054), so nothing was changed. The gateway asks it of every delete except the Portal UI's own, which follows once the UI sends a reason; DM-113 extends it to corrections and every UI write.
 
-What to do: Send the same request again with a `JC-Reason` header of 1 to 500 characters that says why. A delete a person makes carries the reason that person gives: the Portal, the SDK's `entities.remove` and `jc_data_write` ask for it and refuse a missing or longer one before they send anything, and never fill one in.
+What to do: Send the same request again with a `JC-Reason` header of 1 to 500 characters that says why.
 
 ### `unauthorized` {#unauthorized}
 
@@ -147,6 +147,14 @@ What to do: Send less at once: split the request or the file.
 The body's `Content-Type` is not one the operation reads.
 
 What to do: Send the body as application/json or application/ld+json.
+
+### `urn-owner` {#urn-owner}
+
+**Entity Identifier Names Another Owner**, status 422.
+
+An entity id written through an Endpoint does not carry the id of the Organization that owns the space, `urn:ngsi-ld:{Type}:{orgId}:{id}` ([ADR-N-068](../Decisions/adr-n-068-urn-owner-prefix.md)). The problem names `field: id`.
+
+What to do: Write the id as urn:ngsi-ld:{Type}:{orgId}:{id}, with the id of the Organization that owns the space (sk_bbsk for bbsk.sk).
 
 ### `upgrade-required` {#upgrade-required}
 
@@ -452,7 +460,7 @@ What to do: Enter the credential in the Portal's secret form, never in a chat or
 A bound OData action (propose, approve, reject) changes an entity, and the request carried no
 `If-Match`; nothing was changed (API/13 §2b).
 
-What to do: Read the entity, then send the action again with its @odata.etag in If-Match.
+What to do: Read the entity, then send the action again with its `@odata.etag` in `If-Match`.
 
 ### `quota` {#quota}
 
