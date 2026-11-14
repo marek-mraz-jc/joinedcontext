@@ -992,8 +992,33 @@ async fn authorize_get(
     let handle = random_handle_256();
     let csrf_token = random_handle_256();
 
+    // A session signed in without a second factor, for a person who has an authenticator or
+    // needs one: an action asks the second factor first (a full sign-in), a step-up asks the code.
+    let (sso_has_otp, sso_needs_second) = match existing_sso.as_ref() {
+        Some(sso) if sso.acr != "mfa" => {
+            let has_otp = state
+                .store
+                .list_credentials(&realm.id, &sso.user_id)
+                .await?
+                .iter()
+                .any(|c| c.credential_type == "otp");
+            let required = match state
+                .store
+                .get_user_by_id(&realm.id, None, &sso.user_id)
+                .await?
+            {
+                Some(user) => crate::second_factor_required(&state, &realm, &user).await?,
+                None => false,
+            };
+            (has_otp, has_otp || required)
+        }
+        _ => (false, false),
+    };
     let recent_sso = existing_sso.clone().filter(|sso| {
-        !force_reauth && !needs_step_up && now_unix - sso.auth_time <= KC_ACTION_MAX_AUTH_AGE
+        !force_reauth
+            && !needs_step_up
+            && !sso_needs_second
+            && now_unix - sso.auth_time <= KC_ACTION_MAX_AUTH_AGE
     });
     let mut login_hint = params.get("login_hint").cloned();
     let (initial_step_json, pre_user_id, pre_amr, pre_acr) = match existing_sso
@@ -1028,13 +1053,25 @@ async fn authorize_get(
                 )
             }
         },
-        Some(sso) => (
-            serde_json::to_string(&json!({ "step": "SecondFactorOtp", "user_id": sso.user_id }))
-                .unwrap_or_default(),
+        Some(sso) if sso_has_otp => (
+            json!({ "step": "SecondFactorOtp", "user_id": sso.user_id, "first_factor_passed": true })
+                .to_string(),
             Some(sso.user_id),
             sso.amr,
             sso.acr,
         ),
+        // No authenticator to step up with: the person signs in again, named for them.
+        Some(sso) => {
+            if login_hint.is_none() {
+                login_hint = Some(sso.username);
+            }
+            (
+                json!({ "step": "IdentityFirst" }).to_string(),
+                None,
+                Vec::new(),
+                String::new(),
+            )
+        }
         None => (
             serde_json::to_string(&json!({ "step": "IdentityFirst" })).unwrap_or_default(),
             None,
@@ -1578,6 +1615,17 @@ async fn mint_tokens_for_principal(
         sso_session_id,
     )
     .await?;
+    // An `organization:<alias>` the person is not a member of leaves the granted scope
+    // (DESIGN-K): the token, its `scope` answer and its refresh family name only the verified one.
+    let verified_scope = granted_scope_str
+        .split_whitespace()
+        .filter(|s| {
+            s.strip_prefix("organization:")
+                .is_none_or(|alias| resolved_active_org.as_deref() == Some(alias))
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let granted_scope_str = verified_scope.as_str();
 
     let mapper_ctx = MapperContext {
         realm,
@@ -2990,27 +3038,27 @@ async fn handle_password_grant(
 
     // Check if second factor is required or configured (RI `custom direct grant`)
     let mfa_required = crate::second_factor_required(state, realm, &user).await?;
-    let otp_cred = creds.iter().find(|c| c.credential_type == "otp");
+    let has_otp = creds.iter().any(|c| c.credential_type == "otp");
 
     let mut amr = vec!["pwd".to_owned()];
     let mut acr = "pwd".to_owned();
 
-    if mfa_required || otp_cred.is_some() {
-        let Some(otp_cred) = otp_cred else {
+    if mfa_required || has_otp {
+        if !has_otp {
             return Err(KaisatsuError::oauth(
                 400,
                 "invalid_grant",
                 "A second factor is required: sign in through the browser once to set up an authenticator app",
             ));
-        };
+        }
         let submitted_totp = form
             .get("totp")
             .or_else(|| form.get("otp"))
             .map(String::as_str)
             .ok_or_else(|| KaisatsuError::invalid_grant("Missing totp code"))?;
         let now_secs = Utc::now().timestamp() as u64;
-        let Some(matched_step) = verify_totp_code(
-            otp_cred,
+        let Some((otp_cred, matched_step)) = verify_any_totp_code(
+            &creds,
             submitted_totp,
             realm.otp_policy_look_ahead_window,
             now_secs,

@@ -102,6 +102,12 @@ impl Fixture {
                 realm_id: "dev".into(),
                 org_id: Some("helsinki".into()),
                 client_id: "hel-app".into(),
+                // An App client the Portal created carries its mark (app_clients.rs).
+                managed_by: Some("joinedcontext".into()),
+                attributes: std::collections::BTreeMap::from([(
+                    "managed-by".to_owned(),
+                    "joinedcontext".to_owned(),
+                )]),
                 ..Default::default()
             })
             .await
@@ -502,6 +508,77 @@ async fn a_revoked_admin_token_is_refused() {
     );
 }
 
+/// Deleting a person ends their sessions (refresh families revoked, clients told); a client's
+/// service-account user is its own, never a person who took the name.
+#[tokio::test]
+async fn person_delete_and_service_account_user_follow_the_person() {
+    let f = Fixture::new().await;
+    let now = chrono::Utc::now();
+    f.store
+        .upsert_refresh_family(RefreshTokenFamily {
+            id: "fam-1".into(),
+            realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
+            sso_session_id: "sso-1".into(),
+            user_id: "hel-person".into(),
+            client_id: "hel-app".into(),
+            scope: "openid".into(),
+            mapper_scopes: Vec::new(),
+            acr: "pwd".into(),
+            amr: Vec::new(),
+            auth_time: now.timestamp(),
+            rotation_counter: 0,
+            current_jti_hash: "h".into(),
+            previous_hashes: Vec::new(),
+            dpop_jkt: None,
+            offline: false,
+            revoked: false,
+            expires_at: now + chrono::Duration::hours(1),
+        })
+        .await
+        .unwrap();
+    let admin = f
+        .token(
+            "dev",
+            "boss",
+            json!({ "realm_access": { "roles": ["realm-admin"] } }),
+        )
+        .await;
+    assert_eq!(
+        f.send(
+            Method::DELETE,
+            "/admin/realms/dev/users/hel-person",
+            &admin,
+            None
+        )
+        .await,
+        StatusCode::NO_CONTENT
+    );
+    let family = f.store.get_refresh_family("dev", "fam-1").await.unwrap();
+    assert!(family.as_ref().is_none_or(|fam| fam.revoked), "{family:?}");
+
+    f.store
+        .create_user(UserRepresentation {
+            id: "squatter".into(),
+            realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
+            username: "service-account-hel-app".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        f.send(
+            Method::GET,
+            "/admin/realms/dev/clients/uuid-hel-app/service-account-user",
+            &admin,
+            None
+        )
+        .await,
+        StatusCode::NOT_FOUND
+    );
+}
+
 /// Only an existing, enabled realm's keys verify an admin token: a disabled realm's tokens stop
 /// working, and a token on an unknown realm's path is refused before any key is read for it.
 #[tokio::test]
@@ -637,6 +714,96 @@ async fn application_and_group_subresources_are_checked_by_the_authorizer() {
 
 /// K3: Proved red against pre-K3 where `view-clients` was permitted to create, update, and delete
 /// client roles and client scopes on compat routes.
+/// `view-clients` (portal-api) writes and reads the secret of the clients the Portal marked
+/// `managed-by: joinedcontext` only: an unmarked client is not adopted, its secret stays out of
+/// the client's representation and the list, and an edit cannot drop the mark.
+#[tokio::test]
+async fn view_clients_neither_adopts_unmarked_clients_nor_reads_their_secret() {
+    let f = Fixture::new().await;
+    for (id, managed) in [("uuid-bare", None), ("uuid-portal", Some("joinedcontext"))] {
+        f.store
+            .upsert_client(ClientRepresentation {
+                id: id.into(),
+                realm_id: "dev".into(),
+                client_id: id.trim_start_matches("uuid-").into(),
+                secret: Some(format!("secret-of-{id}")),
+                managed_by: managed.map(str::to_owned),
+                attributes: managed
+                    .map(|m| {
+                        std::collections::BTreeMap::from([("managed-by".to_owned(), m.to_owned())])
+                    })
+                    .unwrap_or_default(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    }
+    let t = f
+        .token(
+            "dev",
+            "portal-svc",
+            json!({ "resource_access": { "realm-management": { "roles": ["view-clients"] } } }),
+        )
+        .await;
+    let get = |uri: String| {
+        let app = f.app.clone();
+        let t = t.clone();
+        async move {
+            let req = Request::builder()
+                .uri(uri)
+                .header("authorization", format!("Bearer {t}"))
+                .body(Body::empty())
+                .unwrap();
+            let resp = app.oneshot(req).await.unwrap();
+            let st = resp.status();
+            let body = resp.into_body().collect().await.unwrap().to_bytes();
+            (st, String::from_utf8_lossy(&body).into_owned())
+        }
+    };
+    let (st, _) = get("/admin/realms/dev/clients/uuid-bare/client-secret".into()).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, body) = get("/admin/realms/dev/clients/uuid-bare".into()).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(!body.contains("secret-of-uuid-bare"), "{body}");
+    let (st, body) = get("/admin/realms/dev/clients".into()).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        !body.contains("secret-of-uuid-bare") && body.contains("secret-of-uuid-portal"),
+        "{body}"
+    );
+    let (st, body) = get("/admin/realms/dev/clients/uuid-portal/client-secret".into()).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(body.contains("secret-of-uuid-portal"), "{body}");
+    // No write on the unmarked client, no edit that drops the mark of the Portal's own.
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev/clients/uuid-bare",
+            &t,
+            Some(json!({ "clientId": "bare", "attributes": { "managed-by": "joinedcontext" } })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev/clients/uuid-portal",
+            &t,
+            Some(json!({ "clientId": "portal", "attributes": {} })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev/clients/uuid-portal",
+            &t,
+            Some(json!({ "clientId": "portal", "attributes": { "managed-by": "joinedcontext" } })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+}
+
 #[tokio::test]
 async fn k3_view_clients_cannot_write_roles_or_client_scopes_on_compat_routes() {
     let f = Fixture::new().await;

@@ -430,8 +430,12 @@ async fn every_token_check_refuses_a_token_that_breaks_only_it() {
     let (st, _) = rest(&app, Method::GET, "/", &forge(&|_| {}), None).await;
     assert_eq!(st, StatusCode::OK, "the unchanged copy is accepted");
 
-    let cases: [(&str, &ClaimEdit<'_>); 4] = [
+    let cases: [(&str, &ClaimEdit<'_>); 6] = [
         ("audience", &|c| c["aud"] = json!(["broker"])),
+        // A relying party's own token carries `account` too (full scope): it is not the
+        // console's, so it does not manage the person's account.
+        ("client", &|c| c["azp"] = json!("edge")),
+        ("delegated", &|c| c["act"] = json!({ "sub": "agent" })),
         ("issuer", &|c| {
             c["iss"] = json!(format!("{ISSUER_ORIGIN}/realms/other"));
         }),
@@ -1063,6 +1067,40 @@ async fn sessions_sign_out_one_others_or_all_and_never_another_persons() {
             .unwrap()
             .is_some()
     );
+}
+
+/// A session signed in with the password alone, for a person who has an authenticator app: the
+/// password action asks for a full sign-in first, and a step-up asks the app's code at once.
+#[tokio::test]
+async fn a_password_session_of_a_person_with_an_authenticator_asks_the_second_factor() {
+    let (app, store) = app().await;
+    let me = sign_in(&app, &store, MEMBER, MEMBER_PW).await;
+    let member = user(&store, MEMBER).await;
+    store
+        .upsert_credential(CredentialRecord {
+            id: "otp-added-later".into(),
+            realm_id: "dev".into(),
+            user_id: member.id.clone(),
+            credential_type: "otp".into(),
+            secret_data: json!({ "value": generate_totp_secret() }).to_string(),
+            credential_data:
+                r#"{"digits":6,"period":30,"algorithm":"HmacSHA1","secretEncoding":"BASE32"}"#
+                    .into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let page = authorize(&app, "&kc_action=UPDATE_PASSWORD", Some(&me.sso))
+        .await
+        .ok()
+        .unwrap();
+    assert_ne!(page_id(&page.html), "update-password", "{}", page.html);
+    let page = authorize(&app, "&acr_values=mfa", Some(&me.sso))
+        .await
+        .ok()
+        .unwrap();
+    assert!(page.html.contains(r#"name="otp""#), "{}", page.html);
+    assert!(!page.html.contains(r#"name="password""#), "{}", page.html);
 }
 
 #[tokio::test]
