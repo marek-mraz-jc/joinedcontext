@@ -1373,7 +1373,22 @@ async fn plugins_profiles_branding_activity_and_feed_check() {
         .await
         .unwrap();
     assert_eq!(fc["conforms"], true);
-    assert_eq!(fc["datasetsChecked"], 3, "public active datasets: {fc}");
+    assert_eq!(
+        fc["datasetsChecked"], 2,
+        "public active datasets of active publishers: {fc}"
+    );
+    // A jc_hide dataset is not in the feed, so not in its check either.
+    let mut cat = w.store.get_catalogue(w.org, w.cat).await.unwrap().unwrap();
+    cat.hidden_datasets
+        .insert("open".into(), "quality check".into());
+    w.store.upsert_catalogue(cat.clone()).await.unwrap();
+    let fc = w
+        .run(&w.anonymous(), "catalogue.feed_check", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(fc["datasetsChecked"], 1, "{fc}");
+    cat.hidden_datasets.clear();
+    w.store.upsert_catalogue(cat).await.unwrap();
     let mut ops = w.ops();
     ops.validator = Some(Arc::new(Validator { conforms: true }));
     let fc = execute_operation(
@@ -1384,7 +1399,7 @@ async fn plugins_profiles_branding_activity_and_feed_check() {
     )
     .await
     .unwrap();
-    assert_eq!(fc, json!({"checked": 3, "profile": "dcat-ap-sk-2.0"}));
+    assert_eq!(fc, json!({"checked": 2, "profile": "dcat-ap-sk-2.0"}));
 }
 
 /// `allowed` answers what the call does: allowed exactly when the call is not refused for

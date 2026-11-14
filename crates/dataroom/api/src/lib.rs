@@ -1051,6 +1051,14 @@ async fn handle_validate_sample(
             "dataset '{name}' not found"
         )));
     }
+    // Shapes of the caller's own are an editor's draft: they need Propose on the dataset.
+    if body.shapes_turtle.is_some() {
+        let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
+        let decision = state.authorizer.check(&ctx, Action::Propose, &target);
+        if !decision.allowed {
+            return problem_response(decision_error(decision));
+        }
+    }
     let shapes = body
         .shapes_turtle
         .or_else(|| ds.custom_shacl_shapes.clone())
@@ -1061,15 +1069,24 @@ async fn handle_validate_sample(
         Ok(s) => s,
         Err(e) => return problem_response(e),
     };
-    match state.profiles.validate_custom_sample(
-        &shapes,
-        &body.sample_turtle,
-        ctx.org_id,
-        ctx.catalogue_id,
-        &ds.id,
-    ) {
-        Ok(report) => Json(report).into_response(),
-        Err(e) => problem_response(e),
+    // Parsing and validating is CPU work: off the async workers.
+    let profiles = state.profiles.clone();
+    let checked = tokio::task::spawn_blocking(move || {
+        profiles.validate_custom_sample(
+            &shapes,
+            &body.sample_turtle,
+            ctx.org_id,
+            ctx.catalogue_id,
+            &ds.id,
+        )
+    })
+    .await;
+    match checked {
+        Ok(Ok(report)) => Json(report).into_response(),
+        Ok(Err(e)) => problem_response(e),
+        Err(_) => problem_response(DataroomError::Storage(
+            "the sample check stopped before it finished".into(),
+        )),
     }
 }
 

@@ -1448,14 +1448,22 @@ pub async fn execute_operation(
                 .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
             let profile = input.get("profile").and_then(Value::as_str);
             let all_ds = op_ctx.store.list_datasets(req_ctx).await?;
-            let public_ds: Vec<Dataset> = all_ds
-                .into_iter()
-                .filter(|d| d.state == RecordState::Active && d.visibility == Visibility::Public)
-                .collect();
             let publishers = op_ctx.store.list_publishers(req_ctx).await?;
             let pub_map: BTreeMap<String, Publisher> = publishers
                 .into_iter()
                 .flat_map(|p| [(p.id.clone(), p.clone()), (p.name.clone(), p)])
+                .collect();
+            // The datasets the public feed carries: no jc_hide one, none of a withdrawn publisher.
+            let public_ds: Vec<Dataset> = all_ds
+                .into_iter()
+                .filter(|d| {
+                    d.state == RecordState::Active
+                        && d.visibility == Visibility::Public
+                        && !cat.hidden_datasets.contains_key(&d.name)
+                        && !pub_map
+                            .get(&d.publisher_id)
+                            .is_some_and(|p| p.state == RecordState::Withdrawn)
+                })
                 .collect();
             if let Some(validator) = &op_ctx.validator {
                 validator.check_catalogue_feed(&cat, &public_ds, &pub_map, profile)

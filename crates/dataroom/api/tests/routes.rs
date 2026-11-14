@@ -2540,10 +2540,21 @@ async fn sample_validation_uses_shapes_only_of_a_dataset_the_caller_sees() {
     .await;
     assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", a.body);
     assert!(a.body.contains("dataset has no custom SHACL shapes"));
+    // Shapes of the caller's own: an editor's draft, refused to anyone else.
+    for token in [None, Some("tok-member")] {
+        let a = post(
+            app,
+            "/api/v1/datasets/second/validate-sample",
+            token,
+            json!({"sample_turtle": bad, "shapes_turtle": SHAPES}),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::FORBIDDEN, "{token:?}: {}", a.body);
+    }
     let a = post(
         app,
         "/api/v1/datasets/second/validate-sample",
-        None,
+        Some("tok-editor"),
         json!({"sample_turtle": bad, "shapes_turtle": SHAPES}),
     )
     .await;
