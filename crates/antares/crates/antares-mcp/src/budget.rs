@@ -248,7 +248,7 @@ pub(crate) enum Admit {
 
 /// The byte budget: `used` bytes are kept, `max` may be.
 pub(crate) fn admit(row: &serde_json::Value, used: usize, max: usize) -> Admit {
-    let size = serde_json::to_vec(row).map_or(usize::MAX, |b| b.len());
+    let size = antares_ops::json_len(row);
     if size > MAX_ROW_BYTES {
         Admit::Skip
     } else if used.saturating_add(size) > max {
