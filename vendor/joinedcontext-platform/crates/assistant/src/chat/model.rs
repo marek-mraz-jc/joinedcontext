@@ -333,21 +333,18 @@ impl Model {
         &self.config.model
     }
 
-    /// One completion for `deployment` (`{project}/{name}`) under its day's `tokens_per_day`.
+    /// One completion for `deployment` (`{project}/{name}`) under its day's `tokens_per_day`, on
+    /// the deployment's model, output cap, providers and effort as `call` names them.
     pub async fn complete(
         &self,
         deployment: &str,
         tokens_per_day: u64,
+        call: &Call<'_>,
         messages: &[Value],
         tools: &[Value],
         allow_tools: bool,
     ) -> Result<Completion, CallError> {
-        let mut body = json!({
-            "model": self.config.model,
-            "messages": messages,
-            "max_tokens": MAX_ANSWER_TOKENS,
-            "reasoning": jc_core::kinds::ReasoningEffort::default().openrouter(),
-        });
+        let mut body = self.body(call, messages, false);
         if !tools.is_empty() {
             body["tools"] = Value::Array(tools.to_vec());
             if !allow_tools {
@@ -886,6 +883,42 @@ mod tests {
             "both waited {:?}",
             started.elapsed()
         );
+    }
+
+    /// Q-9-20: a tool loop's call goes on the deployment's answer model with its output cap, as
+    /// the routed answer does, and never on the service's defaults.
+    #[tokio::test]
+    async fn a_completion_asks_the_deployments_model_and_output_cap() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(token_answer())
+            .mount(&realm)
+            .await;
+        let proxy = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{ "message": { "role": "assistant", "content": "ok" }, "finish_reason": "stop" }],
+            })))
+            .mount(&proxy)
+            .await;
+        let model = a_model(&realm.uri(), &proxy.uri());
+        let call = Call {
+            model: Some("vendor/answer"),
+            max_tokens: 900,
+            json: false,
+            provider: None,
+            reasoning: jc_core::kinds::ReasoningEffort::default(),
+        };
+        let messages = [json!({ "role": "user", "content": "hi" })];
+        model
+            .complete("p/d", 0, &call, &messages, &[], true)
+            .await
+            .expect("a completion");
+        let asked = proxy.received_requests().await.expect("recorded");
+        let body: Value = serde_json::from_slice(&asked[0].body).expect("a JSON body");
+        assert_eq!(body["model"], "vendor/answer", "{body}");
+        assert_eq!(body["max_tokens"], 900, "{body}");
     }
 
     fn a_model(realm: &str, proxy: &str) -> Model {

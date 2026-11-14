@@ -578,7 +578,7 @@ fn pending_endpoint(open: &[crate::api::changes::ChangeProposal], name: &str) ->
 
 /// The project of the Endpoint with `slug`: the conversation's own, or the one a shared space
 /// reference reaches.
-fn endpoint_project(state: &AppState, slug: &str) -> Option<String> {
+pub(super) fn endpoint_project(state: &AppState, slug: &str) -> Option<String> {
     state
         .mirror
         .matching(|env| {
