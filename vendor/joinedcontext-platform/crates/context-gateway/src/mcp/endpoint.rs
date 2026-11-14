@@ -201,6 +201,7 @@ pub(crate) async fn mcp_answer(
         )
         .await;
     }
+    let answer = personal_read(&endpoint, &subject, &message, answer).await;
     let asked = Asked {
         method: &method,
         id,
@@ -208,6 +209,34 @@ pub(crate) async fn mcp_answer(
         reads_only,
     };
     decorate_answer(&gateway, &endpoint, &subject, asked, &federates, answer).await
+}
+
+/// DM-128 (T-6885): a read of personal attributes is held and read for the Entities it names,
+/// recorded, and served; one the gateway cannot hold or read is refused, never served unlogged.
+async fn personal_read(
+    endpoint: &Endpoint,
+    subject: &Subject,
+    message: &Value,
+    answer: Response<Body>,
+) -> Response<Body> {
+    if !mcp::read_record::needed(endpoint, message) || !answer.status().is_success() {
+        return answer;
+    }
+    let (parts, body) = answer.into_parts();
+    let json = parts
+        .headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("application/json"));
+    let held = axum::body::to_bytes(body, MAX_BODY).await.ok();
+    let read = held
+        .as_ref()
+        .filter(|_| json)
+        .and_then(|held| serde_json::from_slice::<Value>(held).ok());
+    match mcp::read_record::recorded(endpoint, subject, message, read.as_ref()) {
+        Ok(()) => proxy::with_body(parts, held.unwrap_or_default()),
+        Err(refusal) => mcp::jsonrpc::json_response(StatusCode::OK, &refusal),
+    }
 }
 
 /// What the gateway answers before any hop to the broker: an anonymous caller's write tool
@@ -660,15 +689,26 @@ pub(crate) async fn member_call(
         }
     };
     let status = answer.status();
-    let held = axum::body::to_bytes(answer.into_body(), MAX_BODY)
-        .await
-        .unwrap_or_default();
+    let held = axum::body::to_bytes(answer.into_body(), MAX_BODY).await;
+    let whole = held.is_ok();
+    let held = held.unwrap_or_default();
     if let Some(reserved) = reserved {
         let taken = status.is_success()
             && serde_json::from_slice::<Value>(&held)
                 .is_ok_and(|answer| answer["result"]["isError"] != true);
         if !taken {
             reserved.release(gateway, endpoint);
+        }
+    }
+    if status.is_success() {
+        // DM-128 (T-6885): a read of personal attributes is recorded or refused, as on the
+        // Endpoint's own MCP address.
+        let read = serde_json::from_slice::<Value>(&held)
+            .ok()
+            .filter(|answer| whole && answer.get("jsonrpc").is_some());
+        if let Err(refusal) = mcp::read_record::recorded(endpoint, subject, &message, read.as_ref())
+        {
+            return refusal;
         }
     }
     match serde_json::from_slice::<Value>(&held) {

@@ -76,7 +76,7 @@ class Assistant:
     proxy: the router, then the answer with the rows read. `leaky` reads any routed Endpoint and
     serves every id."""
 
-    def __init__(self, model_port: int, leaky=False, deaf=False):
+    def __init__(self, model_port: int, leaky=False, deaf=False, viz=None, bad_chart=None):
         public = {"hel-public": {"open"}}
         fake = self
 
@@ -103,13 +103,25 @@ class Assistant:
                 if len(p) == 4 and p[1] == "d":
                     if not self.known(p[2]):
                         return self.send(404, b"<html>missing</html>", "text/html")
-                    return self.send(200, b"<html>widget</html>" if p[3] == "widget" else b"x", "text/html")
+                    if p[3] == "widget":
+                        frames = [viz] if viz else []
+                        if bad_chart == "frames":
+                            frames.append("https://evil.invalid")
+                        self.send_response(200)
+                        self.send_header("content-type", "text/html")
+                        csp = "default-src 'none'; " + (f"frame-src {' '.join(frames)}; " if frames else "") + \
+                            "frame-ancestors 'none'"
+                        self.send_header("content-security-policy", csp)
+                        self.send_header("content-length", "19")
+                        self.end_headers()
+                        return self.wfile.write(b"<html>widget</html>")
+                    return self.send(200, b"x", "text/html")
                 if len(p) == 6 and p[3] == "d":
                     if not self.known(p[4]):
                         return self.send(404)
                     if p[5] == "challenge":
                         return self.send(200, json.dumps({"challenge": "c.1.8.s", "difficulty": 8}).encode())
-                    return self.send(200, b"{}")
+                    return self.send(200, json.dumps({"viz": viz} if viz else {}).encode())
                 self.send(404)
 
             def do_POST(self):
@@ -135,8 +147,14 @@ class Assistant:
                 events = []
                 if item.get("endpoint") in public.get(p[4], set()) or (leaky and item.get("endpoint") in ROWS):
                     st, eid = ROWS[item["endpoint"]]
-                    events.append(("data", {"type": st, "columns": ["id"], "rows": [[eid]]}))
-                answer = fake.model({"messages": [{"role": "user", "content": json.dumps(events)}]})
+                    if viz and st == "AirQualityObserved":
+                        rows = [[eid, "Kallio", 21], ["urn:a2", "Vallila", 9], ["urn:a3", "Pasila", 14]]
+                        events.append(("data", {"type": st, "columns": ["id", "name", "pm10"], "rows": rows}))
+                    else:
+                        events.append(("data", {"type": st, "columns": ["id"], "rows": [[eid]]}))
+                messages = [{"role": "user", "content": json.dumps(events)}]
+                tools = [{"type": "function", "function": {"name": modelstub.CHART_TOOL}}] if viz and events else []
+                answer = fake.answer(messages, tools, events, bad_chart)
                 events += [("answer", {"text": answer}), ("done", {})]
                 raw = "".join(f"event: {n}\ndata: {json.dumps(d)}\n\n" for n, d in events).encode()
                 self.send(200, raw, "text/event-stream")
@@ -148,10 +166,31 @@ class Assistant:
         self.base = f"http://127.0.0.1:{self.srv.server_address[1]}"
 
     def model(self, body) -> str:
+        return self.message(body)["content"]
+
+    def message(self, body) -> dict:
         req = urllib.request.Request(f"http://127.0.0.1:{self.model_port}/chat/completions",
                                      data=json.dumps(body).encode(), headers={"content-type": "application/json"})
         with urllib.request.urlopen(req, timeout=5) as r:
-            return json.loads(r.read())["choices"][0]["message"]["content"]
+            return json.loads(r.read())["choices"][0]["message"]
+
+    def answer(self, messages, tools, events, bad_chart) -> str:
+        """The answer, after the chart calls the model makes: table 1 is refused (the tables are
+        numbered 2 here, as when a search came first), table 2 shown, as jc's data loop does."""
+        for _ in range(4):
+            m = self.message({"messages": messages, "tools": tools})
+            calls = m.get("tool_calls") or []
+            if not calls:
+                return m["content"]
+            args = json.loads(calls[0]["function"]["arguments"])
+            if args["data"] != 2:
+                said = f"There is no table {args['data']}; the tables of this answer are: 2."
+            else:
+                said = "Shown to the person."
+                for _ in range(2 if bad_chart == "two" else 1):
+                    events.append(("visualization", {"spec": {"mark": "bar"}, "rows": []}))
+            messages = messages + [m, {"role": "tool", "tool_call_id": calls[0]["id"], "content": said}]
+        return ""
 
     def close(self):
         self.srv.shutdown()
@@ -164,15 +203,15 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-def run_suite(tmp_path, leaky=False, log=None, off=False, deaf=False, kept=False):
+def run_suite(tmp_path, leaky=False, log=None, off=False, deaf=False, kept=False, viz=None, bad_chart=None):
     root = write_export(tmp_path / "export")
     files = root / "gitea" / "files"
     port = free_port()
-    jc = Assistant(port, leaky, deaf)
+    jc = Assistant(port, leaky, deaf, viz, bad_chart)
     if off:
         jc.close()
     a = argparse.Namespace(base_url=jc.base, model_stub_port=port, log_file=log, prod_widget=False, timeout=10,
-                           kept_component=kept)
+                           kept_component=kept, viz_origin=viz)
     s = suite.Suite(a, suite.load_deployments(files), suite.Targets(ex.load_endpoints(files), INDEX))
     try:
         s.run()
@@ -193,6 +232,31 @@ def test_a_jc_that_reads_only_granted_endpoints_passes(tmp_path):
     assert r["prod.widget"]["result"] == SKIP and "--prod-widget" in r["prod.widget"]["reason"]
     # An internal deployment has no public chat to ask.
     assert not any(k.startswith("chat.hel-knowledge") for k in r)
+
+
+VIZ = "https://viz.hel.test"
+
+
+def test_a_jc_with_a_renderer_frames_it_alone_and_draws_one_chart(tmp_path):
+    r, s = run_suite(tmp_path, viz=VIZ)
+    fails = [x for x in s.r.rows if x["result"] == FAIL]
+    assert not fails, fails
+    assert r["page.hel-public.viz"]["result"] == PASS
+    assert r["chat.hel-public.visualization"]["result"] == PASS
+    assert "1 visualization event" in r["chat.hel-public.visualization"]["actual"]
+
+
+@pytest.mark.parametrize("bad", ["two", "frames"])
+def test_two_charts_or_a_second_framed_origin_fail(tmp_path, bad):
+    r, _ = run_suite(tmp_path, viz=VIZ, bad_chart=bad)
+    rid = "chat.hel-public.visualization" if bad == "two" else "page.hel-public.viz"
+    assert r[rid]["result"] == FAIL, r[rid]
+
+
+def test_without_a_viz_origin_the_chart_rows_are_named_skips(tmp_path):
+    r, _ = run_suite(tmp_path)
+    for rid in ("page.hel-public.viz", "chat.hel-public.visualization"):
+        assert r[rid]["result"] == SKIP and "--viz-origin" in r[rid]["reason"], r[rid]
 
 
 def test_a_jc_that_reads_a_closed_endpoint_and_serves_every_id_fails(tmp_path):

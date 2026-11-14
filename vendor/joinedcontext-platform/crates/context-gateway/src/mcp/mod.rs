@@ -15,6 +15,7 @@ pub mod hub;
 pub mod jsonrpc;
 pub mod limits;
 pub mod personal;
+pub mod read_record;
 pub mod search;
 pub mod server;
 pub mod tools;
