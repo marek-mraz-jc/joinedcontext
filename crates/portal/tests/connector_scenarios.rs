@@ -446,7 +446,8 @@ fn seed_project(mirror: &Mirror, project: &str, catalogue: &str) {
             { "widgetType": "vega-lite", "endpointRef": format!("{project}-reports"),
               "data": { "source": "csv", "type": "PotholeReport" },
               "spec": { "mark": "bar", "data": { "name": "source" }, "encoding": {
-                  "x": { "field": "contactEmail", "type": "nominal" } } } }
+                  "x": { "field": "contactEmail", "type": "nominal" },
+                  "y": { "field": "count", "type": "quantitative" } } } }
         ] }] }),
     ));
     // The Pipelines' write target: a valid Endpoint manifest the write checks can read (PL-111).
@@ -956,6 +957,15 @@ async fn data_plane(server: &MockServer) {
             "description": { "type": "Property", "value": "Hlboká jama pri zastávke" },
             "contactEmail": { "type": "Property", "value": "jana@example.org" }
         }])))
+        .mount(server)
+        .await;
+    // The reports as the Endpoint's CSV file (T-6864): what a widget on contactEmail would draw.
+    Mock::given(method("GET"))
+        .and(path_regex("^/api/endpoint/[a-z2-7]+reportszz+/file.csv$"))
+        .and(header("authorization", bearer.as_str()))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "id,type,contactEmail,count\nurn:ngsi-ld:PotholeReport:1,PotholeReport,jana@example.org,1\n",
+        ))
         .mount(server)
         .await;
     // The broker's admin read of a type's stored names (T-6001): t-scn-23's BikeCounters hold
