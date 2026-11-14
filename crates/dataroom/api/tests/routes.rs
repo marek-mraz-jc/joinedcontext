@@ -884,6 +884,46 @@ async fn resource_view_create_cannot_take_over_another_datasets_view() {
 }
 
 #[tokio::test]
+async fn resource_create_cannot_reuse_another_datasets_resource_id() {
+    let w = world().await;
+    let app = &w.app;
+    // `res-orphan-0` belongs to a dataset the editor may not change.
+    let body = json!({"package_id": "open", "id": "res-orphan-0", "url": "https://x.test/a.csv"});
+    let a = ckan(app, "resource_create", Some("tok-editor"), body).await;
+    assert_eq!(a.status, StatusCode::CONFLICT, "{}", a.body);
+    let a = ckan(
+        app,
+        "resource_show",
+        Some("tok-admin"),
+        json!({"id": "res-orphan-0"}),
+    )
+    .await;
+    assert_eq!(a.json()["result"]["package_id"], "pkg-orphan", "{}", a.body);
+    // A fresh id of its own still works.
+    let body = json!({"package_id": "open", "id": "res-open-new", "url": "https://x.test/b.csv"});
+    let a = ckan(app, "resource_create", Some("tok-editor"), body).await;
+    assert_eq!(a.json()["result"]["id"], "res-open-new", "{}", a.body);
+}
+
+#[tokio::test]
+async fn mcp_tool_errors_keep_the_stores_text_in_the_server_log() {
+    let w = world().await;
+    let app = &w.app;
+    w.store.fail(&["get_dataset"]);
+    let a = post(
+        app,
+        "/mcp",
+        None,
+        json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+               "params": {"name": "jc_dataset_get", "arguments": {"name": "open"}}}),
+    )
+    .await;
+    assert_eq!(a.json()["result"]["isError"], true, "{}", a.body);
+    assert!(a.body.contains("storage failed"), "{}", a.body);
+    assert!(!a.body.contains("get_dataset failed"), "{}", a.body);
+}
+
+#[tokio::test]
 async fn ckan_get_refuses_every_write_and_purge_action() {
     let w = world().await;
     let app = &w.app;
@@ -1427,6 +1467,19 @@ async fn ckan_organization_writes() {
         a.json()["result"]["uri"],
         format!("https://{HOST}/organization/dept2")
     );
+    // A new organization's id never names a stored one: datasets name their publisher by it.
+    for id in ["city", "org-dept"] {
+        let a = ckan(
+            app,
+            "organization_create",
+            Some("tok-admin"),
+            json!({"name": "dept3", "id": id}),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::CONFLICT, "{id}: {}", a.body);
+    }
+    let a = ckan(app, "package_show", None, json!({"id": "open"})).await;
+    assert_eq!(a.json()["result"]["organization"]["name"], "city");
 
     // organization_update / patch: by id or name, an instance renames only its own organization.
     let a = ckan(
@@ -2248,8 +2301,11 @@ async fn portal_catalogue_and_dataset_answer_like_package_show() {
         )
         .await;
         assert_eq!(a.status == StatusCode::OK, editor, "{name}: {}", a.body);
+        // A signed-in answer may hold what an anonymous one may not read: never shared-cached.
+        assert_eq!(a.header("cache-control"), "private, no-store", "{name}");
     }
     let a = get(app, "/api/v1/catalogue/datasets/open", None).await;
+    assert_eq!(a.header("cache-control"), "public, max-age=60");
     assert_eq!(a.json()["name"], "open");
     let a = get(app, "/api/v1/catalogue/datasets/ghost", None).await;
     assert_eq!(a.status, StatusCode::NOT_FOUND);

@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { App } from "../src/App";
+import { EXACT_PROJECTS } from "./exactProjects";
 import { lastAddress, preferredProject, rememberAddress, rememberProject } from "../src/api/projects";
 
 const IDENTITY = { subject: "b7c1e0f4", username: "jana.kovacova", roles: ["portal-viewer"] };
@@ -20,7 +21,7 @@ const LIST = (items: unknown[]) => ({ apiVersion: "joinedcontext.com/v1alpha1", 
 // banskabystrica is the sample every newcomer may read, listed first by name (T-5603).
 const PROJECTS = LIST([{ name: "banskabystrica", sample: true }, { name: "helsinki", sample: false }]);
 
-function renderAt(path: string) {
+function renderAt(path: string, exact = false) {
   window.history.pushState({}, "", path);
   vi.stubGlobal(
     "fetch",
@@ -34,7 +35,7 @@ function renderAt(path: string) {
             ? { project: "helsinki", bootstrap: true, grants: [] }
             : LIST([]);
       return Promise.resolve(
-        new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }),
+        new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json", ...(exact ? { [EXACT_PROJECTS]: "1" } : {}) } }),
       );
     }),
   );
@@ -85,6 +86,15 @@ describe("the project a page outside any project opens on (T-2753)", () => {
       expect(preferredProject(["banskabystrica", "helsinki"])).toBe("helsinki");
     });
   }
+
+  it("never remembers a project the person cannot read, not even while the project list loads", async () => {
+    renderAt("/projects/foreign/spaces", true);
+    // The page is drawn before the list settles; what it remembers waits for the list.
+    await screen.findByRole("button", { name: en.nav.projects });
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input instanceof Request ? input.url : input).endsWith("/api/v1/projects"))).toBe(true));
+    expect(window.localStorage.getItem("jc.lastProject")).not.toBe("foreign");
+    expect(lastAddress("foreign")).toBeUndefined();
+  });
 
   it("sends / to the home of the project last worked in", async () => {
     rememberProject("helsinki");

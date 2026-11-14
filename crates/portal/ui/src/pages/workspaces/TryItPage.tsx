@@ -8,6 +8,7 @@ import { Alert, Badge, Button, Card, ExternalLink, PageHeader, PageLoading } fro
 import { ResourcePageFailed } from "../../components/ui/PageState";
 import { copyIntoPreview, PER_TYPE } from "./copyIntoPreview";
 import type { CopyResult } from "./copyIntoPreview";
+import { isWorkspaceOwner } from "./owner";
 
 const POLL_MS = 5000;
 
@@ -94,7 +95,7 @@ export function TryItPage({ project, name }: { project: string; name: string }):
   }
 
   const owner = workspace.data?.owner;
-  const mine = !!identity && !!owner && (owner === identity.email || owner === identity.username);
+  const mine = isWorkspaceOwner(identity, owner);
   const state = preview.data?.state ?? "none";
   const running = state === "running" || state === "starting";
   const tone = state === "running" ? "success" : state === "error" ? "danger" : "neutral";

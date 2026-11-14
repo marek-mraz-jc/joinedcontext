@@ -214,6 +214,7 @@ export function PoliciesPage({ project, edit }: { project: string; edit?: string
   const addButton = (
     <PermissionGuard project={project} kind="Policy" verb="propose">
       <Button
+        data-shortcut="new"
         variant="primary"
         icon={<Icon name="plus" className="size-4" />}
         onClick={() => {

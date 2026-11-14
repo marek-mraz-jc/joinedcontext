@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { api, ApiError, queryKeys, unwrap } from "../api/client";
 import { ownRights, usePermissions } from "../api/permissions";
 import { ChangeNotice } from "../components/ChangeNotice";
-import { changeSentence } from "./changeWords";
+import { changeSentence, landed } from "./changeWords";
 import { ChangedFields } from "../components/ResourceHistory";
 import { download } from "../pages/models/diagramExport";
 import { AdminGrid } from "../components/grid/AdminGrid";
@@ -236,8 +236,7 @@ export function ApprovalsHistory({
       align: "right",
       cell: (change) => (
         <>
-          {change.status.phase === "Merged" &&
-          change.summary.key === "change.summary.delete" ? (
+          {landed(change) && change.summary.key === "change.summary.delete" ? (
             <PermissionGuard
               project={project}
               kind={String((change.summary.params as Record<string, unknown>).kind ?? "")}
@@ -256,7 +255,7 @@ export function ApprovalsHistory({
               </Button>
             </PermissionGuard>
           ) : null}
-          {change.status.phase === "Merged" && change.summary.key === "change.summary.update" ? (
+          {landed(change) && change.summary.key === "change.summary.update" ? (
             <PermissionGuard
               project={project}
               kind={String((change.summary.params as Record<string, unknown>).kind ?? "")}

@@ -126,6 +126,41 @@ async fn the_mount_names_the_catalogue_and_the_links_not_the_raw_host() {
 
 /// A request as jc's router hands it over: its `Mount`, and the Organization its host registry
 /// decided (a bound host's row or a shared host's first segment).
+#[tokio::test]
+async fn a_catalogues_uploaded_profile_is_listed_only_on_its_own_host() {
+    let state = state().await;
+    let org = OrgId::from_uuid(Uuid::from_u128(ORG));
+    let own = CatalogueId::from_uuid(Uuid::from_u128(DEFAULT));
+    let ctx = RequestCtx::new(
+        org,
+        own,
+        dataroom_core::Subject::authenticated("seed", vec![org], Vec::new()),
+    );
+    let record: dataroom_core::ProfileRecord = serde_json::from_value(serde_json::json!({
+        "id": "own-draft", "version": "1.0.0", "uri": "https://profiles.example.org/own-draft",
+        "title": {"en": "Own draft"}, "builtIn": false,
+        "shapesTurtle": "@prefix sh: <http://www.w3.org/ns/shacl#> .
+    <urn:own:Shape> a sh:NodeShape .",
+    }))
+    .expect("profile");
+    let cat = state.store.get_catalogue(org, own).await.unwrap().unwrap();
+    let (saved, _) = state
+        .profiles
+        .upload_and_dry_run(record, &cat, &[], &Default::default())
+        .expect("upload");
+    state.store.upsert_profile(&ctx, saved).await.unwrap();
+
+    let (status, body) = get(state.clone(), "other.city.test", None, "/api/v1/profiles").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        !body.contains("own-draft"),
+        "another catalogue's upload is listed"
+    );
+    assert!(body.contains("dcat-ap-sk-2.0"), "built-ins stay listed");
+    let (_, body) = get(state, "data.city.test", None, "/api/v1/profiles").await;
+    assert!(body.contains("own-draft"), "its own upload is listed");
+}
+
 async fn call(
     state: DataroomState,
     at: jc_router::Mount,

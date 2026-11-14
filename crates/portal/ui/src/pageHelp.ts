@@ -11,6 +11,7 @@ export interface PageHelp {
 
 /** A project's sections by their address, and the guide page each one has. */
 const SECTIONS: Record<string, PageHelp> = {
+  home: { key: "home", guide: "User-Guide/01-getting-started" },
   spaces: { key: "spaces", guide: "User-Guide/02-organizations-projects-spaces" },
   models: { key: "models", guide: "User-Guide/03-data-models" },
   datasources: { key: "datasources", guide: "User-Guide/04-pipelines" },
@@ -30,7 +31,7 @@ const SECTIONS: Record<string, PageHelp> = {
 };
 
 /** Every main page that has help: what the help tests hold to words in every locale. */
-export const HELPED: string[] = ["home", "organization", ...Object.keys(SECTIONS)];
+export const HELPED: string[] = ["organization", ...Object.keys(SECTIONS)];
 
 /** The help of the page at `pathname`, or nothing for a page without one. */
 export function helpFor(pathname: string): PageHelp | undefined {

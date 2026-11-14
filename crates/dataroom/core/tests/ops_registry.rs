@@ -876,6 +876,21 @@ async fn publisher_operations_and_no_self_granted_editing() {
         .unwrap();
     assert_eq!(created["id"], "pub-region");
     assert!(w.activity_ops().await.contains(&"publisher.propose".into()));
+    // A new record's id or name never names a stored publisher: datasets name theirs by it.
+    for (id, name) in [("city", "fresh"), ("pub-fresh", "city")] {
+        let r = w
+            .run(
+                &w.admin(),
+                "publisher.propose",
+                json!({"publisher": {"id": id, "name": name, "title": {"sk": "X"},
+                    "description": {}, "uri": "https://example.org/x", "state": "active"}}),
+            )
+            .await;
+        assert!(
+            matches!(r, Err(DataroomError::Conflict(_))),
+            "{id}/{name}: {r:?}"
+        );
+    }
     // Now the member is region's editor and may edit region's record.
     w.run(
         &w.member(),
