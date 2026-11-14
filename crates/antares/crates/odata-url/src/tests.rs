@@ -862,6 +862,28 @@ fn an_ampersand_in_a_literal_starts_no_option() {
     }
 }
 
+/// An apostrophe inside a `$search` phrase opens no string literal, so the
+/// `$apply` and `$compute` after it are read as themselves.
+#[test]
+fn an_apostrophe_in_a_search_phrase_opens_no_literal() {
+    for uri in [
+        "Buildings?$search=%22don't%22&$compute=height%20mul%202%20as%20h&$select=h",
+        "Buildings?$search=%22don%27t%22&$apply=identity",
+        "Buildings?$search=\"don't\"&$apply=identity",
+    ] {
+        let o = options(uri);
+        assert!(o.apply.is_some() || o.compute.is_some(), "{uri}: {o:?}");
+        assert!(o.schemaversion.is_none(), "{uri}: {o:?}");
+        assert!(o.search.is_some(), "{uri}");
+    }
+    let o = options("Buildings?$filter=name%20eq%20'a%22b&$apply=identity'");
+    assert!(
+        o.apply.is_none(),
+        "a double quote in a literal: {:?}",
+        o.apply
+    );
+}
+
 /// F-R2ANT4-015: an offset is into the URL as given, so a name after decoded
 /// escapes is placed past the path, not inside it (odata-axum answers 404 or
 /// 400 by that offset).
