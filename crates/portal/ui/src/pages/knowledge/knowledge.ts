@@ -509,7 +509,7 @@ function closed(value: unknown, depth: number): boolean {
   if (depth > 8) return false;
   if (Array.isArray(value)) return value.length <= 8 && value.every((v) => closed(v, depth + 1));
   if (value === null || typeof value !== "object") return typeof value !== "string" || value.length <= 200;
-  return Object.entries(value).every(([key, inner]) => VISUAL_KEYS.has(key) && (key === "config" || closed(inner, depth + 1)));
+  return Object.entries(value).every(([key, inner]) => VISUAL_KEYS.has(key) && (key === "config" ? depth === 0 : closed(inner, depth + 1)));
 }
 
 /**
