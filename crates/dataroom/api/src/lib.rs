@@ -849,11 +849,22 @@ async fn handle_portal_dataset(
 }
 
 async fn handle_list_profiles(State(state): State<DataroomState>, headers: HeaderMap) -> Response {
-    let (_ctx, cat) = match state.resolve_context(&headers).await {
+    let (ctx, cat) = match state.resolve_context(&headers).await {
         Ok(v) => v,
         Err(e) => return problem_response(e),
     };
-    let profiles = state.profiles.list();
+    // The registry serves every catalogue: its built-in profiles, and this catalogue's own
+    // uploads from the store, never another catalogue's.
+    let mut profiles: Vec<ProfileRecord> = state
+        .profiles
+        .list()
+        .into_iter()
+        .filter(|p| p.built_in)
+        .collect();
+    match state.store.list_profiles(&ctx).await {
+        Ok(own) => profiles.extend(own),
+        Err(e) => return problem_response(e),
+    }
     Json(json!({
         "mainProfile": cat.main_profile,
         "activeProfiles": cat.active_profiles,
