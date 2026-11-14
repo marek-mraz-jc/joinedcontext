@@ -150,7 +150,7 @@ export function useGridKeys(
       }
       gridProps.onKeyDown(e);
     },
-    [activeCellId, gridProps, setEdit, leaveCell, state.activeCell, cellAt, rows, rules, columns, inspects, editable, locks, labels.locked],
+    [activeCellId, gridProps, setEdit, leaveCell, state.activeCell, cellAt, rows, rules, columns, inspects, editable, cellHistory, openHistoryOf, locks, labels.locked],
   );
 
   /**
