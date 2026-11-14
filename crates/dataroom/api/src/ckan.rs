@@ -38,15 +38,25 @@ fn ckan_ok(base: &str, action: &str, result: Value, cache_public: bool) -> Respo
         "success": true,
         "result": result,
     });
+    // A cached anonymous answer is keyed apart from token callers; any other answer stays out of
+    // shared caches (it may hold what only this caller may read).
     if cache_public {
         (
             StatusCode::OK,
-            [(header::CACHE_CONTROL, "public, max-age=60")],
+            [
+                (header::CACHE_CONTROL, "public, max-age=60"),
+                (header::VARY, "Authorization, X-CKAN-API-Key"),
+            ],
             Json(body),
         )
             .into_response()
     } else {
-        (StatusCode::OK, Json(body)).into_response()
+        (
+            StatusCode::OK,
+            [(header::CACHE_CONTROL, "private, no-store")],
+            Json(body),
+        )
+            .into_response()
     }
 }
 

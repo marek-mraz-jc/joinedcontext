@@ -317,6 +317,17 @@ impl Answer {
     fn json(&self) -> Value {
         serde_json::from_str(&self.body).unwrap_or_else(|e| panic!("{e}: {}", self.body))
     }
+    /// Every `Vary` line joined: a response may carry several.
+    fn vary(&self) -> String {
+        let all: Vec<&str> = self
+            .headers
+            .get_all("vary")
+            .iter()
+            .map(|v| v.to_str().unwrap())
+            .collect();
+        all.join(", ")
+    }
+
     fn header(&self, name: &str) -> &str {
         self.headers
             .get(name)
@@ -722,7 +733,7 @@ async fn ckan_reads_answer_cors_for_the_viz_origin_alone() {
         "https://viz.city.test"
     );
     assert_eq!(a.header("access-control-allow-credentials"), "");
-    assert!(a.header("vary").to_ascii_lowercase().contains("origin"));
+    assert!(a.vary().to_ascii_lowercase().contains("origin"));
     for other in [
         "https://evil.test",
         "https://viz.city.test.evil.test",
@@ -730,7 +741,7 @@ async fn ckan_reads_answer_cors_for_the_viz_origin_alone() {
     ] {
         let a = read_from(app, other).await;
         assert_eq!(a.header("access-control-allow-origin"), "", "{other}");
-        assert!(a.header("vary").to_ascii_lowercase().contains("origin"));
+        assert!(a.vary().to_ascii_lowercase().contains("origin"));
     }
     let a = send(
         app,
@@ -758,6 +769,7 @@ async fn ckan_site_and_listing_actions() {
     let a = get(app, "/api/3/action/status_show", None).await;
     assert_eq!(a.status, StatusCode::OK);
     assert_eq!(a.header("cache-control"), "public, max-age=60");
+    assert_eq!(a.header("vary"), "Authorization, X-CKAN-API-Key");
     let v = a.json();
     assert_eq!(v["result"]["site_title"], "Mestský katalóg");
     assert_eq!(v["result"]["site_url"], format!("https://{HOST}"));
@@ -781,7 +793,7 @@ async fn ckan_site_and_listing_actions() {
     );
     // An authenticated GET is not publicly cacheable.
     let a = get(app, "/api/3/action/site_read", Some("tok-member")).await;
-    assert_eq!(a.header("cache-control"), "");
+    assert_eq!(a.header("cache-control"), "private, no-store");
 
     // tag_list: tags of public active datasets only.
     let tags = get(app, "/api/3/action/tag_list", None).await.json()["result"].clone();
@@ -1907,6 +1919,7 @@ async fn dcat_feeds_negotiate_format_and_profile_and_page() {
         );
         assert!(a.header("link").contains("rel=\"profile\""), "{uri}");
         assert!(!a.header("content-profile").is_empty(), "{uri}");
+        assert_eq!(a.header("vary"), "Accept, Accept-Profile", "{uri}");
     }
     let a = get(app, "/profiles/dcat-ap-sk-2.0/catalog.ttl", None).await;
     assert!(

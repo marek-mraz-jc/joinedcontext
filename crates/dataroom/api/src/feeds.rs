@@ -177,6 +177,8 @@ fn render_dcat_catalog_response(
                 header::HeaderName::from_static("content-profile"),
                 profile_uri,
             ),
+            // The format and profile follow these request headers.
+            (header::VARY, "Accept, Accept-Profile".to_owned()),
         ],
         body,
     )
