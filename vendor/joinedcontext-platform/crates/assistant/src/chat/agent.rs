@@ -754,12 +754,25 @@ async fn answer_in_scope(
             messages.push(json!({"role": "user", "content": ANSWER_NOW}));
         }
         let at = std::time::Instant::now();
-        let pending = ask.trace.pending("agent", ask.model.name(), at, &messages);
+        let pending = ask.trace.pending(
+            "agent",
+            ask.answer_model.unwrap_or(ask.model.name()),
+            at,
+            &messages,
+        );
+        let answer_call = super::model::Call {
+            model: ask.answer_model,
+            max_tokens: ask.output_tokens,
+            json: false,
+            provider: ask.provider,
+            reasoning: ask.reasoning.answer.unwrap_or_default(),
+        };
         let completed = ask
             .model
             .complete(
                 ask.deployment,
                 ask.tokens_per_day,
+                &answer_call,
                 &messages,
                 &tools,
                 allow_tools,
