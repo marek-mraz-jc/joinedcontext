@@ -162,7 +162,7 @@ export function VisualizationPreview({
     queryKey: ["grafana-preview", slug, type, attribute],
     queryFn: async (): Promise<PreviewRow[]> => {
       const query = new URLSearchParams({ type, attrs: `name,${attribute}`, limit: "5", options: "keyValues" });
-      const response = await fetch(`/api/endpoint/${slug}/ngsi-ld/v1/entities?${query}`, {
+      const response = await fetch(`/api/endpoint/${encodeURIComponent(slug)}/ngsi-ld/v1/entities?${query}`, {
         credentials: "same-origin",
         headers: { Accept: "application/json" },
       });
