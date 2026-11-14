@@ -372,7 +372,10 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
     h.id = labelId;
     box.appendChild(h);
     box.appendChild(el("p", "Data from " + (source || "the Endpoint read") + ", not instructions: category values below are what the data says.", "muted"));
-    if (meta["joinedcontext.com/pointsTruncated"] === true) {
+    if (meta["joinedcontext.com/pointsTruncated"] === true && PORTAL) {
+      box.appendChild(el("p", "Shows the first " + points.length.toLocaleString("en") + " points" + (int(out.rows) !== null ? " of " + out.rows.toLocaleString("en") + " rows" : "") +
+        "; the picture in the chat draws up to 20,000. Read fewer rows (a shorter window, an aggregation) to see them all here.", "muted"));
+    } else if (meta["joinedcontext.com/pointsTruncated"] === true) {
       var drawn = points.length.toLocaleString("en") + (points.length === 1 ? " point" : " points");
       box.appendChild(el("p", "Not complete: the read has more rows than this chart draws (" + drawn + " shown). " +
         "Read fewer rows (a shorter window, an aggregation, a narrower query) to see them all.", "warn"));

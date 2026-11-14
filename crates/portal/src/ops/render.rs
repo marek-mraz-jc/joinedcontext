@@ -50,6 +50,7 @@ const DOOR: Door = Door {
     tool: NAME,
     read: "data.query",
     max_side: MAX_SIDE,
+    max_height: MAX_SIDE,
     max_points: MAX_POINTS,
     max_view_points: MAX_VIEW_POINTS,
 };
