@@ -1,0 +1,1 @@
+Deliberate (T-6834): Bento lints clickhouse as accepted and runs it; ekiben runs only postgres, mysql and sqlite and refuses a listed driver it cannot run at lint, naming it.

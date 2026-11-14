@@ -859,3 +859,94 @@ pub async fn isolation(store: &dyn Store) {
         .is_empty());
     assert!(store.get_catalogue(org_a, cat_b).await.unwrap().is_none());
 }
+
+/// A deleted catalogue takes no more writes (a harvest run still going when it was deleted
+/// cannot bring rows back), a re-create starts empty, and its id belongs to its Organization
+/// alone, tombstone included (ODP-09, ODP-12).
+pub async fn deleted_catalogues(store: &dyn Store) {
+    let (org, cat) = tenant();
+    let (other_org, _) = tenant();
+    let host = unique_host("gone");
+    store
+        .upsert_catalogue(catalogue(org, cat, "gone", &host))
+        .await
+        .unwrap();
+    let ctx = member_ctx(org, cat);
+    store
+        .upsert_publisher(&ctx, publisher("city"))
+        .await
+        .unwrap();
+    store
+        .upsert_dataset(&ctx, dataset("air", "city", "public"))
+        .await
+        .unwrap();
+    assert!(store.delete_catalogue(org, cat).await.unwrap());
+
+    let gone = |r: Result<(), DataroomError>, what: &str| {
+        assert!(matches!(r, Err(DataroomError::Gone(_))), "{what}: {r:?}");
+    };
+    gone(
+        store
+            .upsert_dataset(&ctx, dataset("late", "city", "public"))
+            .await
+            .map(drop),
+        "dataset",
+    );
+    gone(
+        store
+            .upsert_harvest_run(
+                &ctx,
+                harvest_run("run-9", "hs-nkod", "2026-11-14T10:00:00Z"),
+            )
+            .await
+            .map(drop),
+        "run",
+    );
+    gone(
+        store
+            .upsert_harvest_source(&ctx, harvest_source("nkod"))
+            .await
+            .map(drop),
+        "source",
+    );
+    let stale_before = chrono::Utc::now();
+    gone(
+        store
+            .claim_harvest_run(
+                &ctx,
+                harvest_run("run-10", "hs-nkod", "2026-11-14T10:00:00Z"),
+                stale_before,
+            )
+            .await
+            .map(drop),
+        "claim",
+    );
+
+    let theirs = catalogue(other_org, cat, "taken", &unique_host("taken"));
+    assert!(
+        matches!(
+            store.upsert_catalogue(theirs).await,
+            Err(DataroomError::Conflict(_))
+        ),
+        "another Organization cannot take a tombstoned id"
+    );
+
+    store
+        .upsert_catalogue(catalogue(org, cat, "gone", &host))
+        .await
+        .expect("the owner re-creates it");
+    assert!(store.list_datasets(&ctx).await.unwrap().is_empty());
+    store
+        .upsert_publisher(&ctx, publisher("city"))
+        .await
+        .unwrap();
+    store
+        .upsert_dataset(&ctx, dataset("air", "city", "public"))
+        .await
+        .expect("a re-created catalogue takes writes");
+    let theirs = catalogue(other_org, cat, "taken", &unique_host("taken"));
+    assert!(matches!(
+        store.upsert_catalogue(theirs).await,
+        Err(DataroomError::Conflict(_))
+    ));
+}

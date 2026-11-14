@@ -266,8 +266,8 @@ describe("the canvas and the step's block", () => {
     const unarchive = within(palette).getByTestId("palette-processor-unarchive").closest("li");
     expect(unarchive).toHaveTextContent("multiple messages within a batch");
     expect(unarchive).not.toHaveTextContent("/docs/configuration/batching");
-    // Only what the runner builds (T-6825): jq is in the Bento catalogue, not in ekiben.
-    expect(within(palette).queryByTestId("palette-processor-jq")).toBeNull();
+    // Only what the runner builds (T-6825): couchbase is in the Bento catalogue, not in ekiben.
+    expect(within(palette).queryByTestId("palette-processor-couchbase")).toBeNull();
   });
 
   it("puts a clicked processor behind the selected node and selects it", async () => {

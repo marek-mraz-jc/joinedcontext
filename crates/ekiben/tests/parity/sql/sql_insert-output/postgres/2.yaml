@@ -1,0 +1,16 @@
+logger: {level: OFF}
+input:
+  generate:
+    count: 6
+    interval: ""
+    mapping: 'root = {"cat": {"meow": "c" + counter().string()}, "doc": {"woofs": [counter()]}}'
+output:
+  sql_insert:
+    driver: postgres
+    dsn: ${PG_DSN}
+    table: footable
+    columns: [ foo, bar, baz ]
+    args_mapping: 'root = [ this.cat.meow, this.doc.woofs[0], "x" ]'
+    suffix: ON CONFLICT (foo) DO NOTHING
+    batching:
+      count: 2

@@ -89,8 +89,9 @@ impl PgStore {
     /// the schema owner (ODP-12: each JC Organization's catalogue gets the Organization's own
     /// `OrgId`). Forced row level security binds the owner too, so the transaction lifts it per
     /// table around its one `UPDATE` and forces it again before the commit; a failure rolls back
-    /// both, rows and settings. Deletes nothing; returns the number of rows moved (0 when the
-    /// catalogue is not under `from`, so a second start moves nothing).
+    /// both, rows and settings. Deletes nothing; returns the number of rows moved (0, with no
+    /// table lock taken, when the catalogue row is not under `from`, so a second start moves
+    /// nothing).
     pub async fn move_catalogue(
         &self,
         from: OrgId,
@@ -104,6 +105,21 @@ impl PgStore {
             .execute(&mut *tx)
             .await
             .map_err(fail)?;
+        // Nothing to move on every start after the first: look under the tenant's own row level
+        // security first, so a start takes no table lock (ALTER TABLE) for an empty move.
+        set_tenant_config(&mut tx, from, Some(catalogue)).await?;
+        let (pending,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS (SELECT 1 FROM dataroom.cat_catalogue WHERE org_id = $1 AND id = $2)",
+        )
+        .bind(from.as_uuid())
+        .bind(catalogue.as_uuid())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(fail)?;
+        if !pending {
+            tx.commit().await.map_err(fail)?;
+            return Ok(0);
+        }
         let mut moved = 0;
         for table in REQUIRED_RLS_TABLES {
             let column = if table == "cat_catalogue" {
@@ -173,6 +189,9 @@ fn db_err(e: sqlx::Error) -> DataroomError {
                 ),
                 Some("cat_catalogue_host_key" | "uq_cat_catalogue_host_lower") => {
                     DataroomError::Conflict("host is already claimed by another catalogue".into())
+                }
+                Some("uq_cat_catalogue_id") => {
+                    DataroomError::Conflict("catalogue id belongs to another organisation".into())
                 }
                 Some(other) => DataroomError::Conflict(format!("duplicate record ({other})")),
                 None => DataroomError::Conflict("duplicate record".into()),
@@ -258,9 +277,32 @@ fn normalise_dataset(ctx: &RequestCtx, mut dataset: Dataset) -> Dataset {
     dataset
 }
 
+/// Refuses a write into a deleted catalogue, so a harvest run still going when its catalogue
+/// was deleted cannot write rows back. `FOR SHARE` waits for a delete in flight to commit and
+/// then reads its tombstone. A catalogue with no row at all is the caller's business.
+async fn refuse_deleted(conn: &mut PgConnection, ctx: &RequestCtx) -> Result<()> {
+    let deleted: Option<(bool,)> = sqlx::query_as(
+        "SELECT doc->>'deleted' IS NOT NULL FROM dataroom.cat_catalogue
+         WHERE org_id = $1 AND id = $2 FOR SHARE",
+    )
+    .bind(ctx.org_id.as_uuid())
+    .bind(ctx.catalogue_id.as_uuid())
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    if let Some((true,)) = deleted {
+        return Err(DataroomError::Gone(format!(
+            "catalogue {} was deleted",
+            ctx.catalogue_id
+        )));
+    }
+    Ok(())
+}
+
 /// Writes a dataset row and replaces its distribution rows inside the caller's tenant
 /// transaction.
 async fn write_dataset(conn: &mut PgConnection, ctx: &RequestCtx, dataset: &Dataset) -> Result<()> {
+    refuse_deleted(conn, ctx).await?;
     let title = text_in_lang(&dataset.title, None)
         .unwrap_or(&dataset.name)
         .to_owned();
@@ -1137,6 +1179,7 @@ impl Store for PgStore {
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
+            refuse_deleted(&mut tx, ctx).await?;
             sqlx::query(
                 "INSERT INTO dataroom.cat_harvest_source
                  (org_id, catalogue_id, id, name, kind, url, publisher_id, enabled, modified, doc)
@@ -1243,6 +1286,7 @@ impl Store for PgStore {
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
+            refuse_deleted(&mut tx, ctx).await?;
             sqlx::query(
                 "INSERT INTO dataroom.cat_harvest_run
                  (org_id, catalogue_id, id, source_id, state, started_at, finished_at,
@@ -1289,6 +1333,7 @@ impl Store for PgStore {
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
+            refuse_deleted(&mut tx, ctx).await?;
             let stale: Vec<(Json<HarvestRun>,)> = sqlx::query_as(
                 "SELECT doc FROM dataroom.cat_harvest_run
                  WHERE org_id = $1 AND catalogue_id = $2 AND source_id COLLATE \"C\" = $3

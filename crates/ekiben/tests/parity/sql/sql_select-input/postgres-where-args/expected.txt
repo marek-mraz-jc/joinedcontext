@@ -1,0 +1,5 @@
+## step 1 exit 0
+## step 2 exit 0
+## step 3 exit 0
+{"bar":2,"created_at":200,"foo":"doc-2"}
+{"bar":4,"created_at":400,"foo":"doc-4"}

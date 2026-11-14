@@ -242,6 +242,8 @@ export function EntityChanges({
             ))}
           </select>
         </label>
+        {/* No writer is named to this reader (an anonymous one, T-6878): no filter by person. */}
+        {actors.length > 0 && (
         <label>
           {labels.person}
           <select
@@ -256,6 +258,7 @@ export function EntityChanges({
             ))}
           </select>
         </label>
+        )}
         {/* Nothing to copy when the filters match nothing: the button goes, the sentence below says why. */}
         {shown.length > 0 ? (
           <button

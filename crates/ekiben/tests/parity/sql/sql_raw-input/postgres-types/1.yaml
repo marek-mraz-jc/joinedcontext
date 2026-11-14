@@ -1,0 +1,11 @@
+logger: {level: OFF}
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {"i": counter()}'
+output:
+  sql_raw:
+    driver: postgres
+    dsn: ${PG_DSN}
+    query: "CREATE TABLE t (id int4 primary key, a int2, b int8, c float4, d float8, e numeric(10,3), f bool, g text, h varchar(9), i char(3), j bytea, k json, l jsonb, m uuid, n timestamp, o timestamptz, p date, q time, r timetz, s oid)"

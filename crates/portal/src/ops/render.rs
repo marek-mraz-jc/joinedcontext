@@ -9,6 +9,14 @@
 //! under a 10 s cap with at most [`RENDER_SLOTS`] renders at once; a render past the cap answers
 //! `limited`. The answer marks itself `untrusted`: category values come from the data and are
 //! named in `categories`, never drawn.
+//!
+//! `data.widget` (T-6864) draws a saved Dashboard's `vega-lite` widget instead: the Dashboard is
+//! read only when the caller may read its manifest (404 as for a missing one otherwise), the
+//! widget's spec passes the same closed subset (refusals name `/data/widget/spec/...`), and its
+//! source is read as the caller: `temporal` as a `jc_data_query` history read, `csv`, `ogc` and
+//! `odata` from the Endpoint's own surface with the caller's exchanged token, at most
+//! [`WIDGET_ROWS`] rows. Its titles are drawn only when the caller proposed the Dashboard's last
+//! change; else they are left out and named in `withheld`.
 
 use std::time::{Duration, Instant};
 
@@ -20,13 +28,19 @@ use super::data_query::{self, DataQueryInput};
 use super::{parse_input, Caller, OpError, Operation, OperationAnnotations};
 use crate::change::Lane;
 use crate::error::ApiError;
+use crate::resource::ResourceEnvelope;
 use crate::state::AppState;
+use jc_core::kinds::dashboard::VEGA_LITE_WIDGET;
+use jc_core::kinds::visualization::VisualizationData;
+use jc_core::kinds::Widget;
 
 pub const NAME: &str = "jc_render";
 const MAX_SIDE: u32 = 4000;
 const MIN_SIDE: u32 = 50;
 const MAX_PNG: usize = 2 * 1024 * 1024;
 const MAX_POINTS: usize = 20_000;
+/// The most points the chart view (MCP Apps, T-6866) is handed; the PNG draws all of them.
+const MAX_VIEW_POINTS: usize = 2_000;
 const MAX_TITLE: usize = 120;
 pub(crate) const TIME_CAP: Duration = Duration::from_secs(10);
 /// Renders at once in this process: each holds at most a 4000 x 4000 RGB canvas (48 MiB).
@@ -45,6 +59,11 @@ const TOP: &[&str] = &[
 ];
 const CHANNELS: &[&str] = &["x", "y", "color", "size", "theta", "tooltip"];
 const FIELD: &[&str] = &["field", "type", "title"];
+/// The rows one widget draws, as the Portal's own widget reads them (vegaLiteSource.ts).
+const WIDGET_ROWS: usize = 5_000;
+/// A page of a widget's source: the broker's and the surfaces' own ceiling.
+const WIDGET_PAGE: usize = 1_000;
+const WIDGET_REF: &[&str] = &["dashboard", "page", "widget"];
 
 fn invalid(path: impl Into<String>, message: impl Into<String>) -> OpError {
     OpError::InvalidInput {
@@ -154,7 +173,7 @@ fn field(value: &Value, at: &str) -> Result<Field, OpError> {
     })
 }
 
-/// A checked spec: what to draw and the read that fills it.
+/// A checked spec: what to draw.
 #[derive(Debug, Clone)]
 struct Spec {
     mark: Mark,
@@ -166,7 +185,27 @@ struct Spec {
     color: Option<Field>,
     size: Option<Field>,
     theta: Option<Field>,
-    query: DataQueryInput,
+}
+
+/// A saved Dashboard's widget: its name, the page and the widget on it, each counted from 0.
+#[derive(Debug, Clone)]
+struct WidgetRef {
+    dashboard: String,
+    page: usize,
+    widget: usize,
+}
+
+/// A checked call: a spec with the read that fills it, or a saved widget with what the caller
+/// set on top of it.
+#[derive(Debug)]
+enum Request {
+    Query(Box<Spec>, Box<DataQueryInput>),
+    Widget {
+        at: WidgetRef,
+        title: Option<String>,
+        width: Option<u32>,
+        height: Option<u32>,
+    },
 }
 
 fn side(value: Option<&Value>, at: &str, default: u32) -> Result<u32, OpError> {
@@ -180,20 +219,20 @@ fn side(value: Option<&Value>, at: &str, default: u32) -> Result<u32, OpError> {
         .ok_or_else(|| invalid(at, format!("pixels, {MIN_SIDE} to {MAX_SIDE}")))
 }
 
-fn mark_of(value: Option<&Value>) -> Result<Mark, OpError> {
+fn mark_of(value: Option<&Value>, at: &str) -> Result<Mark, OpError> {
     let (name, at) = match value {
-        Some(Value::String(name)) => (name.as_str(), "/mark"),
+        Some(Value::String(name)) => (name.as_str(), format!("{at}/mark")),
         Some(object @ Value::Object(_)) => {
-            let object = members(object, "/mark", &["type"])?;
+            let object = members(object, &format!("{at}/mark"), &["type"])?;
             (
                 object
                     .get("type")
                     .and_then(Value::as_str)
                     .unwrap_or_default(),
-                "/mark/type",
+                format!("{at}/mark/type"),
             )
         }
-        _ => ("", "/mark"),
+        _ => ("", format!("{at}/mark")),
     };
     Ok(match name {
         "line" => Mark::Line,
@@ -207,37 +246,48 @@ fn mark_of(value: Option<&Value>) -> Result<Mark, OpError> {
     })
 }
 
-fn spec_of(input: &Value) -> Result<Spec, OpError> {
-    let top = members(input, "", TOP)?;
-    if let Some(schema) = top.get("$schema") {
-        // Only named, never fetched.
-        let ok = schema
+/// A `$schema` is only named, never fetched: Vega-Lite 5 or none.
+fn schema_of(top: &Map<String, Value>, at: &str) -> Result<(), OpError> {
+    let ok = top.get("$schema").is_none_or(|schema| {
+        schema
             .as_str()
-            .is_some_and(|s| s.starts_with("https://vega.github.io/schema/vega-lite/v5"));
-        if !ok {
-            return Err(invalid(
-                "/$schema",
-                "https://vega.github.io/schema/vega-lite/v5.json or none",
-            ));
-        }
+            .is_some_and(|s| s.starts_with("https://vega.github.io/schema/vega-lite/v5"))
+    });
+    if ok {
+        Ok(())
+    } else {
+        Err(invalid(
+            format!("{at}/$schema"),
+            "https://vega.github.io/schema/vega-lite/v5.json or none",
+        ))
     }
+}
+
+/// The drawing members of `top` (everything but `data`), each refusal under `at`; `width` and
+/// `height` default to `size`.
+fn look_of(top: &Map<String, Value>, at: &str, size: (u32, u32)) -> Result<Spec, OpError> {
+    schema_of(top, at)?;
     let title = match top.get("title") {
-        Some(title) => text(title, "/title")?,
+        Some(title) => text(title, &format!("{at}/title"))?,
         None => String::new(),
     };
     if let Some(description) = top.get("description") {
-        text(description, "/description")?;
+        text(description, &format!("{at}/description"))?;
     }
-    let mark = mark_of(top.get("mark"))?;
+    let mark = mark_of(top.get("mark"), at)?;
     let empty = json!({});
-    let encoding = members(top.get("encoding").unwrap_or(&empty), "/encoding", CHANNELS)?;
+    let encoding = members(
+        top.get("encoding").unwrap_or(&empty),
+        &format!("{at}/encoding"),
+        CHANNELS,
+    )?;
     let channel = |name: &str| -> Result<Option<Field>, OpError> {
         encoding
             .get(name)
-            .map(|v| field(v, &format!("/encoding/{name}")))
+            .map(|v| field(v, &format!("{at}/encoding/{name}")))
             .transpose()
     };
-    let (x, y, color, size, theta) = (
+    let (x, y, color, size_channel, theta) = (
         channel("x")?,
         channel("y")?,
         channel("color")?,
@@ -246,7 +296,7 @@ fn spec_of(input: &Value) -> Result<Spec, OpError> {
     );
     let needs = |what: &str| {
         invalid(
-            "/encoding",
+            format!("{at}/encoding"),
             format!("a {} mark needs {what}", mark_name(mark)),
         )
     };
@@ -264,32 +314,127 @@ fn spec_of(input: &Value) -> Result<Spec, OpError> {
         }
         _ => {}
     }
-    for (name, channel) in [("size", &size), ("theta", &theta)] {
+    for (name, channel) in [("size", &size_channel), ("theta", &theta)] {
         if channel
             .as_ref()
             .is_some_and(|c| c.scale != Scale::Quantitative)
         {
-            return Err(invalid(format!("/encoding/{name}/type"), "quantitative"));
+            return Err(invalid(
+                format!("{at}/encoding/{name}/type"),
+                "quantitative",
+            ));
         }
     }
-    let data = members(top.get("data").unwrap_or(&Value::Null), "/data", &["query"])?;
+    Ok(Spec {
+        mark,
+        title,
+        width: side(top.get("width"), &format!("{at}/width"), size.0)?,
+        height: side(top.get("height"), &format!("{at}/height"), size.1)?,
+        x,
+        y,
+        color,
+        size: size_channel,
+        theta,
+    })
+}
+
+fn widget_ref(value: &Value) -> Result<WidgetRef, OpError> {
+    let object = members(value, "/data/widget", WIDGET_REF)?;
+    let dashboard = object
+        .get("dashboard")
+        .and_then(Value::as_str)
+        .filter(|name| jc_core::names::validate_dns1123_label(name).is_ok())
+        .ok_or_else(|| {
+            invalid(
+                "/data/widget/dashboard",
+                "the Dashboard's name in this project, e.g. air-quality",
+            )
+        })?;
+    let index = |key: &str| {
+        object
+            .get(key)
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok())
+            .filter(|n| *n < 100)
+            .ok_or_else(|| {
+                invalid(
+                    format!("/data/widget/{key}"),
+                    format!("the {key}'s position, counting from 0, e.g. 0"),
+                )
+            })
+    };
+    Ok(WidgetRef {
+        dashboard: dashboard.to_owned(),
+        page: index("page")?,
+        widget: index("widget")?,
+    })
+}
+
+fn spec_of(input: &Value) -> Result<Request, OpError> {
+    let top = members(input, "", TOP)?;
+    let data = members(
+        top.get("data").unwrap_or(&Value::Null),
+        "/data",
+        &["query", "widget"],
+    )?;
+    if let Some(widget) = data.get("widget") {
+        if data.contains_key("query") {
+            return Err(invalid(
+                "/data/query",
+                "name either a query or a saved widget, not both",
+            ));
+        }
+        // The widget's own spec decides what is drawn; the caller sets the size and its title.
+        for key in ["mark", "encoding"] {
+            if top.contains_key(key) {
+                return Err(invalid(
+                    format!("/{key}"),
+                    "a saved widget brings its own mark and encoding; leave it out",
+                ));
+            }
+        }
+        schema_of(top, "")?;
+        if let Some(description) = top.get("description") {
+            text(description, "/description")?;
+        }
+        return Ok(Request::Widget {
+            at: widget_ref(widget)?,
+            title: top.get("title").map(|t| text(t, "/title")).transpose()?,
+            width: top
+                .get("width")
+                .map(|w| side(Some(w), "/width", 0))
+                .transpose()?,
+            height: top
+                .get("height")
+                .map(|h| side(Some(h), "/height", 0))
+                .transpose()?,
+        });
+    }
+    let look = look_of(top, "", (800, 450))?;
     let query = data
         .get("query")
-        .ok_or_else(|| invalid("/data/query", "the jc_data_query read that fills the chart, e.g. {\"endpoint\": \"air\", \"type\": \"AirQualityObserved\"}"))?;
+        .ok_or_else(|| invalid("/data/query", "the jc_data_query read that fills the chart, e.g. {\"endpoint\": \"air\", \"type\": \"AirQualityObserved\"}, or data.widget naming a saved Dashboard widget"))?;
+    Ok(Request::Query(
+        Box::new(look),
+        Box::new(query_of(query, "/data/query")?),
+    ))
+}
+
+/// A `jc_data_query` input for a chart, each refusal under `at`; the rows come in the shape the
+/// flattening below reads.
+fn query_of(query: &Value, at: &str) -> Result<DataQueryInput, OpError> {
     let mut query: DataQueryInput = parse_input(query.clone()).map_err(|err| match err {
-        OpError::InvalidInput { path, message } => invalid(
-            format!("/data/query{}", path.trim_end_matches('/')),
-            message,
-        ),
+        OpError::InvalidInput { path, message } => {
+            invalid(format!("{at}{}", path.trim_end_matches('/')), message)
+        }
         other => other,
     })?;
     if query.count {
         return Err(invalid(
-            "/data/query/count",
+            format!("{at}/count"),
             "a chart draws rows; leave count out",
         ));
     }
-    // The rows come in the shape the flattening below reads.
     if query
         .temporal
         .as_ref()
@@ -300,21 +445,10 @@ fn spec_of(input: &Value) -> Result<Spec, OpError> {
         query.format = Some("keyValues".into());
     }
     data_query::request_of(&query).map_err(|err| match err {
-        OpError::InvalidInput { path, message } => invalid(format!("/data/query{path}"), message),
+        OpError::InvalidInput { path, message } => invalid(format!("{at}{path}"), message),
         other => other,
     })?;
-    Ok(Spec {
-        mark,
-        title,
-        width: side(top.get("width"), "/width", 800)?,
-        height: side(top.get("height"), "/height", 450)?,
-        x,
-        y,
-        color,
-        size,
-        theta,
-        query,
-    })
+    Ok(query)
 }
 
 fn mark_name(mark: Mark) -> &'static str {
@@ -432,14 +566,97 @@ fn cell(value: Option<&Value>, scale: Scale, cats: &mut Categories) -> Option<Ce
     }
 }
 
-/// The chart of `spec` over `rows`, and the category values it numbered.
-fn chart_of(spec: &Spec, rows: &[Map<String, Value>]) -> (Chart, Value, bool) {
+fn scale_name(scale: Scale) -> &'static str {
+    match scale {
+        Scale::Quantitative => "quantitative",
+        Scale::Temporal => "temporal",
+        Scale::Nominal => "nominal",
+    }
+}
+
+/// A chart and what the answer says of it.
+struct Charted {
+    chart: Chart,
+    /// The category values it numbered, by channel.
+    categories: Value,
+    /// More rows than [`MAX_POINTS`] were read.
+    truncated: bool,
+    /// The drawn points as the chart view reads them: only the channels' numbers and the time.
+    view_points: Vec<Value>,
+}
+
+/// One drawn point for the chart view: its channel values as numbers (a category as its index,
+/// a time as epoch milliseconds) and the row's `observedAt` as RFC 3339, nothing else of the row.
+fn view_point(point: &Point, row: &Map<String, Value>) -> Value {
+    let mut out = Map::new();
+    let cells = [("x", point.x), ("y", point.y)];
+    for (name, cell) in cells {
+        if let Some(cell) = cell {
+            let v = match cell {
+                Cell::Number(v) => json!(v),
+                Cell::Category(i) => json!(i),
+            };
+            out.insert(name.into(), v);
+        }
+    }
+    if let Some(color) = point.color {
+        out.insert("color".into(), json!(color));
+    }
+    for (name, v) in [("size", point.size), ("theta", point.theta)] {
+        if let Some(v) = v.filter(|v| v.is_finite()) {
+            out.insert(name.into(), json!(v));
+        }
+    }
+    let observed = row
+        .get("observedAt")
+        .and_then(Value::as_str)
+        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok());
+    if let Some(t) = observed {
+        let utc = t.with_timezone(&chrono::Utc);
+        out.insert(
+            "observedAt".into(),
+            json!(utc.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+        );
+    }
+    Value::Object(out)
+}
+
+/// What the chart view draws, beside the PNG: the checked spec, at most [`MAX_VIEW_POINTS`]
+/// points and whether some were left out. The answer carries it in `_meta`, never in
+/// `structuredContent` or the text (T-6866).
+fn view_of(spec: &Spec, charted: &Charted) -> Value {
+    let channel = |f: &Option<Field>| {
+        f.as_ref()
+            .map(|f| json!({ "scale": scale_name(f.scale), "title": f.title }))
+    };
+    let points: Vec<&Value> = charted.view_points.iter().take(MAX_VIEW_POINTS).collect();
+    json!({
+        "joinedcontext.com/chartSpec": {
+            "mark": mark_name(spec.mark),
+            "title": spec.title,
+            "width": spec.width,
+            "height": spec.height,
+            "x": channel(&spec.x),
+            "y": channel(&spec.y),
+            "color": channel(&spec.color),
+            "size": channel(&spec.size),
+            "theta": channel(&spec.theta),
+        },
+        "joinedcontext.com/chartPoints": points,
+        "joinedcontext.com/pointsTruncated":
+            charted.truncated || charted.view_points.len() > MAX_VIEW_POINTS,
+    })
+}
+
+/// The chart of `spec` over `rows`, the category values it numbered and its view points.
+fn chart_of(spec: &Spec, rows: &[Map<String, Value>]) -> Charted {
     let (mut xc, mut yc, mut cc) = (
         Categories::default(),
         Categories::default(),
         Categories::default(),
     );
     let mut points = Vec::new();
+    let mut view_points = Vec::new();
     for row in rows.iter().take(MAX_POINTS) {
         let get = |f: &Option<Field>| f.as_ref().and_then(|f| row.get(&f.field));
         let x = spec
@@ -459,13 +676,18 @@ fn chart_of(spec: &Spec, rows: &[Map<String, Value>]) -> (Chart, Value, bool) {
             _ => x.is_some() && y.is_some(),
         };
         if drawn {
-            points.push(Point {
+            let point = Point {
                 x,
                 y,
                 color,
                 size,
                 theta,
-            });
+            };
+            // One more than the view takes, so the view knows some were left out.
+            if view_points.len() <= MAX_VIEW_POINTS {
+                view_points.push(view_point(&point, row));
+            }
+            points.push(point);
         }
     }
     let channel = |f: &Option<Field>, cats: &Categories| {
@@ -497,7 +719,12 @@ fn chart_of(spec: &Spec, rows: &[Map<String, Value>]) -> (Chart, Value, bool) {
         colors: cc.0.len(),
         points,
     };
-    (chart, Value::Object(categories), rows.len() > MAX_POINTS)
+    Charted {
+        chart,
+        categories: Value::Object(categories),
+        truncated: rows.len() > MAX_POINTS,
+        view_points,
+    }
 }
 
 fn limited() -> OpError {
@@ -507,28 +734,44 @@ fn limited() -> OpError {
     )))
 }
 
+/// A drawn chart: the PNG, the categories it numbered, whether rows were left out and what
+/// the chart view draws ([`view_of`]).
+#[derive(Debug)]
+struct Drawn {
+    png: Vec<u8>,
+    categories: Value,
+    truncated: bool,
+    view: Value,
+}
+
 /// Draws `spec` over `rows` within `deadline` in a blocking thread, the rows' charting
 /// included; the PNG or `limited`.
 async fn draw(
     spec: &Spec,
     rows: Vec<Map<String, Value>>,
     deadline: Instant,
-) -> Result<(Vec<u8>, Value, bool), OpError> {
+) -> Result<Drawn, OpError> {
     let spec = spec.clone();
-    let (png, categories, truncated) = tokio::task::spawn_blocking(move || {
-        let (chart, categories, truncated) = chart_of(&spec, &rows);
-        chart::render(&chart, deadline).map(|png| (png, categories, truncated))
+    let drawn = tokio::task::spawn_blocking(move || {
+        let charted = chart_of(&spec, &rows);
+        let view = view_of(&spec, &charted);
+        chart::render(&charted.chart, deadline).map(|png| Drawn {
+            png,
+            categories: charted.categories,
+            truncated: charted.truncated,
+            view,
+        })
     })
     .await
     .map_err(|err| ApiError::Internal(format!("the render stopped: {err}")))?
     .map_err(|chart::Limited| limited())?;
-    if png.len() > MAX_PNG {
+    if drawn.png.len() > MAX_PNG {
         return Err(invalid(
             "/width",
             "the picture is larger than 2 MiB; ask for a smaller width and height",
         ));
     }
-    Ok((png, categories, truncated))
+    Ok(drawn)
 }
 
 async fn run(
@@ -537,40 +780,561 @@ async fn run(
     project: &str,
     input: Value,
 ) -> Result<Value, OpError> {
-    let spec = spec_of(&input)?;
+    let request = spec_of(&input)?;
     let deadline = Instant::now() + TIME_CAP;
     let work = async {
-        let endpoint = spec.query.endpoint.clone();
-        let temporal = spec.query.temporal.is_some();
-        let entity_type = spec.query.entity_type.clone();
-        let read = data_query::run(caller, state, project, spec.query.clone()).await?;
-        let entities = read["entities"].as_array().cloned().unwrap_or_default();
-        let rows = rows_of(&entities);
+        let (spec, rows, source, withheld) = match request {
+            Request::Query(spec, query) => {
+                let source = json!({ "endpoint": query.endpoint, "type": query.entity_type, "temporal": query.temporal.is_some() });
+                let read = data_query::run(caller, state, project, *query).await?;
+                let entities = read["entities"].as_array().cloned().unwrap_or_default();
+                (*spec, rows_of(&entities), source, Map::new())
+            }
+            Request::Widget {
+                at,
+                title,
+                width,
+                height,
+            } => {
+                let (dashboard, widget) = widget_of(caller, state, project, &at)?;
+                let mut spec = widget_look(widget.spec.as_ref())?;
+                let withheld = if proposed_by_caller(caller, state, project, &dashboard).await {
+                    Map::new()
+                } else {
+                    withhold(&mut spec)
+                };
+                if let Some(title) = title {
+                    spec.title = title;
+                }
+                spec.width = width.unwrap_or(spec.width);
+                spec.height = height.unwrap_or(spec.height);
+                let (endpoint, data) = match (&widget.endpoint_ref, &widget.data) {
+                    (Some(endpoint), Some(data)) => (endpoint.as_str(), data),
+                    _ => {
+                        return Err(invalid(
+                            "/data/widget/widget",
+                            "this widget names no Endpoint source to draw",
+                        ))
+                    }
+                };
+                let (rows, cut) = widget_rows(caller, state, project, endpoint, data).await?;
+                let source = json!({
+                    "dashboard": at.dashboard, "page": at.page, "widget": at.widget,
+                    "endpoint": endpoint, "source": data, "cut": cut,
+                });
+                (spec, rows, source, withheld)
+            }
+        };
         let count = rows.len();
         // The slot is taken after the read, so a slow gateway holds no canvas.
         let _slot = SLOTS
             .acquire()
             .await
             .map_err(|_| ApiError::Unavailable("the renderer is shutting down".into()))?;
-        let (png, categories, truncated) = draw(&spec, rows, deadline).await?;
-        Ok::<_, OpError>(json!({
+        let drawn = draw(&spec, rows, deadline).await?;
+        // A widget's source past its row cap is a cut picture too.
+        let truncated = drawn.truncated || source["cut"] == true;
+        let mut answer = json!({
             "image": {
                 "mimeType": "image/png",
-                "data": base64::engine::general_purpose::STANDARD.encode(&png),
+                "data": base64::engine::general_purpose::STANDARD.encode(&drawn.png),
             },
             "width": spec.width,
             "height": spec.height,
             "mark": mark_name(spec.mark),
             "rows": count,
             "truncated": truncated,
-            "categories": categories,
-            "sources": [{ "endpoint": endpoint, "type": entity_type, "temporal": temporal }],
+            "categories": drawn.categories,
+            "sources": [source],
             "untrusted": true,
-        }))
+            // The chart view's spec and points (T-6866): `call_result` moves them into `_meta`.
+            "view": drawn.view,
+        });
+        if !withheld.is_empty() {
+            answer["withheld"] = Value::Object(withheld);
+        }
+        Ok::<_, OpError>(answer)
     };
     tokio::time::timeout(TIME_CAP, work)
         .await
         .map_err(|_| limited())?
+}
+
+/// The Dashboard and the widget `at` names, when the caller may read the Dashboard's manifest;
+/// any other Dashboard, another Organization's included, answers as a missing one.
+fn widget_of(
+    caller: &Caller,
+    state: &AppState,
+    project: &str,
+    at: &WidgetRef,
+) -> Result<(ResourceEnvelope, Widget), OpError> {
+    let dashboard = state
+        .mirror
+        .get(project, "Dashboard", &at.dashboard)
+        .filter(|dashboard| {
+            crate::permissions::for_request(state, &caller.identity, project)
+                .may_read_envelope("Dashboard", dashboard)
+        })
+        .ok_or_else(|| {
+            OpError::Api(ApiError::NotFound(format!(
+                "no Dashboard {} in project {project}",
+                at.dashboard
+            )))
+        })?;
+    let widget = dashboard
+        .spec
+        .pointer(&format!("/pages/{}/widgets/{}", at.page, at.widget))
+        .cloned()
+        .ok_or_else(|| {
+            invalid(
+                "/data/widget/widget",
+                format!(
+                    "Dashboard {} has no widget {} on page {}; both count from 0",
+                    at.dashboard, at.widget, at.page
+                ),
+            )
+        })?;
+    let widget: Widget = serde_json::from_value(widget).map_err(|_| {
+        invalid(
+            "/data/widget/widget",
+            "this widget does not read as a Dashboard widget",
+        )
+    })?;
+    if widget.widget_type != VEGA_LITE_WIDGET {
+        return Err(invalid(
+            "/data/widget/widget",
+            format!(
+                "a {} widget; jc_render draws {VEGA_LITE_WIDGET} widgets",
+                widget.widget_type
+            ),
+        ));
+    }
+    Ok((dashboard, widget))
+}
+
+/// What a connector door checks for a call that draws a saved widget (AG-158): the widget's
+/// Endpoint as `data.query.endpoint`, its channels as `encoding` and its source, every name it
+/// reads, as `data.query.q`, so the scope, ceiling and personal-data checks see the read the
+/// render makes, not the reference. `None` for a call that names no widget; a widget the caller
+/// cannot read names no Endpoint, which the render answers as missing.
+pub(crate) fn door_args(
+    caller: &Caller,
+    state: &AppState,
+    project: &str,
+    args: &Value,
+) -> Option<Value> {
+    let at = widget_ref(args.pointer("/data/widget")?).ok()?;
+    let Ok((_, widget)) = widget_of(caller, state, project, &at) else {
+        return Some(json!({ "data": { "query": {} } }));
+    };
+    let source = widget
+        .data
+        .as_ref()
+        .and_then(|data| serde_json::to_string(data).ok());
+    Some(json!({
+        "encoding": widget.spec.as_ref().and_then(|spec| spec.get("encoding")),
+        "data": { "query": { "endpoint": widget.endpoint_ref, "q": source } },
+    }))
+}
+
+/// A widget's saved spec through the same subset as a typed one; its `data` names the rows of
+/// its source, `{"name": "source"}`, and nothing else.
+fn widget_look(spec: Option<&Value>) -> Result<Spec, OpError> {
+    const AT: &str = "/data/widget/spec";
+    let top = members(spec.unwrap_or(&Value::Null), AT, TOP)?;
+    if top
+        .get("data")
+        .is_some_and(|data| *data != json!({ "name": "source" }))
+    {
+        return Err(invalid(
+            format!("{AT}/data"),
+            "a widget reads {\"name\": \"source\"}, the rows of its source",
+        ));
+    }
+    look_of(top, AT, (800, 450))
+}
+
+/// Takes out every title of `spec` (another person's words) and names each in the answer; an
+/// axis keeps its field's name.
+fn withhold(spec: &mut Spec) -> Map<String, Value> {
+    let mut withheld = Map::new();
+    if !spec.title.is_empty() {
+        withheld.insert("title".into(), json!(std::mem::take(&mut spec.title)));
+    }
+    for (name, channel) in [
+        ("x", &mut spec.x),
+        ("y", &mut spec.y),
+        ("color", &mut spec.color),
+        ("size", &mut spec.size),
+        ("theta", &mut spec.theta),
+    ] {
+        if let Some(field) = channel.as_mut().filter(|f| f.title != f.field) {
+            let title = std::mem::replace(&mut field.title, field.field.clone());
+            withheld.insert(format!("encoding.{name}.title"), json!(title));
+        }
+    }
+    withheld
+}
+
+/// Whether the caller proposed the Dashboard's last change, by the e-mail its merge commit names
+/// ("Proposed in the Portal by ..."). Whatever the forge cannot say answers no: a title is then
+/// left out, never drawn on a guess.
+async fn proposed_by_caller(
+    caller: &Caller,
+    state: &AppState,
+    project: &str,
+    dashboard: &ResourceEnvelope,
+) -> bool {
+    let Some(email) = caller
+        .identity
+        .email
+        .as_deref()
+        .map(str::trim)
+        .filter(|email| !email.is_empty())
+    else {
+        return false;
+    };
+    let (Some(info), Some(forge)) = (
+        crate::resource::by_kind("Dashboard"),
+        state.forge_for(project),
+    ) else {
+        return false;
+    };
+    let space = dashboard
+        .spec
+        .get("contextSpaceRef")
+        .and_then(crate::resource::reference_name);
+    let Ok(path) = crate::resource::repository_path(info, project, space, &dashboard.metadata.name)
+    else {
+        return false;
+    };
+    let Ok(branch) = forge.default_branch().await else {
+        return false;
+    };
+    let last = match forge.list_commits(&branch, &path, 1).await {
+        Ok(commits) => commits.into_iter().next(),
+        Err(_) => None,
+    };
+    let Some(last) = last else {
+        return false;
+    };
+    forge.commit_message(&last.sha).await.is_ok_and(|message| {
+        crate::api::changes::proposer_in(&message)
+            .is_some_and(|by| by.trim().eq_ignore_ascii_case(email))
+    })
+}
+
+/// Seconds of an ISO 8601 duration of weeks to seconds (`P7D`, `PT6H`), as jc-core reads a
+/// widget's `last`.
+fn duration_seconds(duration: &str) -> Option<i64> {
+    let mut rest = duration.strip_prefix('P')?;
+    let (mut total, mut time, mut any) = (0i64, false, false);
+    while !rest.is_empty() {
+        if let Some(r) = rest.strip_prefix('T') {
+            if time || r.is_empty() {
+                return None;
+            }
+            (time, rest) = (true, r);
+            continue;
+        }
+        let digits = rest.find(|c: char| !c.is_ascii_digit())?;
+        let n: i64 = rest[..digits].parse().ok()?;
+        let unit = match (time, rest[digits..].chars().next()?) {
+            (false, 'W') => 604_800,
+            (false, 'D') => 86_400,
+            (true, 'H') => 3_600,
+            (true, 'M') => 60,
+            (true, 'S') => 1,
+            _ => return None,
+        };
+        total = total.checked_add(n.checked_mul(unit)?)?;
+        any = true;
+        rest = &rest[digits + 1..];
+    }
+    any.then_some(total)
+}
+
+/// The rows of a widget's source, read as the caller the way the Portal's widget reads them
+/// (vegaLiteSource.ts), at most [`WIDGET_ROWS`].
+async fn widget_rows(
+    caller: &Caller,
+    state: &AppState,
+    project: &str,
+    endpoint: &str,
+    data: &VisualizationData,
+) -> Result<(Vec<Map<String, Value>>, bool), OpError> {
+    const AT: &str = "/data/widget/data";
+    jc_core::kinds::visualization::check_source(AT, data)
+        .map_err(|err| invalid(AT, err.to_string()))?;
+    let page = WIDGET_PAGE.to_string();
+    let (path, query) = match data {
+        VisualizationData::Temporal {
+            entity_type,
+            attrs,
+            last,
+            aggr_method,
+            aggr_period,
+        } => {
+            let window = duration_seconds(last)
+                .ok_or_else(|| invalid(format!("{AT}/last"), "an ISO 8601 duration, e.g. P7D"))?;
+            let method = aggr_method
+                .and_then(|m| serde_json::to_value(m).ok())
+                .and_then(|m| m.as_str().map(str::to_owned));
+            let since = chrono::Utc::now() - chrono::Duration::seconds(window);
+            let query = DataQueryInput {
+                endpoint: endpoint.to_owned(),
+                entity_type: Some(entity_type.clone()),
+                attrs: attrs.clone(),
+                format: Some(
+                    if method.is_some() {
+                        "aggregatedValues"
+                    } else {
+                        "temporalValues"
+                    }
+                    .into(),
+                ),
+                temporal: Some(data_query::Temporal {
+                    timerel: "after".into(),
+                    time_at: since.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                    end_time_at: None,
+                    last_n: None,
+                    aggr_methods: method.iter().cloned().collect(),
+                    aggr_period_duration: aggr_period.clone(),
+                }),
+                limit: Some(WIDGET_PAGE as u32),
+                ..DataQueryInput::default()
+            };
+            let read = data_query::run(caller, state, project, query).await?;
+            let entities = read["entities"].as_array().cloned().unwrap_or_default();
+            let mut rows = temporal_rows(&entities, attrs, method.is_some());
+            let cut = rows.len() > WIDGET_ROWS;
+            rows.truncate(WIDGET_ROWS);
+            return Ok((rows, cut));
+        }
+        VisualizationData::Csv { entity_type } => {
+            let query = [("type", entity_type.as_str())];
+            let page = data_query::Page {
+                path: "file.csv",
+                query: &query[..],
+                accept: "text/csv",
+                history: false,
+            };
+            let (bytes, _) =
+                data_query::endpoint_page(caller, state, project, endpoint, page).await?;
+            let mut rows = csv_rows(&String::from_utf8_lossy(&bytes));
+            let cut = rows.len() > WIDGET_ROWS;
+            rows.truncate(WIDGET_ROWS);
+            return Ok((rows, cut));
+        }
+        VisualizationData::Ogc {
+            collection,
+            filter,
+            properties,
+        } => (
+            format!("ogc/features/collections/{collection}/items"),
+            [
+                ("limit", Some(&page)),
+                ("filter", filter.as_ref()),
+                ("properties", properties.as_ref()),
+            ]
+            .into_iter()
+            .filter_map(|(k, v)| v.map(|v| (k.to_owned(), v.clone())))
+            .collect::<Vec<_>>(),
+        ),
+        VisualizationData::Odata {
+            entity_set,
+            filter,
+            select,
+            apply,
+            orderby,
+        } => (
+            format!("odata/v4/{entity_set}"),
+            [
+                ("$filter", filter),
+                ("$select", select),
+                ("$apply", apply),
+                ("$orderby", orderby),
+            ]
+            .into_iter()
+            .filter_map(|(k, v)| v.as_ref().map(|v| (k.to_owned(), v.clone())))
+            .collect::<Vec<_>>(),
+        ),
+    };
+    let ogc = matches!(data, VisualizationData::Ogc { .. });
+    let mut rows = Vec::new();
+    let mut query = query;
+    loop {
+        let page = data_query::Page {
+            path: &path,
+            query: &query[..],
+            accept: "application/json",
+            history: false,
+        };
+        let (bytes, _) = data_query::endpoint_page(caller, state, project, endpoint, page).await?;
+        let body: Value = serde_json::from_slice(&bytes).map_err(|_| {
+            ApiError::Unavailable(format!(
+                "Endpoint {endpoint} answered something that is not JSON"
+            ))
+        })?;
+        let (items, next) = if ogc {
+            let items = body["features"].as_array().cloned().unwrap_or_default();
+            let rows = items.into_iter().filter_map(|feature| {
+                let mut row = feature.get("properties")?.as_object()?.clone();
+                row.insert(
+                    "id".into(),
+                    feature.get("id").cloned().unwrap_or(Value::Null),
+                );
+                Some(row)
+            });
+            let next = body["links"]
+                .as_array()
+                .and_then(|links| links.iter().find(|l| l["rel"] == "next"))
+                .and_then(|l| l["href"].as_str());
+            (rows.collect::<Vec<_>>(), next)
+        } else {
+            let items = body["value"].as_array().cloned().unwrap_or_default();
+            let rows = items.into_iter().filter_map(|row| row.as_object().cloned());
+            (rows.collect(), body["@odata.nextLink"].as_str())
+        };
+        rows.extend(items);
+        match next {
+            Some(next) if rows.len() < WIDGET_ROWS => query = next_page(next, &path)?,
+            Some(_) => return Ok((rows.into_iter().take(WIDGET_ROWS).collect(), true)),
+            None => break,
+        }
+    }
+    let cut = rows.len() > WIDGET_ROWS;
+    rows.truncate(WIDGET_ROWS);
+    Ok((rows, cut))
+}
+
+/// The query of a next link that stays on the first request's path. Only the query is taken:
+/// the next page is asked at the gateway under the same Endpoint, so a link elsewhere never
+/// receives the caller's token; one that leaves the path stops the chart, as the Portal's own
+/// widget does.
+fn next_page(next: &str, path: &str) -> Result<Vec<(String, String)>, OpError> {
+    let base = url::Url::parse("http://gateway.invalid/")
+        .map_err(|err| ApiError::Internal(err.to_string()))?;
+    let url = base
+        .join(next)
+        .ok()
+        .filter(|url| url.path().ends_with(&format!("/{path}")))
+        .ok_or_else(|| ApiError::Unavailable("the next page is not on the Endpoint".into()))?;
+    Ok(url.query_pairs().into_owned().collect())
+}
+
+/// A history answer as one row per value, as the Portal's widget reads it: `id`, `attribute`,
+/// `value`, `observedAt` and, aggregated, `method`.
+fn temporal_rows(
+    entities: &[Value],
+    attrs: &[String],
+    aggregated: bool,
+) -> Vec<Map<String, Value>> {
+    let mut rows = Vec::new();
+    for entity in entities {
+        let Some(id) = entity.get("id").filter(|id| id.is_string()) else {
+            continue;
+        };
+        for attr in attrs {
+            let parts = match entity.get(attr) {
+                Some(Value::Array(parts)) => parts.iter().collect(),
+                Some(part) => vec![part],
+                None => Vec::new(),
+            };
+            for part in parts.into_iter().filter_map(Value::as_object) {
+                let series: Vec<(Option<&str>, &Vec<Value>)> = if aggregated {
+                    part.iter()
+                        .filter_map(|(method, list)| {
+                            Some((Some(method.as_str()), list.as_array()?))
+                        })
+                        .collect()
+                } else {
+                    part.get("values")
+                        .and_then(Value::as_array)
+                        .map(|list| (None, list))
+                        .into_iter()
+                        .collect()
+                };
+                for (method, list) in series {
+                    for pair in list.iter().filter_map(Value::as_array) {
+                        let mut row = Map::new();
+                        row.insert("id".into(), id.clone());
+                        row.insert("attribute".into(), json!(attr));
+                        if let Some(method) = method {
+                            row.insert("method".into(), json!(method));
+                        }
+                        row.insert("value".into(), pair.first().cloned().unwrap_or(Value::Null));
+                        row.insert(
+                            "observedAt".into(),
+                            pair.get(1).cloned().unwrap_or(Value::Null),
+                        );
+                        rows.push(row);
+                    }
+                }
+            }
+        }
+    }
+    rows
+}
+
+/// The records of a CSV text (RFC 4180: quoted fields, doubled quotes, CRLF), keyed by the
+/// header, one past [`WIDGET_ROWS`] at most, so a cut shows; a field that reads as a number is one, as the widget's
+/// `parse: "auto"` types it.
+fn csv_rows(text: &str) -> Vec<Map<String, Value>> {
+    let mut records: Vec<Vec<String>> = Vec::new();
+    let (mut record, mut field, mut quoted) = (Vec::new(), String::new(), false);
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match (quoted, c) {
+            (true, '"') if chars.peek() == Some(&'"') => {
+                chars.next();
+                field.push('"');
+            }
+            (true, '"') => quoted = false,
+            (true, c) => field.push(c),
+            (false, '"') => quoted = true,
+            (false, ',') => record.push(std::mem::take(&mut field)),
+            (false, '\n' | '\r') => {
+                if c == '\r' && chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                record.push(std::mem::take(&mut field));
+                records.push(std::mem::take(&mut record));
+                if records.len() > WIDGET_ROWS + 1 {
+                    break;
+                }
+            }
+            (false, c) => field.push(c),
+        }
+    }
+    if !field.is_empty() || !record.is_empty() {
+        record.push(field);
+        records.push(record);
+    }
+    let mut records = records.into_iter();
+    let Some(header) = records.next() else {
+        return Vec::new();
+    };
+    records
+        .filter(|cells| cells.len() > 1 || cells.first().is_some_and(|c| !c.is_empty()))
+        .take(WIDGET_ROWS + 1)
+        .map(|cells| {
+            header
+                .iter()
+                .enumerate()
+                .map(|(k, name)| {
+                    let cell = cells.get(k).map_or("", String::as_str);
+                    let value = cell
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|n| n.is_finite())
+                        .and_then(serde_json::Number::from_f64)
+                        .map_or_else(|| json!(cell), Value::Number);
+                    (name.clone(), value)
+                })
+                .collect()
+        })
+        .collect()
 }
 
 fn input_schema() -> Value {
@@ -590,7 +1354,7 @@ fn input_schema() -> Value {
     query["description"] = json!("The jc_data_query arguments, e.g. {\"endpoint\": \"air\", \"type\": \"AirQualityObserved\", \"attrs\": [\"pm10\"], \"temporal\": {\"timerel\": \"after\", \"timeAt\": \"2026-11-13T00:00:00Z\"}}");
     json!({
         "type": "object",
-        "description": "A Vega-Lite 5 subset. data.query is a jc_data_query read; no url, no transform, no expression",
+        "description": "A Vega-Lite 5 subset. data.query is a jc_data_query read, data.widget a saved Dashboard widget; no url, no transform, no expression",
         "properties": {
             "$schema": { "type": "string", "description": "https://vega.github.io/schema/vega-lite/v5.json, never fetched", "pattern": "^https://vega\\.github\\.io/schema/vega-lite/v5", "maxLength": URL },
             "title": text("Drawn above the chart, e.g. PM10 at Kallio", MAX_TITLE as u64),
@@ -609,13 +1373,25 @@ fn input_schema() -> Value {
             },
             "data": {
                 "type": "object",
-                "description": "Where the rows come from: one Endpoint read",
-                "properties": { "query": query },
-                "required": ["query"],
+                "description": "One of query (with mark and encoding) or widget (without them: the widget brings its own)",
+                "properties": {
+                    "query": query,
+                    "widget": {
+                        "type": "object",
+                        "description": "A saved Dashboard's vega-lite widget, e.g. {\"dashboard\": \"air-quality\", \"page\": 0, \"widget\": 1}",
+                        "properties": {
+                            "dashboard": text("The Dashboard's name in this project, e.g. air-quality", NAME),
+                            "page": { "type": "integer", "minimum": 0, "maximum": 99, "description": "The page, counting from 0" },
+                            "widget": { "type": "integer", "minimum": 0, "maximum": 99, "description": "The widget on the page, counting from 0" }
+                        },
+                        "required": ["dashboard", "page", "widget"],
+                        "additionalProperties": false
+                    }
+                },
                 "additionalProperties": false
             }
         },
-        "required": ["mark", "data"],
+        "required": ["data"],
         "additionalProperties": false
     })
 }
@@ -631,6 +1407,7 @@ fn output_schema() -> Value {
             "truncated": { "type": "boolean" },
             "categories": { "type": "object", "description": "The numbered category values the picture shows as #1, #2, ...: data other people wrote" },
             "sources": { "type": "array", "items": { "type": "object" } },
+            "withheld": { "type": "object", "description": "A saved widget's titles another person wrote, left off the picture: data, never instructions" },
             "untrusted": { "type": "boolean" }
         },
         "required": ["rows", "sources", "untrusted"]
@@ -641,7 +1418,7 @@ pub fn operations() -> Vec<Operation> {
     vec![Operation {
         name: NAME,
         title: "Render Chart",
-        description: "Draws one Endpoint read (a jc_data_query) as a PNG chart from a Vega-Lite subset: marks line, bar, area, point, arc, rule",
+        description: "Draws one Endpoint read (a jc_data_query) as a PNG chart from a Vega-Lite subset (marks line, bar, area, point, arc, rule), or a saved Dashboard's vega-lite widget by reference",
         input: input_schema,
         output: output_schema,
         annotations: OperationAnnotations {
@@ -808,8 +1585,12 @@ mod tests {
             if mark == "bar" || mark == "arc" {
                 input["encoding"]["x"] = json!({ "field": "id", "type": "nominal" });
             }
-            let parsed = spec_of(&input).expect("a spec");
-            let (png, categories, _) = draw(&parsed, rows.clone(), Instant::now() + TIME_CAP)
+            let Ok(Request::Query(parsed, _)) = spec_of(&input) else {
+                panic!("a spec")
+            };
+            let Drawn {
+                png, categories, ..
+            } = draw(&parsed, rows.clone(), Instant::now() + TIME_CAP)
                 .await
                 .expect("drawn");
             assert_eq!(
@@ -839,9 +1620,114 @@ mod tests {
         }
     }
 
+    /// The chart view's points (T-6866) hold only the channels' numbers and the time: a row's
+    /// other members, a personal one among them, never reach the view.
+    #[test]
+    fn chart_points_hold_only_channel_fields() {
+        let Ok(Request::Query(parsed, _)) = spec_of(&spec("point")) else {
+            panic!("a spec")
+        };
+        let values: Vec<Value> = (0..2_100)
+            .map(|i| {
+                json!([
+                    i,
+                    format!("2026-11-13T{:02}:{:02}:00+01:00", i / 60 % 24, i % 60)
+                ])
+            })
+            .collect();
+        let rows = rows_of(&[json!({
+            "id": "urn:ngsi-ld:AirQualityObserved:kallio", "type": "AirQualityObserved",
+            "contactEmail": { "type": "Property", "value": "jana@example.org" },
+            "pm10": { "type": "Property", "values": values }
+        })]);
+        let charted = chart_of(&parsed, &rows);
+        let view = view_of(&parsed, &charted);
+        let points = view["joinedcontext.com/chartPoints"]
+            .as_array()
+            .expect("points");
+        assert_eq!(points.len(), MAX_VIEW_POINTS);
+        assert_eq!(view["joinedcontext.com/pointsTruncated"], json!(true));
+        let allowed = ["x", "y", "color", "size", "theta", "observedAt"];
+        for point in points {
+            let object = point.as_object().expect("an object");
+            assert!(
+                object.keys().all(|k| allowed.contains(&k.as_str())),
+                "{point}"
+            );
+            for (key, value) in object {
+                assert!(value.is_number() || key == "observedAt", "{point}");
+            }
+        }
+        // Times are re-written in UTC by the server, never the row's own string.
+        assert_eq!(points[0]["observedAt"], "2026-11-12T23:00:00.000Z");
+        assert_eq!(points[0]["color"], 0);
+        let text = view.to_string();
+        assert!(
+            !text.contains("jana@example.org") && !text.contains("kallio"),
+            "{text}"
+        );
+        assert_eq!(view["joinedcontext.com/chartSpec"]["mark"], "point");
+        assert_eq!(view["joinedcontext.com/chartSpec"]["title"], "PM10");
+        assert_eq!(
+            view["joinedcontext.com/chartSpec"]["x"],
+            json!({ "scale": "temporal", "title": "observedAt" })
+        );
+        let few = chart_of(&parsed, &rows[..3]);
+        assert_eq!(
+            view_of(&parsed, &few)["joinedcontext.com/pointsTruncated"],
+            json!(false)
+        );
+    }
+
+    /// The answer hands the view its points in `_meta`; the model reads neither them nor the
+    /// spec again in `structuredContent` or the text (T-6866).
+    #[tokio::test]
+    async fn chart_points_are_in_meta_not_in_text_or_structured_content() {
+        let Ok(Request::Query(parsed, _)) = spec_of(&spec("line")) else {
+            panic!("a spec")
+        };
+        let rows = rows_of(&[json!({
+            "id": "urn:x", "type": "T",
+            "pm10": { "values": [[7, "2026-11-13T00:00:00Z"], [9, "2026-11-13T01:00:00Z"]] }
+        })]);
+        let drawn = draw(&parsed, rows, Instant::now() + TIME_CAP)
+            .await
+            .expect("drawn");
+        let output = json!({
+            "image": { "mimeType": "image/png", "data": "iVBORw0KGgo=" },
+            "rows": 2, "categories": drawn.categories, "untrusted": true,
+            "sources": [{ "endpoint": "air" }],
+            "view": drawn.view,
+        });
+        let answer = crate::mcp::call_result(&output);
+        let meta = &answer["_meta"];
+        assert_eq!(
+            meta["joinedcontext.com/chartPoints"],
+            json!([
+                { "x": 1_794_528_000_000.0, "y": 7.0, "color": 0, "theta": 7.0, "observedAt": "2026-11-13T00:00:00.000Z" },
+                { "x": 1_794_531_600_000.0, "y": 9.0, "color": 0, "theta": 9.0, "observedAt": "2026-11-13T01:00:00.000Z" }
+            ])
+        );
+        assert_eq!(meta["joinedcontext.com/pointsTruncated"], json!(false));
+        assert_eq!(meta["joinedcontext.com/chartSpec"]["mark"], "line");
+        assert_eq!(meta[crate::mcp::UNTRUSTED_META], json!(true), "{meta}");
+        assert!(answer["structuredContent"].get("view").is_none());
+        assert!(answer["structuredContent"].get("image").is_none());
+        let text = answer["content"][1]["text"].as_str().expect("text");
+        assert!(
+            !text.contains("chartPoints")
+                && !text.contains("chartSpec")
+                && !text.contains("1794528000000"),
+            "{text}"
+        );
+        assert_eq!(answer["content"][0]["type"], "image");
+    }
+
     #[tokio::test]
     async fn a_render_over_the_time_cap_is_limited() {
-        let parsed = spec_of(&spec("line")).expect("a spec");
+        let Ok(Request::Query(parsed, _)) = spec_of(&spec("line")) else {
+            panic!("a spec")
+        };
         let rows = rows_of(&[
             json!({ "id": "urn:x", "type": "T", "pm10": { "values": [[1, "2026-11-13T00:00:00Z"]] } }),
         ]);
@@ -852,5 +1738,352 @@ mod tests {
             matches!(&refused, OpError::Api(ApiError::TooManyRequests(text)) if text.starts_with("limited")),
             "{refused}"
         );
+    }
+
+    const AIR: &str = "airhelsinkizzzzzzzzzzzzzzzzz";
+
+    fn manifest(kind: &str, name: &str, namespace: &str, spec: Value) -> ResourceEnvelope {
+        ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: crate::resource::ObjectMeta::new(name, namespace),
+            spec,
+            status: None,
+        }
+    }
+
+    fn dashboard(widget_spec: Value) -> Value {
+        json!({ "title": "Air", "pages": [{ "widgets": [
+            { "widgetType": "grid", "endpointRef": "air", "entityType": "AirQualityObserved" },
+            { "widgetType": "vega-lite", "endpointRef": "air",
+              "data": { "source": "temporal", "type": "AirQualityObserved", "attrs": ["pm10"], "last": "P1D" },
+              "spec": widget_spec }
+        ] }] })
+    }
+
+    fn olga_s_spec() -> Value {
+        json!({
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "title": "PM10 by Olga", "mark": "line", "data": { "name": "source" },
+            "encoding": {
+                "x": { "field": "observedAt", "type": "temporal" },
+                "y": { "field": "value", "type": "quantitative", "title": "Olga's axis title" },
+                "color": { "field": "id", "type": "nominal" }
+            }
+        })
+    }
+
+    /// Helsinki holds Dashboard air-quality over Endpoint air (audience project: ana reads it only
+    /// as Policy lets the gateway share it); ana@hel.fi may read Helsinki's Dashboards and nothing
+    /// else. Bratislava, another Organization, holds a Dashboard of the same name. The gateway,
+    /// realm and forge are `server`; the forge says `proposer` proposed the last change.
+    async fn widgets(
+        server: &wiremock::MockServer,
+        proposer: &str,
+    ) -> (AppState, Caller, wiremock::MockServer) {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, ResponseTemplate};
+        let realm = crate::auth::oidc::tests::mock_realm().await;
+        Mock::given(method("POST"))
+            .and(path("/realms/bb/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "endpoint-token", "token_type": "Bearer", "expires_in": 300
+            })))
+            .mount(&realm)
+            .await;
+        const REPO: &str = "/odata/Repositories(Owner='o',Name='r')";
+        Mock::given(method("GET"))
+            .and(path(REPO))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
+            )
+            .mount(server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/Shako.History(Ref=@r,Path=@p,Top=@n)")))
+            .and(query_param(
+                "@p",
+                "'projects/helsinki/dashboards/air-quality.yaml'",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "value": [{ "Sha": "c0ffee", "Message": "Merge change proposal chg-7" }]
+            })))
+            .mount(server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/Commits('c0ffee')")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "c0ffee",
+                "Message": format!("Merge change proposal chg-7: air\n\nApproved in the Portal by eva@hel.fi\nProposed in the Portal by {proposer}")
+            })))
+            .mount(server)
+            .await;
+        let mut config = crate::config::Config::for_tests();
+        config.gateway_url = Some(server.uri());
+        let forge = crate::forge::ShakoClient::new(
+            url::Url::parse(&server.uri()).expect("url"),
+            "o",
+            "r",
+            "t",
+        )
+        .expect("a forge client");
+        let mut state = AppState::new(config, None).with_shako(std::sync::Arc::new(forge));
+        let client = crate::auth::oidc::OidcClient::discover(
+            &crate::auth::oidc::tests::config_for(&realm),
+            "https://portal.test/cb",
+        )
+        .await
+        .expect("discovery");
+        state.oidc = Some(std::sync::Arc::new(client));
+        for (kind, name, namespace, spec) in [
+            (
+                "Endpoint",
+                "air",
+                "helsinki",
+                json!({ "slug": AIR, "audience": "project" }),
+            ),
+            (
+                "Dashboard",
+                "air-quality",
+                "helsinki",
+                dashboard(olga_s_spec()),
+            ),
+            (
+                "Endpoint",
+                "air",
+                "bratislava",
+                json!({ "slug": "airbratislavazzzzzzzzzzzzzz", "audience": "project" }),
+            ),
+            (
+                "Dashboard",
+                "air-quality",
+                "bratislava",
+                dashboard(olga_s_spec()),
+            ),
+            (
+                "Role",
+                "dashboard-reader",
+                "org",
+                json!({ "rules": [{ "kinds": ["Dashboard"], "verbs": ["read"] }] }),
+            ),
+            (
+                "RoleBinding",
+                "ana",
+                "org",
+                json!({ "role": "dashboard-reader", "subjects": [{ "user": "ana@hel.fi" }], "scope": { "project": "helsinki" } }),
+            ),
+        ] {
+            state.mirror.upsert(manifest(kind, name, namespace, spec));
+        }
+        let caller = Caller {
+            identity: crate::auth::session::Identity {
+                client: None,
+                subject: "sub-ana".into(),
+                username: "ana".into(),
+                email: Some("ana@hel.fi".into()),
+                name: None,
+                roles: vec![],
+                groups: vec![],
+                second_factor: false,
+            },
+            via: super::super::Via::Mcp,
+            access: None,
+            bearer: Some(super::super::Bearer("person-token".into())),
+        };
+        (state, caller, realm)
+    }
+
+    fn the_widget() -> Value {
+        json!({ "width": 400, "height": 240,
+                "data": { "widget": { "dashboard": "air-quality", "page": 0, "widget": 1 } } })
+    }
+
+    async fn pm10(server: &wiremock::MockServer) {
+        use wiremock::matchers::{header, method, path, query_param};
+        use wiremock::{Mock, ResponseTemplate};
+        let history: Vec<Value> = ["kallio", "vallila"]
+            .iter()
+            .enumerate()
+            .map(|(n, place)| json!({
+                "id": format!("urn:ngsi-ld:AirQualityObserved:{place}"), "type": "AirQualityObserved",
+                "pm10": { "type": "Property", "values": (0..12).map(|h| json!([10.0 + (n * 7) as f64 + f64::from(h % 5) * 2.5, format!("2026-11-13T{h:02}:00:00Z")])).collect::<Vec<_>>() }
+            }))
+            .collect();
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "/api/endpoint/{AIR}/ngsi-ld/v1/temporal/entities"
+            )))
+            .and(header("authorization", "Bearer endpoint-token"))
+            .and(query_param("type", "AirQualityObserved"))
+            .and(query_param("attrs", "pm10"))
+            .and(query_param("format", "temporalValues"))
+            .and(query_param("timerel", "after"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&history))
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_widget_render_reads_only_what_the_caller_may_read() {
+        let server = wiremock::MockServer::start().await;
+        pm10(&server).await;
+        let (state, caller, _realm) = widgets(&server, "ana@hel.fi").await;
+        let answer = run(&caller, &state, "helsinki", the_widget())
+            .await
+            .expect("drawn");
+        assert_eq!(answer["image"]["mimeType"], "image/png");
+        assert_eq!(answer["rows"], 24);
+        assert_eq!(answer["untrusted"], true);
+        assert_eq!(answer["sources"][0]["dashboard"], "air-quality");
+        assert_eq!(
+            answer["categories"]["color"][1]["value"],
+            "urn:ngsi-ld:AirQualityObserved:vallila"
+        );
+        if let Ok(dir) = std::env::var("JC_RENDER_EVIDENCE") {
+            let png = base64::engine::general_purpose::STANDARD
+                .decode(answer["image"]["data"].as_str().expect("data"))
+                .expect("base64");
+            std::fs::write(std::path::Path::new(&dir).join("widget.png"), png).expect("evidence");
+        }
+        // The rows went as ana, with the token exchanged for the Endpoint, never her own.
+        let reads: Vec<_> = server
+            .received_requests()
+            .await
+            .expect("recorded")
+            .into_iter()
+            .filter(|r| r.url.path().starts_with("/api/endpoint/"))
+            .collect();
+        assert_eq!(reads.len(), 1);
+        assert_eq!(reads[0].headers["authorization"], "Bearer endpoint-token");
+        // A Dashboard ana may not read is missing, the words the same as for an unknown one.
+        state.mirror.remove(&crate::resource::ResourceKey {
+            namespace: "org".into(),
+            kind: "RoleBinding".into(),
+            name: "ana".into(),
+        });
+        match run(&caller, &state, "helsinki", the_widget()).await {
+            Err(OpError::Api(ApiError::NotFound(text))) => {
+                assert_eq!(text, "no Dashboard air-quality in project helsinki")
+            }
+            other => panic!("not missing: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_widget_of_another_organizations_dashboard_is_404() {
+        let server = wiremock::MockServer::start().await;
+        pm10(&server).await;
+        let (state, caller, _realm) = widgets(&server, "ana@hel.fi").await;
+        let words = |result: Result<Value, OpError>| match result {
+            Err(OpError::Api(ApiError::NotFound(text))) => text,
+            other => panic!("not missing: {other:?}"),
+        };
+        let foreign = words(run(&caller, &state, "bratislava", the_widget()).await);
+        let mut unknown = the_widget();
+        unknown["data"]["widget"]["dashboard"] = json!("nobody");
+        let missing = words(run(&caller, &state, "bratislava", unknown).await);
+        assert_eq!(foreign, missing.replace("nobody", "air-quality"));
+        let reads = server.received_requests().await.expect("recorded");
+        assert!(
+            reads
+                .iter()
+                .all(|r| !r.url.path().starts_with("/api/endpoint/")),
+            "nothing of Bratislava was read"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_widget_title_another_person_wrote_is_not_drawn() {
+        let server = wiremock::MockServer::start().await;
+        pm10(&server).await;
+        let (state, caller, _realm) = widgets(&server, "olga@hel.fi").await;
+        let withheld = run(&caller, &state, "helsinki", the_widget())
+            .await
+            .expect("drawn");
+        if let Ok(dir) = std::env::var("JC_RENDER_EVIDENCE") {
+            let png = base64::engine::general_purpose::STANDARD
+                .decode(withheld["image"]["data"].as_str().expect("data"))
+                .expect("base64");
+            std::fs::write(std::path::Path::new(&dir).join("widget-withheld.png"), png)
+                .expect("evidence");
+        }
+        assert_eq!(
+            withheld["withheld"],
+            json!({ "title": "PM10 by Olga", "encoding.y.title": "Olga's axis title" })
+        );
+        // Neither is drawn: the spec drawn is the one without those words.
+        let mut plain = olga_s_spec();
+        plain.as_object_mut().expect("object").remove("title");
+        plain["encoding"]["y"]
+            .as_object_mut()
+            .expect("y")
+            .remove("title");
+        let plain = widget_look(Some(&plain)).expect("a spec");
+        let mut olga = widget_look(Some(&olga_s_spec())).expect("a spec");
+        withhold(&mut olga);
+        assert_eq!(olga.title, plain.title);
+        assert_eq!(
+            olga.y.as_ref().map(|y| y.title.as_str()),
+            plain.y.as_ref().map(|y| y.title.as_str())
+        );
+        // The caller's own last change draws its titles, and the caller's own title always.
+        let server = wiremock::MockServer::start().await;
+        pm10(&server).await;
+        let (state, caller, _realm) = widgets(&server, "Ana@hel.fi").await;
+        let own = run(&caller, &state, "helsinki", the_widget())
+            .await
+            .expect("drawn");
+        assert!(own.get("withheld").is_none(), "{own}");
+    }
+
+    #[test]
+    fn a_widget_whose_spec_holds_an_expression_is_refused() {
+        let refused = |spec: Value| match widget_look(Some(&spec)) {
+            Err(OpError::InvalidInput { path, .. }) => path,
+            other => panic!("not refused: {other:?}"),
+        };
+        let mut transform = olga_s_spec();
+        transform["transform"] = json!([{ "calculate": "datum.value * 2", "as": "v" }]);
+        assert_eq!(refused(transform), "/data/widget/spec/transform");
+        let mut condition = olga_s_spec();
+        condition["encoding"]["y"]["condition"] = json!({ "test": "datum.value > 1", "value": 1 });
+        assert_eq!(refused(condition), "/data/widget/spec/encoding/y/condition");
+        let mut url = olga_s_spec();
+        url["data"] = json!({ "url": "https://evil.example/rows.json" });
+        assert_eq!(refused(url), "/data/widget/spec/data");
+        // A call naming a widget brings no mark of its own.
+        let mut both = the_widget();
+        both["mark"] = json!("bar");
+        assert!(
+            matches!(spec_of(&both), Err(OpError::InvalidInput { path, .. }) if path == "/mark")
+        );
+    }
+
+    #[test]
+    fn a_widget_source_reads_csv_and_stays_on_its_path() {
+        let rows = csv_rows("id,count,name\r\nc1,4,\"Main, \"\"north\"\"\"\nc2,x,b\n");
+        assert_eq!(rows.len(), 2);
+        let long = format!("n\n{}", "1\n".repeat(WIDGET_ROWS + 9));
+        assert_eq!(
+            csv_rows(&long).len(),
+            WIDGET_ROWS + 1,
+            "one past the cap shows the cut"
+        );
+        assert_eq!(rows[0]["count"], json!(4.0));
+        assert_eq!(rows[0]["name"], json!("Main, \"north\""));
+        assert_eq!(rows[1]["count"], json!("x"));
+        let path = "odata/v4/BikeCounter";
+        let next = next_page(
+            "https://portal.example/api/endpoint/abc/odata/v4/BikeCounter?$skiptoken=2&$top=1000",
+            path,
+        )
+        .expect("the same set");
+        assert_eq!(next[0], ("$skiptoken".to_owned(), "2".to_owned()));
+        for elsewhere in [
+            "https://evil.example/odata/v4/Person?$skiptoken=2",
+            "/api/endpoint/abc/odata/v4/BikeCounter/../Person",
+        ] {
+            assert!(next_page(elsewhere, path).is_err(), "{elsewhere}");
+        }
     }
 }

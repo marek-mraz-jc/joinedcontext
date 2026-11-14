@@ -1,0 +1,9 @@
+logger: {level: OFF}
+input:
+  sql_raw:
+    driver: mysql
+    dsn: ${MY_DSN}
+    query: "SELECT * FROM t WHERE id >= ? ORDER BY id"
+    args_mapping: 'root = [ 1 ]'
+output:
+  stdout: {}

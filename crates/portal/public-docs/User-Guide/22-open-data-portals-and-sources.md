@@ -17,6 +17,10 @@ A further portal serves a theme or an audience of its own, for example `mobility
 - `/{org}/opendata/-/{name}/` on the platform's shared host, for example `/bratislava/opendata/-/mobility/`. The `-` segment is never a dataset, group or page name, so a portal can never take over an address of `default`.
 - or its own host, for example `mobility.bratislava.sk`, when the operator of the deployment has listed that host for your Organization. A host nobody listed is refused when the Change is proposed (section 4).
 
+A portal on its own host chooses what its path address does with `spec.slug`. `redirect`, the default, answers every request on the path address `/{org}/opendata/[-/{name}/]...` with `308` to the same path and query on the host. `keep` answers on both, and every page and feed names the host as the canonical address.
+
+Changing a portal's address never changes a dataset IRI: an IRI keeps the address the dataset was first published under, and that first address redirects to the new one (ODP-08).
+
 A portal's `name` is a DNS label: lower-case letters, digits and hyphens, at most 63 characters, starting and ending with a letter or digit, and unique in the Organization. Example: `mobility`.
 
 The deployment caps how many portals all its Organizations hold together: `portals.max` in the deployment configuration, by default three per Organization the deployment is sized for. Every `default` portal counts toward it and is always created.
@@ -31,6 +35,7 @@ A portal is configuration as code: one manifest in the Organization's repository
 | `spec.title` | the title on every page of the portal, per language | `{sk: "Doprava", en: "Mobility"}` |
 | `spec.languages` | the languages the portal is shown in, the first one the default | `[sk, en]` |
 | `spec.host` | its own host, one the operator listed for the Organization; absent means the path address | `mobility.bratislava.sk` |
+| `spec.slug` | with `spec.host`: `redirect` (the default) sends the path address to the host with `308`, `keep` serves both with the host canonical | `keep` |
 | `spec.appearance` | overrides of the Organization's appearance (logo, colours) for this portal only | `{accent: "#0b6e4f"}` |
 | `spec.profiles` | the DCAT-AP profiles the portal's feeds serve | `[dcat-ap-3.0.1, dcat-ap-sk]` |
 | `spec.sources` | where its datasets come from (section 3) | |
@@ -38,7 +43,7 @@ A portal is configuration as code: one manifest in the Organization's repository
 
 A second portal for a theme:
 
-```yaml
+```yaml excerpt
 apiVersion: joinedcontext.com/v1alpha1
 kind: Portal
 metadata:
@@ -64,7 +69,7 @@ A source tells the portal where its datasets come from (ODP-10). Each source has
 
 Federation with another deployment, of this platform or of any DCAT-AP catalogue, is a `dcat-ap` source at that catalogue's public address:
 
-```yaml
+```yaml excerpt
 apiVersion: joinedcontext.com/v1alpha1
 kind: Portal
 metadata:

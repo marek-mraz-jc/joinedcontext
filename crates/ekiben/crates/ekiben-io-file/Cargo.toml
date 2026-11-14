@@ -16,6 +16,12 @@ chrono = { workspace = true }
 csv = { workspace = true }
 tar = { workspace = true }
 flate2 = { workspace = true }
+bzip2 = { workspace = true }
+lz4_flex = { workspace = true }
+quick-xml = { workspace = true }
+regex = { workspace = true }
+snap = { workspace = true }
+zstd = { workspace = true }
 glob = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

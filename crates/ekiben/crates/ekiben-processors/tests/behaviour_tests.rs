@@ -235,10 +235,7 @@ fn configs_bento_refuses_are_refused_with_a_reason() {
         ),
         (json!({"dedupe": 1}), "dedupe config must be an object"),
         (json!({"dedupe": {}}), "dedupe requires a cache field"),
-        (
-            json!({"group_by_value": {}}),
-            "group_by_value requires a value field",
-        ),
+        (json!({"group_by_value": {}}), "field value is required"),
         (json!({"archive": 1}), "archive config must be an object"),
         (json!({"archive": {}}), "archive requires a format field"),
         (

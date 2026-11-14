@@ -1,0 +1,11 @@
+input:
+  stdin:
+    scanner:
+      decompress:
+        algorithm: zstd
+pipeline:
+  threads: 1
+  processors:
+    - mapping: 'root = {"b": content().string(), "m": @, "i": batch_index(), "n": batch_size()}'
+output:
+  stdout: {}

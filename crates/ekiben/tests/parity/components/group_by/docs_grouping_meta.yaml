@@ -1,0 +1,19 @@
+input:
+  stdin:
+    scanner:
+      to_the_end: {}
+pipeline:
+  threads: 1
+  processors:
+    - unarchive:
+        format: lines
+    - group_by:
+      - check: content().contains("this is a foo")
+        processors:
+          - archive:
+              format: json_array
+          - mapping: 'meta grouping = "foo"'
+      - check: this.n > 2
+    - mapping: 'root = {"b": content().string(), "m": @, "i": batch_index(), "n": batch_size()}'
+output:
+  stdout: {}

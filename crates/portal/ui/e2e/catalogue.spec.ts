@@ -88,7 +88,15 @@ async function shot(page: Page, name: string): Promise<void> {
  * The dataset's Endpoint as the grid reads it from the browser (T-6376): `entities` answers rows,
  * or the gateway's 401 for a private Endpoint read without a session.
  */
-async function stubEndpoint(page: Page, entities: "rows" | 401 | 403 = "rows"): Promise<void> {
+/** A series of the indicator, as the Endpoint's temporal read answers it (T-6878). */
+const KPI_HISTORY = [
+  [10, "2026-11-14T06:00:00Z"],
+  [11.5, "2026-11-14T07:00:00Z"],
+  [11, "2026-11-14T08:00:00Z"],
+  [12, "2026-11-14T09:00:00Z"],
+] as const;
+
+async function stubEndpoint(page: Page, entities: "rows" | 401 | 403 = "rows", history?: boolean): Promise<void> {
   await page.route(`**/api/endpoint/${SLUG}/**`, (route) => {
     const url = new URL(route.request().url());
     const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
@@ -100,15 +108,30 @@ async function stubEndpoint(page: Page, entities: "rows" | 401 | 403 = "rows"): 
     if (url.pathname.endsWith("/schema/index.json")) return json({ models: [{ name: "kpi", version: 1 }] });
     if (url.pathname.endsWith("/schema/v1/json-schema")) return json(KPI_SCHEMA);
     if (url.pathname.endsWith("/access/attributes")) {
-      return json({ type: "KeyPerformanceIndicator", attributes: ["name", "kpiValue"].map((name) => ({ name, read: true, write: false, delete: false, reason: "not_in_grant" })) });
+      const temporal = (name: string) => (history === undefined ? {} : { history: history && name === "kpiValue" });
+      return json({ type: "KeyPerformanceIndicator", attributes: ["name", "kpiValue"].map((name) => ({ name, read: true, write: false, delete: false, ...temporal(name), reason: "not_in_grant" })) });
     }
-    if (url.pathname.endsWith("/ngsi-ld/v1/entities")) return json(KPI_ROWS, 200, { "NGSILD-Results-Count": String(KPI_ROWS.length) });
+    if (url.pathname.includes("/ngsi-ld/v1/temporal/entities/")) {
+      // What the broker answers an anonymous caller (T-6878): values and times, no writer.
+      if (url.searchParams.get("versions") === "all") {
+        return json({ id: KPI_ROWS[0].id, type: "KeyPerformanceIndicator", kpiValue: [
+          { type: "Property", value: 11.5, observedAt: "2026-11-14T07:00:00Z", supersededAt: "2026-11-14T07:30:00Z", provenance: { channel: "ui", operation: "correct", writtenAt: "2026-11-14T07:05:00Z" } },
+          { type: "Property", value: 11, observedAt: "2026-11-14T07:00:00Z", provenance: { channel: "ui", operation: "correct", writtenAt: "2026-11-14T07:30:00Z" } },
+          ...KPI_HISTORY.filter(([, at]) => at !== "2026-11-14T07:00:00Z").map(([value, observedAt]) => ({ type: "Property", value, observedAt, provenance: { channel: "pipeline", operation: "update", writtenAt: observedAt } })),
+        ] });
+      }
+      return json({ id: KPI_ROWS[0].id, type: "KeyPerformanceIndicator", kpiValue: { type: "Property", values: KPI_HISTORY } });
+    }
+    if (url.pathname.endsWith("/ngsi-ld/v1/entities")) {
+      const rows = history === undefined ? KPI_ROWS : KPI_ROWS.map((row) => ({ ...row, kpiValue: { ...row.kpiValue, observedAt: "2026-11-14T09:00:00Z" } }));
+      return json(rows, 200, { "NGSILD-Results-Count": String(rows.length) });
+    }
     return json({ title: "Not Found", status: 404 }, 404);
   });
 }
 
-async function stubApi(page: Page, asked: string[]): Promise<void> {
-  await stubEndpoint(page);
+async function stubApi(page: Page, asked: string[], history?: boolean): Promise<void> {
+  await stubEndpoint(page, "rows", history);
   await page.route("**/api/v1/**", async (route) => {
     const url = new URL(route.request().url());
     asked.push(url.pathname + url.search);
@@ -177,6 +200,65 @@ test.describe("the public catalogue", () => {
       await expect(page.getByText(/Your access|not allowed|no access/)).toHaveCount(0);
       expect(await sideways()).toBeLessThanOrEqual(0);
       await shot(page, `t6869-public-row-detail-${width}`);
+    });
+  }
+
+  // T-6878: a signed-out visitor sees which values have history the Policy lets them read, opens
+  // the series and the versions (values and times, no writer), and a dataset without it shows none.
+  for (const width of [1440, 400]) {
+    test(`a signed-out dataset marks the values with history and opens them (${width} px)`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      // Every request the page makes on its own (fetch and XHR), so the marks are shown to cost none.
+      const asked: string[] = [];
+      page.on("request", (request) => {
+        if (["fetch", "xhr"].includes(request.resourceType())) asked.push(`${request.method()} ${request.url()}`);
+      });
+      const temporal = () => asked.filter((request) => request.includes("/temporal/"));
+      const capability = () => asked.filter((request) => request.includes("/access/attributes"));
+      await stubApi(page, [], true);
+      await page.goto("/catalogue/bbsk-kpi?lang=en");
+      const data = page.locator('section[aria-labelledby="catalogue-data"]');
+      const grid = data.getByRole("grid");
+      await expect(grid.getByText("Unemployment")).toBeVisible();
+      const column = grid.getByRole("button", { name: /^History available: / });
+      const cell = grid.getByRole("button", { name: /^Show the history of this value/ });
+      await expect(column).toHaveCount(1);
+      await expect(cell).toHaveCount(1);
+      await page.waitForLoadState("networkidle");
+      expect(temporal()).toEqual([]);
+      expect(capability().length).toBeGreaterThan(0);
+      const marked = [...asked].sort();
+      const sideways = () => page.evaluate(() => document.scrollingElement!.scrollWidth - window.innerWidth);
+      expect(await sideways()).toBeLessThanOrEqual(0);
+      await data.scrollIntoViewIfNeeded();
+      await shot(page, `t6878-grid-marks-${width}`);
+      const beforeOpen = asked.length;
+      await cell.click();
+      const panel = page.getByRole("region", { name: /History: / });
+      await expect(panel.locator("svg polyline, svg path").first()).toBeVisible();
+      expect(temporal()).toHaveLength(1);
+      expect(asked).toHaveLength(beforeOpen + 1);
+      expect(await sideways()).toBeLessThanOrEqual(0);
+      await panel.scrollIntoViewIfNeeded();
+      await shot(page, `t6878-history-open-${width}`);
+      await panel.getByRole("checkbox", { name: "Every version of each value" }).check();
+      await expect(panel.getByRole("columnheader", { name: "Replaced" })).toBeVisible();
+      await expect(panel.getByRole("columnheader", { name: /Changed by|Reason/ })).toHaveCount(0);
+      expect(temporal().at(-1)).toContain("versions=all");
+      expect(await axeViolations(page)).toEqual([]);
+      await shot(page, `t6878-versions-open-${width}`);
+      await page.unroute(`**/api/endpoint/${SLUG}/**`);
+      await stubEndpoint(page, "rows", false);
+      asked.length = 0;
+      await page.reload();
+      await expect(grid.getByText("Unemployment")).toBeVisible();
+      await expect(page.locator(".jc-grid-history-mark")).toHaveCount(0);
+      await page.waitForLoadState("networkidle");
+      // The same requests with and without marks: the one capability read is the access table the grid reads anyway.
+      expect([...asked].sort()).toEqual(marked);
+      expect(temporal()).toEqual([]);
+      await data.scrollIntoViewIfNeeded();
+      await shot(page, `t6878-no-history-${width}`);
     });
   }
 

@@ -223,6 +223,15 @@ pub async fn build_with_writer(
     for org in organizations {
         let own = OrgId::of_organization(org_id, &org.name);
         let id = CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| err(&e))?;
+        // A shared id would move the deployment-wide catalogue (or another Organization's)
+        // with this one; the store holds one catalogue per id.
+        if id == catalogue_id || moves.iter().any(|&(_, _, c)| c == id) {
+            return Err(err(&format!(
+                "[[organizations]] {}: catalogue_id {id} is already [dataroom] catalogue_id or \
+                 another Organization's; give each Organization a catalogue id of its own",
+                org.name
+            )));
+        }
         own_org.insert(org.name.clone(), own);
         moves.push((org_id, own, id));
     }
@@ -1426,6 +1435,55 @@ mod tests {
             writer.upsert(z).await,
             Err(DataroomError::Conflict(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn a_catalogue_id_stays_with_its_organization_after_a_delete_and_under_a_race() {
+        let (router, writer) = runtime_dataroom().await;
+        let a = portal_spec(0xA6, 0xC6, "mobility");
+        let mut b = portal_spec(0xB6, 0xC6, "schools");
+        b.publish_token = Some("publish-token-of-b-0123456789abcdef".into());
+        writer.upsert(a.clone()).await.unwrap();
+        assert!(writer.delete(a.org_id, a.id).await.unwrap());
+        assert!(
+            matches!(
+                writer.upsert(b.clone()).await,
+                Err(DataroomError::Conflict(_))
+            ),
+            "B cannot take A's deleted catalogue id"
+        );
+        let shown = action(&router, &b.host, None, "package_list", None).await;
+        assert_eq!(
+            shown,
+            axum::http::StatusCode::NOT_FOUND,
+            "B's host serves nothing"
+        );
+
+        let (c, mut d) = (
+            portal_spec(0xA7, 0xC7, "culture"),
+            portal_spec(0xB7, 0xC7, "sport"),
+        );
+        d.publish_token = Some("publish-token-of-d-0123456789abcdef".into());
+        let (rc, rd) = tokio::join!(writer.upsert(c.clone()), writer.upsert(d.clone()));
+        assert!(
+            rc.is_ok() != rd.is_ok(),
+            "exactly one Organization holds the id"
+        );
+        let (won, lost) = if rc.is_ok() { (&c, &d) } else { (&d, &c) };
+        let made = action(
+            &router,
+            &won.host,
+            won.publish_token.as_deref(),
+            "package_create",
+            Some(package("air")),
+        )
+        .await;
+        assert!(
+            made.is_success(),
+            "the winner's principal still writes: {made}"
+        );
+        let lost_list = action(&router, &lost.host, None, "package_list", None).await;
+        assert_eq!(lost_list, axum::http::StatusCode::NOT_FOUND);
     }
 
     /// prod's open data catalogue: the base its datasets' `isPartOf` names.

@@ -163,6 +163,30 @@ async fn a_correction_shows_its_chain_only_to_a_caller_granted_read_versions() {
         "{all}"
     );
     assert_eq!(rows[0]["provenance"]["channel"], "api", "{all}");
+    // GDPR (T-6878): an anonymous caller granted the versions reads when and how a value
+    // changed, never who changed it or in whose words.
+    let anonymous = [
+        ("l5d-client-id", GATEWAY),
+        ("jc-read-versions", "true"),
+        ("jc-provenance-actor", "anonymous"),
+    ];
+    let (s, public) = send(&st, &t, "GET", &temporal("&versions=all"), &anonymous, None).await;
+    assert_eq!(s, 200, "{public}");
+    let fix = &public["speed"][1]["provenance"];
+    assert_eq!(
+        (&fix["channel"], &fix["operation"]),
+        (&json!("ui"), &json!("correct")),
+        "{public}"
+    );
+    assert!(fix["writtenAt"].is_string(), "{public}");
+    for row in public["speed"].as_array().into_iter().flatten() {
+        for member in ["actor", "client", "reason", "requestId"] {
+            assert!(
+                row["provenance"].get(member).is_none(),
+                "{member}: {public}"
+            );
+        }
+    }
     // The broker stamps when it stored each version (ADR-N-054 2.3, T-5361).
     for row in &rows {
         let at = row["provenance"]["writtenAt"].as_str().unwrap_or_default();

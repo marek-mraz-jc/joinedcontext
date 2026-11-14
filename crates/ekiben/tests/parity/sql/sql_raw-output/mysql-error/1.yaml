@@ -1,0 +1,12 @@
+logger: {level: OFF}
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {"i": counter()}'
+output:
+  sql_raw:
+    driver: mysql
+    dsn: ${MY_DSN}
+    query: "INSERT INTO missing (v) VALUES (?)"
+    args_mapping: 'root = [ this.i ]'

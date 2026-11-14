@@ -26,6 +26,8 @@ export function useGridKeys(
     accessOf,
     setInspected,
     setPasteNote,
+    cellHistory,
+    openHistoryOf,
   }: {
     editing: boolean;
     editable: (column: VisibleColumn) => boolean;
@@ -36,6 +38,8 @@ export function useGridKeys(
     accessOf: (attr: string) => AttributeAccess | undefined;
     setInspected: (panel: { attr: string; label: string; row?: EntityGridApi["rows"][number] }) => void;
     setPasteNote: (note: string | null) => void;
+    cellHistory: (row: EntityGridApi["rows"][number] | undefined, column: VisibleColumn) => column is VisibleColumn & { attr: string };
+    openHistoryOf: (column: VisibleColumn & { attr: string }, row: EntityGridApi["rows"][number] | undefined) => void;
   },
 ) {
   const { rows, columns, state, labels, getGridProps, setEdit, setEdits } = grid;
@@ -119,6 +123,14 @@ export function useGridKeys(
         setInspected({ attr: here.attr, label: here.label, row: rows[state.activeCell!.row] });
         return;
       }
+      // `h` on a cell wearing the history mark opens that value's history (T-6878), as its button does;
+      // Ctrl/Cmd/Alt+H stays the browser's.
+      const hereRow = state.activeCell ? rows[state.activeCell.row] : undefined;
+      if (onGrid && e.key === "h" && !e.ctrlKey && !e.metaKey && !e.altKey && here && cellHistory(hereRow, here) && !editable(here)) {
+        e.preventDefault();
+        openHistoryOf(here, hereRow);
+        return;
+      }
       // Typing on an editable cell starts editing it with that character, as Baserow and every
       // spreadsheet do: the value is replaced, Escape brings it back.
       const typed = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
@@ -138,7 +150,7 @@ export function useGridKeys(
       }
       gridProps.onKeyDown(e);
     },
-    [activeCellId, gridProps, setEdit, leaveCell, state.activeCell, cellAt, rows, rules, columns, inspects, editable, locks, labels.locked],
+    [activeCellId, gridProps, setEdit, leaveCell, state.activeCell, cellAt, rows, rules, columns, inspects, editable, cellHistory, openHistoryOf, locks, labels.locked],
   );
 
   /**

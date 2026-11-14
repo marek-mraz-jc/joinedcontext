@@ -1,0 +1,11 @@
+logger: {level: OFF}
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {"i": counter()}'
+output:
+  sql_raw:
+    driver: mysql
+    dsn: ${MY_DSN}
+    query: "CREATE TABLE t (id int primary key, a tinyint, b bigint unsigned, c float, d double, e decimal(10,3), f varchar(9), g blob, h datetime(6), i date, j time, k json, l year, m tinyint(1))"

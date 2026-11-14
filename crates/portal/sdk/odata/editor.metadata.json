@@ -1841,7 +1841,7 @@
           },
           {
             "$Name": "mark",
-            "$Nullable": false,
+            "$Nullable": true,
             "$Type": "Edm.String"
           },
           {

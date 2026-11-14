@@ -1,0 +1,11 @@
+logger: {level: OFF}
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {"i": counter()}'
+output:
+  sql_raw:
+    driver: sqlite
+    dsn: ${LITE_DSN}
+    query: "CREATE TABLE t (id integer primary key, a real, b text, c blob, d datetime, e, f date)"

@@ -1,0 +1,17 @@
+input:
+  stdin: {}
+pipeline:
+  threads: 1
+  processors:
+    - cached:
+        key: '${! content() }'
+        ttl: '${! 2+2 }'
+        cache: c
+        processors:
+          - mapping: 'root = content().uppercase()'
+    - mapping: 'root = {"b": content().string(), "e": error()}'
+cache_resources:
+  - label: c
+    memory: {}
+output:
+  stdout: {}

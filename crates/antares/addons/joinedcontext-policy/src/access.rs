@@ -420,8 +420,14 @@ pub const ATTRIBUTE_ACTIONS: [(&str, &str); 3] = [
     ("delete", "deleteAttrs"),
 ];
 
+/// The action of the table's `history` member: a temporal read of the
+/// Entity (5.7.3), whose kept values and versions the grid opens (T-6878).
+/// It stays out of `reason`, which speaks of the current value.
+pub const HISTORY_ACTION: &str = "retrieveTemporal";
+
 /// The caller's decisions on each Attribute of `names` of `entity_type`
-/// (platform API/02 section 7b): `read`, `write` and `delete`, and one
+/// (platform API/02 section 7b): `read`, `write`, `delete` and `history`
+/// ([`HISTORY_ACTION`]), and one
 /// `reason`, the strongest of the three verdicts: `prohibited`, then
 /// `grant` (or `formula`, a grant with a condition the stored Entity must
 /// meet), then `not_in_grant`, then `no_grant`. A reason names no policy
@@ -450,6 +456,17 @@ pub fn attributes_of(
                     Verdict::NoGrant => 0,
                 });
             }
+            let history = verdict(
+                grants,
+                HISTORY_ACTION,
+                Some(entity_type),
+                Some(name),
+                served,
+            );
+            row.insert(
+                "history".into(),
+                json!(matches!(history, Verdict::Granted(_))),
+            );
             let reason = ["no_grant", "not_in_grant", "grant", "formula", "prohibited"]
                 .get(reason)
                 .copied()
@@ -928,10 +945,10 @@ mod tests {
         assert_eq!(
             table,
             json!({"type": "Car", "attributes": [
-                {"name": "speed", "read": true, "write": true, "delete": false, "reason": "prohibited"},
-                {"name": "colour", "read": true, "write": false, "delete": false, "reason": "prohibited"},
-                {"name": "owner", "read": false, "write": false, "delete": false, "reason": "prohibited"},
-                {"name": "plate", "read": false, "write": false, "delete": false, "reason": "prohibited"}
+                {"name": "speed", "read": true, "write": true, "delete": false, "history": false, "reason": "prohibited"},
+                {"name": "colour", "read": true, "write": false, "delete": false, "history": false, "reason": "prohibited"},
+                {"name": "owner", "read": false, "write": false, "delete": false, "history": false, "reason": "prohibited"},
+                {"name": "plate", "read": false, "write": false, "delete": false, "history": false, "reason": "prohibited"}
             ]})
         );
         let without = Grants {
@@ -956,7 +973,7 @@ mod tests {
         assert_eq!(
             attributes_of(&none, "Car", &["speed"], &every),
             json!({"type": "Car", "attributes": [
-                {"name": "speed", "read": false, "write": false, "delete": false, "reason": "no_grant"}]})
+                {"name": "speed", "read": false, "write": false, "delete": false, "history": false, "reason": "no_grant"}]})
         );
         let text = attributes_of(&grants, "Car", &["speed"], &every).to_string();
         for hidden in ["editor", "never-plate", "if-red", "did:web"] {
@@ -966,8 +983,41 @@ mod tests {
         assert_eq!(
             attributes_of(&without, "Car", &["owner"], &|_| true),
             json!({"type": "Car", "attributes": [
-                {"name": "owner", "read": false, "write": false, "delete": false, "reason": "not_in_grant"}]})
+                {"name": "owner", "read": false, "write": false, "delete": false, "history": false, "reason": "not_in_grant"}]})
         );
+        Ok(())
+    }
+
+    #[test]
+    fn the_attribute_table_answers_history_where_a_temporal_read_is_granted() -> Result<(), String>
+    {
+        let t = compiled(&json!([
+            {"id": "now-and-history", "assignee": {"kind": "role", "id": "public"},
+             "operations": ["5.7.1", "5.7.3"],
+             "information": [{"entities": [{"type": "Air"}], "propertyNames": ["pm10"]}]},
+            {"id": "now-only", "assignee": {"kind": "role", "id": "public"},
+             "operations": ["5.7.1"],
+             "information": [{"entities": [{"type": "Air"}], "propertyNames": ["name"]}]},
+            {"id": "no-history", "effect": "prohibit", "assignee": {"kind": "role", "id": "public"},
+             "operations": ["5.7.3"],
+             "information": [{"entities": [{"type": "Air"}], "propertyNames": ["no2"]}]},
+            {"id": "no2", "assignee": {"kind": "role", "id": "public"},
+             "operations": ["5.7.1", "5.7.3"],
+             "information": [{"entities": [{"type": "Air"}], "propertyNames": ["no2"]}]}
+        ]))?;
+        let public = caller(&[("x-jc-roles", "")]);
+        let grants = Grants::of(Some(&t), &public, Utc::now());
+        let table = attributes_of(&grants, "Air", &["pm10", "name", "no2"], &every);
+        let history: Vec<Value> = (0..3)
+            .map(|i| at(&table, &format!("/attributes/{i}/history")))
+            .collect();
+        assert_eq!(history, vec![json!(true), json!(false), json!(false)]);
+        // a history prohibition leaves the current read and its reason alone
+        assert_eq!(at(&table, "/attributes/2/read"), json!(true));
+        assert_eq!(at(&table, "/attributes/2/reason"), json!("grant"));
+        // a view that does not serve the temporal route grants no history
+        let none = attributes_of(&grants, "Air", &["pm10"], &|row| row != "temporal_retrieve");
+        assert_eq!(at(&none, "/attributes/0/history"), json!(false));
         Ok(())
     }
 

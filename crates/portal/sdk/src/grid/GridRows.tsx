@@ -134,7 +134,7 @@ function GridRow({ view, row, rowIndex }: { view: GridView; row: RichRow; rowInd
 
 /** One cell: a click opens its row on the attribute, the "i" opens what the person may do with it. */
 function GridCell({ view, row, rowIndex, col, colIndex, tone }: { view: GridView; row: RichRow; rowIndex: number; col: VisibleColumn; colIndex: number; tone?: { tone: string; label: string } }): React.JSX.Element {
-  const { props, grid, kindOf, locks, inspects, editable, selection, setCellPlace, setDetailId, setInspected, inspectorLabels, formatOf, renderCellContent } = view;
+  const { props, grid, kindOf, locks, inspects, editable, selection, setCellPlace, setDetailId, setInspected, inspectorLabels, formatOf, renderCellContent, cellHistory, openHistoryOf, labels } = view;
   const { getCellProps, cellOf } = grid;
   const { classNames, marks } = props;
   return (
@@ -180,6 +180,22 @@ function GridCell({ view, row, rowIndex, col, colIndex, tone }: { view: GridView
         onClick={(e) => {
           e.stopPropagation();
           setInspected({ attr: col.attr, label: col.label, row });
+        }}
+      />
+    ) : null}
+    {/* A value that changed, in a column whose history the person reads (T-6878): read from the
+        row itself, so the mark costs no request; `h` on the active cell opens it too. */}
+    {cellHistory(row, col) ? (
+      <button
+        type="button"
+        className="jc-grid-history-mark jc-grid-history-mark--cell"
+        tabIndex={-1}
+        aria-keyshortcuts="h"
+        aria-label={`${labels.historyOfValue}: ${col.label}`}
+        title={labels.historyOfValue}
+        onClick={(e) => {
+          e.stopPropagation();
+          openHistoryOf(col, row);
         }}
       />
     ) : null}

@@ -314,8 +314,11 @@ fn answered_here(
     id: &Value,
     message: &Value,
 ) -> Option<(Response, String)> {
-    if method == "resources/read" && message["params"]["uri"] == super::app_view::URI {
-        let contents = super::app_view::contents(&state.config.public_base());
+    let uri = message["params"]["uri"].as_str().unwrap_or_default();
+    if let Some(contents) = (method == "resources/read")
+        .then(|| super::app_view::contents(uri, &state.config.public_base()))
+        .flatten()
+    {
         let answer = result(id.clone(), json!({ "contents": contents }));
         return Some((json_response(StatusCode::OK, &answer), "allowed".to_owned()));
     }
@@ -323,7 +326,7 @@ fn answered_here(
         let answer = error(
             id.clone(),
             -32601,
-            "a connector serves initialize, ping, tools/list, tools/call and its plan view",
+            "a connector serves initialize, ping, tools/list, tools/call and its plan and chart views",
         );
         return Some((
             json_response(StatusCode::OK, &answer),
@@ -492,7 +495,15 @@ async fn judge(
         }
         "tools/call" => {
             let name = params["name"].as_str().unwrap_or("");
-            let args = target_args(name, &params["arguments"]);
+            // A saved widget's read is checked, not the reference to it (T-6864).
+            let resolved = match project.as_deref() {
+                Some(p) if name == crate::ops::render::NAME => {
+                    crate::ops::render::door_args(&caller, state, p, &params["arguments"])
+                }
+                _ => None,
+            };
+            let arguments = resolved.as_ref().unwrap_or(&params["arguments"]);
+            let args = target_args(name, arguments);
             let target = match (crate::ops::find(name), project.as_deref()) {
                 (Some(op), Some(project)) => connector
                     .admits(op, project, args, &|kind, name| {
@@ -521,7 +532,7 @@ async fn judge(
                 .is_some_and(|p| connector.shows_personal(p, args));
             if !shows {
                 if let Err(why) =
-                    indicator_stays_open(state, project.as_deref(), name, params).await
+                    indicator_stays_open(state, project.as_deref(), name, arguments).await
                 {
                     let answer = refused_call(id, &why);
                     return (
@@ -827,9 +838,8 @@ async fn indicator_stays_open(
     state: &AppState,
     project: Option<&str>,
     tool: &str,
-    params: &Value,
+    args: &Value,
 ) -> Result<(), String> {
-    let args = &params["arguments"];
     let text = |at: &str| args.pointer(at).and_then(Value::as_str).unwrap_or("");
     let texts: Vec<&str> = match tool {
         "jc_kpi_compute" if args.get("endpoint").is_some() => vec![text("/attribute"), text("/q")],

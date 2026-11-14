@@ -76,6 +76,11 @@ CREATE POLICY cat_catalogue_host_lookup ON dataroom.cat_catalogue
 CREATE UNIQUE INDEX IF NOT EXISTS uq_cat_catalogue_host_lower
     ON dataroom.cat_catalogue (lower(host));
 
+-- A catalogue id names one catalogue in the whole deployment, a deleted one's tombstone
+-- included: the serving tables key routes, branding and publish principals by id (ODP-12).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_cat_catalogue_id
+    ON dataroom.cat_catalogue (id);
+
 CREATE TABLE IF NOT EXISTS dataroom.cat_publisher (
     org_id uuid NOT NULL,
     catalogue_id uuid NOT NULL,

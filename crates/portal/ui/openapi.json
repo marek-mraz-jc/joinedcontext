@@ -29426,7 +29426,7 @@
     },
     "/api/v1/projects/{project}/ops/jc_render": {
       "post": {
-        "description": "Draws one Endpoint read (a jc_data_query) as a PNG chart from a Vega-Lite subset: marks line, bar, area, point, arc, rule",
+        "description": "Draws one Endpoint read (a jc_data_query) as a PNG chart from a Vega-Lite subset (marks line, bar, area, point, arc, rule), or a saved Dashboard's vega-lite widget by reference",
         "operationId": "jc_render",
         "parameters": [
           {
@@ -29443,16 +29443,11 @@
           "content": {
             "application/json": {
               "example": {
-                "data": {
-                  "query": {
-                    "endpoint": "example"
-                  }
-                },
-                "mark": "line"
+                "data": {}
               },
               "schema": {
                 "additionalProperties": false,
-                "description": "A Vega-Lite 5 subset. data.query is a jc_data_query read; no url, no transform, no expression",
+                "description": "A Vega-Lite 5 subset. data.query is a jc_data_query read, data.widget a saved Dashboard widget; no url, no transform, no expression",
                 "properties": {
                   "$schema": {
                     "description": "https://vega.github.io/schema/vega-lite/v5.json, never fetched",
@@ -29462,7 +29457,7 @@
                   },
                   "data": {
                     "additionalProperties": false,
-                    "description": "Where the rows come from: one Endpoint read",
+                    "description": "One of query (with mark and encoding) or widget (without them: the widget brings its own)",
                     "properties": {
                       "query": {
                         "additionalProperties": false,
@@ -29610,11 +29605,37 @@
                           "endpoint"
                         ],
                         "type": "object"
+                      },
+                      "widget": {
+                        "additionalProperties": false,
+                        "description": "A saved Dashboard's vega-lite widget, e.g. {\"dashboard\": \"air-quality\", \"page\": 0, \"widget\": 1}",
+                        "properties": {
+                          "dashboard": {
+                            "description": "The Dashboard's name in this project, e.g. air-quality",
+                            "maxLength": 253,
+                            "type": "string"
+                          },
+                          "page": {
+                            "description": "The page, counting from 0",
+                            "maximum": 99,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "widget": {
+                            "description": "The widget on the page, counting from 0",
+                            "maximum": 99,
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "dashboard",
+                          "page",
+                          "widget"
+                        ],
+                        "type": "object"
                       }
                     },
-                    "required": [
-                      "query"
-                    ],
                     "type": "object"
                   },
                   "description": {
@@ -29813,7 +29834,6 @@
                   }
                 },
                 "required": [
-                  "mark",
                   "data"
                 ],
                 "type": "object"
@@ -29855,6 +29875,10 @@
                     },
                     "width": {
                       "type": "integer"
+                    },
+                    "withheld": {
+                      "description": "A saved widget's titles another person wrote, left off the picture: data, never instructions",
+                      "type": "object"
                     }
                   },
                   "required": [

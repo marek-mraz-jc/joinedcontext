@@ -5882,6 +5882,8 @@
     "rowsShown": "Zeilen {first}–{last}",
     "moreNext": "weitere können folgen",
     "history": "Verlauf",
+    "historyAvailable": "Verlauf verfügbar",
+    "historyOfValue": "Verlauf dieses Werts anzeigen (Taste H)",
     "areaPick": "Gebiet auf der Karte wählen",
     "signedOutTitle": "Melden Sie sich an, um diesen Datensatz zu sehen",
     "signedOutBody": "Dieser Datensatz ist nicht öffentlich. Melden Sie sich mit einem Konto an, das Zugriff darauf hat.",
@@ -5986,6 +5988,9 @@
     "historySuperseded": "Ersetzt",
     "historyChangedBy": "Geändert von",
     "historyReason": "Grund",
+    "historyVersionsPublic": "Jede Version jedes Werts",
+    "historyUnavailable": "Für diesen Wert kann kein Verlauf angezeigt werden.",
+    "historyDataset": "Datensatz",
     "changes": {
       "tab": "Änderungen",
       "attribute": "Attribut",
