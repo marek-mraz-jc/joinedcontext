@@ -297,14 +297,22 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
-        let url = format!("http://{}/internal/connectors", listener.local_addr().expect("addr"));
+        let url = format!(
+            "http://{}/internal/connectors",
+            listener.local_addr().expect("addr")
+        );
         // Valid JSON an uncapped read takes: an empty list padded with blanks.
         let body = format!("{{\"connectors\": [{}]}}", " ".repeat(crate::app::MAX_BODY));
         let app = axum::Router::new().route(
             "/internal/connectors/{sub}",
             axum::routing::get(move || {
                 let body = body.clone();
-                async move { ([(axum::http::header::CONTENT_TYPE, "application/json")], body) }
+                async move {
+                    (
+                        [(axum::http::header::CONTENT_TYPE, "application/json")],
+                        body,
+                    )
+                }
             }),
         );
         tokio::spawn(async move { axum::serve(listener, app).await });
