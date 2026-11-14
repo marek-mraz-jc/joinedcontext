@@ -273,6 +273,12 @@ pub async fn extract_admin_ctx(
 
     let mut verified: Option<(Value, &str)> = None;
     for candidate_realm in [realm_id, "master"] {
+        // Only an existing, enabled realm issues admin tokens: reading the keys of any other
+        // name would mint and store keys for it on an unauthenticated request.
+        let issuing = state.oidc.store.get_realm(candidate_realm).await?;
+        if !issuing.is_some_and(|r| r.enabled) {
+            continue;
+        }
         if let Ok(keys) = state.oidc.store.list_signing_keys(candidate_realm).await {
             let issuer = mount.realm_issuer(candidate_realm);
             if let Ok((_, claims)) = verify_jwt::<Value>(raw_token, &keys, Some(&issuer), None)

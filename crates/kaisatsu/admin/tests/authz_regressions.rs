@@ -502,6 +502,34 @@ async fn a_revoked_admin_token_is_refused() {
     );
 }
 
+/// Only an existing, enabled realm's keys verify an admin token: a disabled realm's tokens stop
+/// working, and a token on an unknown realm's path is refused before any key is read for it.
+#[tokio::test]
+async fn a_disabled_or_unknown_realm_verifies_no_admin_token() {
+    let f = Fixture::new().await;
+    let claims = json!({ "realm_access": { "roles": ["realm-admin"] } });
+    let t = f.token("dev", "boss", claims).await;
+    assert_eq!(
+        f.send(Method::GET, "/admin/realms/dev/users", &t, None)
+            .await,
+        StatusCode::OK
+    );
+    let mut dev = f.store.get_realm("dev").await.unwrap().unwrap();
+    dev.enabled = false;
+    f.store.upsert_realm(dev).await.unwrap();
+    assert_eq!(
+        f.send(Method::GET, "/admin/realms/dev/users", &t, None)
+            .await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        f.send(Method::GET, "/admin/realms/no-such-realm/users", &t, None)
+            .await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert!(f.store.get_realm("no-such-realm").await.unwrap().is_none());
+}
+
 /// Scope links, mappers, role holders and group members of an application or group were served
 /// to any signed-in member of its organization, and a member could attach any client scope (an
 /// audience, a role) to an application of the organization.
