@@ -77,7 +77,7 @@ One source of a portal (ODP-10). No source carries a credential in this version.
 | `tags` | list of string | no | `endpoints`: only Endpoints carrying one of these tags. |
 | `titles` | map of string | no | Titles replaced, old title to new. |
 | `type` | [PortalSourceType](#portalsourcetype) | yes | The source's type, e.g. `dcat-ap`. |
-| `url` | string | no | A harvested catalogue's address, `https://` or `http://`. |
+| `url` | string | no | A harvested catalogue's address, `https://` only. |
 
 ## AppearanceColours
 
