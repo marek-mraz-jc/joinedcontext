@@ -692,10 +692,13 @@ pub(crate) async fn member_call(
     let held = axum::body::to_bytes(answer.into_body(), MAX_BODY).await;
     let whole = held.is_ok();
     let held = held.unwrap_or_default();
+    // Parsed once: an answer is up to MAX_BODY, and each check below reads the same value.
+    let parsed = serde_json::from_slice::<Value>(&held).ok();
     if let Some(reserved) = reserved {
         let taken = status.is_success()
-            && serde_json::from_slice::<Value>(&held)
-                .is_ok_and(|answer| answer["result"]["isError"] != true);
+            && parsed
+                .as_ref()
+                .is_some_and(|answer| answer["result"]["isError"] != true);
         if !taken {
             reserved.release(gateway, endpoint);
         }
@@ -703,16 +706,15 @@ pub(crate) async fn member_call(
     if status.is_success() {
         // DM-128 (T-6885): a read of personal attributes is recorded or refused, as on the
         // Endpoint's own MCP address.
-        let read = serde_json::from_slice::<Value>(&held)
-            .ok()
+        let read = parsed
+            .as_ref()
             .filter(|answer| whole && answer.get("jsonrpc").is_some());
-        if let Err(refusal) = mcp::read_record::recorded(endpoint, subject, &message, read.as_ref())
-        {
+        if let Err(refusal) = mcp::read_record::recorded(endpoint, subject, &message, read) {
             return refusal;
         }
     }
-    match serde_json::from_slice::<Value>(&held) {
-        Ok(mut answer) if status.is_success() && answer.get("jsonrpc").is_some() => {
+    match parsed {
+        Some(mut answer) if status.is_success() && answer.get("jsonrpc").is_some() => {
             let federates = member_names(gateway, endpoint);
             if !federates.is_empty() {
                 federated(&mut answer, "tools/call", &federates);
