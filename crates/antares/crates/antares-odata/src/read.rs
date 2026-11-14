@@ -2181,11 +2181,19 @@ pub(crate) fn compare(a: Option<&Value>, b: Option<&Value>) -> std::cmp::Orderin
         (None, None) => Equal,
         (None, Some(_)) => Less,
         (Some(_), None) => Greater,
-        (Some(Value::Number(x)), Some(Value::Number(y))) => x
-            .as_f64()
-            .zip(y.as_f64())
-            .and_then(|(x, y)| x.partial_cmp(&y))
-            .unwrap_or(Equal),
+        (Some(Value::Number(x)), Some(Value::Number(y))) => {
+            // An Edm.Int64 past 2^53 compares exactly, not through an f64.
+            let int =
+                |n: &serde_json::Number| n.as_i64().map(i128::from).or(n.as_u64().map(i128::from));
+            match int(x).zip(int(y)) {
+                Some((x, y)) => x.cmp(&y),
+                None => x
+                    .as_f64()
+                    .zip(y.as_f64())
+                    .and_then(|(x, y)| x.partial_cmp(&y))
+                    .unwrap_or(Equal),
+            }
+        }
         (Some(Value::String(x)), Some(Value::String(y))) => x.cmp(y),
         (Some(Value::Bool(x)), Some(Value::Bool(y))) => x.cmp(y),
         (Some(x), Some(y)) => kind(x).cmp(&kind(y)),
@@ -2863,6 +2871,15 @@ mod tests {
             (None, v(json!(1)), Less),
             (v(json!(1)), None, Greater),
             (v(json!(2)), v(json!(10)), Less),
+            // Edm.Int64 past 2^53 compares exactly, not through an f64
+            (
+                v(json!(9_007_199_254_740_993_i64)),
+                v(json!(9_007_199_254_740_992_i64)),
+                Greater,
+            ),
+            (v(json!(u64::MAX)), v(json!(u64::MAX - 1)), Greater),
+            (v(json!(-1)), v(json!(u64::MAX)), Less),
+            (v(json!(1.5)), v(json!(1)), Greater),
             (v(json!("b")), v(json!("a")), Greater),
             (v(json!(false)), v(json!(true)), Less),
             // across kinds: by kind, bool < number < string < array < object

@@ -77,6 +77,8 @@ fn rank(value: &Value) -> u8 {
 /// assert_eq!(compare(Some(&null), Some(&two)), Ordering::Less);
 /// assert_eq!(compare(None, Some(&null)), Ordering::Equal);
 /// assert_eq!(compare(Some(&ten), Some(&two)), Ordering::Greater);
+/// let (big, next) = (serde_json::json!(9_007_199_254_740_993_i64), serde_json::json!(9_007_199_254_740_992_i64));
+/// assert_eq!(compare(Some(&big), Some(&next)), Ordering::Greater);
 /// ```
 #[must_use]
 pub fn compare(a: Option<&Value>, b: Option<&Value>) -> Ordering {
@@ -84,11 +86,19 @@ pub fn compare(a: Option<&Value>, b: Option<&Value>) -> Ordering {
     rank(a).cmp(&rank(b)).then_with(|| match (a, b) {
         (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
         (Value::Number(x), Value::Number(y)) => {
-            let (x, y) = (
-                x.as_f64().unwrap_or(f64::NAN),
-                y.as_f64().unwrap_or(f64::NAN),
-            );
-            x.total_cmp(&y)
+            // An Edm.Int64 past 2^53 compares exactly, not through an f64.
+            let int =
+                |n: &serde_json::Number| n.as_i64().map(i128::from).or(n.as_u64().map(i128::from));
+            int(x).zip(int(y)).map_or_else(
+                || {
+                    let (x, y) = (
+                        x.as_f64().unwrap_or(f64::NAN),
+                        y.as_f64().unwrap_or(f64::NAN),
+                    );
+                    x.total_cmp(&y)
+                },
+                |(x, y)| x.cmp(&y),
+            )
         }
         (Value::String(x), Value::String(y)) => x.as_bytes().cmp(y.as_bytes()),
         _ => Ordering::Equal,
