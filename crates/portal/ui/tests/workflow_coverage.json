@@ -1233,6 +1233,26 @@
           "test": "CkanInstance: a viewer finds every write control disabled with its reason, and the door answers 403"
         },
         "assistant": "jc_resource_propose"
+      },
+      "test-portal-source": {
+        "live": {
+          "spec": "portals.spec.ts",
+          "test": "an administrator adds a dcat-ap source, tests it, runs it, reads its run log and hides a dataset"
+        },
+        "personOnly": "the Portal assistant holds no catalogue principal; an agent tests and runs a harvest source through the catalogue's own door (jc_harvest_source_test, jc_harvest_run_start in the dataroom registry)",
+        "routes": [
+          "POST /api/v1/projects/org/portals/{name}/sources/{source}/test"
+        ]
+      },
+      "run-portal-source": {
+        "live": {
+          "spec": "portals.spec.ts",
+          "test": "an administrator adds a dcat-ap source, tests it, runs it, reads its run log and hides a dataset"
+        },
+        "personOnly": "the Portal assistant holds no catalogue principal; an agent tests and runs a harvest source through the catalogue's own door (jc_harvest_source_test, jc_harvest_run_start in the dataroom registry)",
+        "routes": [
+          "POST /api/v1/projects/org/portals/{name}/sources/{source}/runs"
+        ]
       }
     },
     "app": {

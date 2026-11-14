@@ -2,6 +2,9 @@
  * T-6875 (ODP-15): an Organization's administrator makes a second open data Portal through the
  * Portals area, edits it, opens it and removes it, each write a Change an approver confirms.
  * Run by hand after a deploy (sweep.sh byhand): every Portal counts toward `portals.max`.
+ * T-6876: the second test adds a dcat-ap source to such a portal, tests it, runs it, reads the
+ * run log and hides a dataset. Its source is LIVE_DCAT_SOURCE, else the Organization's default
+ * portal's own catalog.ttl (a host the harvest allow-list must hold).
  *
  *   pnpm exec playwright test -c playwright.live.config.ts e2e/live/portals.spec.ts
  */
@@ -56,6 +59,59 @@ test("an administrator creates, edits, opens and removes a second portal", async
     await waitGone(page, "org", "portals", name);
   } finally {
     await cleanUp(steward, "org", "portals", name, "portals journey");
+    await approver.context.close();
+    await steward.context.close();
+  }
+});
+
+test("an administrator adds a dcat-ap source, tests it, runs it, reads its run log and hides a dataset", async ({ browser }) => {
+  const steward = await signIn(browser, STEWARD, "/portals?lang=en");
+  const approver = await signIn(browser, APPROVER, "/portals?lang=en");
+  const { page } = steward;
+  const hosts = (await (await page.request.get("/api/v1/organization/portal-hosts")).json()) as { items: { organization: string; opendata?: string }[] };
+  const { organization, opendata } = hosts.items[0];
+  const source = process.env.LIVE_DCAT_SOURCE ?? `${opendata}/catalog.ttl`;
+  const path = `sources-${Date.now().toString(36)}`;
+  const name = `${organization}-${path}`;
+  try {
+    await page.goto("/portals/new?lang=en");
+    await page.getByLabel(/^Organization/).selectOption(organization);
+    await page.getByLabel(/Name in the address/).fill(path);
+    await page.getByLabel(/Title in Slovak/).fill("Zdroje portálu");
+    await page.getByRole("button", { name: "Propose the portal" }).click();
+    await approve(approver.page, "org", await proposedChange(page));
+    await expect
+      .poll(async () => (await page.request.get(`/api/v1/projects/org/portals/${name}`)).status(), { timeout: 180_000, intervals: [5_000] })
+      .toBe(200);
+
+    await page.goto(`/portals/${name}?lang=en`);
+    await page.getByRole("tab", { name: "Sources" }).click();
+    await page.getByRole("button", { name: "Add a source" }).click();
+    await page.getByLabel(/^Type/).selectOption("dcat-ap");
+    await page.getByLabel(/^Name/).fill("federated");
+    await page.getByLabel(/^Address/).fill(source);
+    await page.getByRole("button", { name: "Propose the source" }).click();
+    await approve(approver.page, "org", await proposedChange(page));
+    await expect
+      .poll(async () => JSON.stringify(await (await page.request.get(`/api/v1/projects/org/portals/${name}`)).json()), { timeout: 180_000, intervals: [5_000] })
+      .toContain('"federated"');
+
+    await page.goto(`/portals/${name}?lang=en`);
+    await page.getByRole("tab", { name: "Sources" }).click();
+    await page.getByRole("button", { name: "Test connection of federated" }).click();
+    await expect(page.getByText("The source answered in the expected format.")).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: "Run federated now" }).click();
+    await expect(page.getByText(/The run started/)).toBeVisible();
+    const log = page.getByRole("table", { name: "Last runs of federated" });
+    await expect(log.getByText("Done")).toBeVisible({ timeout: 300_000 });
+
+    await page.getByRole("tab", { name: "Datasets" }).click();
+    const datasets = page.getByRole("table", { name: "Datasets of the portal" });
+    await expect(datasets).toBeVisible({ timeout: 60_000 });
+    await datasets.getByRole("button", { name: /^Hide / }).first().click();
+    await approve(approver.page, "org", await proposedChange(page));
+  } finally {
+    await cleanUp(steward, "org", "portals", name, "portal sources journey");
     await approver.context.close();
     await steward.context.close();
   }

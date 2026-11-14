@@ -119,7 +119,8 @@
     "Interval",
     "Panel",
     "Filter: {field}",
-    "Logo (SVG)"
+    "Logo (SVG)",
+    "ArcGIS Hub"
   ],
   "cs": [
     "@context",
@@ -238,7 +239,8 @@
     "Euro",
     "Interval",
     "Panel",
-    "Logo (SVG)"
+    "Logo (SVG)",
+    "ArcGIS Hub"
   ],
   "de": [
     "@context",
@@ -409,6 +411,7 @@
     "Panel",
     "Filter: {field}",
     "Logo (SVG)",
-    "Favicon (SVG)"
+    "Favicon (SVG)",
+    "ArcGIS Hub"
   ]
 }

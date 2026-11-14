@@ -2154,6 +2154,15 @@
         "portals_area.test.tsx"
       ]
     },
+    "src/pages/portals/PortalSources.tsx": {
+      "controls": {
+        "Button": 10,
+        "Checkbox": 1
+      },
+      "tests": [
+        "portal_sources.test.tsx"
+      ]
+    },
     "src/pages/repositories/PullsView.tsx": {
       "controls": {
         "Button": 1

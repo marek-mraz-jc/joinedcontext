@@ -12679,7 +12679,127 @@
       "open": "Portal öffnen",
       "delete": "Portal entfernen",
       "defaultKept": "Das Standardportal bleibt: es ist der eigene Katalog der Organisation.",
-      "fixed": "Fest, sobald das Portal besteht: ein Portal zieht nie zu einer anderen Organisation, einem anderen Namen oder Pfad um."
+      "fixed": "Fest, sobald das Portal besteht: ein Portal zieht nie zu einer anderen Organisation, einem anderen Namen oder Pfad um.",
+      "descriptionTabs": "Die Einstellungen des Portals, seine Quellen mit Läufen und seine Datensätze. Jede Änderung wird einem Genehmiger vorgeschlagen."
+    },
+    "tabs": {
+      "label": "Ansichten des Portals",
+      "settings": "Einstellungen",
+      "sources": "Quellen",
+      "datasets": "Datensätze"
+    },
+    "sources": {
+      "empty": "Noch keine Quelle",
+      "emptyHint": "Eine Quelle füllt das Portal: die veröffentlichten Endpunkte Ihrer Organisation oder ein anderer Katalog, der nach Plan geerntet wird, zum Beispiel der DCAT-AP-Feed einer Stadt. Fügen Sie die erste hinzu.",
+      "add": "Quelle hinzufügen",
+      "addTitle": "Neue Quelle",
+      "propose": "Quelle vorschlagen",
+      "cancel": "Abbrechen",
+      "remove": "Entfernen",
+      "refused": "Die Änderung wurde nicht vorgeschlagen",
+      "test": "Verbindung testen",
+      "runNow": "Jetzt ausführen",
+      "showRuns": "Letzte Läufe",
+      "hideRuns": "Läufe ausblenden",
+      "started": "Der Lauf hat begonnen. Seine Zahlen erscheinen unter Letzte Läufe, wenn er endet.",
+      "limited": "Zu viele Tests in kurzer Zeit. {detail}",
+      "busy": "Ein Lauf dieser Quelle läuft noch; warten Sie, bis er endet.",
+      "noCatalogue": "Diese Installation stellt noch keinen Open-Data-Katalog bereit, daher können Quellen hier weder getestet, ausgeführt noch aufgelistet werden. Bitten Sie Ihren Betreiber, ihn einzuschalten.",
+      "gone": "Diese Quelle ist nicht mehr im Portal; laden Sie die Seite neu.",
+      "projectsLine": "Veröffentlichte Endpunkte von: {projects}",
+      "scheduleLine": "Läuft nach Plan {schedule} (UTC)",
+      "noSchedule": "Kein Plan: läuft nur, wenn gestartet",
+      "noProjects": "{organization} hat noch kein Projekt, das Sie lesen; legen Sie zuerst eines an.",
+      "type": {
+        "endpoints": "Veröffentlichte Endpunkte",
+        "dcat-ap": "DCAT-AP-Katalog",
+        "ckan-action": "CKAN-Katalog",
+        "nkod-sparql": "Nationaler Katalog (SPARQL)",
+        "arcgis-hub": "ArcGIS Hub"
+      },
+      "field": {
+        "type": "Typ",
+        "typePick": "Typ wählen",
+        "name": "Name",
+        "url": "Adresse",
+        "allowedHosts": "Weitere erlaubte Hosts",
+        "records": "Höchstens Datensätze je Lauf",
+        "bytes": "Höchstens Bytes je Lauf",
+        "schedule": "Plan",
+        "projects": "Projekte"
+      },
+      "hint": {
+        "type": "Woher die Datensätze kommen: Ihre veröffentlichten Endpunkte oder ein über https geernteter Katalog, zum Beispiel DCAT-AP-Katalog.",
+        "name": "Kleinbuchstaben, Ziffern und Bindestriche, eindeutig im Portal, zum Beispiel kosice.",
+        "url": {
+          "dcat-ap": "Die https-Adresse eines DCAT-AP-Katalogs in Turtle, RDF/XML oder JSON-LD, zum Beispiel https://data.kosice.sk/catalog.ttl.",
+          "ckan-action": "Die https-Adresse einer CKAN Action API, zum Beispiel https://data.gov.sk/api/3/action.",
+          "nkod-sparql": "Die https-Adresse des SPARQL-Endpunkts, zum Beispiel https://data.slovensko.sk/sparql.",
+          "arcgis-hub": "Die https-Adresse einer ArcGIS-Hub-Seite, zum Beispiel https://opendata.bratislava.sk."
+        },
+        "allowedHosts": "Hosts, von denen der Lauf auch lesen darf, durch Kommas getrennt, zum Beispiel files.kosice.sk; der Host der Adresse ist immer erlaubt. Jeder muss in der Erlaubnisliste des Betreibers stehen.",
+        "records": "Ein Lauf endet nach so vielen Datensätzen, zum Beispiel 5000.",
+        "bytes": "Ein Lauf endet nach so vielen gelesenen Bytes, zum Beispiel 50000000 (50 MB). Ein Test liest höchstens so viel.",
+        "schedule": "Fünf Cron-Felder in UTC, zum Beispiel 23 3 * * * für 03:23 jeden Tag. Leer: nur Jetzt ausführen.",
+        "projects": "Nur die veröffentlichten Endpunkte dieser Projekte der Organisation des Portals, zum Beispiel mobility."
+      },
+      "fault": {
+        "name": "Verwenden Sie Kleinbuchstaben, Ziffern und Bindestriche.",
+        "nameTaken": "Das Portal hat bereits eine Quelle dieses Namens.",
+        "type": "Wählen Sie einen Typ.",
+        "url": "Schreiben Sie eine https-Adresse, zum Beispiel https://data.kosice.sk/catalog.ttl.",
+        "allowedHosts": "Schreiben Sie nur Hostnamen.",
+        "number": "Schreiben Sie eine ganze Zahl über 0.",
+        "schedule": "Schreiben Sie fünf Cron-Felder.",
+        "projects": "Wählen Sie mindestens ein Projekt."
+      },
+      "testNamed": "Verbindung von {name} testen",
+      "runNamed": "{name} jetzt ausführen",
+      "removeNamed": "Quelle {name} entfernen",
+      "endpointsNote": "Endpunkte erscheinen binnen einer Minute nach der Veröffentlichung; es gibt nichts auszuführen."
+    },
+    "outcome": {
+      "ok": "Die Quelle hat im erwarteten Format geantwortet.",
+      "unreachable": "Die Quelle hat nicht geantwortet. Prüfen Sie die Adresse oder versuchen Sie es später.",
+      "refused_host": "Die Adresse wird abgelehnt: sie muss https sein, auf einem erlaubten Host, an einer öffentlichen Adresse, und ebenso jede Weiterleitung.",
+      "not_the_expected_format": "Die Quelle hat geantwortet, aber nicht im Format ihres Typs {type}.",
+      "too_large": "Die Antwort ist größer als das Byte-Budget der Quelle.",
+      "over_budget": "Der Lauf hat am Budget der Quelle angehalten. Erhöhen Sie Höchstens Datensätze je Lauf oder Höchstens Bytes je Lauf, oder grenzen Sie die Quelle ein.",
+      "past_the_time_cap": "Der Lauf hat am Zeitlimit angehalten.",
+      "failed": "Der Lauf ist fehlgeschlagen; versuchen Sie es später oder fragen Sie Ihren Betreiber."
+    },
+    "runs": {
+      "empty": "Noch kein Lauf. Jetzt ausführen startet einen.",
+      "caption": "Letzte Läufe von {source}",
+      "started": "Begonnen",
+      "state": "Zustand",
+      "counts": "Datensätze",
+      "countLine": "{created} neu, {updated} geändert, {unchanged} gleich, {withdrawn} zurückgezogen, {skipped} ausgelassen",
+      "stateName": {
+        "running": "Läuft",
+        "done": "Fertig",
+        "stopped": "Vorzeitig angehalten"
+      },
+      "reason": "Was ihn anhielt"
+    },
+    "datasets": {
+      "empty": "Noch kein Datensatz",
+      "emptyHint": "Datensätze erscheinen hier, sobald eine Quelle gelaufen ist. Fügen Sie unter Quellen eine hinzu und starten Sie sie mit Jetzt ausführen.",
+      "hint": "Ein ausgeblendeter Datensatz bleibt im Katalog und verschwindet von diesem Portal; jede Änderung wird einem Genehmiger vorgeschlagen.",
+      "caption": "Datensätze des Portals",
+      "title": "Datensatz",
+      "source": "Quelle",
+      "listed": "Im Portal",
+      "actions": "Aktionen",
+      "hidden": "Ausgeblendet",
+      "shown": "Angezeigt",
+      "hide": "Ausblenden",
+      "unhide": "Wieder anzeigen",
+      "hideNamed": "{name} ausblenden",
+      "unhideNamed": "{name} wieder anzeigen",
+      "noCatalogue": "Diese Installation stellt noch keinen Open-Data-Katalog bereit, daher listet dieses Portal hier keine Datensätze. Bitten Sie Ihren Betreiber, den Katalog einzuschalten.",
+      "toSources": "Zu den Quellen",
+      "noCatalogueTitle": "Hier noch kein Open-Data-Katalog"
     }
   }
 }
