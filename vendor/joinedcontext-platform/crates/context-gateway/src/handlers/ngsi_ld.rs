@@ -502,6 +502,7 @@ pub(crate) async fn serve_ngsi_ld_view(
             &mut parts.headers,
             &mut sent,
             &mut divided,
+            true,
         )
         .await
     };
@@ -1153,7 +1154,8 @@ fn subscription_target_refusal(sent: &[u8], private_hosts: &[String]) -> Option<
 /// The payload of a view request as the gateway keeps it: the media type (CIM 009 6.3.2), the
 /// core context (T-3287), a form's minted id and one entity per create (EP-97), the model's
 /// units (DM-06) and relationships (DM-70, DM-71). Returns the units it filled; a batch the
-/// relationships divide leaves its refused members in `divided`.
+/// relationships divide leaves its refused members in `divided`. A delete's relationship changes
+/// are made only when `apply_deletes`.
 pub(crate) async fn view_payload(
     gateway: &Gateway,
     (endpoint, subject): (&Endpoint, &Subject),
@@ -1161,6 +1163,7 @@ pub(crate) async fn view_payload(
     headers: &mut HeaderMap,
     sent: &mut Vec<u8>,
     divided: &mut Option<(Vec<String>, Refused)>,
+    apply_deletes: bool,
 ) -> Result<Vec<String>, Box<Response<Body>>> {
     let answer = |problem: ProblemDetails| Box::new(problem.into_response());
     if operation.is_write() && !sent.is_empty() && !accepted_payload(headers) {
@@ -1248,7 +1251,7 @@ pub(crate) async fn view_payload(
             gateway,
             (endpoint, subject),
             (path, params, operation),
-            (&*headers, rules),
+            (&*headers, rules, apply_deletes),
             sent,
             divided,
         )
@@ -1403,7 +1406,7 @@ async fn relationships_held(
     gateway: &Gateway,
     (endpoint, subject): (&Endpoint, &Subject),
     (path, params, operation): (&str, &[(String, String)], Operation),
-    (headers, rules): (&HeaderMap, &crate::relationships::RelationshipRules),
+    (headers, rules, apply): (&HeaderMap, &crate::relationships::RelationshipRules, bool),
     sent: &mut Vec<u8>,
     divided: &mut Option<(Vec<String>, Refused)>,
 ) -> Result<(), Box<Response<Body>>> {
@@ -1431,6 +1434,7 @@ async fn relationships_held(
         endpoint,
         headers,
         rules,
+        apply,
     };
     let refused = if operation == Operation::DeleteEntity {
         match operations::addressed_entity(path).map(query::decode) {

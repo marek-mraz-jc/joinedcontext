@@ -515,8 +515,9 @@ fn asked(arguments: &Map<String, Value>) -> Result<Asked, String> {
     let (mut limit, mut cursor, mut source) = (DEFAULT_LIMIT, None, None);
     for (name, value) in arguments {
         match (name.as_str(), value) {
+            // The words are embedded, never the blanks around them: what is checked is sent.
             ("query", Value::String(query)) if is_query(query) => {
-                queries.insert(0, query.clone());
+                queries.insert(0, query.trim().to_owned());
             }
             ("translations", translations) => {
                 add_translations(translations, &mut queries)?;
@@ -587,8 +588,9 @@ fn add_translations(translations: &Value, queries: &mut Vec<String>) -> Result<(
     for (lang, text) in translations {
         match text {
             Value::String(text) if is_lang(lang) && is_query(text) => {
-                if !queries.contains(text) {
-                    queries.push(text.clone());
+                let text = text.trim().to_owned();
+                if !queries.contains(&text) {
+                    queries.push(text);
                 }
             }
             _ => return Err(format!(
@@ -882,6 +884,17 @@ mod tests {
             asked(&arguments(json!({"query": "uimahallit"}))).expect("valid");
         assert_eq!(queries, ["uimahallit"]);
         assert_eq!(limit, 5, "the default page");
+    }
+
+    #[test]
+    fn a_question_padded_with_blanks_is_embedded_without_them() {
+        let blanks = " ".repeat(100_000);
+        let Asked { queries, .. } = asked(&arguments(json!({
+            "query": format!("{blanks}uimahallit{blanks}"),
+            "translations": {"en": format!("swimming halls{blanks}"), "fi": "uimahallit\n"}
+        })))
+        .expect("valid");
+        assert_eq!(queries, ["uimahallit", "swimming halls"]);
     }
 
     #[test]
