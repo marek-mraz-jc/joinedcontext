@@ -751,6 +751,33 @@ fn expand_errors() {
     );
 }
 
+/// A date its month does not hold is no `Edm.Date`, in a URL or a body.
+#[test]
+fn a_date_past_its_month_is_no_date() {
+    for (text, valid) in [
+        ("2024-02-29", true),
+        ("2023-02-29", false),
+        ("2000-02-29", true),
+        ("1900-02-29", false),
+        ("2026-02-31", false),
+        ("2026-04-31", false),
+        ("2026-12-31", true),
+    ] {
+        assert_eq!(crate::is_primitive_text("Edm.Date", text), valid, "{text}");
+        assert_eq!(
+            crate::is_primitive_text("Edm.DateTimeOffset", &format!("{text}T00:00:00Z")),
+            valid,
+            "{text}"
+        );
+    }
+    assert!(parse(
+        "Buildings?$filter=built eq 2026-02-31",
+        &Service,
+        &Limits::strict()
+    )
+    .is_err());
+}
+
 #[test]
 fn literals_in_keys_and_filters() {
     for (text, literal) in [
@@ -795,6 +822,7 @@ fn limits_are_checked() {
         max_orderby_items: 2,
         max_in_list_len: 2,
         max_literal_len: 6,
+        max_skip: 10,
     };
     let limit = |uri: &str, kind: LimitKind| {
         let e = err_within(uri, &tiny);
@@ -859,6 +887,28 @@ fn an_ampersand_in_a_literal_starts_no_option() {
         assert!(o.apply.is_none(), "{uri}: {:?}", o.apply);
         assert!(o.filter.is_some(), "{uri}");
     }
+}
+
+/// An apostrophe inside a `$search` phrase opens no string literal, so the
+/// `$apply` and `$compute` after it are read as themselves.
+#[test]
+fn an_apostrophe_in_a_search_phrase_opens_no_literal() {
+    for uri in [
+        "Buildings?$search=%22don't%22&$compute=height%20mul%202%20as%20h&$select=h",
+        "Buildings?$search=%22don%27t%22&$apply=identity",
+        "Buildings?$search=\"don't\"&$apply=identity",
+    ] {
+        let o = options(uri);
+        assert!(o.apply.is_some() || o.compute.is_some(), "{uri}: {o:?}");
+        assert!(o.schemaversion.is_none(), "{uri}: {o:?}");
+        assert!(o.search.is_some(), "{uri}");
+    }
+    let o = options("Buildings?$filter=name%20eq%20'a%22b&$apply=identity'");
+    assert!(
+        o.apply.is_none(),
+        "a double quote in a literal: {:?}",
+        o.apply
+    );
 }
 
 /// F-R2ANT4-015: an offset is into the URL as given, so a name after decoded

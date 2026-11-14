@@ -281,6 +281,9 @@ async fn apply_portal_realm(
     if let Some(kaisatsu) = ctx.siblings.get(Module::Kaisatsu) {
         files.push(account_console_realm_file(&kaisatsu.public, realm));
     }
+    seed_first_admin_once(store, realm, &mut files)
+        .await
+        .map_err(|e| err(&e))?;
     let options = ApplyOptions {
         env_vars: setup::realm_env(ctx.setup),
         ..ApplyOptions::default()
@@ -293,6 +296,24 @@ async fn apply_portal_realm(
         changed = report.has_changes(),
         "kaisatsu: the Portal's realm is applied"
     );
+    Ok(())
+}
+
+/// Leaves the first administrator out of `files` once the realm holds it: applied again on every
+/// start, its file would enable the account and put it back into the bootstrap group after an
+/// administrator disabled it or took it out.
+async fn seed_first_admin_once(
+    store: &Arc<dyn Store>,
+    realm: &setup::Realm,
+    files: &mut Vec<(String, serde_json::Value)>,
+) -> Result<(), kaisatsu_core::KaisatsuError> {
+    if store
+        .get_user_by_username_or_email(realm.as_str(), None, setup::FIRST_ADMIN)
+        .await?
+        .is_some()
+    {
+        files.retain(|(name, _)| name != setup::FIRST_ADMIN_FILE);
+    }
     Ok(())
 }
 
@@ -791,6 +812,46 @@ mod tests {
         assert!(client(setup::PROXY_CLIENT).await.service_accounts_enabled);
         let portal = client(setup::PORTAL_CLIENT).await;
         assert!(audience(&portal).contains(&setup::ASSISTANT_CLIENT.to_owned()));
+    }
+
+    /// The first administrator is seeded on the first start only: one an administrator disabled
+    /// stays disabled when `jc` starts again with changed realm files (an upgrade, an added
+    /// Organization), which an unchanged file's checksum would skip.
+    #[tokio::test]
+    async fn a_disabled_first_admin_stays_disabled_on_the_next_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let setup = setup::Setup::prepare(dir.path(), &Module::ALL, &Default::default()).unwrap();
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new(
+            Kek::from_raw_bytes("07".repeat(32).as_bytes()).unwrap(),
+        ));
+        let options = ApplyOptions {
+            env_vars: setup::realm_env(&setup),
+            ..ApplyOptions::default()
+        };
+        let (setup, store, options) = (&setup, &store, &options);
+        let start = |portals: Vec<String>| async move {
+            let mut files =
+                setup::portal_realm_files("https://portal.city.example/", &portals, &setup.realm)
+                    .unwrap();
+            seed_first_admin_once(store, &setup.realm, &mut files)
+                .await
+                .unwrap();
+            apply_realm_files(store, &files, options).await.unwrap();
+        };
+        let admin = || async {
+            store
+                .get_user_by_username_or_email(setup.realm.as_str(), None, setup::FIRST_ADMIN)
+                .await
+                .unwrap()
+                .expect("the first admin")
+        };
+        start(vec![]).await;
+        let mut first = admin().await;
+        assert!(first.enabled);
+        first.enabled = false;
+        store.update_user(first).await.unwrap();
+        start(vec!["https://portal.org.city.example".into()]).await;
+        assert!(!admin().await.enabled);
     }
 
     fn edge(attrs: &[(&str, &str)]) -> ClientRepresentation {

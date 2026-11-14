@@ -184,6 +184,15 @@ pub async fn publishers(store: &dyn Store) {
         .unwrap();
     assert_eq!(source.merged_into.as_deref(), Some("city"));
     assert_eq!(source.state, RecordState::Withdrawn);
+    // Withdrawing the merged name touches that record, never the target it redirects to.
+    let w = store.withdraw_publisher(&ctx, "region").await.unwrap();
+    assert_eq!(w.name, "region");
+    let city = store.get_publisher(&ctx, "city").await.unwrap().unwrap();
+    assert_eq!(
+        city.state,
+        RecordState::Active,
+        "the merge target stays active"
+    );
 
     // Merging a publisher into itself, or an unknown one, is refused.
     let err = store
@@ -364,8 +373,20 @@ pub async fn datasets(store: &dyn Store) {
         store.withdraw_dataset(&ctx, "nothing").await,
         Err(DataroomError::NotFound(_))
     ));
+    store
+        .upsert_shacl_report(&ctx, shacl_report("pkg-air", "dcat-ap-3.0.1", false))
+        .await
+        .unwrap();
     store.purge_dataset(&ctx, "air").await.unwrap();
     assert!(store.get_dataset(&ctx, "air").await.unwrap().is_none());
+    assert!(
+        store
+            .list_shacl_reports(&ctx, Some("pkg-air"), None)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a purge removes the dataset's SHACL reports"
+    );
     assert!(store
         .get_distribution(&ctx, "res-air-json")
         .await
@@ -833,9 +854,10 @@ pub async fn isolation(store: &dyn Store) {
         assert_eq!(store.list_harvest_sources(c).await.unwrap().len(), 1);
         assert_eq!(store.list_harvest_runs(c, None).await.unwrap().len(), 1);
         assert_eq!(store.list_activity(c, None, 100).await.unwrap().len(), 1);
+        // b's report was of the dataset b purged.
         assert_eq!(
             store.list_shacl_reports(c, None, None).await.unwrap().len(),
-            1
+            usize::from(std::ptr::eq(c, &a))
         );
         assert_eq!(store.list_profiles(c).await.unwrap().len(), 1);
         assert_eq!(store.list_pages(c).await.unwrap().len(), 1);

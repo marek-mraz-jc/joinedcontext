@@ -1810,6 +1810,83 @@ async fn a_realm_lookup_that_fails_keeps_the_runners_secret() {
     );
 }
 
+/// T-6899: on jc with `JC_PORTAL_PIPELINE_IDENTITY=pipeline-secret` each stream signs in as its
+/// Pipeline's own client. Banska Bystrica's od-* Pipelines wrote through `{project}-pipelines`,
+/// an imported client whose audiences named four of its Endpoints and not the one they write,
+/// and the gateway answered every upsert 401. Here the project declares its `pipelines` account
+/// and the realm holds an imported client of it: that client is served as it is, and the
+/// Pipeline gets `zilina-pl-drepo`, audienced to the Endpoint it writes and the internal
+/// listener alone (not another project's), its secret on the runner as the variable its stream
+/// names. Without the mode no Pipeline client is derived.
+#[tokio::test]
+async fn a_pipeline_made_after_start_gets_its_own_client_when_streams_sign_in_as_it() {
+    const OTHER: &str = "o4mt6xq2bz7nk3wd5vhj2rcya6";
+    let keycloak = realm(json!([])).await;
+    let mut imported = desired_external("zilina", "pipelines", &ClientCredential::Secret);
+    imported["id"] = json!("uuid-imported");
+    imported["attributes"] = json!({});
+    client_lookup(&keycloak, "zilina-pipelines", json!([imported])).await;
+    let mut own = desired_external("zilina", "pl-drepo", &ClientCredential::Secret);
+    own["id"] = json!("uuid-pl");
+    creates(&keycloak, "zilina-pl-drepo", own).await;
+    mappers(&keycloak, "uuid-pl", json!([])).await;
+    secret_of(&keycloak, "uuid-pl", "drepo-generated").await;
+    let mirror = mirror_with(vec![
+        drepo(),
+        endpoint("zilina", "zilina-uniza", "zilina-uniza", SLUG),
+        endpoint("trnava", "trnava-all", "trnava", OTHER),
+        external(
+            "zilina",
+            "pipelines",
+            json!([{ "kind": "oauth-client", "name": "main" }]),
+        ),
+    ]);
+
+    let off = sync(&keycloak).with_host_runner(true);
+    let outcomes = off.converge(&mirror, &Bentos::new()).await;
+    assert!(
+        outcomes.iter().all(|o| o.app != "zilina/pl-drepo"),
+        "{outcomes:?}"
+    );
+    assert!(off.host_secrets().is_empty());
+
+    let wave = sync(&keycloak)
+        .with_host_runner(true)
+        .with_own_pipeline_clients(true);
+    let outcomes = wave.converge(&mirror, &Bentos::new()).await;
+
+    let drepo = outcomes.iter().find(|o| o.app == "zilina/pl-drepo");
+    assert_eq!(drepo.map(|o| o.error.clone()), Some(None), "{outcomes:?}");
+    let created = bodies(&keycloak, "POST", &format!("{REALM}/clients")).await;
+    let client = created
+        .iter()
+        .find(|c| c["clientId"] == "zilina-pl-drepo")
+        .expect("the Pipeline's client is created");
+    assert_eq!(client["clientAuthenticatorType"], "client-secret");
+    assert_eq!(client["serviceAccountsEnabled"], true);
+    assert_eq!(client["standardFlowEnabled"], false);
+    assert_eq!(client.get("secret"), None, "the realm generates the secret");
+    let mut want = vec![SLUG, "portal-internal"];
+    want.sort_unstable();
+    assert_eq!(audiences_of(&keycloak, "uuid-pl").await, want);
+    let secrets = wave.host_secrets();
+    assert_eq!(
+        secrets.keys().collect::<Vec<_>>(),
+        ["JC_PIPELINE_SECRET_ZILINA_PL_DREPO"]
+    );
+    assert_eq!(
+        secrets["JC_PIPELINE_SECRET_ZILINA_PL_DREPO"],
+        "drepo-generated"
+    );
+    assert!(
+        !wrote(&keycloak)
+            .await
+            .iter()
+            .any(|w| w.contains("uuid-imported")),
+        "the imported project client is left alone"
+    );
+}
+
 /// T-5766: a Pipeline's token fits the smallest header limit on its hops beside a project of 455
 /// Endpoints on its one space, as Bratislava's is. Before T-5757 its `aud` named all 455 and the
 /// 22 KB token got 431 from the gateway and the Portal's internal listener, so no Bratislava

@@ -1168,6 +1168,18 @@ impl ServerHandler for Server {
     }
 
     async fn listen(&self, context: SubscriptionContext) -> Result<(), ErrorData> {
+        // rmcp acknowledges what was asked, repeats included: one watch each
+        let uris: std::collections::BTreeSet<String> = context
+            .accepted()
+            .resource_subscriptions
+            .iter()
+            .flatten()
+            .cloned()
+            .collect();
+        // a stream that watches nothing would only hold a slot of the caps
+        if uris.is_empty() {
+            return Ok(());
+        }
         let (stream, wake) = listen::streams()
             .open(self.view.tenant(), self.caller.subject(), listen::CAPS)
             .map_err(|why| ErrorData::new(ErrorCode(-32000), why, None))?;
@@ -1180,14 +1192,7 @@ impl ServerHandler for Server {
         // it: a name left out here would make a change to it no event, but
         // one left out of `watchedAttributes` would make every change one
         let (_, attributes) = self.view.shown_names();
-        // rmcp acknowledges what was asked, repeats included: one watch each
-        let uris: std::collections::BTreeSet<&String> = context
-            .accepted()
-            .resource_subscriptions
-            .iter()
-            .flatten()
-            .collect();
-        for uri in uris {
+        for uri in &uris {
             self.watch(&stream, uri, &attributes).await;
         }
         let lifetime = tokio::time::sleep(LIFETIME);

@@ -146,6 +146,19 @@ impl RefPolicy {
             .find(|r| glob_matches(&r.rule_name, short))
     }
 
+    /// Every branch protection rule whose pattern matches `branch`. A ref update or merge must
+    /// pass all of them, so a broad rule saved next to a narrow one never opens what the narrow
+    /// one closes.
+    pub fn matching_branch_rules<'a>(
+        &'a self,
+        branch: &'a str,
+    ) -> impl Iterator<Item = &'a BranchProtectionRule> + 'a {
+        let short = branch.strip_prefix("refs/heads/").unwrap_or(branch);
+        self.branch_rules
+            .iter()
+            .filter(move |r| glob_matches(&r.rule_name, short))
+    }
+
     /// Finds the first matching tag protection rule for `tag` (without `refs/tags/`).
     #[must_use]
     pub fn matching_tag_rule(&self, tag: &str) -> Option<&TagProtectionRule> {
@@ -214,13 +227,14 @@ impl RefPolicy {
 
         // 2. Branch protection (`refs/heads/*`)
         let branch_name = refname.strip_prefix("refs/heads/").unwrap_or(refname);
-        let Some(rule) = self.matching_branch_rule(branch_name) else {
+        let rules: Vec<&BranchProtectionRule> = self.matching_branch_rules(branch_name).collect();
+        if rules.is_empty() {
             // Unprotected branch: requires `Action::Propose` (or `Action::Write`)
             authorizer
                 .check(ctx, Action::Propose, &target)
                 .into_result("repository not found")?;
             return Ok(());
-        };
+        }
 
         // Protected branch requires `Action::Write`
         authorizer
@@ -228,75 +242,76 @@ impl RefPolicy {
             .into_result("repository not found")?;
 
         let principals = ctx.subject.principals();
-
-        // A protected branch is deleted only by a subject its rule names to rewrite it: a force
-        // push already replaces its whole history, so deleting grants nothing more. That is how
-        // the Portal closes the `workspace/*` branches reserved to it (T-6706); `main` is never.
-        let may_rewrite = rule.enable_push
-            && rule.enable_force_push
-            && rule
-                .force_push_allowlist_usernames
-                .iter()
-                .any(|u| principals.contains(&u.as_str()));
-        if is_delete && !may_rewrite {
-            return Err(ShakoError::Forbidden(format!(
-                "branch '{branch_name}' is protected and cannot be deleted"
-            )));
-        }
-
-        // Direct push disabled (`enable_push: false`)
-        if !rule.enable_push {
-            return Err(ShakoError::Forbidden(format!(
-                "branch '{branch_name}' is protected: direct pushes are disabled"
-            )));
-        }
-
-        let whitelist_active =
-            rule.enable_push_whitelist || !rule.push_whitelist_usernames.is_empty();
-        if whitelist_active
-            && !rule
-                .push_whitelist_usernames
-                .iter()
-                .any(|u| principals.contains(&u.as_str()))
-        {
-            return Err(ShakoError::Forbidden(format!(
-                "branch '{branch_name}' is protected: subject '{}' is not in push_whitelist_usernames",
-                ctx.subject.username
-            )));
-        }
-
-        if !is_create && !is_fast_forward {
-            if !rule.enable_force_push {
+        for rule in rules {
+            // A protected branch is deleted only by a subject its rule names to rewrite it: a force
+            // push already replaces its whole history, so deleting grants nothing more. That is how
+            // the Portal closes the `workspace/*` branches reserved to it (T-6706); `main` is never.
+            let may_rewrite = rule.enable_push
+                && rule.enable_force_push
+                && rule
+                    .force_push_allowlist_usernames
+                    .iter()
+                    .any(|u| principals.contains(&u.as_str()));
+            if is_delete && !may_rewrite {
                 return Err(ShakoError::Forbidden(format!(
-                    "branch '{branch_name}' is protected: non-fast-forward force push is disabled"
+                    "branch '{branch_name}' is protected and cannot be deleted"
                 )));
             }
-            let fp_whitelist_active =
-                rule.enable_force_push_allowlist || !rule.force_push_allowlist_usernames.is_empty();
-            if fp_whitelist_active
+
+            // Direct push disabled (`enable_push: false`)
+            if !rule.enable_push {
+                return Err(ShakoError::Forbidden(format!(
+                    "branch '{branch_name}' is protected: direct pushes are disabled"
+                )));
+            }
+
+            let whitelist_active =
+                rule.enable_push_whitelist || !rule.push_whitelist_usernames.is_empty();
+            if whitelist_active
                 && !rule
-                    .force_push_allowlist_usernames
+                    .push_whitelist_usernames
                     .iter()
                     .any(|u| principals.contains(&u.as_str()))
             {
                 return Err(ShakoError::Forbidden(format!(
-                    "branch '{branch_name}' is protected: subject '{}' is not in force_push_allowlist_usernames",
+                    "branch '{branch_name}' is protected: subject '{}' is not in push_whitelist_usernames",
                     ctx.subject.username
                 )));
             }
-        }
 
-        // Check `protected_file_patterns` and `unprotected_file_patterns`
-        if let Some(prot_set) = compile_glob_list(&rule.protected_file_patterns) {
-            let unprot_set = compile_glob_list(&rule.unprotected_file_patterns);
-            for path in changed_paths {
-                let is_prot = prot_set.is_match(path);
-                let is_unprot = unprot_set.as_ref().is_some_and(|u| u.is_match(path));
-                if is_prot && !is_unprot {
+            if !is_create && !is_fast_forward {
+                if !rule.enable_force_push {
                     return Err(ShakoError::Forbidden(format!(
-                        "path '{path}' is protected by branch rule '{}'",
-                        rule.rule_name
+                        "branch '{branch_name}' is protected: non-fast-forward force push is disabled"
                     )));
+                }
+                let fp_whitelist_active = rule.enable_force_push_allowlist
+                    || !rule.force_push_allowlist_usernames.is_empty();
+                if fp_whitelist_active
+                    && !rule
+                        .force_push_allowlist_usernames
+                        .iter()
+                        .any(|u| principals.contains(&u.as_str()))
+                {
+                    return Err(ShakoError::Forbidden(format!(
+                        "branch '{branch_name}' is protected: subject '{}' is not in force_push_allowlist_usernames",
+                        ctx.subject.username
+                    )));
+                }
+            }
+
+            // Check `protected_file_patterns` and `unprotected_file_patterns`
+            if let Some(prot_set) = compile_glob_list(&rule.protected_file_patterns) {
+                let unprot_set = compile_glob_list(&rule.unprotected_file_patterns);
+                for path in changed_paths {
+                    let is_prot = prot_set.is_match(path);
+                    let is_unprot = unprot_set.as_ref().is_some_and(|u| u.is_match(path));
+                    if is_prot && !is_unprot {
+                        return Err(ShakoError::Forbidden(format!(
+                            "path '{path}' is protected by branch rule '{}'",
+                            rule.rule_name
+                        )));
+                    }
                 }
             }
         }
@@ -326,98 +341,95 @@ impl RefPolicy {
             .check(ctx, Action::Write, &target)
             .into_result("repository not found")?;
 
-        let Some(rule) = self.matching_branch_rule(base_branch) else {
-            return Ok(());
-        };
-
         let principals = ctx.subject.principals();
         let is_admin = authorizer.check(ctx, Action::Admin, &target).allowed;
-        let can_admin_override = is_admin && !rule.block_admin_merge_override;
+        for rule in self.matching_branch_rules(base_branch) {
+            let can_admin_override = is_admin && !rule.block_admin_merge_override;
 
-        // 1. Merge whitelist check (`block_admin_merge_override` blocks admins too!)
-        let merge_wl_active =
-            rule.enable_merge_whitelist || !rule.merge_whitelist_usernames.is_empty();
-        if merge_wl_active
-            && !can_admin_override
-            && !rule
-                .merge_whitelist_usernames
-                .iter()
-                .any(|u| principals.contains(&u.as_str()))
-        {
-            return Err(ShakoError::Forbidden(format!(
-                "branch '{base_branch}' is protected: subject '{}' is not in merge_whitelist_usernames",
-                ctx.subject.username
-            )));
-        }
-
-        // 2. Outdated branch check: MUST return 405 with "behind the base branch" (S5, S7)
-        if rule.block_on_outdated_branch && input.is_behind_base && !can_admin_override {
-            return Err(ShakoError::BehindBaseBranch(
-                "Pull request is behind the base branch".into(),
-            ));
-        }
-
-        // 3. Reviews evaluation (latest non-dismissed verdict per reviewer)
-        let mut latest_by_author: BTreeMap<&str, (&ReviewRecord, bool)> = BTreeMap::new();
-        for rev in input.reviews {
-            if rev.dismissed || rev.verdict == ReviewVerdict::Comment {
-                continue;
-            }
-            let stale = rule.dismiss_stale_approvals
-                && !rev.commit_id.is_empty()
-                && rev.commit_id != input.head_sha;
-            latest_by_author.insert(rev.author_login.as_str(), (rev, stale));
-        }
-
-        if rule.block_on_rejected_reviews && !can_admin_override {
-            let rejected = latest_by_author
-                .values()
-                .any(|(rev, _)| rev.verdict == ReviewVerdict::RequestChanges);
-            if rejected {
-                return Err(ShakoError::MethodNotAllowed(
-                    "Pull request is blocked by rejected reviews".into(),
-                ));
-            }
-        }
-
-        if rule.required_approvals > 0 && !can_admin_override {
-            let approvals = latest_by_author
-                .iter()
-                .filter(|(reviewer, (rev, stale))| {
-                    rev.verdict == ReviewVerdict::Approved
-                        && !*stale
-                        && **reviewer != input.pr_author_login
-                        && (!rule.enable_approvals_whitelist
-                            || rule
-                                .approvals_whitelist_username
-                                .iter()
-                                .any(|u| u == *reviewer))
-                })
-                .count() as u64;
-            if approvals < rule.required_approvals {
-                return Err(ShakoError::MethodNotAllowed(format!(
-                    "Pull request requires {} approval(s), has {approvals}",
-                    rule.required_approvals
+            // 1. Merge whitelist check (`block_admin_merge_override` blocks admins too!)
+            let merge_wl_active =
+                rule.enable_merge_whitelist || !rule.merge_whitelist_usernames.is_empty();
+            if merge_wl_active
+                && !can_admin_override
+                && !rule
+                    .merge_whitelist_usernames
+                    .iter()
+                    .any(|u| principals.contains(&u.as_str()))
+            {
+                return Err(ShakoError::Forbidden(format!(
+                    "branch '{base_branch}' is protected: subject '{}' is not in merge_whitelist_usernames",
+                    ctx.subject.username
                 )));
             }
-        }
 
-        // 4. Required status checks
-        if (rule.enable_status_check || !rule.status_check_contexts.is_empty())
-            && !can_admin_override
-        {
-            for req_ctx in &rule.status_check_contexts {
-                let passed = input.statuses.iter().any(|s| {
-                    s.sha == input.head_sha && &s.context == req_ctx && s.state == "success"
-                });
-                if !passed {
+            // 2. Outdated branch check: MUST return 405 with "behind the base branch" (S5, S7)
+            if rule.block_on_outdated_branch && input.is_behind_base && !can_admin_override {
+                return Err(ShakoError::BehindBaseBranch(
+                    "Pull request is behind the base branch".into(),
+                ));
+            }
+
+            // 3. Reviews evaluation (latest non-dismissed verdict per reviewer)
+            let mut latest_by_author: BTreeMap<&str, (&ReviewRecord, bool)> = BTreeMap::new();
+            for rev in input.reviews {
+                if rev.dismissed || rev.verdict == ReviewVerdict::Comment {
+                    continue;
+                }
+                let stale = rule.dismiss_stale_approvals
+                    && !rev.commit_id.is_empty()
+                    && rev.commit_id != input.head_sha;
+                latest_by_author.insert(rev.author_login.as_str(), (rev, stale));
+            }
+
+            if rule.block_on_rejected_reviews && !can_admin_override {
+                let rejected = latest_by_author
+                    .values()
+                    .any(|(rev, _)| rev.verdict == ReviewVerdict::RequestChanges);
+                if rejected {
+                    return Err(ShakoError::MethodNotAllowed(
+                        "Pull request is blocked by rejected reviews".into(),
+                    ));
+                }
+            }
+
+            if rule.required_approvals > 0 && !can_admin_override {
+                let approvals = latest_by_author
+                    .iter()
+                    .filter(|(reviewer, (rev, stale))| {
+                        rev.verdict == ReviewVerdict::Approved
+                            && !*stale
+                            && **reviewer != input.pr_author_login
+                            && (!rule.enable_approvals_whitelist
+                                || rule
+                                    .approvals_whitelist_username
+                                    .iter()
+                                    .any(|u| u == *reviewer))
+                    })
+                    .count() as u64;
+                if approvals < rule.required_approvals {
                     return Err(ShakoError::MethodNotAllowed(format!(
-                        "Required status check '{req_ctx}' has not succeeded"
+                        "Pull request requires {} approval(s), has {approvals}",
+                        rule.required_approvals
                     )));
                 }
             }
-        }
 
+            // 4. Required status checks
+            if (rule.enable_status_check || !rule.status_check_contexts.is_empty())
+                && !can_admin_override
+            {
+                for req_ctx in &rule.status_check_contexts {
+                    let passed = input.statuses.iter().any(|s| {
+                        s.sha == input.head_sha && &s.context == req_ctx && s.state == "success"
+                    });
+                    if !passed {
+                        return Err(ShakoError::MethodNotAllowed(format!(
+                            "Required status check '{req_ctx}' has not succeeded"
+                        )));
+                    }
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -786,5 +798,89 @@ mod tests {
         }
         let deleted = update("jc-portal", "refs/heads/main", true, true);
         assert!(deleted.is_err_and(|e| e.to_string().contains("cannot be deleted")));
+    }
+
+    #[test]
+    fn a_broad_rule_beside_a_closed_one_opens_nothing() {
+        let inst = InstanceId::from_u128(1);
+        let org = OrgId::from_u128(1);
+        let authz = LocalAuthorizer::new(vec![RoleBinding {
+            org_id: org,
+            principal: "admin-eve".into(),
+            actions: vec![Action::Admin],
+            project_id: None,
+            repo: None,
+        }]);
+        // "*" sorts before "main", as the store lists rules by name.
+        let policy = RefPolicy {
+            branch_rules: vec![
+                BranchProtectionRule {
+                    rule_name: "*".into(),
+                    enable_push: true,
+                    enable_force_push: true,
+                    ..BranchProtectionRule::default()
+                },
+                BranchProtectionRule {
+                    rule_name: "main".into(),
+                    enable_push: false,
+                    enable_merge_whitelist: true,
+                    merge_whitelist_usernames: vec!["jc-portal".into()],
+                    block_admin_merge_override: true,
+                    ..BranchProtectionRule::default()
+                },
+            ],
+            tag_rules: vec![],
+        };
+        let ctx = RequestCtx::new(
+            inst,
+            org,
+            Subject::authenticated("admin-eve", "admin-eve", vec![org], vec![]),
+        );
+        let push = policy.check_ref_update(
+            &ctx,
+            &authz,
+            "jc",
+            "cfg",
+            RefUpdate {
+                refname: "refs/heads/main",
+                is_delete: false,
+                is_create: false,
+                is_fast_forward: false,
+                changed_paths: &[],
+            },
+        );
+        assert_eq!(push.map_err(|e| e.status_code()), Err(403));
+        let merge = policy.check_pr_merge(
+            &ctx,
+            &authz,
+            "jc",
+            "cfg",
+            "main",
+            &MergePolicyInput {
+                is_behind_base: false,
+                reviews: &[],
+                statuses: &[],
+                head_sha: "",
+                pr_author_login: "admin-eve",
+            },
+        );
+        assert_eq!(merge.map_err(|e| e.status_code()), Err(403));
+        assert!(
+            policy
+                .check_ref_update(
+                    &ctx,
+                    &authz,
+                    "jc",
+                    "cfg",
+                    RefUpdate {
+                        refname: "refs/heads/feature",
+                        is_delete: false,
+                        is_create: false,
+                        is_fast_forward: false,
+                        changed_paths: &[],
+                    },
+                )
+                .is_ok()
+        );
     }
 }

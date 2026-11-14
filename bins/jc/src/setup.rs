@@ -80,6 +80,8 @@ pub const PROXY_CLIENT: &str = "agent-proxy";
 pub const EMBEDDER_SCOPE: &str = "embedder";
 /// The first person, a member of the Portal's bootstrap group.
 pub const FIRST_ADMIN: &str = "admin";
+/// The realm file that seeds [`FIRST_ADMIN`] (`portal_realm_files`).
+pub const FIRST_ADMIN_FILE: &str = "20-jc-first-admin.json";
 /// The Portal's default bootstrap group (`JC_PORTAL_BOOTSTRAP_ADMINS`).
 pub const BOOTSTRAP_GROUP: &str = "platform-admins";
 /// The shako owner of the Portal's organization repository and of its Apps.
@@ -552,7 +554,7 @@ pub fn portal_realm_files(
     });
     Ok(vec![
         ("10-jc-portal.json".to_owned(), shipped),
-        ("20-jc-first-admin.json".to_owned(), first_admin),
+        (FIRST_ADMIN_FILE.to_owned(), first_admin),
     ])
 }
 

@@ -357,6 +357,9 @@ pub struct DataroomSection {
     /// The deployment's harvest allow-list (ODP-10): every host a Portal source may read,
     /// beside the hosts the `[[dataroom.harvest]]` seeds read.
     pub harvest_allowed_hosts: Vec<String>,
+    /// The directory of jc.toml, where a Portal source's `convertedFile` is read; not a key.
+    #[serde(skip)]
+    pub config_dir: Option<PathBuf>,
 }
 
 impl DataroomSection {
@@ -515,6 +518,7 @@ impl Default for DataroomSection {
             branding: DataroomBranding::default(),
             portals_max: None,
             harvest_allowed_hosts: Vec::new(),
+            config_dir: None,
         }
     }
 }
@@ -934,7 +938,8 @@ impl Config {
     /// Default directory of the generated secrets.
     pub const DEFAULT_STATE_DIR: &'static str = "jc-state";
 
-    /// Reads and parses a TOML config file. A relative `converted_file` is read beside it.
+    /// Reads and parses a TOML config file. A relative `converted_file` is read beside it, and so
+    /// is a Portal source's `convertedFile`.
     pub fn read_file(path: &Path) -> Result<FileConfig, ConfigError> {
         let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
             path: path.to_path_buf(),
@@ -942,6 +947,9 @@ impl Config {
         })?;
         let mut file = Self::parse_file(path, &text)?;
         let dir = path.parent().unwrap_or(Path::new(""));
+        if let Some(dataroom) = file.dataroom.as_mut() {
+            dataroom.config_dir = Some(dir.to_path_buf());
+        }
         for seed in file.dataroom.iter_mut().flat_map(|d| d.harvest.iter_mut()) {
             if let Some(f) = seed.converted_file.as_mut().filter(|f| f.is_relative()) {
                 *f = dir.join(&*f);
