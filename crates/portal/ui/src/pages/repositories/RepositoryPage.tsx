@@ -29,7 +29,7 @@ export function CloneAddress({ url }: { url: string }): JSX.Element {
         aria-label={t("repositories.clone.copy")}
         icon={<Icon name={copied ? "check" : "copy"} className="size-4" />}
         onClick={() => {
-          void navigator.clipboard?.writeText(url).then(() => setCopied(true));
+          void navigator.clipboard?.writeText(url).then(() => setCopied(true), () => setCopied(false));
         }}
       >
         {copied ? t("repositories.clone.copied") : t("repositories.clone.copyShort")}

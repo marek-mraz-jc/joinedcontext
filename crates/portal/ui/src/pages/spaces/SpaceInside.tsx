@@ -215,7 +215,7 @@ function EntityId({ id }: { id: string }): JSX.Element {
         aria-label={t("spaces.inside.copyId", { id })}
         title={copied ? t("endpoints.copied") : t("spaces.inside.copyId", { id })}
         onClick={() => {
-          void navigator.clipboard?.writeText(id).then(() => setCopied(true));
+          void navigator.clipboard?.writeText(id).then(() => setCopied(true), () => setCopied(false));
         }}
       >
         <Icon name={copied ? "check" : "copy"} className="size-3.5" />
