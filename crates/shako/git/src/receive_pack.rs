@@ -250,7 +250,7 @@ pub fn scan_blob_for_secrets(path: &str, bytes: &[u8]) -> Option<String> {
         if let Some(found) = regex.find(&text) {
             let line = text[..found.start()].matches('\n').count() + 1;
             return Some(format!(
-                "pre-receive secret scan blocked {rule_name} in '{path}' line {line}"
+                "{SECRET_REFUSAL} {rule_name} in '{path}' line {line}"
             ));
         }
     }
@@ -259,7 +259,7 @@ pub fn scan_blob_for_secrets(path: &str, bytes: &[u8]) -> Option<String> {
     {
         let at = line.map(|n| format!(" line {n}")).unwrap_or_default();
         return Some(format!(
-            "pre-receive secret scan blocked literal-secret-field in '{path}'{at} \
+            "{SECRET_REFUSAL} literal-secret-field in '{path}'{at} \
              (field '{field}'; name the credential with secretRef)"
         ));
     }
@@ -407,11 +407,20 @@ pub fn handle_receive_pack(
         cmd_results.push((cmd.clone(), res));
     }
 
+    // A credential in any command refuses the whole push like a failed `atomic` one, so its pack
+    // is removed below instead of staying beside the other refs (Contract S4).
+    let leaked = cmd_results
+        .iter()
+        .any(|(_, r)| r.as_ref().is_err_and(|e| e.starts_with(SECRET_REFUSAL)));
     // If `atomic` capability was requested and any command failed, reject all commands
-    if atomic && cmd_results.iter().any(|(_, r)| r.is_err()) {
+    if (atomic || leaked) && cmd_results.iter().any(|(_, r)| r.is_err()) {
         for (_, r) in &mut cmd_results {
             if r.is_ok() {
-                *r = Err("atomic push failed".into());
+                *r = Err(if leaked {
+                    "push refused whole: another ref carries a credential".into()
+                } else {
+                    "atomic push failed".into()
+                });
             }
         }
     }
@@ -704,6 +713,9 @@ fn verify_tip_connectivity_and_tree(
 /// runs; no instance or repository setting turns it off (T-6713).
 /// ponytail: only local branches are hidden, so a first push into an empty repository walks every
 /// commit's full tree (fine at seed size); hide tags too or diff trees if large imports lag.
+/// How every secret-scan refusal starts.
+const SECRET_REFUSAL: &str = "pre-receive secret scan blocked";
+
 fn scan_new_commits(repo: &gix::Repository, new_oid: ObjectId) -> Result<(), String> {
     let missing = |_| "missing necessary objects".to_owned();
     let tip = repo

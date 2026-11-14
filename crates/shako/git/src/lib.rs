@@ -51,6 +51,16 @@ mod tests {
 
     /// Pushes `main` of `source` into a new empty repository and answers the report-status text.
     fn push_main(tmp: &std::path::Path, source: &std::path::Path, tip: &str) -> String {
+        push_refs(tmp, source, &[(tip, "refs/heads/main")]).0
+    }
+
+    /// Pushes the objects of `source`'s `main` with one ref creation per `(tip, refname)` in one
+    /// non-atomic receive-pack; answers the report-status text and the new repository's path.
+    fn push_refs(
+        tmp: &std::path::Path,
+        source: &std::path::Path,
+        updates: &[(&str, &str)],
+    ) -> (String, std::path::PathBuf) {
         let inst = InstanceId::from_u128(1);
         let org = OrgId::from_u128(1);
         let dest = init_bare_repo(tmp, inst, RepoId::from_u128(201), "main", false, "Dest")
@@ -62,13 +72,14 @@ mod tests {
             .expect("header end")
             + 2;
         let mut body = Vec::new();
-        write_text_line(
-            &mut body,
-            &format!(
-                "0000000000000000000000000000000000000000 {tip} refs/heads/main\0 report-status"
-            ),
-        )
-        .unwrap();
+        for (i, (tip, refname)) in updates.iter().enumerate() {
+            let caps = if i == 0 { "\0 report-status" } else { "" };
+            write_text_line(
+                &mut body,
+                &format!("0000000000000000000000000000000000000000 {tip} {refname}{caps}"),
+            )
+            .unwrap();
+        }
         write_flush(&mut body).unwrap();
         body.extend_from_slice(&bundle[pack..]);
         let authz = LocalAuthorizer::new(vec![RoleBinding {
@@ -92,7 +103,10 @@ mod tests {
         };
         let out =
             handle_receive_pack(&dest, &guard, 10 * 1024 * 1024, &body).expect("receive-pack");
-        String::from_utf8_lossy(&out.response_bytes).into_owned()
+        (
+            String::from_utf8_lossy(&out.response_bytes).into_owned(),
+            dest,
+        )
     }
 
     /// SEC-06, P-19 (T-6713): a credential committed and removed again inside one push is still
@@ -161,6 +175,60 @@ mod tests {
             assert!(said.contains(rule), "{said}");
             assert!(!said.contains(&literal) && !said.contains(&token), "{said}");
         }
+    }
+
+    /// Contract S4: a push whose one ref carries a credential is refused whole, so the pack holding
+    /// the credential is not kept beside the refs the push would have created.
+    #[test]
+    fn a_secret_in_one_ref_of_a_push_refuses_every_ref_and_keeps_no_pack() {
+        let author = CommitAuthor {
+            name: "Alice".into(),
+            email: "alice@hel.fi".into(),
+        };
+        let token = format!("ghp_{}", "a1B2c3D4e5".repeat(4));
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = init_bare_repo(
+            tmp.path(),
+            InstanceId::from_u128(1),
+            RepoId::from_u128(200),
+            "main",
+            true,
+            "Source",
+        )
+        .expect("init source");
+        let commit = |message: &str, path: &str, content: String| {
+            commit_file_changes(
+                &source,
+                "main",
+                message,
+                &author,
+                &author,
+                &[FileChangeOp {
+                    operation: FileOpKind::Create,
+                    path: path.into(),
+                    content: Some(content.into_bytes()),
+                    sha: None,
+                }],
+            )
+            .expect("commit")
+        };
+        let clean = commit("readme", "notes.md", "plain text\n".into());
+        let leaked = commit(
+            "config",
+            "src/config.ts",
+            format!("const k = \"{token}\";\n"),
+        );
+        let (said, dest) = push_refs(
+            tmp.path(),
+            &source,
+            &[(&clean, "refs/heads/ok"), (&leaked, "refs/heads/main")],
+        );
+        assert!(said.contains("ng refs/heads/main"), "{said}");
+        assert!(said.contains("ng refs/heads/ok"), "{said}");
+        let packs = std::fs::read_dir(dest.join("objects/pack"))
+            .map(|d| d.flatten().count())
+            .unwrap_or(0);
+        assert_eq!(packs, 0, "no pack of a refused push stays");
     }
 
     #[test]
