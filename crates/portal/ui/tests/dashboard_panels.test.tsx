@@ -18,7 +18,7 @@ import { barGradient, BarGaugePanel, DEFAULT_THRESHOLDS, globalRange, shownValue
 import { PhoneTable, TableCellValue, tableOf, TablePanel } from "../src/components/panels/TablePanel";
 import { Legend } from "../src/components/panels/TimeSeriesPanel";
 import type { LegendOptions } from "../src/components/panels/TimeSeriesPanel";
-import { colorOf, displayValue, formatDate, formatUnit, mapValue, settingsFor } from "../src/components/panels/fieldConfig";
+import { colorOf, displayValue, formatDate, formatUnit, mapValue, safeRegExp, settingsFor } from "../src/components/panels/fieldConfig";
 import type { Frame } from "../src/components/panels/frames";
 import { ordered, sections } from "../src/components/panels/DashboardGrid";
 import { ColourKey } from "../src/components/panels/ChartPanels";
@@ -251,6 +251,15 @@ describe("table", () => {
     expect(mapValue([{ type: "regex", options: { pattern: "a".repeat(300), result: { text: "hit" } } }], "a".repeat(300))).toBeUndefined();
     expect(performance.now() - started).toBeLessThan(200);
     expect(mapValue([{ type: "regex", options: { pattern: "^st-(\\d+)$", result: { text: "Station $1" } } }], "st-7")?.text).toBe("Station 7");
+  });
+
+  it("refuses a quantified group that nests its quantifier or offers a choice, at any depth", () => {
+    for (const pattern of ["((a)+)+$", "((a+))+$", "(?:(a)+)+$", "(a|aa)+$", "(x(a*))*y", "(?<n>a)\\k<n>"]) {
+      expect(safeRegExp(pattern), pattern).toBeNull();
+    }
+    for (const pattern of ["^st-(\\d+)$", "^(temp|humidity)$", "(ab)+", "[(+]+", "\\(a+\\)+", "(a+)?"]) {
+      expect(safeRegExp(pattern), pattern).not.toBeNull();
+    }
   });
 
   it("draws the helsinki stations in the SDK grid, each cell in its unit and mapping", async () => {
