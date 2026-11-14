@@ -663,7 +663,7 @@ impl ClientRepresentation {
 }
 
 /// The client attribute naming the prefix of the Portal's Endpoint scopes a realm-file client
-/// takes as optional (`endpoint:` on `portal-api`, `mcp-hub`, `jcctl`; T-6857).
+/// takes as optional (`endpoint:` on `portal-api` and `mcp-hub` in `jc-portal.json`; T-6857).
 pub const LINKED_SCOPE_PREFIX: &str = "kaisatsu.linked-scope-prefix";
 
 impl Default for ClientRepresentation {
