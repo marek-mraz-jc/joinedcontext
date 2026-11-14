@@ -2173,3 +2173,26 @@
       via: connector
       contains: ['jc_data_query']
       absent: ['jc_data_write', 'jc_change_plan']
+- id: S-93
+  segment: data-read
+  as: viewer
+  says: "Draw the counts of the bike counters in Endpoint X as a bar chart."
+  expect: 'a PNG drawn from the rows the viewer reads, marked untrusted, the counter ids named as numbered categories (T-6860)'
+  deny: 'an Endpoint the viewer cannot see -> 404 as for a missing one; a spec with a URL or an expression -> 422 naming the member'
+  script:
+    - proves: expect
+      call: jc_render
+      args: { title: Bike counts, mark: bar, encoding: { x: { field: id, type: nominal }, y: { field: count, type: quantitative } }, data: { query: { endpoint: '{project}-counters', type: BikeCounter } } }
+      contains: ['"mimeType":"image/png"', '"untrusted":true', 'urn:ngsi-ld:BikeCounter:snp']
+    - proves: deny
+      call: jc_render
+      args: { mark: bar, encoding: { x: { field: id, type: nominal }, y: { field: count, type: quantitative } }, data: { query: { endpoint: 't-scn-other-reports', type: PotholeReport } } }
+      refused: true
+      contains: ['no Endpoint t-scn-other-reports']
+      absent: ['urn:ngsi-ld:PotholeReport', 'image/png']
+    - proves: deny
+      call: jc_render
+      args: { mark: bar, encoding: { x: { field: id, type: nominal }, y: { field: count, type: quantitative } }, data: { url: 'https://evil.example/rows.json', query: { endpoint: '{project}-counters', type: BikeCounter } } }
+      refused: true
+      contains: ['/data/url']
+      absent: ['image/png']

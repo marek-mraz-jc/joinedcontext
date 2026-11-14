@@ -72,6 +72,8 @@ pub(super) fn offered(
         // A run reads data through the agent proxy's query_endpoint; jc_data_query exchanges the
         // caller's own token, which a run does not hold (T-5986).
         .filter(|op| op.name != crate::ops::data_query::NAME)
+        // jc_render reads through jc_data_query (T-6860).
+        .filter(|op| op.name != crate::ops::render::NAME)
         // T-6039: the project's members reach access connectors; this prompt keeps its 4k-token
         // turn (AG-72), and a person picks a subject from the RoleBinding form.
         .filter(|op| op.name != crate::ops::people::MEMBERS)

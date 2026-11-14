@@ -56,6 +56,7 @@ pub const SEGMENTS: &[(&str, &[&str], &[&str])] = &[
             "jc_resource_get",
             "jc_kpi_compute",
             "jc_data_query",
+            "jc_render",
             "jc_catalog_search",
             "jc_attribute_explain",
         ],
@@ -3099,6 +3100,7 @@ pub(crate) mod tests {
                 "jc_catalog_search",
                 "jc_data_query",
                 "jc_kpi_compute",
+                "jc_render",
                 "jc_resource_get",
                 "jc_resource_list",
                 "jc_schema_get"

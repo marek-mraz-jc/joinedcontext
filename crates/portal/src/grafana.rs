@@ -30,6 +30,20 @@ const SWEEP: Duration = Duration::from_secs(300);
 /// only with that credential.
 pub const PERSON_TOKEN_HEADER: &str = "x-daiya-person-token";
 
+/// The header that says a read is for the public, when no person's token goes with it: daiya
+/// refuses the server administrator's data reads that name nobody (T-6859).
+pub const READ_AS_HEADER: &str = "x-daiya-read-as";
+const READ_AS_PUBLIC: &str = "public";
+
+/// `request` read for `person` (their token, exchanged for one Endpoint) or, with none, for the
+/// public: never for nobody.
+fn reading_for(request: reqwest::RequestBuilder, person: Option<&str>) -> reqwest::RequestBuilder {
+    match person {
+        Some(token) => request.header(PERSON_TOKEN_HEADER, token),
+        None => request.header(READ_AS_HEADER, READ_AS_PUBLIC),
+    }
+}
+
 /// A datasource uid Grafana accepts at most.
 const MAX_UID: usize = 40;
 
@@ -594,16 +608,14 @@ impl<'a> Client<'a> {
         let what = "running a panel's queries";
         let mut query = vec![("panel".to_owned(), panel.to_string())];
         query.extend(asked.iter().cloned());
-        let mut request = self
+        let request = self
             .request(
                 reqwest::Method::GET,
                 &format!("/dashboards/{uid}/render"),
                 Some(org),
             )
             .query(&query);
-        if let Some(token) = person {
-            request = request.header(PERSON_TOKEN_HEADER, token);
-        }
+        let request = reading_for(request, person);
         let answer = request.send().await.map_err(|err| unreachable(what, err))?;
         let status = answer.status();
         let body = jc_core::outbound::read_capped(answer, MAX_PANEL_ANSWER)
@@ -636,7 +648,7 @@ impl<'a> Client<'a> {
         person: Option<&str>,
     ) -> Result<Value, ApiError> {
         let what = "running a preview's queries";
-        let mut request = self
+        let request = self
             .request(reqwest::Method::POST, "/ds/query", Some(org))
             .json(&json!({
                 "from": range.0,
@@ -645,9 +657,7 @@ impl<'a> Client<'a> {
                 "queries": queries,
                 "variables": variables,
             }));
-        if let Some(token) = person {
-            request = request.header(PERSON_TOKEN_HEADER, token);
-        }
+        let request = reading_for(request, person);
         let answer = request.send().await.map_err(|err| unreachable(what, err))?;
         let status = answer.status();
         let body = jc_core::outbound::read_capped(answer, MAX_PANEL_ANSWER)
@@ -674,6 +684,7 @@ impl<'a> Client<'a> {
                 &format!("/datasources/uid/{datasource}/resources/variable"),
                 Some(org),
             )
+            .header(READ_AS_HEADER, READ_AS_PUBLIC)
             .query(&[("query", query)])
             .send()
             .await
