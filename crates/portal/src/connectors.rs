@@ -1400,6 +1400,8 @@ fn names_its_object(op: &Operation) -> bool {
             && input.pointer("/properties/name").is_some())
         || (op.kind == "Endpoint" && input.pointer("/properties/endpoint").is_some())
         || op.name == "jc_schema_get"
+        // Its Endpoint sits in `data.query`, which the door hands in as the arguments (T-6860).
+        || op.name == crate::ops::render::NAME
 }
 
 /// The object a call names: `name`, or `endpoint` (jc_data_write, T-6389). `jc_kpi_compute`'s

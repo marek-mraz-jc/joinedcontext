@@ -649,18 +649,20 @@ fn draw_xy(
             }
         }
         Mark::Line | Mark::Area => {
-            let lines: Vec<Vec<(i64, i64)>> = (0..groups)
-                .map(|group| {
-                    let mut line: Vec<(i64, i64)> = chart
-                        .points
-                        .iter()
-                        .filter(|p| p.color.unwrap_or(0) == group)
-                        .filter_map(|p| Some((px(p.x?.value()), py(p.y?.value()))))
-                        .collect();
-                    line.sort_by_key(|(x, _)| *x);
-                    line
-                })
-                .collect();
+            // One pass over the points, so many groups cost no more than one.
+            let mut lines: Vec<Vec<(i64, i64)>> = vec![Vec::new(); groups];
+            for p in &chart.points {
+                check(deadline)?;
+                if let (Some(x), Some(y), Some(line)) =
+                    (p.x, p.y, lines.get_mut(p.color.unwrap_or(0)))
+                {
+                    line.push((px(x.value()), py(y.value())));
+                }
+            }
+            for line in &mut lines {
+                check(deadline)?;
+                line.sort_by_key(|(x, _)| *x);
+            }
             // Every fill first, so no group's line hides under another's area.
             if chart.mark == Mark::Area {
                 for (group, line) in lines.iter().enumerate() {

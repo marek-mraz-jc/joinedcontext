@@ -2075,6 +2075,26 @@
       args: { endpoint: '{project}-reports', type: PotholeReport }
       contains: ['urn:ngsi-ld:PotholeReport:1']
       absent: ['jana@example.org']
+    - proves: expect
+      via: connector
+      call: jc_render
+      args: { mark: rule, encoding: { x: { field: id, type: nominal } }, data: { query: { endpoint: '{project}-reports', type: PotholeReport } } }
+      contains: ['"mimeType":"image/png"', '"untrusted":true', 'urn:ngsi-ld:PotholeReport:1']
+      absent: ['jana@example.org']
+    - proves: deny
+      via: connector
+      call: jc_render
+      args: { mark: rule, encoding: { x: { field: contactEmail, type: nominal } }, data: { query: { endpoint: '{project}-reports', type: PotholeReport } } }
+      refused: true
+      contains: ['contactEmail personal']
+      absent: ['jana@example.org', 'image/png']
+    - proves: deny
+      via: connector
+      call: jc_render
+      args: { mark: rule, encoding: { x: { field: id, type: nominal } }, data: { query: { endpoint: '{project}-reports', type: PotholeReport, q: 'contactEmail~=".*jana.*"' } } }
+      refused: true
+      contains: ['contactEmail personal']
+      absent: ['image/png']
     - proves: deny
       via: connector
       call: jc_data_write

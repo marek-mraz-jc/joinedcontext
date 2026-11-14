@@ -155,7 +155,7 @@ fn field(value: &Value, at: &str) -> Result<Field, OpError> {
 }
 
 /// A checked spec: what to draw and the read that fills it.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Spec {
     mark: Mark,
     title: String,
@@ -397,9 +397,10 @@ fn rows_of(entities: &[Value]) -> Vec<Map<String, Value>> {
     rows
 }
 
-/// The category values of one nominal channel, in order of first appearance.
+/// The category values of one nominal channel, in order of first appearance, with their index
+/// by value so a read of 20,000 distinct values stays linear.
 #[derive(Default)]
-struct Categories(Vec<String>);
+struct Categories(Vec<String>, std::collections::HashMap<String, usize>);
 
 impl Categories {
     fn index(&mut self, value: &Value) -> Option<usize> {
@@ -408,13 +409,12 @@ impl Categories {
             Value::Number(_) | Value::Bool(_) => value.to_string(),
             _ => return None,
         };
-        Some(match self.0.iter().position(|k| *k == key) {
-            Some(i) => i,
-            None => {
-                self.0.push(key);
-                self.0.len() - 1
-            }
-        })
+        let next = self.0.len();
+        let at = *self.1.entry(key.clone()).or_insert(next);
+        if at == next {
+            self.0.push(key);
+        }
+        Some(at)
     }
 }
 
@@ -507,17 +507,21 @@ fn limited() -> OpError {
     )))
 }
 
-/// Draws `spec` over `rows` within `deadline` in a blocking thread; the PNG or `limited`.
+/// Draws `spec` over `rows` within `deadline` in a blocking thread, the rows' charting
+/// included; the PNG or `limited`.
 async fn draw(
     spec: &Spec,
-    rows: &[Map<String, Value>],
+    rows: Vec<Map<String, Value>>,
     deadline: Instant,
 ) -> Result<(Vec<u8>, Value, bool), OpError> {
-    let (chart, categories, truncated) = chart_of(spec, rows);
-    let png = tokio::task::spawn_blocking(move || chart::render(&chart, deadline))
-        .await
-        .map_err(|err| ApiError::Internal(format!("the render stopped: {err}")))?
-        .map_err(|chart::Limited| limited())?;
+    let spec = spec.clone();
+    let (png, categories, truncated) = tokio::task::spawn_blocking(move || {
+        let (chart, categories, truncated) = chart_of(&spec, &rows);
+        chart::render(&chart, deadline).map(|png| (png, categories, truncated))
+    })
+    .await
+    .map_err(|err| ApiError::Internal(format!("the render stopped: {err}")))?
+    .map_err(|chart::Limited| limited())?;
     if png.len() > MAX_PNG {
         return Err(invalid(
             "/width",
@@ -536,17 +540,19 @@ async fn run(
     let spec = spec_of(&input)?;
     let deadline = Instant::now() + TIME_CAP;
     let work = async {
-        let _slot = SLOTS
-            .acquire()
-            .await
-            .map_err(|_| ApiError::Unavailable("the renderer is shutting down".into()))?;
         let endpoint = spec.query.endpoint.clone();
         let temporal = spec.query.temporal.is_some();
         let entity_type = spec.query.entity_type.clone();
         let read = data_query::run(caller, state, project, spec.query.clone()).await?;
         let entities = read["entities"].as_array().cloned().unwrap_or_default();
         let rows = rows_of(&entities);
-        let (png, categories, truncated) = draw(&spec, &rows, deadline).await?;
+        let count = rows.len();
+        // The slot is taken after the read, so a slow gateway holds no canvas.
+        let _slot = SLOTS
+            .acquire()
+            .await
+            .map_err(|_| ApiError::Unavailable("the renderer is shutting down".into()))?;
+        let (png, categories, truncated) = draw(&spec, rows, deadline).await?;
         Ok::<_, OpError>(json!({
             "image": {
                 "mimeType": "image/png",
@@ -555,7 +561,7 @@ async fn run(
             "width": spec.width,
             "height": spec.height,
             "mark": mark_name(spec.mark),
-            "rows": rows.len(),
+            "rows": count,
             "truncated": truncated,
             "categories": categories,
             "sources": [{ "endpoint": endpoint, "type": entity_type, "temporal": temporal }],
@@ -794,7 +800,7 @@ mod tests {
                 input["encoding"]["x"] = json!({ "field": "id", "type": "nominal" });
             }
             let parsed = spec_of(&input).expect("a spec");
-            let (png, categories, _) = draw(&parsed, &rows, Instant::now() + TIME_CAP)
+            let (png, categories, _) = draw(&parsed, rows.clone(), Instant::now() + TIME_CAP)
                 .await
                 .expect("drawn");
             assert_eq!(
@@ -830,7 +836,7 @@ mod tests {
         let rows = rows_of(&[
             json!({ "id": "urn:x", "type": "T", "pm10": { "values": [[1, "2026-11-13T00:00:00Z"]] } }),
         ]);
-        let refused = draw(&parsed, &rows, Instant::now() - Duration::from_millis(1))
+        let refused = draw(&parsed, rows, Instant::now() - Duration::from_millis(1))
             .await
             .expect_err("past the cap");
         assert!(
