@@ -14,8 +14,8 @@
 
 use assistant::{
     dataset_page, dataset_page_projects, dataset_reads_projects, endpoint_page, fill_terms,
-    held_page_projects, hybrid_search, project_scope, rows_dataset_projects, search_projects,
-    sources_by_project, titles, Search, DIMENSIONS, MIGRATOR,
+    held_page_projects, hybrid_search, page_scope, project_scope, rows_dataset_projects,
+    search_projects, sources_by_project, titles, Search, DIMENSIONS, MIGRATOR,
 };
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{ConnectOptions, PgPool};
@@ -898,6 +898,32 @@ async fn a_news_page_ranks_below_the_same_passage_elsewhere() {
     )
     .await;
     assert_eq!(order, vec![ids[1], ids[0]]);
+    drop_database(admin, pool, &name).await;
+}
+
+/// P-9-25: a page lookup the answer stopped waiting for is cancelled by the server too, so the
+/// scan no longer holds a pooled connection; any other work in a project's scope keeps no limit.
+#[tokio::test]
+async fn a_page_scan_past_its_deadline_is_cancelled_by_the_server() {
+    let (admin, pool, name) = database("page_deadline").await;
+    let mut tx = page_scope(&pool, "helsinki").await.expect("scope");
+    let slow = sqlx::query("SELECT pg_sleep(5)")
+        .execute(&mut *tx)
+        .await
+        .expect_err("the scan is cancelled at the deadline");
+    let code = slow.as_database_error().and_then(|e| e.code());
+    assert_eq!(code.as_deref(), Some("57014"), "{slow}");
+    tx.rollback().await.expect("rollback");
+    let mut tx = project_scope(&pool, "helsinki").await.expect("scope");
+    let limit: String = sqlx::query_scalar("SHOW statement_timeout")
+        .fetch_one(&mut *tx)
+        .await
+        .expect("show");
+    assert_eq!(
+        limit, "0",
+        "the page deadline is local to the lookup's transaction"
+    );
+    tx.rollback().await.expect("rollback");
     drop_database(admin, pool, &name).await;
 }
 
