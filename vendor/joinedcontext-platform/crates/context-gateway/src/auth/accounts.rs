@@ -60,7 +60,12 @@ impl Account {
     /// admits the account (F-SEC1-001, T-5860). A role scoped to the organization reaches only
     /// an Endpoint of the account's own Organization: `same_organization` says whether the
     /// Endpoint's project is of it (ADR-N-058).
-    pub fn roles_in(&self, project: &str, space: &str, same_organization: bool) -> BTreeSet<String> {
+    pub fn roles_in(
+        &self,
+        project: &str,
+        space: &str,
+        same_organization: bool,
+    ) -> BTreeSet<String> {
         self.roles_in_at(project, space, same_organization, chrono::Utc::now())
     }
 

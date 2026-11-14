@@ -125,7 +125,10 @@ fn an_empty_scope_name_matches_only_an_empty_name() {
         project: String::new(),
         ..unnamespaced
     };
-    assert_eq!(unnamespaced.roles_in("", "mobility", true), set(&["writer"]));
+    assert_eq!(
+        unnamespaced.roles_in("", "mobility", true),
+        set(&["writer"])
+    );
 }
 
 #[test]
@@ -208,13 +211,19 @@ fn a_grant_outside_its_validity_is_not_a_role() {
         set(&["reader", "writer"])
     );
     assert_eq!(
-        a.roles_in_at("helsinki", "mobility", true, until + chrono::Duration::seconds(1)),
+        a.roles_in_at(
+            "helsinki",
+            "mobility",
+            true,
+            until + chrono::Duration::seconds(1)
+        ),
         set(&["reader"])
     );
     assert_eq!(
         a.roles_in_at(
             "helsinki",
-            "mobility", true,
+            "mobility",
+            true,
             Utc.with_ymd_and_hms(2026, 9, 30, 23, 59, 59).unwrap()
         ),
         set(&["reader"])
