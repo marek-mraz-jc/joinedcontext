@@ -22,6 +22,7 @@ token); without it they are skipped with that reason. Every name the suite write
 from __future__ import annotations
 
 import argparse
+import base64
 import concurrent.futures as cf
 import datetime as dt
 import json
@@ -416,6 +417,31 @@ class Suite:
         self.check("hub.search", t, f"search query={typ}", f"hits, one naming an Endpoint that holds {typ}",
                    a.brief(120), a.ok and any(x.slug in text for x in self.by_type.get(typ, [])))
 
+    def hub_render(self, e: ex.Endpoint):
+        """T-6881: an anonymous render_chart draws a PNG, and a spec member outside the subset is refused."""
+        types = self.x.granted(e)
+        if not types:
+            return
+        typ = self.x.pick(e, types)
+        t = f"hub {e.project}/{e.name} ({self.x.klass(e)})"
+        spec = {"mark": "bar", "encoding": {"x": {"field": "id", "type": "nominal"},
+                                            "y": {"field": "id", "type": "nominal"}}}
+        args = {"endpoint": e.slug, "spec": spec,
+                "data": {"tool": "query_entities", "arguments": {"type": [typ], "limit": 20}}}
+        a = self.hub.call("render_chart", args)
+        image = next((c for c in (a.result or {}).get("content", []) if c.get("type") == "image"), {})
+        try:
+            png = base64.b64decode(image.get("data", ""), validate=True)
+        except ValueError:
+            png = b""
+        self.check("hub.render_chart.png", t, f"render_chart endpoint={e.slug} type={typ}",
+                   "an image/png whose bytes start with the PNG signature",
+                   f"{image.get('mimeType')} {len(png)} bytes; {a.brief(80)}",
+                   a.ok and image.get("mimeType") == "image/png" and png.startswith(b"\x89PNG\r\n\x1a\n"))
+        b = self.hub.call("render_chart", {**args, "spec": {**spec, "data": {"url": "https://example.org/rows.json"}}})
+        self.check("hub.render_chart.url-refused", t, "render_chart spec.data.url", "refused, no image",
+                   b.brief(120), b.refused and "image" not in json.dumps(b.result or {}))
+
     # ------------------------------------------------------------ 2. an Endpoint's own MCP
 
     def endpoint_door(self, e: ex.Endpoint):
@@ -711,6 +737,7 @@ class Suite:
                 list(pool.map(self.hub_endpoint, chosen))
                 firsts = [v[0] for v in self.classes(served).values()]
                 list(pool.map(self.hub_search, firsts))
+                list(pool.map(self.hub_render, firsts[:1]))
                 list(pool.map(self.hub_write, firsts))
             for id, target in (("door", "/api/endpoint/{slug}/mcp"), ("portal", "portal /api/v1/mcp"),
                                ("portal.personas", "portal /api/v1/mcp"), ("connector", "/c/{id}")):

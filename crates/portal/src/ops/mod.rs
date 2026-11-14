@@ -17,7 +17,8 @@ pub mod admin;
 pub mod administration;
 pub(crate) mod bounds;
 pub mod changes;
-pub mod chart;
+/// The raster, shared with the gateway's render_chart (T-6881).
+pub use jc_chart::raster as chart;
 pub mod compute;
 pub mod data_query;
 pub mod data_views;

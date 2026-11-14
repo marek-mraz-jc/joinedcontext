@@ -182,6 +182,7 @@ fn an_anonymous_caller_may_use_the_named_reads_alone() {
             "list_endpoints"
                 | "get_endpoint"
                 | "search"
+                | "render_chart"
                 | "search_documents"
                 | "read_knowledge_context"
         )
@@ -195,6 +196,11 @@ fn an_anonymous_caller_may_use_the_named_reads_alone() {
     for tool in TOOLS.iter().filter(|tool| !tool.read_only()) {
         assert!(!anonymous_may(tool.name), "{} writes", tool.name);
     }
+    // The gateway's own chart reads only, through the reads above (T-6881).
+    assert_eq!(
+        crate::mcp::render::tool()["annotations"]["readOnlyHint"],
+        serde_json::json!(true)
+    );
     // The gateway's own document search reads only (T-4659).
     assert_eq!(
         crate::mcp::documents::tool("")["annotations"]["readOnlyHint"],
