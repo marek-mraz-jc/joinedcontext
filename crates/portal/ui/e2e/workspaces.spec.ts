@@ -100,6 +100,37 @@ const SIZES = [
   { name: "1280px at 1.5x zoom", viewport: { width: 853, height: 480 } },
 ];
 
+// T-6917: a discard the server refuses keeps its dialog open and says why.
+for (const width of [1440, 400]) {
+  test(`a refused discard says why in its dialog at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await stubApi(page);
+    await page.route("**/api/v1/projects/helsinki/workspaces", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: API, kind: "List", items: [WORKSPACE] }) }),
+    );
+    await page.route(`**/api/v1/projects/helsinki/workspaces/${COPY}`, (route) =>
+      route.request().method() === "DELETE"
+        ? route.fulfill({
+            status: 409,
+            contentType: "application/problem+json",
+            body: JSON.stringify({ type: "about:blank", title: "Conflict", status: 409, detail: "The copy has a change waiting for approval: decide it first, then discard the copy." }),
+          })
+        : route.fallback(),
+    );
+    const shots = process.env.JC_SHOTS_DIR;
+    await page.goto(`/projects/${PROJECT}/workspaces?lang=en`);
+    await expect(page.getByText("Air cleanup before the winter season")).toBeVisible();
+    if (shots) await page.screenshot({ path: `${shots}/workspaces-filled-${width}.png`, fullPage: true });
+    await page.getByRole("button", { name: "Discard" }).first().click();
+    const dialog = page.getByRole("alertdialog");
+    await dialog.getByRole("button", { name: "Discard" }).click();
+    await expect(dialog.getByRole("alert")).toContainText("decide it first");
+    await expect(dialog).toBeVisible();
+    expect(await axeViolations(page)).toEqual([]);
+    if (shots) await page.screenshot({ path: `${shots}/workspaces-discard-refused-${width}.png`, fullPage: false });
+  });
+}
+
 test.describe("the copy bar and the conflict chooser", () => {
   for (const size of SIZES) {
     test.describe(size.name, () => {
