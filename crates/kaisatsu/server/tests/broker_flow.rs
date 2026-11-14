@@ -412,7 +412,10 @@ async fn a_brokered_sign_in_under_the_floor_goes_on_to_the_second_factor() {
     // No code: the upstream sign-in counts as the first factor only.
     assert_eq!(st, StatusCode::SEE_OTHER);
     let next = h[header::LOCATION].to_str().unwrap().to_owned();
-    assert!(!next.contains("?code=") && !next.contains("&code="), "{next}");
+    assert!(
+        !next.contains("?code=") && !next.contains("&code="),
+        "{next}"
+    );
     assert!(next.contains("/login-actions/authenticate"), "{next}");
     // The person has no authenticator yet: the login page enrols one.
     let (st, _, html) = get_with_ck(&app, &next, &auth_cookie).await;
