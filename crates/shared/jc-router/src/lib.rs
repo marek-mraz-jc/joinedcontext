@@ -903,7 +903,9 @@ mod tests {
             .build()
             .unwrap();
         let issuer = |host: &str, forwarded: Option<&str>, peer: &str| {
-            let mut req = Request::builder().uri("/id/realms/dev").header("host", host);
+            let mut req = Request::builder()
+                .uri("/id/realms/dev")
+                .header("host", host);
             if let Some(f) = forwarded {
                 req = req.header("x-forwarded-host", f);
             }
@@ -918,10 +920,26 @@ mod tests {
             }
         };
         let base = "issuer=https://city.example/id/realms/dev";
-        assert!(issuer("city.example", None, "127.0.0.1").await.contains(base));
-        assert!(issuer("evil.example", None, "127.0.0.1").await.contains(base));
-        assert!(issuer("192.168.7.9:8080", None, "192.168.7.9").await.contains(base));
-        assert!(issuer("city.example", Some("evil.example"), "127.0.0.1").await.contains(base));
+        assert!(
+            issuer("city.example", None, "127.0.0.1")
+                .await
+                .contains(base)
+        );
+        assert!(
+            issuer("evil.example", None, "127.0.0.1")
+                .await
+                .contains(base)
+        );
+        assert!(
+            issuer("192.168.7.9:8080", None, "192.168.7.9")
+                .await
+                .contains(base)
+        );
+        assert!(
+            issuer("city.example", Some("evil.example"), "127.0.0.1")
+                .await
+                .contains(base)
+        );
         assert!(
             issuer("city.example", Some("jc.city.example"), "10.0.0.5")
                 .await
