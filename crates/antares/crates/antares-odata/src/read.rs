@@ -931,7 +931,10 @@ pub(crate) async fn count(
     };
     Ok((
         StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, "text/plain")],
+        [
+            (axum::http::header::CONTENT_TYPE, "text/plain"),
+            (ODATA_VERSION, version.as_str()),
+        ],
         total.to_string(),
     )
         .into_response())
@@ -2205,6 +2208,10 @@ pub(crate) fn resource<'r>(
 ) -> Result<Resource<'r>, ODataErrorResponse> {
     Resource::new(&reads.state.model, name).ok_or_else(|| not_found(version))
 }
+
+/// The header every answer names its OData version in (Protocol 8.1.5), a plain-text one too.
+pub(crate) const ODATA_VERSION: axum::http::HeaderName =
+    axum::http::HeaderName::from_static("odata-version");
 
 /// The set `name` a request body is read against: the URL model, where a 4.0 document's open
 /// type still declares the `Edm.Untyped` members it serves as dynamic properties, so a write

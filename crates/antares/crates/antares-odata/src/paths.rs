@@ -9,6 +9,7 @@ use crate::filter::Translated;
 use crate::read::{
     admitted, default_instance, encode, entity_value, key_segment, member_value, not_found,
     not_implemented, objects, query, resource, run, selected, set_of, Reads, MAX_PAGE,
+    ODATA_VERSION,
 };
 use antares_ops::{core_name, Caller, OperationId};
 use axum::http::{header::CONTENT_TYPE, StatusCode};
@@ -64,7 +65,11 @@ pub(crate) async fn property(
     let value = member_value(&member.shape, default_instance(Some(&instances)));
     if raw {
         let text = raw_text(value).ok_or_else(|| not_implemented(NON_PRIMITIVE, version))?;
-        return Ok((StatusCode::OK, [(CONTENT_TYPE, "text/plain")], text).into_response());
+        let headers = [
+            (CONTENT_TYPE, "text/plain"),
+            (ODATA_VERSION, version.as_str()),
+        ];
+        return Ok((StatusCode::OK, headers, text).into_response());
     }
     let mut body = Map::new();
     if ctx.level != MetadataLevel::None {

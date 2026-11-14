@@ -19,7 +19,7 @@ use crate::edm::{Member, Set, OBSERVED_AT_IRI};
 use crate::filter::{bounds_of, mint, program, residual_whole, Refused, Translated};
 use crate::read::{
     compare, default_instance, encode, not_found, not_implemented, now, page_link, paged, position,
-    refusal, resource, run, selected, served, token, Reads,
+    refusal, resource, run, selected, served, token, Reads, ODATA_VERSION,
 };
 use antares_ops::residual::{DateTime, Program, Truth};
 use antares_ops::{Caller, OperationId, RESIDUAL_SCAN};
@@ -151,7 +151,10 @@ pub(crate) async fn count(
     let total = whole(reads, caller, &plan, None, version).await?.len();
     Ok((
         StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, "text/plain")],
+        [
+            (axum::http::header::CONTENT_TYPE, "text/plain"),
+            (ODATA_VERSION, version.as_str()),
+        ],
         total.to_string(),
     )
         .into_response())

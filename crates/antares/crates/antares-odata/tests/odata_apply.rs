@@ -657,12 +657,45 @@ async fn ranking_concat_and_search_never_reach_what_is_hidden() -> Result<(), St
     Ok(())
 }
 
+/// A plain-text answer (`$count`, `$value`) names its OData version as every answer does.
+#[tokio::test]
+async fn a_plain_text_answer_names_its_version() -> Result<(), String> {
+    let (_b, app) = broker(false).await?;
+    for (path, version) in [("Car/$count", None), ("Car/$count", Some("4.01"))] {
+        let mut req = Request::builder()
+            .uri(format!("{ROOT}/{path}"))
+            .header("NGSILD-Tenant", "city");
+        if let Some(v) = version {
+            req = req.header("OData-MaxVersion", v);
+        }
+        let Ok(resp) = app
+            .clone()
+            .oneshot(req.body(Body::empty()).unwrap_or_default())
+            .await;
+        assert_eq!(resp.status(), StatusCode::OK, "{path}");
+        assert_eq!(
+            resp.headers()
+                .get("odata-version")
+                .and_then(|v| v.to_str().ok()),
+            Some(version.unwrap_or("4.0")),
+            "{path}"
+        );
+    }
+    Ok(())
+}
+
 /// `in ()` (OData 4.01) is a list of nothing: it matches no Entity, by any member.
 #[tokio::test]
 async fn an_empty_in_list_matches_nothing() -> Result<(), String> {
     let (_b, app) = broker(false).await?;
     for filter in ["seats%20in%20()", "id%20in%20()", "brand%20in%20()"] {
-        let (status, body) = send(&app, Method::GET, &format!("{ROOT}/Car?$filter={filter}"), None).await;
+        let (status, body) = send(
+            &app,
+            Method::GET,
+            &format!("{ROOT}/Car?$filter={filter}"),
+            None,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK, "{filter}: {body}");
         assert_eq!(body["value"], json!([]), "{filter}: {body}");
     }
