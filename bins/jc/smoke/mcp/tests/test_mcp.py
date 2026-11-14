@@ -201,12 +201,12 @@ def test_anonymous_runs_part_one_alone_and_names_parts_two_to_four_skipped():
     a = NS(anonymous=True, per_class=0, workers=2, state=None)
     s = object.__new__(suite.Suite)
     s.a, s.x, s.r, calls = a, x, suite.Results("mcp", "http://localhost"), []
-    for m in ("hub_door", "hub_endpoint", "hub_search", "hub_write", "endpoint_door", "portal_door", "personas",
+    for m in ("hub_door", "hub_endpoint", "hub_search", "hub_render", "hub_write", "endpoint_door", "portal_door", "personas",
               "connector"):
         setattr(s, m, lambda *args, m=m: calls.append((m, *[getattr(e, "slug", "") for e in args[:1]])))
     s.run()
     assert sorted(calls) == [("hub_door", ""), ("hub_endpoint", "a"), ("hub_endpoint", "b"),
-                             ("hub_search", "a"), ("hub_write", "a")], calls
+                             ("hub_render", "a"), ("hub_search", "a"), ("hub_write", "a")], calls
     skips = {r["id"]: r for r in s.r.rows}
     assert set(skips) == {"door", "portal", "portal.personas", "connector"}
     assert all(r["result"] == "skip" and "--anonymous" in r["reason"] for r in skips.values())

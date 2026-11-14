@@ -1,4 +1,4 @@
-// The chart MCP App view (T-6866, crates/portal/src/mcp/chart_view.html): its draw over the six
+// The chart MCP App view (T-6866, crates/shared/jc-chart/src/chart_view.html): its draw over the six
 // marks and a hostile point. Only the allowed SVG elements appear, no attribute value comes from
 // the data but a number, and a category value is text, never markup.
 import { readFileSync } from "node:fs";
@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { JSDOM } from "jsdom";
 import { describe, expect, it, vi } from "vitest";
 
-const PAGE = readFileSync(resolve(__dirname, "../../src/mcp/chart_view.html"), "utf8").replace(
+const PAGE = readFileSync(resolve(__dirname, "../../../shared/jc-chart/src/chart_view.html"), "utf8").replace(
   "__PORTAL_ORIGIN__",
   JSON.stringify("https://portal.example.org"),
 );
@@ -22,8 +22,8 @@ const LABEL = /^chart-title-[0-9]+$/;
 
 type Result = Record<string, unknown>;
 
-function open() {
-  const dom = new JSDOM(PAGE, { runScripts: "dangerously" });
+function open(page: string = PAGE) {
+  const dom = new JSDOM(page, { runScripts: "dangerously" });
   const win = dom.window;
   const alert = vi.fn();
   win.alert = alert;
@@ -212,5 +212,14 @@ describe("chart view", () => {
     expect(doc.querySelector("a")).toBeNull();
     post({ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: { project: "bratislava" } } });
     expect(doc.querySelector("a")?.getAttribute("href")).toBe("https://portal.example.org/projects/bratislava/endpoints/air");
+  });
+
+  it("draws no link when the server wrote no origin (the gateway's door, T-6882)", () => {
+    const raw = readFileSync(resolve(__dirname, "../../../shared/jc-chart/src/chart_view.html"), "utf8");
+    const { doc, post } = open(raw.replace("__PORTAL_ORIGIN__", "null"));
+    post({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: result("line", TIMED) });
+    post({ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: { project: "bratislava" } } });
+    expect(doc.querySelector("svg")).not.toBeNull();
+    expect(doc.querySelector("a")).toBeNull();
   });
 });

@@ -5,3 +5,9 @@
 
 pub mod raster;
 pub mod spec;
+
+/// The chart view's address, on both doors.
+pub const VIEW_URI: &str = "ui://joinedcontext/chart-view.html";
+/// The chart view page: it draws the answer's `_meta` points and connects nowhere. The server
+/// that serves it writes the origin of its one link over `__PORTAL_ORIGIN__`, or `null` for none.
+pub const VIEW_PAGE: &str = include_str!("chart_view.html");

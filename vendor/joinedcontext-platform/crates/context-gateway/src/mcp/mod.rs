@@ -15,6 +15,7 @@ pub mod hub;
 pub mod jsonrpc;
 pub mod limits;
 pub mod personal;
+pub mod render;
 pub mod search;
 pub mod server;
 pub mod tools;
@@ -111,6 +112,7 @@ mod tests {
         names(&hub::list_endpoints_tool()["inputSchema"], &mut arguments);
         names(&hub::get_endpoint_tool()["inputSchema"], &mut arguments);
         names(&super::search::tool()["inputSchema"], &mut arguments);
+        names(&super::render::tool()["inputSchema"], &mut arguments);
         names(&super::documents::tool("")["inputSchema"], &mut arguments);
         names(
             &super::documents::context_tool()["inputSchema"],
@@ -145,6 +147,7 @@ mod tests {
             super::search::tool(),
             hub::list_endpoints_tool(),
             hub::get_endpoint_tool(),
+            super::render::tool(),
             super::documents::tool(""),
             super::documents::context_tool(),
         ]);

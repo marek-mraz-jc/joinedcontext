@@ -191,8 +191,6 @@ impl Spec {
     }
 }
 
-/// A saved Dashboard's widget: its name, the page and the widget on it, each counted from 0.
-
 pub fn side(value: Option<&Value>, at: &str, default: u32, max: u32) -> Result<u32, Refusal> {
     let Some(value) = value else {
         return Ok(default);

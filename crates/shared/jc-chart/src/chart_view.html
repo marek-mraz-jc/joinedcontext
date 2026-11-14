@@ -49,7 +49,8 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
 // hands it and nothing else: no network, no token. The chart is inline SVG made with
 // createElementNS from the result's _meta (the checked spec and its points: numbers only); every
 // text, the data's category values included, goes in through textContent. Its one link goes to
-// the Portal origin the Portal wrote here when it served the view.
+// the Portal origin the server wrote here when it served the view; with none written (null, the
+// gateway's door) it draws no link.
 (function () {
   "use strict";
   var PORTAL = __PORTAL_ORIGIN__;
@@ -457,7 +458,7 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
       return;
     }
     var source = chart(view, spec, meta, out, "h1", "chart-title");
-    if (project && NAME.test(project) && NAME.test(source)) {
+    if (PORTAL && project && NAME.test(project) && NAME.test(source)) {
       var url = PORTAL + "/projects/" + encodeURIComponent(project) + "/endpoints/" + encodeURIComponent(source);
       var a = el("a", "Open the Endpoint in Portal", "button");
       a.href = url;

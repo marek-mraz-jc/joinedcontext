@@ -103,6 +103,7 @@ fn view_of(spec: &Spec, charted: &Charted) -> Value {
     jc_chart::spec::view_of(spec, charted, &DOOR)
 }
 
+/// A saved Dashboard's widget: its name, the page and the widget on it, each counted from 0.
 #[derive(Debug, Clone)]
 struct WidgetRef {
     dashboard: String,

@@ -715,6 +715,7 @@ dependencies = [
  "http-body-util",
  "hyper-rustls",
  "hyper-util",
+ "jc-chart",
  "jc-core",
  "jc-dcat",
  "jc-manifest",
