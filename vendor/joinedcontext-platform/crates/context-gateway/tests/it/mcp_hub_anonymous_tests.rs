@@ -115,6 +115,7 @@ fn app(broker: &str, realm: &common::Realm) -> Router {
             Box::new(PolicyPdp),
             "banskabystrica.sk",
         )
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
         .serve([open, inner])
         .authenticate(
             Arc::new(realm.verifier()),

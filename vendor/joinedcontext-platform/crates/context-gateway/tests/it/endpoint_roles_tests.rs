@@ -135,6 +135,7 @@ async fn fixture(audience: Audience) -> Fixture {
             Box::new(PolicyPdp),
             "hel.fi",
         )
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
         .serve([
             endpoint(APP_SLUG, audience, app_roles()),
             endpoint(PLAIN_SLUG, audience, EndpointRoles::default()),

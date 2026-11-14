@@ -1,7 +1,7 @@
 //! A pipeline mints ids of the space it runs in: `env("JC_SPACE")` is rendered per stream,
 //! and a mapping that types its space in is a finding (PL-57, CC-83, T-1445).
 
-use jc_manifest::bento::{inject_space, literal_names, space_var, SPACE_VAR};
+use jc_manifest::bento::{inject_owner, inject_space, literal_names, space_var, SPACE_VAR};
 use jc_manifest::validate;
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -24,6 +24,45 @@ fn a_rendered_stream_carries_the_target_space_segment() {
     assert!(
         mapping.contains(r#"env("JC_ORG_DOMAIN")"#),
         "the domain stays the runner's: {mapping}"
+    );
+}
+
+/// T-6852, ADR-N-068: a stream mints the owner of its project's Organization, never the runner's
+/// installation-wide one, in both the Bloblang and the bare form.
+#[test]
+fn a_rendered_stream_carries_its_organizations_owner() {
+    let mut stream = json!({ "pipeline": { "processors": [
+        { "mapping": MAPPING },
+        { "mapping": r#"root.id = "urn:ngsi-ld:X:" + env("JC_ORG_ID") + ":" + this.id"# },
+        "client-${JC_ORG_ID}-${JC_ORG_DOMAIN}",
+    ] } });
+    inject_owner(&mut stream, "bbsk.sk");
+    let processors = &stream["pipeline"]["processors"];
+    assert!(
+        processors[0]["mapping"]
+            .as_str()
+            .is_some_and(|m| m.starts_with(r#"let domain = "bbsk.sk""#)),
+        "{processors}"
+    );
+    assert!(
+        processors[1]["mapping"]
+            .as_str()
+            .is_some_and(|m| m.contains(r#""urn:ngsi-ld:X:" + "sk_bbsk" + ":""#)),
+        "{processors}"
+    );
+    assert_eq!(processors[2], json!("client-sk_bbsk-bbsk.sk"));
+    assert!(
+        processors[0]["mapping"]
+            .as_str()
+            .is_some_and(|m| m.contains(r#"env("JC_SPACE")"#)),
+        "the space is not the owner's: {processors}"
+    );
+    let mut quoted = json!(r#"root.o = env("JC_ORG_ID")"#);
+    inject_owner(&mut quoted, r#"x" + env("JC_CLIENT_SECRET") + ".sk"#);
+    assert_eq!(
+        quoted,
+        json!(r#"root.o = env("JC_ORG_ID")"#),
+        "no hostname, no write"
     );
 }
 

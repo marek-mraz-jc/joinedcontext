@@ -186,6 +186,10 @@ pub(crate) struct StreamSpaces {
     /// `urn:ngsi-ld:Endpoint:hel.fi:<nil>:<nil>`, every indicator was refused, and the indicator
     /// space stayed empty (T-2445). A source that names a DataSource contributes nothing here.
     sources: Vec<String>,
+    /// The domain of the Organization the project's `organizationRef` names, the owner its ids
+    /// mint (ADR-N-068): a moved project's next render mints the new one (T-6852). `None` keeps
+    /// the runner's installation-wide owner, as the gateway checks such a project against.
+    owner: Option<String>,
 }
 
 impl StreamSpaces {
@@ -220,17 +224,22 @@ impl StreamSpaces {
                 crate::spaces::segment(mirror, owner, &space_of(owner, reference.name()))
             })
             .collect();
+        let owner = crate::permissions::organization_domain(mirror, ns);
         Self {
             spaces,
             segments,
             sources,
+            owner,
         }
     }
 
-    /// Writes the spaces into every string of `stream` that reads them.
+    /// Writes the spaces and the owner into every string of `stream` that reads them.
     pub(crate) fn inject(&self, stream: &mut Value) {
         jcctl::bento::inject_space(stream, &self.segments);
         inject_source_space(stream, &self.sources);
+        if let Some(owner) = &self.owner {
+            jcctl::bento::inject_owner(stream, owner);
+        }
     }
 }
 

@@ -73,6 +73,7 @@ async fn the_audit_line_names_the_endpoint_the_tool_and_the_subject() {
             Box::new(PolicyPdp),
             "banskabystrica.sk",
         )
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
         .serve([endpoint()])
         .authenticate(
             Arc::new(realm.verifier()),

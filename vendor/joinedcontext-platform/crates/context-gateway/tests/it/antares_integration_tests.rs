@@ -363,6 +363,7 @@ fn gateway(broker_url: String) -> axum::Router {
         default_locale: None,
     };
     let gateway = Gateway::new(Broker::new(broker_url), Box::new(PolicyPdp), ORG)
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
         .serve([
             endpoint(PUBLIC_SLUG, Audience::Public),
             endpoint(MEMBERS_SLUG, Audience::Organization),
@@ -1079,6 +1080,7 @@ information:
         .expect("the grant parses")],
     };
     let gateway = Gateway::new(Broker::new(antares.url()), Box::new(PolicyPdp), ORG)
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
         .serve([writer, endpoint(PUBLIC_SLUG, Audience::Public)])
         .authenticate(
             std::sync::Arc::new(realm.verifier()),

@@ -117,6 +117,7 @@ fn app(broker: &str, realm: &common::Realm, limited: bool) -> Router {
         Box::new(PolicyPdp),
         "banskabystrica.sk",
     )
+    .with_provenance(context_gateway::store::Provenance::without_organizations())
     .serve(vec![
         endpoint(AIR, vec![grant("steward", "queryEntity, upsertBatch")]),
         bikes,
@@ -688,6 +689,7 @@ async fn a_stalled_member_leaves_the_type_list_of_the_others_within_its_budget()
     let (url, _) = views_stalling("", BIKES).await;
     let reads = "queryEntity, retrieveEntityTypes";
     let gateway = Gateway::new(Broker::new(&url), Box::new(PolicyPdp), "banskabystrica.sk")
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
         .serve(vec![
             endpoint(AIR, vec![grant("steward", reads)]),
             endpoint(BIKES, vec![grant("steward", reads)]),
@@ -791,6 +793,7 @@ fn serving(
         Box::new(PolicyPdp),
         "banskabystrica.sk",
     )
+    .with_provenance(context_gateway::store::Provenance::without_organizations())
     .serve(endpoints)
     .authenticate(
         Arc::new(realm.verifier()),
@@ -929,6 +932,7 @@ async fn a_publisher_connector_serves_its_own_public_endpoints_only() {
             Box::new(PolicyPdp),
             "banskabystrica.sk",
         )
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
         .serve(endpoints.clone())
         .authenticate(
             Arc::new(realm.verifier()),
@@ -1152,6 +1156,7 @@ fn personal(
         Box::new(PolicyPdp),
         "banskabystrica.sk",
     )
+    .with_provenance(context_gateway::store::Provenance::without_organizations())
     .serve(
         five()
             .into_iter()

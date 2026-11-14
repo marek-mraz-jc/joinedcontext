@@ -254,6 +254,7 @@ pub async fn endpoint_admission(
         &caller.groups,
         caller.member_of_organization,
         |project| organization_of(&state, project),
+        Some(&organizations(&state)),
     ) {
         Ok(_) => Ok(Json(Admission { admitted: true })),
         Err(Outside::Audience) => Ok(Json(Admission { admitted: false })),
@@ -465,6 +466,7 @@ pub(crate) fn subject(
         &caller.groups,
         caller.member_of_organization,
         |project| organization_of(state, project),
+        Some(&organizations(state)),
     )
     .map_err(|_| {
         ApiError::Denied(
@@ -520,6 +522,23 @@ fn organization_of(state: &AppState, project: &str) -> Option<String> {
     serde_json::from_value::<jc_core::kinds::ProjectSpec>(envelope.spec)
         .ok()
         .map(|spec| spec.organization_ref.name().to_owned())
+}
+
+/// Each Organization manifest the mirror holds, its domain by name: what the gateway judges an
+/// `organization` audience against (I-4), so the preview admits whom the gateway does.
+fn organizations(state: &AppState) -> std::collections::BTreeMap<String, String> {
+    state
+        .mirror
+        .matching(|envelope| envelope.kind == "Organization")
+        .into_iter()
+        .map(|envelope| {
+            let domain = envelope.spec.get("domain").and_then(Value::as_str);
+            (
+                envelope.metadata.name,
+                domain.unwrap_or_default().to_owned(),
+            )
+        })
+        .collect()
 }
 
 /// Percent-encoded UTF-8 with the RFC 3986 unreserved characters kept, so a diacritic travels

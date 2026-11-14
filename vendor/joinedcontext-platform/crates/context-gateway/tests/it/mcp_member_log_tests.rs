@@ -84,6 +84,7 @@ async fn a_failed_member_call_logs_no_broker_answer() {
     let realm = common::Realm::new();
     let gateway = Arc::new(
         Gateway::new(Broker::new(&url), Box::new(PolicyPdp), "banskabystrica.sk")
+            .with_provenance(context_gateway::store::Provenance::without_organizations())
             .serve([endpoint()])
             .authenticate(
                 Arc::new(realm.verifier()),

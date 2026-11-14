@@ -1411,6 +1411,74 @@ async fn handle_ui_dispatch_fallback(
     dispatch_ui_route(state, headers, &full, raw_query).await
 }
 
+/// The canonical base of the catalogue a dataset withdrawn here moved to (T-6853): a project
+/// moved to another Organization publishes its datasets in that Organization's catalogue and
+/// withdraws them from this one. The new home holds a dataset of the same name from the same
+/// Endpoint (its slug, the last segment of `endpoint_url`), active, public and readable by
+/// anyone, in another Organization's catalogue of this deployment; only those catalogues'
+/// configured bases are ever named, so nothing redirects off the deployment and nothing that was
+/// not public becomes reachable. `None` keeps the 404 a withdrawn dataset answers.
+async fn moved_home(state: &DataroomState, here: &RequestCtx, gone: &Dataset) -> Option<String> {
+    let slug = |dataset: &Dataset| {
+        dataset
+            .endpoint_url
+            .as_deref()
+            .and_then(|url| url.trim_end_matches('/').rsplit('/').next())
+            .filter(|slug| !slug.is_empty())
+            .map(str::to_owned)
+    };
+    let wanted = slug(gone)?;
+    for id in state.organization_catalogues.values() {
+        let base = match state.catalogue_bases.get(id) {
+            Some(base) => Some(base.clone()),
+            None if *id == state.default_catalogue_id => state.public_base.clone(),
+            None => None,
+        };
+        let Some(base) = base.filter(|_| *id != here.catalogue_id) else {
+            continue;
+        };
+        let ctx = RequestCtx::new(state.default_org_id, *id, Subject::anonymous());
+        let Some(ds) = state
+            .store
+            .get_dataset(&ctx, &gone.name)
+            .await
+            .ok()
+            .flatten()
+        else {
+            continue;
+        };
+        if ds.state != RecordState::Active
+            || ds.visibility != dataroom_core::model::Visibility::Public
+            || slug(&ds).as_deref() != Some(wanted.as_str())
+        {
+            continue;
+        }
+        let Ok(Some(cat)) = state.store.get_catalogue(ctx.org_id, *id).await else {
+            continue;
+        };
+        if cat.hidden_datasets.contains_key(&ds.name) {
+            continue;
+        }
+        let publisher = state
+            .store
+            .get_publisher(&ctx, &ds.publisher_id)
+            .await
+            .ok()
+            .flatten();
+        if publisher
+            .as_ref()
+            .is_some_and(|p| p.state == RecordState::Withdrawn)
+        {
+            continue;
+        }
+        let target = ObjectTarget::from_dataset(&ds, publisher.as_ref());
+        if state.authorizer.check(&ctx, Action::Read, &target).allowed {
+            return Some(base.trim_end_matches('/').to_owned());
+        }
+    }
+    None
+}
+
 /// Builds a redirect without panicking on a target that is not a valid header value
 /// (`axum::response::Redirect` panics on one).
 pub(crate) fn safe_redirect(status: StatusCode, target: &str) -> Response {
@@ -1694,6 +1762,15 @@ async fn dispatch_ui_route(
                 )));
             };
             if ds.state == RecordState::Withdrawn {
+                // A project moved to another Organization took its datasets along (T-6853).
+                if let Some(home) = moved_home(&state, &ctx, &ds).await {
+                    let query = raw_query
+                        .as_deref()
+                        .map(|q| format!("?{q}"))
+                        .unwrap_or_default();
+                    let target = format!("{home}/dataset/{name_or_ext}{query}");
+                    return safe_redirect(StatusCode::MOVED_PERMANENTLY, &target);
+                }
                 return problem_response(DataroomError::NotFound(format!(
                     "dataset '{ds_name}' not found"
                 )));

@@ -694,6 +694,22 @@ pub fn organization_of(mirror: &Mirror, project: &str) -> Option<String> {
         .or_else(|| installation_organization(mirror))
 }
 
+/// The domain of the Organization `project`'s `spec.organizationRef` names, as the gateway reads
+/// the owner of the project's URNs (ADR-N-068, `app.rs` `urn_owner`): `None` when it names none
+/// the mirror holds or that one declares no domain.
+pub fn organization_domain(mirror: &Mirror, project: &str) -> Option<String> {
+    let env = mirror.get(ORG_NAMESPACE, "Project", project)?;
+    let name = env
+        .spec
+        .get("organizationRef")
+        .and_then(crate::resource::reference_name)?;
+    let organization = mirror.get(ORG_NAMESPACE, "Organization", name)?;
+    organization.spec["domain"]
+        .as_str()
+        .filter(|domain| !domain.is_empty())
+        .map(str::to_owned)
+}
+
 /// The domains `project` publishes under, as the gateway binds Policy URNs on them (PF-122,
 /// `store.rs` `policy_ref_domains`): its Project's `spec.domain` and the domain of the
 /// Organization its `spec.organizationRef` names. Empty when it names neither.

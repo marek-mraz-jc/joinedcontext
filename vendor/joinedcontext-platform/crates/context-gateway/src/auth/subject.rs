@@ -12,7 +12,7 @@ use axum::http::{HeaderMap, Response};
 use axum::response::IntoResponse;
 use jc_core::kinds::{Audience, Operation, Representation};
 use jc_core::ProblemDetails;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 /// Who is calling, as established by the PEP — never as claimed by the client (GW20).
@@ -536,6 +536,7 @@ pub(crate) fn subject_of(
         &subject.groups,
         subject.member_of_organization,
         |project| gateway.organization_of(project),
+        gateway.provenance().known_organizations(),
     )
     .map_err(|outside| refused(outside, endpoint, claims, &user))?;
     // A member admitted without a project group writes under the Endpoint's own Organization.
@@ -588,7 +589,8 @@ fn refused(
 /// `organization` audience, the first group that is a project of the Endpoint's Organization
 /// (ADR-N-058 2.4); empty when none is. An `organization` audience admits a member of the
 /// Endpoint's Organization by the verified `jc_org`, no project group needed (ADR-N-067 2.3).
-/// `organization_of` names each Project's Organization.
+/// `organization_of` names each Project's Organization and `organizations` the Organizations the
+/// repository holds ([`in_its_organization`]).
 pub fn admission(
     project: &str,
     audience: Audience,
@@ -596,6 +598,7 @@ pub fn admission(
     groups: &BTreeSet<String>,
     member_of_organization: bool,
     organization_of: impl Fn(&str) -> Option<String>,
+    organizations: Option<&BTreeMap<String, String>>,
 ) -> Result<String, Outside> {
     let ours = organization_of(project);
     let of_ours = |candidate: &str| {
@@ -603,6 +606,7 @@ pub fn admission(
             audience,
             ours.as_deref(),
             organization_of(candidate).as_deref(),
+            organizations,
         )
     };
     let named = group_projects(groups.iter().map(String::as_str));
@@ -616,7 +620,7 @@ pub fn admission(
         })
         .unwrap_or_default()
         .to_owned();
-    if audience == Audience::Organization && member_of_organization {
+    if audience == Audience::Organization && member_of_organization && of_ours(project) {
         return Ok(admitted);
     }
     if !of_ours(&admitted) {
@@ -680,20 +684,38 @@ pub(crate) fn standing(
 /// Whether `project` is of the Endpoint's own Organization, which an `organization` audience
 /// asks of every caller (EP-14, ADR-N-058 2.4): one realm serves several Organizations, so a
 /// valid token says nothing about which one its holder belongs to. Each project's Organization
-/// comes from its Project manifest; while the gateway holds none for the Endpoint's project, the
-/// installation is one Organization and every member passes, as before ADR-N-058.
+/// comes from its Project manifest; see [`in_its_organization`] for a project without one.
 fn of_its_organization(gateway: &Gateway, endpoint: &Endpoint, project: &str) -> bool {
     in_its_organization(
         endpoint.audience,
         gateway.organization_of(&endpoint.project).as_deref(),
         gateway.organization_of(project).as_deref(),
+        gateway.provenance().known_organizations(),
     )
 }
 
 /// [`of_its_organization`] once both Organizations are known: the Endpoint's is `ours`, the
-/// caller's project's `theirs`.
-fn in_its_organization(audience: Audience, ours: Option<&str>, theirs: Option<&str>) -> bool {
-    audience != Audience::Organization || ours.is_none_or(|ours| theirs == Some(ours))
+/// caller's project's `theirs`, and `organizations` each Organization manifest of the repository
+/// by name (`None` before it loads). Where the repository holds Organizations, `ours` has to be
+/// one of them: an Endpoint of a project naming none, or naming one that does not exist, admits
+/// nobody (I-4). An installation without any Organization manifest is one Organization and every
+/// member passes, as before ADR-N-058 (T-6806); before the repository loads nobody does.
+fn in_its_organization(
+    audience: Audience,
+    ours: Option<&str>,
+    theirs: Option<&str>,
+    organizations: Option<&BTreeMap<String, String>>,
+) -> bool {
+    if audience != Audience::Organization {
+        return true;
+    }
+    match (ours, organizations) {
+        (Some(ours), Some(known)) if !known.is_empty() => {
+            known.contains_key(ours) && theirs == Some(ours)
+        }
+        (Some(ours), _) => theirs == Some(ours),
+        (None, known) => known.is_some_and(BTreeMap::is_empty),
+    }
 }
 
 /// Whether `user` may be decided under its own name: any person's username, and a
@@ -980,28 +1002,41 @@ mod tests {
             "espoo" => Some("esp".to_owned()),
             _ => None,
         };
+        let organizations: BTreeMap<String, String> = [("hel", "hel.fi"), ("esp", "espoo.fi")]
+            .into_iter()
+            .map(|(name, domain)| (name.to_owned(), domain.to_owned()))
+            .collect();
+        let known = Some(&organizations);
         let groups = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect();
         let org = Audience::Organization;
         let list = Audience::ProjectList;
         let allowed = ["parks".to_owned()];
         assert_eq!(
-            admission("city", org, &[], &groups(&["city-readers"]), false, orgs),
+            admission(
+                "city",
+                org,
+                &[],
+                &groups(&["city-readers"]),
+                false,
+                orgs,
+                known
+            ),
             Ok("city".to_owned())
         );
         assert_eq!(
-            admission("city", org, &[], &groups(&["parks"]), false, orgs),
+            admission("city", org, &[], &groups(&["parks"]), false, orgs, known),
             Ok("parks".to_owned())
         );
         assert_eq!(
-            admission("city", org, &[], &groups(&[]), true, orgs),
+            admission("city", org, &[], &groups(&[]), true, orgs, known),
             Ok(String::new())
         );
         assert_eq!(
-            admission("city", org, &[], &groups(&["espoo"]), false, orgs),
+            admission("city", org, &[], &groups(&["espoo"]), false, orgs, known),
             Err(Outside::Organization)
         );
         assert_eq!(
-            admission("city", org, &[], &groups(&[]), false, orgs),
+            admission("city", org, &[], &groups(&[]), false, orgs, known),
             Err(Outside::Organization)
         );
         assert_eq!(
@@ -1011,16 +1046,25 @@ mod tests {
                 &allowed,
                 &groups(&["parks-writers"]),
                 false,
-                orgs
+                orgs,
+                known
             ),
             Ok("parks".to_owned())
         );
         assert_eq!(
-            admission("city", list, &[], &groups(&["parks"]), true, orgs),
+            admission("city", list, &[], &groups(&["parks"]), true, orgs, known),
             Err(Outside::Audience)
         );
         assert_eq!(
-            admission("city", Audience::Public, &[], &groups(&[]), false, orgs),
+            admission(
+                "city",
+                Audience::Public,
+                &[],
+                &groups(&[]),
+                false,
+                orgs,
+                known
+            ),
             Ok(String::new())
         );
     }

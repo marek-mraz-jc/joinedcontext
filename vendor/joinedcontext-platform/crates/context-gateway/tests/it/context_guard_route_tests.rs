@@ -116,6 +116,7 @@ async fn world() -> World {
     let realm = common::Realm::new();
     let (upstream, hops) = broker().await;
     let gateway = Gateway::new(Broker::new(upstream), Box::new(PolicyPdp), DOMAIN)
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
         .serve([
             endpoint(
                 FORM,

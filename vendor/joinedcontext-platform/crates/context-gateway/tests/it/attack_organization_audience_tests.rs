@@ -112,13 +112,34 @@ async fn fixture(name: &str) -> Fixture {
     fixture_of(name, true).await
 }
 
-/// The fixture, with every project's Organization known or, before ADR-N-058, none.
+/// The fixture, with every project's Organization known or, before ADR-N-058, a repository that
+/// holds no Organization manifest.
 async fn fixture_of(name: &str, organizations_known: bool) -> Fixture {
-    fixture_serving(name, endpoint(), organizations_known).await
+    let provenance = if organizations_known {
+        organizations()
+    } else {
+        Provenance::without_organizations()
+    };
+    fixture_serving(name, endpoint(), Some(provenance)).await
 }
 
-/// [`fixture_of`] serving `endpoint`.
-async fn fixture_serving(name: &str, endpoint: Endpoint, organizations_known: bool) -> Fixture {
+/// Each project's Organization: the Endpoint's and its sibling's `hel`, the outsider's `zilina`.
+fn organizations() -> Provenance {
+    Provenance {
+        organizations: [(PROJECT, "hel"), (SIBLING, "hel"), (OUTSIDER, "zilina")]
+            .into_iter()
+            .map(|(project, organization)| (project.to_owned(), organization.to_owned()))
+            .collect(),
+        ..Default::default()
+    }
+}
+
+/// [`fixture_of`] serving `endpoint`, with `provenance` loaded or, when `None`, none yet.
+async fn fixture_serving(
+    name: &str,
+    endpoint: Endpoint,
+    provenance: Option<Provenance>,
+) -> Fixture {
     let realm = common::Realm::new();
     let broker = common::BrokerStub::start(vec![json!([])]).await;
     let repo = Repo::new(name, &[PROJECT, OUTSIDER]);
@@ -131,14 +152,8 @@ async fn fixture_serving(name: &str, endpoint: Endpoint, organizations_known: bo
     )
     .serve([endpoint])
     .authenticate(Arc::new(realm.verifier()), accounts, None);
-    if organizations_known {
-        gateway.replace_provenance(Provenance {
-            organizations: [(PROJECT, "hel"), (SIBLING, "hel"), (OUTSIDER, "zilina")]
-                .into_iter()
-                .map(|(project, organization)| (project.to_owned(), organization.to_owned()))
-                .collect(),
-            ..Default::default()
-        });
+    if let Some(provenance) = provenance {
+        gateway.replace_provenance(provenance);
     }
     Fixture {
         realm,
@@ -271,6 +286,89 @@ async fn a_person_of_no_group_is_not_admitted_while_the_organization_is_unknown(
     assert_eq!(status, StatusCode::OK, "{body}");
 }
 
+/// I-4: a repository holding the Organizations `hel` and `zilina` whose Endpoint's project names
+/// `organization` (`None`: no `organizationRef` the gateway knows).
+fn two_organizations(organization: Option<&str>) -> Provenance {
+    let mut provenance = organizations();
+    match organization {
+        Some(organization) => provenance
+            .organizations
+            .insert(PROJECT.to_owned(), organization.to_owned()),
+        None => provenance.organizations.remove(PROJECT),
+    };
+    provenance.domains = [("hel", "hel.fi"), ("zilina", "zilina.sk")]
+        .into_iter()
+        .map(|(organization, domain)| (organization.to_owned(), domain.to_owned()))
+        .collect();
+    provenance.loaded = true;
+    provenance
+}
+
+/// I-4 (section 42): with Organization manifests in the repository, an `organization` Endpoint of
+/// a project naming none of them, or one that does not exist, admits a member of neither
+/// Organization and is answered as a slug nobody created.
+#[tokio::test]
+async fn an_organization_endpoint_of_a_project_without_organization_admits_nobody_when_organizations_exist(
+) {
+    for (case, organization) in [("none", None), ("ghost", Some("ghost"))] {
+        let fixture = fixture_serving(
+            &format!("i4-{case}"),
+            endpoint(),
+            Some(two_organizations(organization)),
+        )
+        .await;
+        let callers = [
+            member(&fixture.realm, SLUG, "hel", &["members"], &["member"]),
+            member(&fixture.realm, SLUG, "zilina", &["members"], &["member"]),
+            member(&fixture.realm, SLUG, "ghost", &["members"], &["member"]),
+            person(&fixture.realm, SLUG, &[SIBLING]),
+            person(&fixture.realm, SLUG, &[OUTSIDER]),
+            person(&fixture.realm, SLUG, &[PROJECT]),
+        ];
+        for token in &callers {
+            let (status, body) = read(&fixture, SLUG, token).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{case}: {body}");
+        }
+        assert_eq!(
+            fixture.broker.hops().len(),
+            0,
+            "{case}: the broker was never asked"
+        );
+    }
+    // The same Endpoint once its project names `hel` admits hel's member again.
+    let fixture = fixture_serving("i4-hel", endpoint(), Some(two_organizations(Some("hel")))).await;
+    let token = member(&fixture.realm, SLUG, "hel", &["members"], &["member"]);
+    let (status, body) = read(&fixture, SLUG, &token).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+/// I-4, T-6806: a repository with no Organization manifest is one Organization, and a person of
+/// any of its projects reads the `organization` Endpoint as before ADR-N-058.
+#[tokio::test]
+async fn without_organization_manifests_the_admit_is_unchanged() {
+    let fixture = fixture_of("i4-no-manifests", false).await;
+    for group in [SIBLING, OUTSIDER] {
+        let token = person(&fixture.realm, SLUG, &[group]);
+        let (status, body) = read(&fixture, SLUG, &token).await;
+        assert_eq!(status, StatusCode::OK, "{group}: {body}");
+    }
+}
+
+/// I-4: before the repository's provenance loads the gateway cannot know whether Organizations
+/// exist, so an `organization` Endpoint whose project it holds no Organization for admits nobody.
+#[tokio::test]
+async fn before_provenance_loads_an_organization_endpoint_fails_closed() {
+    let fixture = fixture_serving("i4-unloaded", endpoint(), None).await;
+    for token in [
+        person(&fixture.realm, SLUG, &[SIBLING]),
+        member(&fixture.realm, SLUG, "hel", &["members"], &["member"]),
+    ] {
+        let (status, body) = read(&fixture, SLUG, &token).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    }
+    assert_eq!(fixture.broker.hops().len(), 0, "the broker was never asked");
+}
+
 /// A person by the claims ADR-N-067 2.2 adds: `jc_org` and `jc_groups` beside full-path
 /// `groups`, with `roles` as their realm roles.
 fn member(
@@ -364,7 +462,7 @@ async fn the_hop_carries_only_the_groups_of_the_endpoints_organization() {
         project: SIBLING.to_owned(),
         ..endpoint()
     };
-    let fixture = fixture_serving("hop-groups", helsinki, true).await;
+    let fixture = fixture_serving("hop-groups", helsinki, Some(organizations())).await;
     let token = |jc_groups: &[&str]| {
         fixture.realm.mint(&json!({
             "iss": common::ISSUER,

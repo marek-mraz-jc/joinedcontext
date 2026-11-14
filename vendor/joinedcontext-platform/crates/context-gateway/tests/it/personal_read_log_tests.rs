@@ -117,6 +117,7 @@ async fn a_read_of_a_personal_attribute_names_reader_endpoint_and_entities_never
             Box::new(PolicyPdp),
             "banskabystrica.sk",
         )
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
         .serve(vec![endpoint(PERSONAL, &[]), endpoint(PLAIN, &["rider"])])
         .authenticate(
             Arc::new(realm.verifier()),

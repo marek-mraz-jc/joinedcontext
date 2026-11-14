@@ -59,6 +59,26 @@ pub struct Provenance {
     pub audited: BTreeSet<String>,
     /// Who reads each preview Endpoint and preview space surface, by slug (CC-91).
     pub previews: BTreeMap<String, PreviewReaders>,
+    /// Whether this was read from the repository: before that nobody knows which Organizations
+    /// exist, so an `organization` Endpoint of a project without one admits nobody (I-4).
+    pub loaded: bool,
+}
+
+impl Provenance {
+    /// What a repository holding no Organization manifest says: one Organization, whose
+    /// `organization` Endpoints admit every member as before ADR-N-058 (T-6806, I-4).
+    pub fn without_organizations() -> Self {
+        Self {
+            loaded: true,
+            ..Self::default()
+        }
+    }
+
+    /// The Organizations an `organization` audience is judged against (I-4): `None` until the
+    /// repository loads, then each one's domain by name, empty on an installation without any.
+    pub fn known_organizations(&self) -> Option<&BTreeMap<String, String>> {
+        self.loaded.then_some(&self.domains)
+    }
 }
 
 /// The readers of one preview surface and the audience its branch declares, which decides the
@@ -74,7 +94,10 @@ pub struct PreviewReaders {
 /// The [`Provenance`] the repository declares. A manifest whose spec does not parse adds
 /// nothing, as every kind here.
 pub fn provenance_of(repo: &Repository) -> Provenance {
-    let mut out = Provenance::default();
+    let mut out = Provenance {
+        loaded: true,
+        ..Provenance::default()
+    };
     for (id, resource) in repo.iter() {
         match id.kind.as_str() {
             "Project" => {

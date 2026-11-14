@@ -116,6 +116,7 @@ fn app_limited(broker: &str, realm: &common::Realm, hub: Option<RateLimits>) -> 
         Box::new(PolicyPdp),
         "banskabystrica.sk",
     )
+    .with_provenance(context_gateway::store::Provenance::without_organizations())
     .serve(endpoints())
     .authenticate(
         Arc::new(realm.verifier()),
@@ -428,6 +429,7 @@ async fn a_hub_call_reaches_the_broker_as_it_was_sent() {
             Box::new(PolicyPdp),
             "banskabystrica.sk",
         )
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
         .serve([air])
         .authenticate(
             Arc::new(realm.verifier()),
@@ -560,6 +562,7 @@ async fn a_call_through_the_hub_spends_the_endpoints_own_bucket() {
             Box::new(PolicyPdp),
             "banskabystrica.sk",
         )
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
         .serve([air])
         .authenticate(
             Arc::new(realm.verifier()),

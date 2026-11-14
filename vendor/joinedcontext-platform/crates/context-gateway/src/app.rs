@@ -716,6 +716,12 @@ impl Gateway {
         self
     }
 
+    /// [`Gateway::replace_provenance`] while the gateway is built.
+    pub fn with_provenance(self, provenance: crate::store::Provenance) -> Self {
+        self.replace_provenance(provenance);
+        self
+    }
+
     /// Replaces the space table, which is the `/cs/{space}` surface (SP-01, EP-19).
     pub fn serve_spaces(self, spaces: impl IntoIterator<Item = Space>) -> Self {
         self.resolver.replace_spaces(spaces);
