@@ -81,6 +81,13 @@ impl fmt::Display for OrgId {
 pub struct CatalogueId(Uuid);
 
 impl CatalogueId {
+    /// The catalogue of the further portal `path` of the Organization `org` (ODP-08): a UUID v5
+    /// under the Organization's id, so a portal deleted and made again on the same address gets
+    /// its catalogue (and tombstone) back, and no two portals share one.
+    pub fn of_portal(org: OrgId, path: &str) -> Self {
+        Self(Uuid::new_v5(&org.0, format!("portal:{path}").as_bytes()))
+    }
+
     /// Creates a `CatalogueId` from a verified `Uuid`.
     pub const fn from_uuid(id: Uuid) -> Self {
         Self(id)

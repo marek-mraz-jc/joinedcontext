@@ -337,6 +337,17 @@ pub struct DataroomSection {
     /// `[dataroom.branding]`: the installation's own logo (prod's global `branding.logo`,
     /// `favicon` and `logoSvg`).
     pub branding: DataroomBranding,
+    /// The most Portals all Organizations of the deployment hold together, each `default`
+    /// included (ODP-09); left out, three per `[[organizations]]` entry (at least three).
+    pub portals_max: Option<usize>,
+}
+
+impl DataroomSection {
+    /// [`Self::portals_max`] or its default for `organizations` Organizations.
+    #[must_use]
+    pub fn portals_max(&self, organizations: usize) -> usize {
+        self.portals_max.unwrap_or(3 * organizations.max(1))
+    }
 }
 
 /// One `[dataroom.publishers.<name>]` entry (prod's chart `organizations.<name>`).
@@ -472,6 +483,7 @@ impl Default for DataroomSection {
             hidden: None,
             publishers: BTreeMap::new(),
             branding: DataroomBranding::default(),
+            portals_max: None,
         }
     }
 }
@@ -500,18 +512,25 @@ pub struct OrganizationHosts {
     pub opendata: String,
     pub api: String,
     pub mcp: String,
+    /// The hosts the operator lists for this Organization's further Portals (ODP-08), e.g.
+    /// `mobility.city.sk`: a `Portal.spec.host` names one of these or none. TLS and the edge
+    /// route of each stay deployment configuration.
+    #[serde(default)]
+    pub portals: Vec<String>,
 }
 
 impl OrganizationHosts {
     /// Each host with the module that answers on it.
     #[must_use]
-    pub fn by_module(&self) -> [(Module, &str); 4] {
-        [
+    pub fn by_module(&self) -> Vec<(Module, &str)> {
+        let mut all = vec![
             (Module::Portal, self.portal.as_str()),
             (Module::Dataroom, self.opendata.as_str()),
             (Module::Gateway, self.api.as_str()),
             (Module::Gateway, self.mcp.as_str()),
-        ]
+        ];
+        all.extend(self.portals.iter().map(|h| (Module::Dataroom, h.as_str())));
+        all
     }
 }
 
@@ -552,7 +571,8 @@ fn check_organizations(orgs: &mut [OrganizationSection]) -> Result<(), ConfigErr
             ));
         }
         let h = &mut org.hosts;
-        for host in [&mut h.portal, &mut h.opendata, &mut h.api, &mut h.mcp] {
+        let fixed = [&mut h.portal, &mut h.opendata, &mut h.api, &mut h.mcp];
+        for host in fixed.into_iter().chain(h.portals.iter_mut()) {
             *host = host.trim().to_ascii_lowercase();
             if !valid_host(host) {
                 return bad(format!("{name}: host '{host}' is not a plain host name"));
@@ -584,7 +604,7 @@ fn check_hosts(hosts: &mut [HostSection], orgs: &[OrganizationSection]) -> Resul
     let bad = |m: String| Err(ConfigError::Organization(m));
     let mut seen: std::collections::BTreeSet<String> = orgs
         .iter()
-        .flat_map(|o| o.hosts.by_module().map(|(_, h)| bare_host(h).to_owned()))
+        .flat_map(|o| o.hosts.by_module().into_iter().map(|(_, h)| bare_host(h).to_owned()))
         .collect();
     for row in hosts.iter_mut() {
         row.host = row.host.trim().to_ascii_lowercase();

@@ -51,6 +51,9 @@ pub struct Config {
     /// `[[organizations]]`). A request on one of those hosts is pinned to its Organization
     /// (`organization_host`); empty, every host is the one Portal it was before.
     pub organization_hosts: Vec<crate::organization_host::OrganizationHost>,
+    /// The hosts the operator lists for each Organization's portals and the deployment's
+    /// `portals.max` (`JC_PORTAL_PORTAL_HOSTS`, `JC_PORTAL_PORTALS_MAX`; ODP-08, ODP-09).
+    pub portal_settings: crate::portals::PortalSettings,
     /// Each Organization's own catalogue (`JC_PORTAL_ORGANIZATION_CATALOGUES`, a JSON array of
     /// `{organization, url, api?, reach?, dataHost?, tokenFile}`; jc fills it from its
     /// `[[organizations]]`): every Endpoint of that Organization's projects publishes there,
@@ -1947,6 +1950,15 @@ impl Config {
             reason,
         })?;
 
+        let portal_settings = crate::portals::parse(
+            &lookup("JC_PORTAL_PORTAL_HOSTS").unwrap_or_default(),
+            lookup("JC_PORTAL_PORTALS_MAX").as_deref(),
+        )
+        .map_err(|reason| ConfigError::Invalid {
+            var: "JC_PORTAL_PORTAL_HOSTS",
+            reason,
+        })?;
+
         let organization_catalogues = crate::organization_host::parse_catalogues(
             &lookup("JC_PORTAL_ORGANIZATION_CATALOGUES").unwrap_or_default(),
         )
@@ -2166,6 +2178,7 @@ impl Config {
             internal_bind,
             public_base_url,
             organization_hosts,
+            portal_settings,
             organization_catalogues,
             oidc,
             trust_edge_token,
@@ -2253,6 +2266,7 @@ impl Config {
             public_base_url: Url::parse("http://localhost:8080")
                 .unwrap_or_else(|_| unreachable!("valid test url")),
             organization_hosts: Vec::new(),
+            portal_settings: crate::portals::PortalSettings::default(),
             organization_catalogues: Vec::new(),
             oidc: None,
             trust_edge_token: false,

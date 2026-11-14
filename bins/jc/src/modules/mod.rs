@@ -38,6 +38,8 @@ pub(crate) mod appearance;
 pub mod assistant;
 #[cfg(feature = "daiya")]
 pub(crate) mod daiya;
+#[cfg(all(feature = "portal", feature = "dataroom"))]
+pub(crate) mod portals;
 #[cfg(feature = "dataroom")]
 pub mod dataroom;
 #[cfg(feature = "ekiben")]

@@ -32,6 +32,7 @@ pub mod model_projection;
 pub mod mqtt_allowance;
 pub mod mqtt_broker;
 pub mod org_settings;
+pub mod portal;
 pub mod organization;
 pub mod pipeline;
 pub mod pipeline_history;
@@ -105,6 +106,10 @@ pub use feed_output::{
     FeedSource, FEED_FORMATS, MAX_FEED_OUTPUTS,
 };
 pub use group::{is_person_id, GroupSpec, Member};
+pub use portal::{
+    http_url_host, is_portal_host, HarvestBudget, PortalSource, PortalSourceType, PortalSpec,
+    SlugAddress, DEFAULT_PORTAL,
+};
 pub use ical_mapping::{
     ical_links, outputs_gaps, Accepts, DateMode, FieldRemap, FieldSource, IcalField, IcalMapping,
     IcalOutput, OutputFilter, Preset, Representations, MAX_OUTPUTS, PRESET_TYPES,
@@ -227,6 +232,8 @@ pub type Environment = crate::envelope::ResourceEnvelope<EnvironmentSpec>;
 
 /// `kind: Group` as a whole manifest.
 pub type Group = crate::envelope::ResourceEnvelope<GroupSpec>;
+/// `kind: Portal` as a whole manifest.
+pub type Portal = crate::envelope::ResourceEnvelope<PortalSpec>;
 /// `kind: DelegationPolicy` as a whole manifest.
 pub type DelegationPolicy = crate::envelope::ResourceEnvelope<DelegationPolicySpec>;
 /// `kind: ContextBroker` as a whole manifest.

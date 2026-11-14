@@ -3,7 +3,7 @@
 //! network surface. The handle shares the serving state's tables, so a change is served from
 //! the next request on; each catalogue gets a publish principal of its own.
 
-use dataroom_api::{portal_publisher_on, DataroomState};
+use dataroom_api::{portal_publisher_on, DataroomState, PortalAddress};
 use dataroom_core::auth::constant_time_eq;
 use dataroom_core::{
     Catalogue, CatalogueId, DataroomError, HarvestSource, LiveAuthorizer, OrgId, Publisher,
@@ -28,6 +28,21 @@ pub struct CatalogueSpec {
     pub publisher: Publisher,
     /// The publish principal's token; `None` leaves the catalogue without a publisher grant.
     pub publish_token: Option<String>,
+    /// A further portal's routes (ODP-08); `None` for an Organization's `default`.
+    pub portal: Option<PortalRoute>,
+}
+
+/// Where a further portal answers besides its catalogue's base (ODP-08).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortalRoute {
+    /// The Organization's name, the `{org}` of the slug address.
+    pub organization: String,
+    /// The portal's `spec.path`, the `{path}` of `/{org}/opendata/-/{path}/`.
+    pub path: String,
+    /// Its own host, when it has one.
+    pub host: Option<String>,
+    /// With a host: the slug address answers `308` to the base (`slug: redirect`).
+    pub redirect: bool,
 }
 
 impl std::fmt::Debug for CatalogueSpec {
@@ -37,6 +52,7 @@ impl std::fmt::Debug for CatalogueSpec {
             .field("id", &self.id)
             .field("name", &self.name)
             .field("host", &self.host)
+            .field("portal", &self.portal)
             .field(
                 "publish_token",
                 &self.publish_token.as_ref().map(|_| "<set>"),
@@ -112,6 +128,11 @@ impl CatalogueWriter {
             store.upsert_publisher(&ctx, spec.publisher.clone()).await?;
         }
 
+        let before = read(&self.state.catalogue_bases).get(&id).cloned();
+        if let Some(old) = before.as_deref().filter(|old| spec.base.as_deref() != Some(*old)) {
+            keep_dataset_iris(store, &ctx, old).await?;
+        }
+
         let mut grants = vec![harvest_principal(org, id).1];
         let principal = principal_of(id);
         let mut tokens = write(&self.state.tokens);
@@ -123,11 +144,25 @@ impl CatalogueWriter {
         drop(tokens);
         self.authorizer.replace_catalogue(org, id, grants);
         let mut bases = write(&self.state.catalogue_bases);
-        match spec.base {
+        match spec.base.clone() {
             Some(base) => bases.insert(id, base),
             None => bases.remove(&id),
         };
         drop(bases);
+        match &spec.portal {
+            Some(route) => self.state.portals.route(
+                id,
+                &route.organization,
+                &route.path,
+                route.host.as_deref(),
+                PortalAddress {
+                    org_id: org,
+                    id,
+                    redirect: spec.base.clone().filter(|_| route.host.is_some() && route.redirect),
+                },
+            ),
+            None => self.state.portals.unroute(id),
+        }
         if let Some(name) = spec.organization {
             write(&self.state.organization_catalogues).insert(name, (org, id));
         }
@@ -147,6 +182,7 @@ impl CatalogueWriter {
             .retain(|b| b.subject.actor_id.as_deref() != Some(principal.as_str()));
         self.authorizer.replace_catalogue(org, id, Vec::new());
         write(&self.state.catalogue_bases).remove(&id);
+        self.state.portals.unroute(id);
         write(&self.state.organization_catalogues).retain(|_, v| *v != (org, id));
         write(&self.harvested).retain(|v| *v != (org, id));
         Ok(deleted)
@@ -185,6 +221,21 @@ impl CatalogueWriter {
         }
         Ok(RequestCtx::new(org, id, Subject::anonymous()))
     }
+}
+
+/// Pins every dataset of `ctx` that names no IRI of its own to the one it has under `old`, the
+/// address the catalogue leaves: an address change never moves a dataset IRI (ODP-08), and the
+/// old address keeps answering (a slug address redirects).
+async fn keep_dataset_iris(store: &dyn dataroom_core::Store, ctx: &RequestCtx, old: &str) -> Result<()> {
+    for mut ds in store.list_datasets(ctx).await? {
+        let own = ds.uri.as_deref().is_some_and(|u| !u.trim().is_empty())
+            || ds.extras.get("uri").is_some_and(|u| !u.trim().is_empty());
+        if !own {
+            ds.uri = Some(ds.canonical_uri(old));
+            store.upsert_dataset(ctx, ds).await?;
+        }
+    }
+    Ok(())
 }
 
 /// The publish principal of one catalogue (as [`portal_publisher_on`] names it).
