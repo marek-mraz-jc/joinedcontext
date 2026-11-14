@@ -657,6 +657,18 @@ async fn ranking_concat_and_search_never_reach_what_is_hidden() -> Result<(), St
     Ok(())
 }
 
+/// `in ()` (OData 4.01) is a list of nothing: it matches no Entity, by any member.
+#[tokio::test]
+async fn an_empty_in_list_matches_nothing() -> Result<(), String> {
+    let (_b, app) = broker(false).await?;
+    for filter in ["seats%20in%20()", "id%20in%20()", "brand%20in%20()"] {
+        let (status, body) = send(&app, Method::GET, &format!("{ROOT}/Car?$filter={filter}"), None).await;
+        assert_eq!(status, StatusCode::OK, "{filter}: {body}");
+        assert_eq!(body["value"], json!([]), "{filter}: {body}");
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_chain_of_compute_is_refused_before_it_outgrows_the_evaluator() -> Result<(), String> {
     let (_b, app) = broker(false).await?;
