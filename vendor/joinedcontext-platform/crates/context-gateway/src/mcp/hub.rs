@@ -693,7 +693,7 @@ impl Hub {
             Ok(routed) => routed,
             Err(answer) => return *answer,
         };
-        if let Err(decision) = self.spend(endpoint) {
+        if let Err(decision) = self.spend(endpoint, subject) {
             return Answer::Refused(rate_limit::too_many(
                 &decision,
                 "the endpoint's rate limit is spent; retry after the seconds the RateLimit-Reset header names",
@@ -880,7 +880,11 @@ impl Hub {
     }
 
     /// Spends the Endpoint's own bucket, as a call to its URL spends it (EP-20).
-    pub(crate) fn spend(&self, endpoint: &Endpoint) -> Result<(), rate_limit::Decision> {
+    pub(crate) fn spend(
+        &self,
+        endpoint: &Endpoint,
+        subject: &Subject,
+    ) -> Result<(), rate_limit::Decision> {
         let Some(limits) = endpoint.rate_limit.as_ref() else {
             return Ok(());
         };
@@ -892,6 +896,8 @@ impl Hub {
             return Ok(());
         }
         tracing::info!(slug = %endpoint.slug, "rate limit reached through the hub");
+        // The refusal reaches the project's Activity as one on the Endpoint's own URL does (T-5624).
+        crate::activity::rate_limited(endpoint, principal_of(subject));
         Err(decision)
     }
 

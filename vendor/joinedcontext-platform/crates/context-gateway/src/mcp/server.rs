@@ -583,7 +583,7 @@ impl Hub {
                 HubTool::Granted => {}
             }
             asked.push((index, endpoint.slug.clone()));
-            if self.spend(endpoint).is_err() {
+            if self.spend(endpoint, subject).is_err() {
                 failed.push((
                     index,
                     json!({ "endpoint": endpoint.slug, "reason": "this Endpoint's rate limit is spent" }),

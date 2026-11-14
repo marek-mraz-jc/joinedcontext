@@ -271,7 +271,7 @@ async fn draw(hub: &Hub, id: Value, arguments: &Map<String, Value>) -> Value {
             ),
         );
     }
-    if hub.spend(endpoint).is_err() {
+    if hub.spend(endpoint, subject).is_err() {
         return refusal(id, "the endpoint's rate limit is spent; retry in a minute");
     }
     let (slug, tool) = (endpoint.slug.clone(), asked.tool);
