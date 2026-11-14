@@ -413,3 +413,37 @@ fn an_organization_administrator_leaves_domain_limits_and_catalogue_to_the_opera
         .check("Organization", Verb::Propose, Some(&new))
         .is_ok());
 }
+
+/// T-6895: the second factor of `bbsk`'s members is set by `bbsk`'s administrators alone: the
+/// administrator of another Organization and a project's steward are refused at the same check
+/// the page and the MCP tool call.
+#[test]
+fn only_the_organizations_administrators_set_its_second_factor() {
+    let state = world();
+    let b = binding(
+        "praha-admins",
+        "prahaadmin",
+        "org-admin",
+        json!({ "organization": "praha" }),
+    );
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "praha-admins",
+        ORG_NAMESPACE,
+        b["spec"].clone(),
+    ));
+    let mut spec = bbsk_organization();
+    spec["policies"] = json!({ "signIn": { "secondFactor": "required" } });
+    let manifest = json!({ "kind": "Organization", "metadata": { "name": "bbsk", "namespace": ORG_NAMESPACE }, "spec": spec });
+    let propose = |who: &Identity| {
+        for_request(&state, who, ORG_NAMESPACE).check(
+            "Organization",
+            Verb::Propose,
+            Some(&manifest),
+        )
+    };
+    assert!(propose(&bbsk_admin()).is_ok());
+    for who in [someone("prahaadmin"), bbsk_steward()] {
+        assert!(propose(&who).is_err(), "{} set bbsk's second factor", who.username);
+    }
+}

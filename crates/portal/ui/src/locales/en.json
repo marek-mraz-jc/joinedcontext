@@ -8369,7 +8369,7 @@
       "modelsHint": "Leave empty to allow every model the installation offers.",
       "everyModel": "Every model of the installation",
       "secondFactor": "Second factor at sign-in",
-      "secondFactorHint": "Required: members are asked to set up an authenticator app at their next sign-in and use it every time. Example: Required for an organization whose people handle personal data. Leave empty to keep the deployment's setting.",
+      "secondFactorHint": "Required: members who hold a role across the whole organization (not only in one project) are asked to set up an authenticator app at their next sign-in and use it every time. It applies on the platform's own sign-in; a deployment that signs people in through Keycloak sets this in Keycloak. Example: Required for an organization whose people handle personal data. Leave empty to keep the deployment's setting.",
       "secondFactor_required": "Required",
       "secondFactor_optional": "Optional",
       "secondFactorInherited": "Required (inherited from the deployment)",

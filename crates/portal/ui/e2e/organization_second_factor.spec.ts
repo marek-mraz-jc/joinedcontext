@@ -106,7 +106,7 @@ async function choose(page: Page, value: string): Promise<void> {
   if ((await signIn.locator("summary").count()) > 0) await signIn.locator("summary").first().click();
   const field = page.getByRole("combobox", { name: /Second factor at sign-in/ });
   await field.selectOption({ label: value });
-  await expect(page.getByText(/members are asked to set up an authenticator app at their next sign-in/).locator("visible=true").first()).toBeVisible();
+  await expect(page.getByText(/are asked to set up an authenticator app at their next sign-in/).locator("visible=true").first()).toBeVisible();
   await field.evaluate((element) => element.scrollIntoView({ block: "center" }));
 }
 

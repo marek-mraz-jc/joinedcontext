@@ -648,6 +648,31 @@ async fn an_organization_requiring_a_second_factor_marks_its_group_and_one_that_
     assert!(wrote("PUT", format!("{REALM}/groups/readers")).is_none());
 }
 
+/// T-6895: an Organization policies block that does not parse (a direct git edit, an older
+/// Portal) keeps the second factor required, so a broken manifest never loosens the rule.
+#[test]
+fn an_organization_whose_policies_do_not_parse_keeps_the_second_factor() {
+    let broken = [
+        json!({ "signIn": { "secondFactor": "sometimes" } }),
+        json!({ "signIn": { "secondFactor": "optional", "unknown": true } }),
+        json!("required"),
+    ];
+    for policies in broken {
+        let mirror = mirror_with(vec![organizational(
+            "Organization",
+            "turku",
+            json!({ "policies": policies }),
+        )]);
+        let generated = derived_groups(&mirror, &std::collections::BTreeMap::new(), chrono::Utc::now());
+        assert!(
+            generated
+                .iter()
+                .any(|group| group.name == "turku_bound" && group.second_factor),
+            "{policies}: {generated:?}"
+        );
+    }
+}
+
 /// EP-172, T-6461: membership follows bindings and nothing else. The binding of the project and
 /// of its Organization count, with the project's Organization; one of another Organization, or
 /// of another project, does not; taking a binding away takes the person out.

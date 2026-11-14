@@ -67,15 +67,28 @@ pub struct DerivedGroup {
 }
 
 /// Whether the Organization manifest `organization` sets `spec.policies.signIn.secondFactor:
-/// required`. Only `spec.policies` is read, as the propose check already parsed it.
+/// required`. Only `spec.policies` is read. A block that does not parse (a manifest that skipped
+/// the propose check: a direct git edit, an older Portal) counts as required, so a broken
+/// manifest never loosens the rule (T-6895).
 fn requires_second_factor(mirror: &Mirror, organization: &str) -> bool {
     use jc_core::kinds::{OrganizationPolicies, SecondFactor};
-    mirror
+    let Some(policies) = mirror
         .get(ORG_NAMESPACE, "Organization", organization)
-        .and_then(|org| {
-            serde_json::from_value::<OrganizationPolicies>(org.spec.get("policies")?.clone()).ok()
-        })
-        .is_some_and(|policies| policies.sign_in.second_factor == Some(SecondFactor::Required))
+        .and_then(|org| org.spec.get("policies").cloned())
+    else {
+        return false;
+    };
+    match serde_json::from_value::<OrganizationPolicies>(policies) {
+        Ok(policies) => policies.sign_in.second_factor == Some(SecondFactor::Required),
+        Err(why) => {
+            tracing::warn!(
+                %organization,
+                %why,
+                "Organization policies do not parse: second factor kept as required"
+            );
+            true
+        }
+    }
 }
 
 /// The two groups of a project: who reads it and who writes it.
