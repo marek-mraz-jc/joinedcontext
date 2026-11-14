@@ -2450,6 +2450,24 @@ mod tests {
                 .expect("base64");
             std::fs::write(std::path::Path::new(&dir).join("dashboard.png"), png)
                 .expect("evidence");
+            // The answers the chart view's shots draw from: one refused widget, all drawn, none.
+            board(&state, "clean", vec![pm10_widget("air")]);
+            state.mirror.upsert(manifest(
+                "Dashboard",
+                "bare",
+                "helsinki",
+                json!({ "title": "Bare", "pages": [] }),
+            ));
+            let clean = run(&caller, &state, "helsinki", whole("clean")).await;
+            let bare = run(&caller, &state, "helsinki", whole("bare")).await;
+            for (name, answer) in [
+                ("mixed", answer),
+                ("clean", clean.expect("drawn")),
+                ("bare", bare.expect("drawn")),
+            ] {
+                let file = std::path::Path::new(&dir).join(format!("dashboard-{name}.json"));
+                std::fs::write(file, answer.to_string()).expect("evidence");
+            }
         }
     }
 
