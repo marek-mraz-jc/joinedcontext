@@ -1592,6 +1592,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/org/portals/{name}/datasets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Portal Datasets
+         * @description The datasets of the portal's catalogue by name, each with the source that wrote it and whether the portal hides it (ODP-15).
+         */
+        get: operations["list_portal_datasets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/org/portals/{name}/sources/{source}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Portal Source Runs
+         * @description The source's last harvest runs, newest first, at most 50, each with its counts and one error word (ODP-15).
+         */
+        get: operations["list_portal_source_runs"];
+        put?: never;
+        /**
+         * Run Portal Source Now
+         * @description Starts a harvest run of the source now (ODP-15); its counts and error word appear in the source's runs when it ends.
+         */
+        post: operations["run_portal_source"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/org/portals/{name}/sources/{source}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Portal Source
+         * @description Reads the source's first page once through the harvest guard (https, allowed hosts, public addresses only, every redirect hop checked), at most its byte budget and 10 s, and writes nothing (ODP-15). The answer is one word; no remote address, status, header or body is echoed. Limited to 6 tests a minute per person, 3 at once.
+         */
+        post: operations["test_portal_source"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}": {
         parameters: {
             query?: never;
@@ -11950,6 +12014,22 @@ export interface components {
             /** Format: int32 */
             port: number;
         };
+        /** @description One dataset of a portal. */
+        PortalDataset: {
+            /** @description Whether `spec.hidden` of the portal names it. */
+            hidden: boolean;
+            /** @description Its name, e.g. `ovzdusie-kosice`. */
+            name: string;
+            /** @description The source that wrote it: a harvest source's name, or `endpoints`. */
+            source: string;
+            /** @description Its title in the catalogue's first language. */
+            title: string;
+        };
+        /** @description A page of a portal's datasets, by name. */
+        PortalDatasets: {
+            items: components["schemas"]["PortalDataset"][];
+            total: number;
+        };
         /** @description The Organizations the caller makes portals in, by name. */
         PortalHosts: {
             items: components["schemas"]["PortalOrganization"][];
@@ -12961,6 +13041,19 @@ export interface components {
             changes: components["schemas"]["ModelChange"][];
             severity: string;
             version: string;
+        };
+        /** @description A source's last runs, newest first. */
+        SourceRuns: {
+            /**
+             * @description At most 50: `id`, `state`, `startedAt`, `finishedAt`, the `created`, `updated`,
+             *     `unchanged`, `withdrawn` and `skipped` counts, and `error`, one word.
+             */
+            items: Record<string, never>[];
+        };
+        /** @description What a source test found. */
+        SourceTestAnswer: {
+            /** @description One word: `ok`, `unreachable`, `refused host`, `not the expected format` or `too large`. */
+            outcome: string;
         };
         /** @description A space's storage in bytes, as the broker measures it in its store (T-2890). */
         SpaceBytes: {
@@ -17902,6 +17995,296 @@ export interface operations {
                 };
             };
             /** @description No git forge configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    list_portal_datasets: {
+        parameters: {
+            query?: {
+                /** @description Datasets to skip, e.g. `50`. */
+                offset?: number;
+                /** @description Datasets in the page, 1 to 200, e.g. `50` (the default). */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description The Portal manifest's name, e.g. `bbsk-skoly` */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of datasets */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortalDatasets"];
+                };
+            };
+            /** @description A limit outside 1 to 200 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A member of the portal's Organization who may not read it */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such portal in the caller's Organization */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description This installation serves no open data catalogue */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    list_portal_source_runs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The Portal manifest's name, e.g. `bbsk-skoly` */
+                name: string;
+                /** @description A `spec.sources[].name` of it, e.g. `kosice` */
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The runs, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceRuns"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A member of the portal's Organization who may not read it */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such portal or source in the caller's Organization */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description This installation serves no open data catalogue */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    run_portal_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The Portal manifest's name, e.g. `bbsk-skoly` */
+                name: string;
+                /** @description A `spec.sources[].name` of it, e.g. `kosice` */
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A member of the portal's Organization without propose on it */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such portal or source in the caller's Organization */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A run of this source is active */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description An `endpoints` source, which reads no remote address */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description This installation serves no open data catalogue */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    test_portal_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The Portal manifest's name, e.g. `bbsk-skoly` */
+                name: string;
+                /** @description A `spec.sources[].name` of it, e.g. `kosice` */
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The outcome, one word */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceTestAnswer"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A member of the portal's Organization without propose on it */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such portal or source in the caller's Organization */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description An `endpoints` source, which reads no remote address */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description More than 6 tests a minute, or 3 at once, by this person */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description This installation serves no open data catalogue */
             503: {
                 headers: {
                     [name: string]: unknown;

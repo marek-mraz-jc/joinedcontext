@@ -117,7 +117,10 @@ fn world() -> AppState {
     let state = AppState::new(config, None).with_mirror(Arc::new(Mirror::new()));
     let m = &state.mirror;
     for (name, spec) in [
-        ("ops", json!({ "domain": "ops.example", "installation": true })),
+        (
+            "ops",
+            json!({ "domain": "ops.example", "installation": true }),
+        ),
         ("bbsk", json!({ "domain": "bbsk.sk" })),
         ("praha", json!({ "domain": "praha.eu" })),
     ] {
@@ -127,11 +130,25 @@ fn world() -> AppState {
         .map(|info| info.kind)
         .collect();
     for (role, rule) in [
-        ("org-admin", json!({ "kinds": kinds, "verbs": ["read", "propose", "approve", "delete"] })),
-        ("portal-reader", json!({ "kinds": ["Portal"], "verbs": ["read"] })),
-        ("group-reader", json!({ "kinds": ["Group"], "verbs": ["read"] })),
+        (
+            "org-admin",
+            json!({ "kinds": kinds, "verbs": ["read", "propose", "approve", "delete"] }),
+        ),
+        (
+            "portal-reader",
+            json!({ "kinds": ["Portal"], "verbs": ["read"] }),
+        ),
+        (
+            "group-reader",
+            json!({ "kinds": ["Group"], "verbs": ["read"] }),
+        ),
     ] {
-        m.upsert(envelope("Role", role, ORG_NAMESPACE, json!({ "rules": [rule] })));
+        m.upsert(envelope(
+            "Role",
+            role,
+            ORG_NAMESPACE,
+            json!({ "rules": [rule] }),
+        ));
     }
     for (who, org) in [("bbadmin", "bbsk"), ("prahaadmin", "praha")] {
         bind(m, &format!("{org}-admins"), who, "org-admin", org);
@@ -200,11 +217,23 @@ async fn nobody_signed_in_reaches_a_source_route() {
 #[tokio::test]
 async fn another_organizations_portal_is_the_same_404_as_none() {
     let state = world();
-    for ((method, theirs), (_, unknown)) in routes("praha-skoly").into_iter().zip(routes("bbsk-nic")) {
+    for ((method, theirs), (_, unknown)) in
+        routes("praha-skoly").into_iter().zip(routes("bbsk-nic"))
+    {
         let a = http(&state, person("bbadmin"), method, &theirs, None).await;
         let b = http(&state, person("bbadmin"), method, &unknown, None).await;
-        assert_eq!(a.status, StatusCode::NOT_FOUND, "{method} {theirs}: {}", a.body);
-        assert_eq!(b.status, StatusCode::NOT_FOUND, "{method} {unknown}: {}", b.body);
+        assert_eq!(
+            a.status,
+            StatusCode::NOT_FOUND,
+            "{method} {theirs}: {}",
+            a.body
+        );
+        assert_eq!(
+            b.status,
+            StatusCode::NOT_FOUND,
+            "{method} {unknown}: {}",
+            b.body
+        );
         let detail = |body: &Value| {
             body["detail"]
                 .as_str()
@@ -238,7 +267,12 @@ async fn a_member_without_the_right_is_403() {
         };
         assert_eq!(reader.status, expected, "{method} {uri}: {}", reader.body);
         let other = http(&state, person("bbother"), method, &uri, None).await;
-        assert_eq!(other.status, StatusCode::FORBIDDEN, "{method} {uri}: {}", other.body);
+        assert_eq!(
+            other.status,
+            StatusCode::FORBIDDEN,
+            "{method} {uri}: {}",
+            other.body
+        );
     }
 }
 
@@ -254,7 +288,12 @@ async fn an_endpoints_source_has_nothing_to_test_or_run() {
             None,
         )
         .await;
-        assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{end}: {}", r.body);
+        assert_eq!(
+            r.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{end}: {}",
+            r.body
+        );
     }
 }
 
@@ -285,7 +324,14 @@ async fn test_connection_is_rate_limited_per_person() {
     assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
     assert!(limited.headers().get(header::RETRY_AFTER).is_some());
     // Another person keeps their own tests.
-    let other = http(&state, person("prahaadmin"), "POST", &source_route("praha-skoly", "kosice", "test"), None).await;
+    let other = http(
+        &state,
+        person("prahaadmin"),
+        "POST",
+        &source_route("praha-skoly", "kosice", "test"),
+        None,
+    )
+    .await;
     assert_eq!(other.status, StatusCode::OK, "{}", other.body);
 }
 
@@ -304,7 +350,14 @@ async fn run_now_twice_is_409() {
 #[tokio::test]
 async fn datasets_of_a_portal_never_list_another_portals_or_organizations_records() {
     let state = world();
-    let page = http(&state, person("bbadmin"), "GET", &datasets_route("bbsk-skoly"), None).await;
+    let page = http(
+        &state,
+        person("bbadmin"),
+        "GET",
+        &datasets_route("bbsk-skoly"),
+        None,
+    )
+    .await;
     assert_eq!(page.status, StatusCode::OK, "{}", page.body);
     assert_eq!(page.body["total"], 2);
     assert_eq!(

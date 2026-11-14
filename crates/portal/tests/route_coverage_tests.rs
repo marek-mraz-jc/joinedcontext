@@ -51,7 +51,6 @@ const ROUTE_COVERAGE: &[(&str, &str, &str)] = &[
 ("GET", "/catalogue", "the public open-data catalogue, read from CKAN as an anonymous caller (EP-81): not a project's data"),
 ("GET", "/organization/data-access", "the Organization's Data access matrix, decided per Endpoint and column by the gateway (access/simulate); it writes nothing, a change is a Policy proposal (T-6412)"),
 ("GET", "/organization/people/{id}/readable", "what one person can read as the gateway decides it, Endpoint names only; it writes nothing (T-6412)"),
-("GET", "/organization/portal-hosts", "the Portals editor's host choices, filtered to the Organizations the caller may propose a Portal in; the judge checks the host again (T-6875)"),
 ("POST", "/projects/org/portals/{name}/sources/{source}/test", "a guarded one-word connection test of a Portal source, rate limited per person; it writes nothing (ODP-15, T-6883)"),
 ("POST", "/projects/org/portals/{name}/sources/{source}/runs", "runs a Portal source now in the catalogue that serves it, as that catalogue's own principal (ODP-15, T-6883)"),
 ("GET", "/projects/org/portals/{name}/sources/{source}/runs", "a Portal source's last runs with counts and one error word; it writes nothing (ODP-15, T-6883)"),

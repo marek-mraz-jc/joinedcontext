@@ -264,6 +264,22 @@ routes:
     rule: "propose on Portal in at least one Organization (OWN_SETTINGS_KINDS narrows org admins to their own); 403 for a caller who makes portals nowhere (ODP-15)"
     expect: [401, 403, 403, 403, 403, allow, 403, 403]
     note: "only the caller's Organizations and their operator-listed hosts; the judge re-checks spec.host on propose (T-6875)"
+  - route: POST /projects/org/portals/{name}/sources/{source}/test
+    rule: "propose on that Portal manifest, looked up in the caller's Organization only (ODP-15)"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    note: "the fixture holds no Portal, so every signed-in caller meets the 404 an unknown or another Organization's portal answers; portal_sources_tests holds 401/403/404/429 per role (T-6883)"
+  - route: POST /projects/org/portals/{name}/sources/{source}/runs
+    rule: "propose on that Portal manifest, looked up in the caller's Organization only (ODP-15)"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    note: "the fixture holds no Portal (404 for all); portal_sources_tests holds 401/403/404/409 per role (T-6883)"
+  - route: GET /projects/org/portals/{name}/sources/{source}/runs
+    rule: "read on that Portal manifest, looked up in the caller's Organization only (ODP-15)"
+    expect: [401, 404, 404, 404, 404, 404, 404, 404]
+    note: "the fixture holds no Portal (404 for all); portal_sources_tests holds 401/403/404 per role (T-6883)"
+  - route: GET /projects/org/portals/{name}/datasets
+    rule: "read on that Portal manifest, looked up in the caller's Organization only (ODP-15)"
+    expect: [401, 404, 404, 404, 404, 404, 404, 404]
+    note: "the fixture holds no Portal (404 for all); portal_sources_tests holds 401/403/404 per role and the isolation of datasets (T-6883)"
   - route: GET /organization/health-checks
     rule: "org-admin"
     expect: [401, 403, 403, 403, 403, allow, 403, 403]

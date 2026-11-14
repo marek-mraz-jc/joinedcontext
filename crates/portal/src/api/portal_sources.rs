@@ -23,8 +23,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::{IntoParams, ToSchema};
 
-use crate::auth::CurrentUser;
 use crate::auth::session::Identity;
+use crate::auth::CurrentUser;
 use crate::error::{ApiError, ProblemDetails};
 use crate::permissions::ORG_NAMESPACE;
 use crate::state::AppState;
@@ -113,8 +113,8 @@ fn take_test(person: &str, now: Instant) -> Option<u64> {
         at: now,
     });
     let rate = TESTS_PER_MINUTE / 60.0;
-    bucket.tokens = (bucket.tokens + now.duration_since(bucket.at).as_secs_f64() * rate)
-        .min(TEST_BURST);
+    bucket.tokens =
+        (bucket.tokens + now.duration_since(bucket.at).as_secs_f64() * rate).min(TEST_BURST);
     bucket.at = now;
     if bucket.tokens >= 1.0 {
         bucket.tokens -= 1.0;
@@ -227,7 +227,7 @@ pub struct SourceTestAnswer {
         (status = 503, description = "This installation serves no open data catalogue", body = ProblemDetails)
     )
 )]
-pub async fn test_source(
+pub async fn test_portal_source(
     user: CurrentUser,
     State(state): State<AppState>,
     Path((name, source)): Path<(String, String)>,
@@ -273,7 +273,7 @@ pub async fn test_source(
         (status = 503, description = "This installation serves no open data catalogue", body = ProblemDetails)
     )
 )]
-pub async fn run_source(
+pub async fn run_portal_source(
     user: CurrentUser,
     State(state): State<AppState>,
     Path((name, source)): Path<(String, String)>,
@@ -315,7 +315,7 @@ pub struct SourceRuns {
         (status = 503, description = "This installation serves no open data catalogue", body = ProblemDetails)
     )
 )]
-pub async fn list_runs(
+pub async fn list_portal_source_runs(
     user: CurrentUser,
     State(state): State<AppState>,
     Path((name, source)): Path<(String, String)>,
@@ -331,6 +331,7 @@ pub async fn list_runs(
 
 /// A page of a portal's datasets.
 #[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct DatasetPage {
     /// Datasets to skip, e.g. `50`.
@@ -379,7 +380,7 @@ pub struct PortalDatasets {
         (status = 503, description = "This installation serves no open data catalogue", body = ProblemDetails)
     )
 )]
-pub async fn list_datasets(
+pub async fn list_portal_datasets(
     user: CurrentUser,
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -416,13 +417,16 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route(
             "/projects/org/portals/{name}/sources/{source}/test",
-            post(test_source),
+            post(test_portal_source),
         )
         .route(
             "/projects/org/portals/{name}/sources/{source}/runs",
-            post(run_source).get(list_runs),
+            post(run_portal_source).get(list_portal_source_runs),
         )
-        .route("/projects/org/portals/{name}/datasets", get(list_datasets))
+        .route(
+            "/projects/org/portals/{name}/datasets",
+            get(list_portal_datasets),
+        )
 }
 
 #[cfg(test)]
