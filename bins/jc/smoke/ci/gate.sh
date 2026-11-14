@@ -6,8 +6,8 @@
 # to now, imports it through deploy/rehearsal/import.sh (PostgreSQL in docker, `jc --role all` on a
 # loopback bind) and runs every smoke suite with the rehearsal's state, log and admin listener.
 # JC_BIN names the jc binary (kaisatsu and daiya beside it); SMOKE_E2E=1 adds `cargo test -p jc
-# --tests`; SMOKE_ARGS adds flags to `run all`. Beside it, two more jcs on the three-Organization
-# bundle compose.py makes of synth-export.tgz (hel, zilina) and multiorg-export.tgz (barcelona):
+# --tests`; SMOKE_ARGS adds flags to `run all`. Beside it, two more jcs on the ten-Organization
+# bundle compose.py makes of synth-export.tgz (hel, zilina) and multiorg-export.tgz (the other eight):
 # one with each Organization on its own *.localhost hosts for `multiorg` (host mode), one without
 # for `multiorg@path`; both import while the gate's own jc does. The CI job
 # (.github/workflows/smoke.yml) and a local check run the same script. Answers `run all`'s verdict: 0 green, 1 red.
@@ -98,17 +98,23 @@ python3 -I "$here/redate.py" "$export_dir"
 # redate rewrites the history lines, so the bundle is stamped again: the import refuses a file that
 # differs from its manifest's digest (P-26).
 python3 -I "$repo/deploy/rehearsal/rehearsal.py" digest --export "$export_dir" >/dev/null
-# The three-Organization bundle, composed, moved to now and stamped: hel's helsinki and zilina's
-# zilina from the gate's own synth (its manifests pass jcctl validate), barcelona with the realm and
-# the configuration repository from multiorg-export.tgz (`rehearsal.py synth` of the deployment's
-# dev config, sliced to barcelona). Not bratislava: its 453 Endpoints held the first reconciler pass
-# 413 s. Each Organization on its own Portal, open data, API and MCP host.
+# The ten-Organization bundle (GOAL-multiorg), composed, moved to now and stamped: hel's helsinki
+# and zilina's zilina from the gate's own synth (its manifests pass jcctl validate); barcelona, the
+# realm and the configuration repository from multiorg-export.tgz (`rehearsal.py synth` of the
+# deployment's dev config, sliced), and from it bbsk, banskabystrica, praha, slovensko and
+# bratislava, each project an Organization of its own; ctl-a and ctl-b with no project, the controls
+# that make an empty Organization's leak visible. No Organization holds the installation role: the
+# operators are the platform-admins group. At most 40 Endpoints a space (bratislava's 453 held the
+# first reconciler pass 413 s). Each Organization on its own Portal, open data, API and MCP host.
 mo_src=$(mktemp -d)
 mkdir "$mo_src/gate" "$mo_src/bcn"
 tar -xzf "$here/synth-export.tgz" -C "$mo_src/gate"
 tar -xzf "$here/multiorg-export.tgz" -C "$mo_src/bcn"
-python3 -I "$repo/bins/jc/smoke/multiorg/compose.py" --base "$mo_src/bcn" --org hel="$mo_src/gate" \
-  --org zilina="$mo_src/gate" --org barcelona="$mo_src/bcn" --out "$mo_export" --entities-per-type 0
+mo_orgs=(hel="$mo_src/gate" zilina="$mo_src/gate" barcelona="$mo_src/bcn")
+for o in bbsk banskabystrica praha slovensko bratislava; do mo_orgs+=("$o=$mo_src/bcn:$o"); done
+mo_orgs+=(ctl-a= ctl-b=)
+python3 -I "$repo/bins/jc/smoke/multiorg/compose.py" --base "$mo_src/bcn" "${mo_orgs[@]/#/--org=}" \
+  --out "$mo_export" --entities-per-type 0 --endpoints-per-space 40 --no-installation
 rm -rf "${mo_src:?}"
 python3 -I "$here/redate.py" "$mo_export"
 python3 -I "$repo/deploy/rehearsal/rehearsal.py" digest --export "$mo_export" >/dev/null
@@ -117,10 +123,11 @@ python3 -I "$repo/deploy/rehearsal/rehearsal.py" digest --export "$mo_export" >/
 mo_tokens=$REHEARSAL_HOME/multiorg-tokens
 rm -rf "$mo_tokens" && mkdir -m 700 "$mo_tokens"
 : > "$mo_hosts"
-for org in hel:a1 zilina:b1 barcelona:c1; do
-  o=${org%%:*}
+i=0
+for org in "${mo_orgs[@]}"; do
+  o=${org%%=*}; i=$((i + 1))
   (umask 077 && python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > "$mo_tokens/$o")
-  printf '[[organizations]]\nname = "%s"\ncatalogue_id = "00000000-0000-7000-8000-0000000000%s"\n' "$o" "${org#*:}"
+  printf '[[organizations]]\nname = "%s"\ncatalogue_id = "00000000-0000-7000-8000-0000000000%s"\n' "$o" "$(printf %02x "$i")"
   printf 'portal_token_file = "%s"\n' "$mo_tokens/$o"
   printf 'hosts = { portal = "portal.%s.localhost:%s", opendata = "opendata.%s.localhost:%s", api = "api.%s.localhost:%s", mcp = "mcp.%s.localhost:%s" }\n\n' \
     "$o" "$mo_port" "$o" "$mo_port" "$o" "$mo_port" "$o" "$mo_port"
