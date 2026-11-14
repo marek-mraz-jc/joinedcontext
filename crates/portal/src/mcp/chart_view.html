@@ -30,6 +30,7 @@ svg:focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
   overflow-wrap: anywhere; box-shadow: 0 2px 8px rgba(0, 0, 0, .15); }
 .board { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); gap: 16px; margin-top: 8px; align-items: start; }
 .tile { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.tile.refused-tile { grid-column: 1 / -1; }
 .tile h2 { font-size: 15px; margin: 0 0 2px; overflow-wrap: anywhere; }
 .tip.below { position: static; max-width: none; margin-top: 6px; box-shadow: none; }
 ol.cats { margin: 0; padding-left: 0; list-style: none; font-size: 13px; columns: 2 220px; }
@@ -413,6 +414,8 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
       var spec = v && !v.error ? specOf(v["joinedcontext.com/chartSpec"]) : null;
       if (!spec) {
         var error = v && v.error && typeof v.error === "object" ? v.error : {};
+        // A refused widget is a slim strip across the grid, not a tall empty card.
+        box.className = "tile refused-tile";
         box.appendChild(el("h2", where + ": not drawn" + (int(error.status) !== null ? " (" + error.status + ")" : "")));
         box.appendChild(el("p", str(error.detail) || "The Portal drew nothing for this widget.", "refused"));
         box.appendChild(el("p", "Ask for this widget alone to see more, or ask the Dashboard's owner for access.", "muted"));

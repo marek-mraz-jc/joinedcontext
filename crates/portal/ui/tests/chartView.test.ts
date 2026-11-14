@@ -165,6 +165,20 @@ describe("chart view", () => {
     expect(alert).not.toHaveBeenCalled();
   });
 
+  it("reads a malformed point as no value, never as markup or a link", () => {
+    const { doc, alert, post } = open();
+    const bad = { x: "1794528000000", y: "<b>34</b>", color: "javascript:alert(1)", size: { valueOf: 3 }, observedAt: "<img src=x>" };
+    post({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: result("line", [bad, ...TIMED]) });
+    const svg = checkSvg(doc);
+    expect(svg.outerHTML).not.toContain("javascript");
+    expect(svg.outerHTML).not.toContain("<b>");
+    expect(doc.querySelectorAll("img, a, use, foreignObject, image").length).toBe(0);
+    // The three good points draw one line; the bad one has no x or y and is left out.
+    expect(svg.querySelectorAll("path").length).toBe(1);
+    attrsHoldNoMarkup(doc);
+    expect(alert).not.toHaveBeenCalled();
+  });
+
   it("says what to do next for a Dashboard without widgets", () => {
     const { doc, post } = open();
     post({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: dashboard([], []) });

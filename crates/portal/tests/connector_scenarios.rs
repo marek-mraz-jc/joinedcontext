@@ -3876,7 +3876,7 @@ async fn chart_view_csp_connects_nowhere() {
     assert_eq!(listed["_meta"]["ui"]["csp"]["connectDomains"], json!([]));
     let read = json!({ "jsonrpc": "2.0", "id": 2, "method": "resources/read",
                        "params": { "uri": "ui://joinedcontext/chart-view.html" } });
-    let (status, answer) = harness.rpc("viewer", read).await;
+    let (status, answer) = harness.rpc("viewer", read.clone()).await;
     assert_eq!(status, StatusCode::OK, "{answer}");
     let page = &answer["result"]["contents"][0];
     assert_eq!(page["mimeType"], "text/html;profile=mcp-app", "{answer}");
@@ -3887,6 +3887,33 @@ async fn chart_view_csp_connects_nowhere() {
     assert!(!text.contains("__PORTAL_ORIGIN__"));
     let token = harness.token("viewer").expect("a token");
     assert!(!text.contains(&token));
+    // The connector door reads the same page under the same CSP; it lists no resources.
+    let expires = (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339();
+    let (status, created) = harness
+        .send_edge(
+            "POST",
+            "/api/v1/connectors",
+            harness.token_for("viewer", AUDIENCE, AUDIENCE),
+            Some(json!({ "name": "chart", "segments": ["data-read"],
+                         "scope": [{ "project": own, "access": "read" }], "expiresAt": expires })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let id = created["id"].as_str().expect("id");
+    let through = harness.token_for("viewer", &format!("https://portal.test/c/{id}"), CLIENT);
+    let (status, answer) = harness
+        .send("POST", &format!("/c/{id}"), through.clone(), Some(read))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let page = &answer["result"]["contents"][0];
+    assert_eq!(
+        page["uri"], "ui://joinedcontext/chart-view.html",
+        "{answer}"
+    );
+    assert_eq!(page["_meta"]["ui"]["csp"]["connectDomains"], json!([]));
+    assert_eq!(page["_meta"]["ui"]["csp"]["resourceDomains"], json!([]));
+    let text = page["text"].as_str().unwrap_or_default();
+    assert!(!text.contains(through.as_deref().expect("a token")));
 }
 
 /// Who may write to an Endpoint is answered only to whoever reads the space's Policies (EP-103,
