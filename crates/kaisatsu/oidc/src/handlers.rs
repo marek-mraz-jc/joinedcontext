@@ -3001,27 +3001,27 @@ async fn handle_password_grant(
 
     // Check if second factor is required or configured (RI `custom direct grant`)
     let mfa_required = crate::second_factor_required(state, realm, &user).await?;
-    let otp_cred = creds.iter().find(|c| c.credential_type == "otp");
+    let has_otp = creds.iter().any(|c| c.credential_type == "otp");
 
     let mut amr = vec!["pwd".to_owned()];
     let mut acr = "pwd".to_owned();
 
-    if mfa_required || otp_cred.is_some() {
-        let Some(otp_cred) = otp_cred else {
+    if mfa_required || has_otp {
+        if !has_otp {
             return Err(KaisatsuError::oauth(
                 400,
                 "invalid_grant",
                 "A second factor is required: sign in through the browser once to set up an authenticator app",
             ));
-        };
+        }
         let submitted_totp = form
             .get("totp")
             .or_else(|| form.get("otp"))
             .map(String::as_str)
             .ok_or_else(|| KaisatsuError::invalid_grant("Missing totp code"))?;
         let now_secs = Utc::now().timestamp() as u64;
-        let Some(matched_step) = verify_totp_code(
-            otp_cred,
+        let Some((otp_cred, matched_step)) = verify_any_totp_code(
+            &creds,
             submitted_totp,
             realm.otp_policy_look_ahead_window,
             now_secs,
