@@ -18,6 +18,8 @@ jaq-json = "=2.0.3"
 jmespath = { version = "=0.5.0", features = ["sync"] }
 regex = { workspace = true }
 ekiben-io-file = { workspace = true }
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
@@ -25,4 +27,3 @@ serde_norway = { workspace = true }
 tempfile = { workspace = true }
 base64 = { workspace = true }
 hex = { workspace = true }
-chrono = { workspace = true }
