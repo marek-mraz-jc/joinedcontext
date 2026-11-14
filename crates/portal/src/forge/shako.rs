@@ -1324,17 +1324,18 @@ impl ShakoClient {
         self.reserve_as(&me).await
     }
 
-    /// `POST R/Shako.Protect` for `portal/*` and `workspace/*`: only this client's forge account
-    /// cuts, writes, rewrites or deletes a Change branch, so a Change's head commit, and the
-    /// author it names, is one the Portal wrote for the signed-in proposer, never what another
-    /// pusher's git configured (AUZ-08, CHG-07, T-6706).
+    /// `POST R/Shako.Protect` for `portal/*`, `workspace/*`, `sync/*` and `mirror/*`: only this
+    /// client's forge account cuts, writes, rewrites or deletes a Change branch, so a Change's
+    /// head commit, and the author it names, is one the Portal wrote for the signed-in proposer,
+    /// never what another pusher's git configured (AUZ-08, CHG-07, T-6706). A SyncSource or
+    /// mirror proposal may merge itself (MF-29), so its branch holds only what the Portal wrote.
     pub async fn reserve_change_branches(&self) -> Result<(), GitError> {
         let me = self.login().await?;
         self.reserve_as(&me).await
     }
 
     async fn reserve_as(&self, me: &str) -> Result<(), GitError> {
-        for pattern in ["portal/*", "workspace/*"] {
+        for pattern in ["portal/*", "workspace/*", "sync/*", "mirror/*"] {
             let rule = json!({
                 "rule_name": pattern,
                 "enable_push": true,

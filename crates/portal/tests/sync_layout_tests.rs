@@ -550,10 +550,14 @@ async fn an_existing_project_repository_takes_the_portal_branch_rules_on_the_fir
     };
     assert_eq!(
         named("ovzdusie"),
-        ["main", "portal/*", "workspace/*"],
+        ["main", "portal/*", "workspace/*", "sync/*", "mirror/*"],
         "{first:?}"
     );
-    assert_eq!(named("test-repo"), ["portal/*", "workspace/*"], "{first:?}");
+    assert_eq!(
+        named("test-repo"),
+        ["portal/*", "workspace/*", "sync/*", "mirror/*"],
+        "{first:?}"
+    );
 
     syncer.sync_once().await.expect("the second sync");
     assert_eq!(rules().await.len(), first.len(), "set once per process");

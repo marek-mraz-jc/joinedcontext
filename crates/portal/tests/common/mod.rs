@@ -319,8 +319,9 @@ pub async fn forge() -> MockServer {
 }
 
 /// The branch rules the Portal sets on `repo` (an `R` path), in the order it sent them: `main`
-/// takes no push and only the Portal's account merges into it; `portal/*` and `workspace/*` are
-/// written, rewritten and deleted by that account alone (T-6706, CHG-12, AUZ-08).
+/// takes no push and only the Portal's account merges into it; `portal/*`, `workspace/*`,
+/// `sync/*` and `mirror/*` are written, rewritten and deleted by that account alone (T-6706,
+/// CHG-12, AUZ-08, MF-29).
 pub async fn assert_portal_branch_rules(shako: &MockServer, repo: &str) {
     let route = format!("{repo}/Shako.Protect");
     let rules: Vec<Value> = shako
@@ -332,13 +333,16 @@ pub async fn assert_portal_branch_rules(shako: &MockServer, repo: &str) {
         .map(|r| serde_json::from_slice::<Value>(&r.body).unwrap_or_default()["Rule"].clone())
         .collect();
     let portal = json!(["jc-portal"]);
-    assert_eq!(rules.len(), 3, "{repo}: {rules:?}");
+    assert_eq!(rules.len(), 5, "{repo}: {rules:?}");
     assert_eq!(rules[0]["rule_name"], "main", "{rules:?}");
     assert_eq!(rules[0]["enable_push"], false);
     assert_eq!(rules[0]["enable_merge_whitelist"], true);
     assert_eq!(rules[0]["merge_whitelist_usernames"], portal);
     assert_eq!(rules[0]["block_admin_merge_override"], true);
-    for (rule, pattern) in rules[1..].iter().zip(["portal/*", "workspace/*"]) {
+    for (rule, pattern) in rules[1..]
+        .iter()
+        .zip(["portal/*", "workspace/*", "sync/*", "mirror/*"])
+    {
         assert_eq!(rule["rule_name"], pattern, "{rules:?}");
         assert_eq!(rule["push_whitelist_usernames"], portal);
         assert_eq!(rule["force_push_allowlist_usernames"], portal);
