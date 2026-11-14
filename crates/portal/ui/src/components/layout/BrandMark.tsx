@@ -32,8 +32,8 @@ export function BrandMark({ short = false }: { short?: boolean }): JSX.Element {
 }
 
 // The two hexagons drawn as one interlocking pair: each mask cuts a gap where the other ring
-// passes over it. Light theme in the lockup's own colours; in the dark theme the indigo ring
-// is lightened, #2f3f9e on the dark surface is under 3:1. Cut from the dataroom lockup
+// passes over it. The colours are tokens (--portal-symbol-ring-*, tokens.css): the lockup's
+// own, with the indigo lightened in the dark theme. Cut from the dataroom lockup
 // crates/dataroom/web/assets/public__jc-logo.svg (symbol only, its translate dropped).
 const RING_A = "29.0 21.2 21.2 29.0 10.6 26.1 7.7 15.5 15.5 7.7 26.1 10.6";
 const RING_B = "38.1 31.8 30.3 39.6 19.7 36.7 16.8 26.1 24.6 18.3 35.2 21.2";
@@ -42,8 +42,8 @@ const RING_B = "38.1 31.8 30.3 39.6 19.7 36.7 16.8 26.1 24.6 18.3 35.2 21.2";
 function JcSymbol(): JSX.Element {
   // One id set per drawing: the frame draws the mark more than once on a page.
   const id = useId().replace(/[^A-Za-z0-9_-]/g, "");
-  const ring = (points: string, stroke: string, width: number, className?: string): JSX.Element => (
-    <polygon points={points} fill="none" stroke={stroke} strokeWidth={width} strokeLinejoin="round" className={className} />
+  const ring = (points: string, stroke: string, width: number): JSX.Element => (
+    <polygon points={points} fill="none" stroke={stroke} strokeWidth={width} strokeLinejoin="round" />
   );
   return (
     <svg viewBox="4.9 5.6 36 36" aria-hidden="true" focusable="false" className="size-7 shrink-0" data-testid="jc-symbol">
@@ -63,8 +63,8 @@ function JcSymbol(): JSX.Element {
           <g clipPath={`url(#${id}cA)`}>{ring(RING_A, "black", 6)}</g>
         </mask>
       </defs>
-      <g mask={`url(#${id}mA)`}>{ring(RING_A, "#2f3f9e", 4, "dark:stroke-[#8c9cf5]")}</g>
-      <g mask={`url(#${id}mB)`}>{ring(RING_B, "#0e8fa3", 4)}</g>
+      <g mask={`url(#${id}mA)`}>{ring(RING_A, "var(--portal-symbol-ring-a)", 4)}</g>
+      <g mask={`url(#${id}mB)`}>{ring(RING_B, "var(--portal-symbol-ring-b)", 4)}</g>
     </svg>
   );
 }

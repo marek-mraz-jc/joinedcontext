@@ -47,7 +47,7 @@ test.describe("the brand mark", () => {
           const symbol = page.getByTestId("jc-symbol").first();
           await expect(symbol).toBeVisible();
           // The indigo ring is lightened on the dark surface (contrast at least 3:1).
-          const stroke = await symbol.locator("polygon[stroke='#2f3f9e']").evaluate((el) => getComputedStyle(el).stroke);
+          const stroke = await symbol.locator("polygon[stroke='var(--portal-symbol-ring-a)']").evaluate((el) => getComputedStyle(el).stroke);
           expect(stroke).toBe(scheme === "dark" ? "rgb(140, 156, 245)" : "rgb(47, 63, 158)");
           await shot(page, `${p.name}-${scheme}-${width}`);
         }
