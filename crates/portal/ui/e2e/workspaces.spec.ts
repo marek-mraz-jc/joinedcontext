@@ -100,6 +100,25 @@ const SIZES = [
   { name: "1280px at 1.5x zoom", viewport: { width: 853, height: 480 } },
 ];
 
+// T-6929: the page's description stays open while the pointer moves from the mark onto it (WCAG 1.4.13).
+for (const width of [1440, 400]) {
+  test(`the page description stays open under the pointer at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await stubApi(page);
+    await page.route("**/api/v1/projects/helsinki/workspaces", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: API, kind: "List", items: [WORKSPACE] }) }),
+    );
+    const shots = process.env.JC_SHOTS_DIR;
+    await page.goto(`/projects/${PROJECT}/workspaces?lang=en`);
+    await page.getByRole("button", { name: "About this page" }).hover();
+    const text = page.getByRole("tooltip");
+    await expect(text).toBeVisible();
+    await text.hover();
+    await expect(text).toBeVisible();
+    if (shots) await page.screenshot({ path: `${shots}/page-hint-open-${width}.png`, fullPage: false });
+  });
+}
+
 // T-6917: a discard the server refuses keeps its dialog open and says why.
 for (const width of [1440, 400]) {
   test(`a refused discard says why in its dialog at ${width} px`, async ({ page }) => {

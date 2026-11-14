@@ -386,7 +386,8 @@ impl Display for Literal {
                 for byte in text.bytes() {
                     match byte {
                         b'\'' => f.write_str("''")?,
-                        b if b.is_ascii_alphanumeric() || b"-._~!()*,;$&=:@".contains(&b) => {
+                        // `&` is escaped: a plain query parser splits a nextLink on it
+                        b if b.is_ascii_alphanumeric() || b"-._~!()*,;$=:@".contains(&b) => {
                             f.write_char(char::from(b))?;
                         }
                         b => write!(f, "%{b:02X}")?,

@@ -47,16 +47,20 @@ function DescriptionHint({ children }: { children: ReactNode }): React.JSX.Eleme
   const id = useId();
   const [open, setOpen] = useState(false);
   return (
-    <span className="contents sm:relative sm:inline-flex">
+    // The pointer handlers sit on the span holding the mark and its text, so the text stays
+    // open while the pointer moves onto it (WCAG 1.4.13, hoverable).
+    <span
+      className="contents sm:relative sm:inline-flex"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
       <button
         type="button"
         aria-label={t("pageHeader.about")}
         title={t("pageHeader.about")}
         aria-describedby={id}
         aria-expanded={open}
-        className="focus-ring inline-flex size-control-xs items-center justify-center rounded-full text-fg-muted hover:text-fg"
-        onMouseEnter={() => setOpen(true)}
-        onMouseLeave={() => setOpen(false)}
+        className="focus-ring inline-flex size-control-xs items-center justify-center rounded-full text-fg-muted hover:text-fg aria-expanded:bg-primary aria-expanded:text-primary-fg"
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         // A touch screen has no hover: a tap shows and hides the text.
@@ -75,7 +79,7 @@ function DescriptionHint({ children }: { children: ReactNode }): React.JSX.Eleme
         role="tooltip"
         className={clsx(
           open
-            ? "basis-full rounded-md border border-border bg-surface p-2 text-caption font-normal text-fg sm:absolute sm:left-0 sm:top-full sm:z-50 sm:mt-1 sm:w-72 sm:basis-auto sm:shadow-2"
+            ? "basis-full rounded-md border border-border bg-surface p-2 text-caption font-normal text-fg sm:absolute sm:left-0 sm:top-full sm:z-50 sm:w-72 sm:basis-auto sm:shadow-2"
             : "sr-only",
         )}
       >

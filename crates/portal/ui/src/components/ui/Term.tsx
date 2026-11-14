@@ -53,14 +53,18 @@ export function Term({ name, children, className }: TermProps): React.JSX.Elemen
   const [open, setOpen] = useState(false);
 
   return (
-    <span className={clsx("relative inline-block", className)}>
+    // The pointer handlers hold the word and its definition, so the definition stays open
+    // while the pointer moves onto it (WCAG 1.4.13, hoverable).
+    <span
+      className={clsx("relative inline-block", className)}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
       <span
         tabIndex={0}
         role="term"
         aria-describedby={definitionId}
         className="focus-ring cursor-help rounded-sm border-b border-dotted border-fg-muted"
-        onMouseEnter={() => setOpen(true)}
-        onMouseLeave={() => setOpen(false)}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         onKeyDown={(event) => {
@@ -90,7 +94,7 @@ export function Term({ name, children, className }: TermProps): React.JSX.Elemen
         role="tooltip"
         className={clsx(
           open
-            ? "absolute left-0 top-full z-50 mt-1 w-72 rounded-md border border-border bg-surface p-2 text-caption font-normal text-fg shadow-2"
+            ? "absolute left-0 top-full z-50 w-72 rounded-md border border-border bg-surface p-2 text-caption font-normal text-fg shadow-2"
             : "sr-only",
         )}
       >

@@ -361,6 +361,16 @@ describe("the parts, drawn alone", () => {
     expect(await screen.findByText("Copied")).toBeInTheDocument();
   });
 
+  it("CloneAddress keeps offering the copy when the browser refuses the clipboard", async () => {
+    const writeText = vi.fn(() => Promise.reject(new DOMException("denied", "NotAllowedError")));
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    alone(<CloneAddress url="https://forge.example/x.git" />);
+    await userEvent.click(screen.getByRole("button", { name: "Copy the clone address" }));
+    expect(writeText).toHaveBeenCalledOnce();
+    await Promise.resolve();
+    expect(screen.queryByText("Copied")).not.toBeInTheDocument();
+  });
+
   it("SettingsView says what is empty, section by section", async () => {
     vi.stubGlobal(
       "fetch",

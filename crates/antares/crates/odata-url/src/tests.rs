@@ -911,6 +911,23 @@ fn an_apostrophe_in_a_search_phrase_opens_no_literal() {
     );
 }
 
+/// A custom option's value is `qchar-no-AMP` with no literal in it: an apostrophe
+/// there opens none, so the `$apply` and `$compute` after it are read.
+#[test]
+fn an_apostrophe_in_a_custom_option_opens_no_literal() {
+    for uri in [
+        "Buildings?owner=O'Brien&$apply=identity",
+        "Buildings?owner=O%27Brien&$compute=height%20mul%202%20as%20h&$select=h",
+        "Buildings?note=%22&$apply=identity",
+    ] {
+        let o = options(uri);
+        assert!(o.apply.is_some() || o.compute.is_some(), "{uri}: {o:?}");
+        assert_eq!(o.custom.len(), 1, "{uri}");
+    }
+    let o = options("Buildings?$filter=name%20eq%20'a&x=1&$apply=identity'");
+    assert!(o.apply.is_none(), "an & in a literal: {:?}", o.apply);
+}
+
 /// F-R2ANT4-015: an offset is into the URL as given, so a name after decoded
 /// escapes is placed past the path, not inside it (odata-axum answers 404 or
 /// 400 by that offset).
@@ -1030,6 +1047,10 @@ fn the_canonical_form_parses_back() {
         ok("Buildings?$filter=name eq 'a%20b%23'").to_string(),
         "Buildings?$filter=name%20eq%20'a%20b%23'"
     );
+    // A nextLink is split on `&` by plain query parsers: none stands inside a literal.
+    let link = ok("Buildings?$filter=name eq 'A%26B'&$top=1").to_string();
+    assert_eq!(link, "Buildings?$filter=name%20eq%20'A%26B'&$top=1");
+    assert_eq!(link.split('&').count(), 2, "{link}");
 }
 
 #[test]
