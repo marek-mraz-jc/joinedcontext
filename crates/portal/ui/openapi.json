@@ -54993,7 +54993,8 @@
         "type": "object",
         "required": [
           "entries",
-          "projects"
+          "projects",
+          "secondFactorFloor"
         ],
         "properties": {
           "entries": {
@@ -55007,6 +55008,11 @@
             "items": {
               "$ref": "#/components/schemas/ProjectQuota"
             }
+          },
+          "secondFactorFloor": {
+            "type": "string",
+            "description": "The deployment's sign-in second-factor floor, `required` or `optional` (T-6895). Under\n`required` every Organization inherits it and its own `spec.policies.signIn.secondFactor:\noptional` has no effect; under `optional` the Organization's `required` asks its members.",
+            "example": "optional"
           }
         }
       },

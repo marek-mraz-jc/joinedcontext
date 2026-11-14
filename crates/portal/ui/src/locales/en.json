@@ -8369,12 +8369,14 @@
       "modelsHint": "Leave empty to allow every model the installation offers.",
       "everyModel": "Every model of the installation",
       "secondFactor": "Second factor at sign-in",
-      "secondFactorHint": "Required: members are asked to set up an authenticator app at their next sign-in and use it every time. Example: required. Leave empty to keep the deployment's setting.",
+      "secondFactorHint": "Required: members are asked to set up an authenticator app at their next sign-in and use it every time. Example: Required for an organization whose people handle personal data. Leave empty to keep the deployment's setting.",
       "secondFactor_required": "Required",
       "secondFactor_optional": "Optional",
       "secondFactorInherited": "Required (inherited from the deployment)",
       "secondFactorInheritedHint": "Inherited: required (deployment). Every member already signs in with an authenticator app, so Optional here has no effect.",
-      "secondFactorByDefault": "Optional (deployment default)"
+      "secondFactorByDefault": "Optional (deployment default)",
+      "secondFactorFixed": "Fixed by the deployment",
+      "secondFactorChoice": "Required or Optional"
     },
     "brokers": {
       "title": "Context brokers",

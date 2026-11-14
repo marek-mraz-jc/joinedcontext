@@ -11446,6 +11446,13 @@ export interface components {
         OrganizationLimits: {
             entries: components["schemas"]["LimitEntry"][];
             projects: components["schemas"]["ProjectQuota"][];
+            /**
+             * @description The deployment's sign-in second-factor floor, `required` or `optional` (T-6895). Under
+             *     `required` every Organization inherits it and its own `spec.policies.signIn.secondFactor:
+             *     optional` has no effect; under `optional` the Organization's `required` asks its members.
+             * @example optional
+             */
+            secondFactorFloor: string;
         };
         /** @description One `DataModel` of the organization as the pickers list it (DM-63, DM-79). */
         OrganizationModel: {

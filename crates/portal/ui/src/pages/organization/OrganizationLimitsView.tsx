@@ -136,7 +136,10 @@ export function OrganizationLimitsView({
                       ? t("organization.policy.secondFactorInheritedHint")
                       : t("organization.policy.secondFactorHint"),
                   value: secondFactorInForce,
-                  range: "—",
+                  range:
+                    limits.secondFactorFloor === "required"
+                      ? t("organization.policy.secondFactorFixed")
+                      : t("organization.policy.secondFactorChoice"),
                 },
               ]
             : []),

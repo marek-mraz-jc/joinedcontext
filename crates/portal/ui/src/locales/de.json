@@ -8369,12 +8369,14 @@
       "modelsHint": "Leer lassen, um jedes Modell der Installation zu erlauben.",
       "everyModel": "Jedes Modell der Installation",
       "secondFactor": "Zweiter Faktor bei der Anmeldung",
-      "secondFactorHint": "Erforderlich: Mitglieder richten bei der nächsten Anmeldung eine Authenticator-App ein und nutzen sie bei jeder Anmeldung. Beispiel: required. Leer lassen, damit die Einstellung der Installation gilt.",
+      "secondFactorHint": "Erforderlich: Mitglieder richten bei der nächsten Anmeldung eine Authenticator-App ein und nutzen sie bei jeder Anmeldung. Beispiel: Erforderlich für eine Organisation, deren Mitarbeitende personenbezogene Daten bearbeiten. Leer lassen, damit die Einstellung der Installation gilt.",
       "secondFactor_required": "Erforderlich",
       "secondFactor_optional": "Optional",
       "secondFactorInherited": "Erforderlich (von der Installation geerbt)",
       "secondFactorInheritedHint": "Geerbt: erforderlich (Installation). Jedes Mitglied meldet sich bereits mit einer Authenticator-App an, Optional hat hier keine Wirkung.",
-      "secondFactorByDefault": "Optional (Standard der Installation)"
+      "secondFactorByDefault": "Optional (Standard der Installation)",
+      "secondFactorFixed": "Von der Installation festgelegt",
+      "secondFactorChoice": "Erforderlich oder Optional"
     },
     "brokers": {
       "title": "Context-Broker",

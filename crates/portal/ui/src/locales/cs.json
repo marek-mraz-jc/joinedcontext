@@ -8369,12 +8369,14 @@
       "modelsHint": "Nechte prázdné, aby byly povoleny všechny modely instalace.",
       "everyModel": "Všechny modely instalace",
       "secondFactor": "Druhý faktor při přihlášení",
-      "secondFactorHint": "Povinný: členové si při příštím přihlášení nastaví ověřovací aplikaci a používají ji při každém přihlášení. Příklad: required. Nechte prázdné, má-li platit nastavení nasazení.",
+      "secondFactorHint": "Povinný: členové si při příštím přihlášení nastaví ověřovací aplikaci a používají ji při každém přihlášení. Příklad: Povinný pro organizaci, jejíž lidé pracují s osobními údaji. Nechte prázdné, má-li platit nastavení nasazení.",
       "secondFactor_required": "Povinný",
       "secondFactor_optional": "Volitelný",
       "secondFactorInherited": "Povinný (zděděno z nasazení)",
       "secondFactorInheritedHint": "Zděděno: povinný (nasazení). Každý člen se už přihlašuje s ověřovací aplikací, takže Volitelný zde nemá účinek.",
-      "secondFactorByDefault": "Volitelný (výchozí nasazení)"
+      "secondFactorByDefault": "Volitelný (výchozí nasazení)",
+      "secondFactorFixed": "Určeno nasazením",
+      "secondFactorChoice": "Povinný nebo Volitelný"
     },
     "brokers": {
       "title": "Kontextové brokery",
