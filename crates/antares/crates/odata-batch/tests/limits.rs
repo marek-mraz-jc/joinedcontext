@@ -144,6 +144,26 @@ mod limits {
                 5,
             ),
             (nested(2), nested(3), BatchLimit::JsonDepth, 2),
+            (
+                json(&[r#"{"id":"1","method":"get","url":"x","headers":{"a":"1","b":"2"}}"#]),
+                json(&[
+                    r#"{"id":"1","method":"get","url":"x","headers":{"a":"1","b":"2","c":"3"}}"#,
+                ]),
+                BatchLimit::Headers,
+                2,
+            ),
+            (
+                json(&[&format!(
+                    r#"{{"id":"1","method":"get","url":"x","headers":{{"a":"{}"}}}}"#,
+                    "v".repeat(55)
+                )]),
+                json(&[&format!(
+                    r#"{{"id":"1","method":"get","url":"x","headers":{{"a":"{}"}}}}"#,
+                    "v".repeat(56)
+                )]),
+                BatchLimit::HeaderBytes,
+                60,
+            ),
         ] {
             assert!(parse(&ok).is_ok(), "{ok}");
             assert_eq!(parse(&over), exceeded(limit, max), "{over}");

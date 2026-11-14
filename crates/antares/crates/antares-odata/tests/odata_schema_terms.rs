@@ -101,7 +101,7 @@ async fn store() -> Result<(TestBroker, Router), String> {
         "selector": ["store:Item", "store:Log"],
         "rules": [{"types": ["store:Item"], "attributes": attrs},
                   {"types": ["store:Log"], "attributes": ["store:name"]}],
-        "operations": ["query_entities", "retrieve_entity", "create_entity", "merge_entity",
+        "operations": ["query_entities", "retrieve_entity", "retrieve_attribute_value", "create_entity", "merge_entity",
                        "replace_entity", "delete_entity", "replace_attribute",
                        "partial_attribute_update", "delete_attribute"]
     });
@@ -254,6 +254,44 @@ async fn a_write_is_checked_against_the_narrower_type_and_the_terms() {
         Some(1),
         "{answer}"
     );
+}
+
+/// A property path reads the Entity only through its own set: another set's
+/// Entity under the same id is absent there.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_property_path_reads_only_an_entity_of_its_set() {
+    let (_b, app) = store().await.expect("broker");
+    let (status, answer) = odata(&app, Method::GET, &format!("{LOG}/name"), None).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    for path in [
+        "Item('urn:ngsi-ld:Log:1')/name",
+        "Item('urn:ngsi-ld:Log:1')/name/$value",
+    ] {
+        let (status, answer) = odata(&app, Method::GET, path, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {answer}");
+    }
+}
+
+/// A member a write may not change (`odata_immutable`, `odata_computed`) is
+/// as read-only to `DELETE` of the property as to `PUT` and `PATCH`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_property_delete_keeps_to_the_terms() {
+    let (_b, app) = store().await.expect("broker");
+    for (method, member, body) in [
+        (Method::DELETE, "serial", None),
+        (Method::DELETE, "made", None),
+        (Method::PUT, "serial", Some(r#"{"value": "s-9"}"#)),
+    ] {
+        let (status, answer) = odata(&app, method.clone(), &format!("{ITEM}/{member}"), body).await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{method} {member}: {answer}"
+        );
+    }
+    let (status, item) = odata(&app, Method::GET, ITEM, None).await;
+    assert_eq!(status, StatusCode::OK, "{item}");
+    assert_eq!(item["serial"], "s-1", "{item}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -108,6 +108,8 @@ pub enum LimitKind {
     InListLength,
     /// Bytes of one literal.
     LiteralLength,
+    /// The value of `$skip`.
+    Skip,
     /// An integer beyond what its target holds (`$top`, `$skip`, an `Int64` literal).
     Number,
 }
@@ -244,6 +246,7 @@ impl LimitKind {
             Self::OrderbyItems => "orderby items",
             Self::InListLength => "in list length",
             Self::LiteralLength => "literal length",
+            Self::Skip => "skip",
             Self::Number => "number range",
         }
     }
