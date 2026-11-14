@@ -1622,6 +1622,11 @@ fn html_response_with_csp(
         [
             (header::CONTENT_TYPE, "text/html; charset=utf-8".to_owned()),
             (header::CONTENT_SECURITY_POLICY, csp),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_owned()),
+            (
+                header::REFERRER_POLICY,
+                "strict-origin-when-cross-origin".to_owned(),
+            ),
         ],
         html,
     )

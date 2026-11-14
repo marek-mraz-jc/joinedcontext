@@ -2888,6 +2888,11 @@ async fn pages_show_a_dataset_its_resources_and_its_map_where_package_show_would
     let a = get(app, "/dataset/open/resource/res-open-0", None).await;
     assert!(a.header("content-type").starts_with("text/html"));
     assert!(a.header("content-security-policy").contains("nonce-"));
+    assert_eq!(a.header("x-content-type-options"), "nosniff");
+    assert_eq!(
+        a.header("referrer-policy"),
+        "strict-origin-when-cross-origin"
+    );
     assert!(a.body.contains("files.example.org/open.csv"));
     let a = get(app, "/map/open", None).await;
     assert!(
