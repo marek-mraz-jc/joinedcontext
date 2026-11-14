@@ -7,7 +7,7 @@ use crate::sources::{
     parse_arcgis_hub_items, parse_ckan_search_page, parse_dcat_page, parse_nkod_sparql_bindings,
 };
 use chrono::Utc;
-use dataroom_core::ops::HarvestRunner;
+use dataroom_core::ops::{HarvestRunner, SourceTest};
 use dataroom_core::store::BoxFuture;
 use dataroom_core::{
     ActivityRow, DataroomError, Dataset, HarvestLogLine, HarvestRun, HarvestRunState,
@@ -496,6 +496,36 @@ impl HarvestEngine {
         cat_allowed_hosts: &[String],
         accept: &str,
     ) -> Result<(Option<String>, String)> {
+        self.phased_fetch(url, source, cat_allowed_hosts, accept)
+            .await
+            .map_err(|(_, e)| e)
+    }
+
+    /// [`Self::checked_fetch`], telling where it stopped: the guard, the read, or the cap.
+    async fn phased_fetch(
+        &self,
+        url: &str,
+        source: &HarvestSource,
+        cat_allowed_hosts: &[String],
+        accept: &str,
+    ) -> std::result::Result<(Option<String>, String), (Stop, DataroomError)> {
+        let guard = |e: DataroomError| {
+            // A name that does not resolve is a source that cannot be reached, not a refusal.
+            let stop = match &e {
+                DataroomError::OutboundRefused(m) if m.starts_with("DNS resolution failed") => {
+                    Stop::Fetch
+                }
+                _ => Stop::Guard,
+            };
+            (stop, e)
+        };
+        let read = |e: DataroomError| {
+            let stop = match &e {
+                DataroomError::OutboundRefused(m) if m.contains("cap of") => Stop::TooLarge,
+                _ => Stop::Fetch,
+            };
+            (stop, e)
+        };
         let mut current_url = url.to_owned();
         let mut hops = 0;
         loop {
@@ -504,7 +534,7 @@ impl HarvestEngine {
                 .as_ref()
                 .map(|r| r.as_ref() as &crate::guard::DnsResolver);
             let own = if hops == 0 {
-                self.own_target(&current_url)?
+                self.own_target(&current_url).map_err(guard)?
             } else {
                 None
             };
@@ -516,38 +546,40 @@ impl HarvestEngine {
                     cat_allowed_hosts,
                     self.resolve_dns,
                     resolver_ref,
-                )?,
+                )
+                .map_err(guard)?,
             };
 
             match self
                 .fetcher
                 .fetch_hop(&target, accept, self.max_bytes, self.timeout)
-                .await?
+                .await
+                .map_err(read)?
             {
                 FetchResponse::Ok { content_type, body } => {
                     if body.len() > self.max_bytes {
-                        return Err(DataroomError::OutboundRefused(format!(
+                        return Err((Stop::TooLarge, DataroomError::OutboundRefused(format!(
                             "{current_url} body size {} exceeded cap of {} bytes",
                             body.len(),
                             self.max_bytes
-                        )));
+                        ))));
                     }
                     return Ok((content_type, body));
                 }
                 FetchResponse::Redirect { location, .. } => {
                     if hops == MAX_REDIRECT_HOPS {
-                        return Err(DataroomError::OutboundRefused(format!(
+                        return Err(guard(DataroomError::OutboundRefused(format!(
                             "redirect limit of {MAX_REDIRECT_HOPS} hops exceeded from {url}"
-                        )));
+                        ))));
                     }
                     hops += 1;
                     let next_url = target
                         .url
                         .join(&location)
                         .map_err(|e| {
-                            DataroomError::OutboundRefused(format!(
+                            guard(DataroomError::OutboundRefused(format!(
                                 "invalid redirect Location '{location}': {e}"
-                            ))
+                            )))
                         })?
                         .into();
                     current_url = next_url;
@@ -880,6 +912,62 @@ impl HarvestEngine {
     }
 }
 
+/// Where a guarded fetch stopped (ODP-15): the guard refused the address, the read failed, or
+/// the answer passed the byte cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stop {
+    Guard,
+    Fetch,
+    TooLarge,
+}
+
+/// The longest a source test waits, every hop included (ODP-15).
+pub const SOURCE_TEST_CAP: Duration = Duration::from_secs(10);
+
+impl HarvestEngine {
+    /// The first page of `source` as a run reads it, and what it is asked to answer in.
+    fn first_page(source: &HarvestSource) -> Result<(String, &'static str)> {
+        let base = source.url.trim_end_matches('/');
+        Ok(match source.kind {
+            HarvestSourceKind::DcatAp => (
+                source.url.clone(),
+                "text/turtle, application/ld+json, application/rdf+xml",
+            ),
+            HarvestSourceKind::NkodSparql => {
+                (nkod_query_url(source)?, "application/sparql-results+json")
+            }
+            HarvestSourceKind::CkanAction if base.contains("/api/3/action/package_search") => {
+                let sep = if base.contains('?') { '&' } else { '?' };
+                (format!("{base}{sep}rows=1&start=0"), "application/json")
+            }
+            HarvestSourceKind::CkanAction => (
+                format!("{base}/api/3/action/package_search?rows=1&start=0"),
+                "application/json",
+            ),
+            HarvestSourceKind::ArcGisHub => (
+                format!("{base}/api/search/v1/collections/dataset/items?limit=1"),
+                "application/json",
+            ),
+        })
+    }
+
+    /// Whether `body` reads as the first page of `source`'s kind.
+    fn reads_as(source: &HarvestSource, ctx: &RequestCtx, ct: Option<&str>, body: &str) -> bool {
+        match source.kind {
+            HarvestSourceKind::DcatAp => {
+                parse_dcat_page(ctx.org_id, ctx.catalogue_id, source, body, ct, "en").is_ok()
+            }
+            HarvestSourceKind::CkanAction => {
+                parse_ckan_search_page(ctx.org_id, ctx.catalogue_id, source, body, "en").is_ok()
+            }
+            HarvestSourceKind::ArcGisHub => serde_json::from_str::<Value>(body)
+                .is_ok_and(|v| v.get("features").is_some_and(Value::is_array)),
+            HarvestSourceKind::NkodSparql => serde_json::from_str::<Value>(body)
+                .is_ok_and(|v| v.pointer("/results/bindings").is_some_and(Value::is_array)),
+        }
+    }
+}
+
 impl HarvestRunner for HarvestEngine {
     /// One run of `source`: refused with a conflict while another run of it holds the source's
     /// Running row, stopped and recorded failed after the deadline, a failure always leaves a
@@ -956,6 +1044,59 @@ impl HarvestRunner for HarvestEngine {
                 store.upsert_harvest_run(ctx, run).await?;
             }
             Err(err)
+        })
+    }
+
+    /// One read of `source`'s first page through the guard, at most its byte budget and
+    /// [`SOURCE_TEST_CAP`] (the engine's own timeout when shorter); writes nothing and logs
+    /// only the word.
+    fn test_source<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        store: &'a dyn Store,
+        source: &'a HarvestSource,
+    ) -> BoxFuture<'a, Result<SourceTest>> {
+        Box::pin(async move {
+            let cat = store
+                .get_catalogue(ctx.org_id, ctx.catalogue_id)
+                .await?
+                .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+            let Ok((url, accept)) = Self::first_page(source) else {
+                return Ok(SourceTest::RefusedHost);
+            };
+            let budget = source
+                .budget
+                .map_or(self.max_bytes, |b| {
+                    usize::try_from(b.bytes).unwrap_or(usize::MAX)
+                })
+                .min(self.max_bytes);
+            let cap = self.timeout.min(SOURCE_TEST_CAP);
+            let probe = HarvestEngine {
+                fetcher: self.fetcher.clone(),
+                resolve_dns: self.resolve_dns,
+                custom_dns: self.custom_dns.clone(),
+                max_bytes: budget,
+                timeout: cap,
+                deadline: cap,
+                own_gateway: self.own_gateway.clone(),
+                retry_waits: Vec::new(),
+            };
+            let read = tokio::time::timeout(
+                cap,
+                probe.phased_fetch(&url, source, &cat.allowed_outbound_hosts, accept),
+            )
+            .await;
+            let outcome = match read {
+                Err(_) | Ok(Err((Stop::Fetch, _))) => SourceTest::Unreachable,
+                Ok(Err((Stop::Guard, _))) => SourceTest::RefusedHost,
+                Ok(Err((Stop::TooLarge, _))) => SourceTest::TooLarge,
+                Ok(Ok((ct, body))) if Self::reads_as(source, ctx, ct.as_deref(), &body) => {
+                    SourceTest::Ok
+                }
+                Ok(Ok(_)) => SourceTest::NotTheExpectedFormat,
+            };
+            tracing::info!(source = %source.name, outcome = ?outcome, "harvest source tested");
+            Ok(outcome)
         })
     }
 }
@@ -1424,6 +1565,229 @@ mod tests {
             false
         )
         .is_ok());
+    }
+
+    /// A catalogue, its publisher and one dcat-ap source on `feed.example.org`, for the source
+    /// test (ODP-15).
+    async fn tested_world(budget: Option<u64>) -> (RequestCtx, MemoryStore, HarvestSource) {
+        let (org_id, catalogue_id, ctx, store) = test_setup();
+        let mut cat = probe_catalogue(org_id, catalogue_id);
+        cat.allowed_outbound_hosts = vec!["feed.example.org".into(), "inner.example.org".into()];
+        store.upsert_catalogue(cat).await.unwrap();
+        let source = HarvestSource {
+            org_id,
+            catalogue_id,
+            id: "hs-feed".into(),
+            name: "feed".into(),
+            kind: HarvestSourceKind::DcatAp,
+            url: "https://feed.example.org/catalog.ttl".into(),
+            publisher_id: "feed".into(),
+            target_publisher_iri: None,
+            spatial_uri: None,
+            name_prefix: String::new(),
+            allowed_hosts: vec!["feed.example.org".into(), "inner.example.org".into()],
+            rewrite_hosts: BTreeMap::new(),
+            skip_items: BTreeMap::new(),
+            title_overrides: BTreeMap::new(),
+            spelling_fixes: BTreeMap::new(),
+            require_column: BTreeMap::new(),
+            converted: BTreeMap::new(),
+            gateway: None,
+            schedule: "23 3 * * *".into(),
+            enabled: true,
+            modified: Utc::now(),
+            budget: budget.map(|bytes| HarvestBudget {
+                records: 10,
+                bytes,
+            }),
+            position: 0,
+        };
+        (ctx, store, source)
+    }
+
+    fn probe_catalogue(org_id: OrgId, catalogue_id: CatalogueId) -> Catalogue {
+        Catalogue {
+            org_id,
+            id: catalogue_id,
+            name: "probe".into(),
+            host: "opendata.probe.example".into(),
+            title: BTreeMap::new(),
+            description: BTreeMap::new(),
+            homepage: None,
+            default_language: "sk".into(),
+            languages: vec!["sk".into()],
+            main_profile: "dcat-ap-sk-2.0".into(),
+            active_profiles: Vec::new(),
+            default_licence: None,
+            publisher_uri: None,
+            publisher_name: None,
+            contact_point: None,
+            theme: ThemeTokens::default(),
+            branding: None,
+            hidden_datasets: Default::default(),
+            allow_cross_org_harvest: false,
+            allowed_outbound_hosts: Vec::new(),
+            applicable_legislation: Vec::new(),
+            modified: Utc::now(),
+            deleted: None,
+            public_base: None,
+            portal_base: None,
+            left_hosts: Vec::new(),
+        }
+    }
+
+    fn probe_engine(fetcher: &MapFetcher) -> HarvestEngine {
+        HarvestEngine::new(Arc::new(fetcher.clone())).with_custom_dns(|host, port| match host {
+            "feed.example.org" | "outside.example.org" => {
+                Ok(vec![SocketAddr::from(([93, 184, 216, 34], port))])
+            }
+            "inner.example.org" => Ok(vec![SocketAddr::from(([10, 0, 0, 7], port))]),
+            other => Err(DataroomError::OutboundRefused(format!(
+                "DNS resolution failed for '{other}': no such host"
+            ))),
+        })
+    }
+
+    const FEED: &str = "@prefix dcat: <http://www.w3.org/ns/dcat#> .\n\
+        <https://feed.example.org/catalog> a dcat:Catalog .";
+
+    #[tokio::test]
+    async fn source_test_goes_through_the_guard() {
+        let (ctx, store, mut source) = tested_world(None).await;
+        let fetcher = MapFetcher::new();
+        fetcher.insert(
+            "https://feed.example.org/catalog.ttl",
+            Some("text/turtle"),
+            FEED,
+        );
+        fetcher.insert_redirect(
+            "https://feed.example.org/to-inner",
+            302,
+            "https://inner.example.org/catalog.ttl",
+        );
+        fetcher.insert_redirect(
+            "https://feed.example.org/to-metadata",
+            302,
+            "https://169.254.169.254/latest/meta-data/",
+        );
+        let engine = probe_engine(&fetcher);
+        let ok = engine.test_source(&ctx, &store, &source).await.unwrap();
+        assert_eq!(ok, SourceTest::Ok);
+        let mut refused = Vec::new();
+        for url in [
+            "https://inner.example.org/catalog.ttl",
+            "https://feed.example.org/to-inner",
+            "https://feed.example.org/to-metadata",
+            "https://outside.example.org/catalog.ttl",
+            "http://feed.example.org/catalog.ttl",
+        ] {
+            source.url = url.into();
+            refused.push(engine.test_source(&ctx, &store, &source).await.unwrap());
+        }
+        assert_eq!(refused, [SourceTest::RefusedHost; 5]);
+        // The guard stopped each before a read: only the first source and the two redirecting
+        // pages were asked, never an internal or unlisted address.
+        let asked: Vec<String> = fetcher.pinned_seen().into_iter().map(|(h, _)| h).collect();
+        assert!(asked.iter().all(|h| h == "feed.example.org"), "{asked:?}");
+        source.url = "https://gone.example.org/catalog.ttl".into();
+        source.allowed_hosts.push("gone.example.org".into());
+        let mut cat = probe_catalogue(ctx.org_id, ctx.catalogue_id);
+        cat.allowed_outbound_hosts = source.allowed_hosts.clone();
+        store.upsert_catalogue(cat).await.unwrap();
+        assert_eq!(
+            engine.test_source(&ctx, &store, &source).await.unwrap(),
+            SourceTest::Unreachable
+        );
+    }
+
+    #[tokio::test]
+    async fn source_test_echoes_no_remote_detail() {
+        let (ctx, store, source) = tested_world(None).await;
+        let fetcher = MapFetcher::new();
+        let marker = "MARKER-7f3a-remote-secret";
+        fetcher.insert(
+            "https://feed.example.org/catalog.ttl",
+            Some("text/html"),
+            format!("<html><body>{marker} 10.0.0.7 Server: nginx</body></html>"),
+        );
+        let engine = probe_engine(&fetcher);
+        let outcome = engine.test_source(&ctx, &store, &source).await.unwrap();
+        assert_eq!(outcome, SourceTest::NotTheExpectedFormat);
+        let answer = serde_json::to_string(&json!({ "outcome": outcome })).unwrap();
+        assert_eq!(answer, r#"{"outcome":"not the expected format"}"#);
+        fetcher.insert_status("https://feed.example.org/catalog.ttl", 503);
+        let outcome = engine.test_source(&ctx, &store, &source).await.unwrap();
+        assert_eq!(
+            serde_json::to_string(&outcome).unwrap(),
+            r#""unreachable""#,
+            "a status line never reaches the answer"
+        );
+    }
+
+    #[tokio::test]
+    async fn source_test_writes_nothing() {
+        let (ctx, store, source) = tested_world(None).await;
+        let fetcher = MapFetcher::new();
+        fetcher.insert(
+            "https://feed.example.org/catalog.ttl",
+            Some("text/turtle"),
+            FEED,
+        );
+        let engine = probe_engine(&fetcher);
+        let before = store.get_catalogue(ctx.org_id, ctx.catalogue_id).await.unwrap();
+        assert_eq!(
+            engine.test_source(&ctx, &store, &source).await.unwrap(),
+            SourceTest::Ok
+        );
+        assert!(store.list_harvest_runs(&ctx, None).await.unwrap().is_empty());
+        assert!(store.list_datasets(&ctx).await.unwrap().is_empty());
+        assert!(store.list_harvest_sources(&ctx).await.unwrap().is_empty());
+        assert!(store.get_publisher(&ctx, "feed").await.unwrap().is_none());
+        assert_eq!(
+            store.get_catalogue(ctx.org_id, ctx.catalogue_id).await.unwrap(),
+            before
+        );
+    }
+
+    /// A fetcher whose answer never comes.
+    struct Silent;
+
+    impl OutboundFetcher for Silent {
+        fn fetch_hop<'a>(
+            &'a self,
+            _target: &'a ValidatedTarget,
+            _accept: &'a str,
+            _max_bytes: usize,
+            _timeout: Duration,
+        ) -> BoxFuture<'a, Result<FetchResponse>> {
+            Box::pin(std::future::pending())
+        }
+    }
+
+    #[tokio::test]
+    async fn source_test_stops_at_the_byte_budget_and_the_time_cap() {
+        let (ctx, store, source) = tested_world(Some(64)).await;
+        let fetcher = MapFetcher::new();
+        fetcher.insert(
+            "https://feed.example.org/catalog.ttl",
+            Some("text/turtle"),
+            format!("{FEED}\n# {}", "x".repeat(128)),
+        );
+        let engine = probe_engine(&fetcher);
+        assert_eq!(
+            engine.test_source(&ctx, &store, &source).await.unwrap(),
+            SourceTest::TooLarge
+        );
+        let silent = HarvestEngine::new(Arc::new(Silent))
+            .with_timeout(Duration::from_millis(50))
+            .with_custom_dns(|_, port| Ok(vec![SocketAddr::from(([93, 184, 216, 34], port))]));
+        let started = std::time::Instant::now();
+        assert_eq!(
+            silent.test_source(&ctx, &store, &source).await.unwrap(),
+            SourceTest::Unreachable
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(SOURCE_TEST_CAP <= Duration::from_secs(10));
     }
 
     #[tokio::test]

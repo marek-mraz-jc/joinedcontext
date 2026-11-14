@@ -1272,7 +1272,9 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
     for op in all_operations() {
         let probe_b_input = match op.name {
             "dataset.get" | "dataset.withdraw" => json!({ "name": "b-only-secret" }),
-            "harvest_run.start" => json!({ "source": "b-only-secret" }),
+            "harvest_run.start" | "harvest_source.test" | "harvest_run.list" => {
+                json!({ "source": "b-only-secret" })
+            }
             "harvest_run.get" | "harvest_run.logs" => json!({ "run": "run-b-only" }),
             "allowed" => json!({ "operation": "dataset.get", "object": "b-only-secret" }),
             "catalogue.propose" => continue,
@@ -1290,7 +1292,8 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
         let res = execute_operation(&op_ctx, &ctx_a, op.name, probe_b_input).await;
         match op.name {
             "dataset.get" | "dataset.withdraw" | "harvest_run.start" | "harvest_run.get"
-            | "harvest_run.logs" | "publisher.withdraw" => {
+            | "harvest_run.logs" | "harvest_source.test" | "harvest_run.list"
+            | "publisher.withdraw" => {
                 assert!(
                     matches!(res, Err(dataroom_core::DataroomError::NotFound(_))),
                     "op {} probing B id must return NotFound, got {:?}",
