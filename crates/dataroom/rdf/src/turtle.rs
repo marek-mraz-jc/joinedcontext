@@ -390,6 +390,33 @@ mod tests {
             .is_empty());
     }
 
+    #[test]
+    fn malicious_language_tag_cannot_inject_triples() {
+        let mut g = RdfGraph::new();
+        g.insert(
+            SubjectNode::Named("https://example.org/ds".into()),
+            "http://purl.org/dc/terms/title",
+            Term::Literal(LiteralValue::lang(
+                "ok",
+                "en . <http://x/s> <http://x/p> <http://x/o>",
+            )),
+        );
+        g.insert(
+            SubjectNode::Named("https://example.org/ds".into()),
+            "http://purl.org/dc/terms/description",
+            Term::Literal(LiteralValue::lang("text", "SK-Latn")),
+        );
+        for text in [serialize_turtle(&g), serialize_ntriples(&g)] {
+            let back = parse_turtle(&text, &RdfLimits::default()).expect(&text);
+            assert_eq!(back.len(), 2, "{text}");
+            assert!(
+                text.contains("\"text\"@sk-latn"),
+                "a valid tag stays: {text}"
+            );
+            assert!(!text.contains("http://x/s"), "{text}");
+        }
+    }
+
     fn kind(e: DataroomError) -> String {
         match e {
             DataroomError::RdfLimitExceeded { kind, .. } => kind,

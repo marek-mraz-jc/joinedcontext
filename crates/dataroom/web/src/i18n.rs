@@ -224,7 +224,15 @@ pub fn url_in_lang(
 
 /// Complete dictionary of UI strings from `ours/ckan-theme/plugin.py` `STRINGS` + CKAN template
 /// words in `sk`, `cs`, `en`, `hu`, and `de` (C3).
-pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static str>> {
+/// Every UI string, built once per process (constant data, no tenant data).
+pub fn string_table() -> &'static BTreeMap<&'static str, BTreeMap<&'static str, &'static str>> {
+    static TABLE: std::sync::LazyLock<
+        BTreeMap<&'static str, BTreeMap<&'static str, &'static str>>,
+    > = std::sync::LazyLock::new(build_string_table);
+    &TABLE
+}
+
+fn build_string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static str>> {
     let mut m: BTreeMap<&'static str, BTreeMap<&'static str, &'static str>> = BTreeMap::new();
     let mut add = |key: &'static str,
                    en: &'static str,
@@ -2335,7 +2343,7 @@ mod tests {
     fn c3_every_key_exists_in_every_shipped_language_and_templates_hold_no_literal_english() {
         let table = string_table();
         assert!(table.len() >= 110);
-        for (key, row) in &table {
+        for (key, row) in table {
             for lang in ["sk", "cs", "en", "hu"] {
                 let val = row.get(lang).copied().unwrap_or("");
                 assert!(

@@ -36,11 +36,10 @@ pub fn nuts_label(uri_or_code: &str, lang: &str) -> String {
         return uri_or_code.to_owned();
     }
     let text = format!("NUTS {code}");
-    let Ok(parsed) = serde_json::from_str::<BTreeMap<String, BTreeMap<String, String>>>(NUTS_JSON)
-    else {
-        return text;
-    };
-    if let Some(names) = parsed.get(code) {
+    // Parsed once per process; a broken file leaves every label as its code.
+    static NUTS: std::sync::LazyLock<BTreeMap<String, BTreeMap<String, String>>> =
+        std::sync::LazyLock::new(|| serde_json::from_str(NUTS_JSON).unwrap_or_default());
+    if let Some(names) = NUTS.get(code) {
         let l = normalize_lang_code(lang);
         if let Some(name) = names.get(&l).or_else(|| names.get("en")) {
             return format!("{name} ({text})");
@@ -1458,7 +1457,12 @@ pub fn jc_visualizations(
         let src = format!("{viz}/#{}&inline&lang={code_lang}", v.id);
         let embed = format!("{viz}/#{}&lang={code_lang}", v.id);
         let code = format!(
-            "<iframe src=\"{embed}\" title=\"{}\" width=\"100%\" height=\"480\" style=\"border:0\" loading=\"lazy\" referrerpolicy=\"no-referrer\" sandbox=\"{embed_sandbox}\"></iframe>",
+            "<iframe src=\"{}\" title=\"{}\" width=\"100%\" height=\"480\" style=\"border:0\" loading=\"lazy\" referrerpolicy=\"no-referrer\" sandbox=\"{embed_sandbox}\"></iframe>",
+            // The quotes and brackets of a stored id stay text; `&` stays as people copy it.
+            embed
+                .replace('"', "&quot;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;"),
             html_escape(&v.title)
         );
         out.push(ChartView {

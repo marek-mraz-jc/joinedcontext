@@ -112,12 +112,17 @@ pub fn default_licence_register() -> Vec<LicenceEntry> {
 /// Resolves a licence by CKAN id, EU code, URL or EU IRI.
 pub fn find_licence(input: &str) -> Option<LicenceEntry> {
     let trimmed = input.trim();
-    default_licence_register().into_iter().find(|l| {
-        l.id.eq_ignore_ascii_case(trimmed)
-            || l.code.eq_ignore_ascii_case(trimmed)
-            || (!l.url.is_empty() && l.url == trimmed)
-            || l.eu_iri == trimmed
-    })
+    static REGISTER: std::sync::LazyLock<Vec<LicenceEntry>> =
+        std::sync::LazyLock::new(default_licence_register);
+    REGISTER
+        .iter()
+        .find(|l| {
+            l.id.eq_ignore_ascii_case(trimmed)
+                || l.code.eq_ignore_ascii_case(trimmed)
+                || (!l.url.is_empty() && l.url == trimmed)
+                || l.eu_iri == trimmed
+        })
+        .cloned()
 }
 
 /// EU Data Themes (`http://publications.europa.eu/resource/authority/data-theme/`).

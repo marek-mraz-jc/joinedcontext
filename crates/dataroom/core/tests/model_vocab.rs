@@ -80,6 +80,36 @@ fn enum_spellings_match_their_wire_names() {
 }
 
 #[test]
+fn dataset_language_keys_must_be_language_tags() {
+    let base = json!({
+        "orgId": uuid::Uuid::nil(), "catalogueId": uuid::Uuid::nil(), "id": "", "name": "air",
+        "title": {"sk": "Ovzdušie", "en-GB": "Air"}, "description": {},
+        "publisherId": "city", "visibility": "public", "state": "active",
+        "issued": "2026-11-01T10:00:00Z", "modified": "2026-11-02T10:00:00Z"
+    });
+    let ds: dataroom_core::Dataset = serde_json::from_value(base.clone()).unwrap();
+    ds.validate_basic().unwrap();
+    for (field, value, problem) in [
+        (
+            "title",
+            json!({"en . <http://x/s> <http://x/p> \"x\"@en": "x"}),
+            "language",
+        ),
+        ("description", json!({"": "x"}), "language"),
+        ("keywords", json!({"s k": ["x"]}), "keywords"),
+    ] {
+        let mut v = base.clone();
+        v[field] = value;
+        let ds: dataroom_core::Dataset = serde_json::from_value(v).unwrap();
+        let err = ds.validate_basic().unwrap_err();
+        assert!(
+            matches!(&err, dataroom_core::DataroomError::Validation { fields, .. } if fields.contains_key(problem)),
+            "{field}: {err:?}"
+        );
+    }
+}
+
+#[test]
 fn text_falls_back_through_en_sk_cs_then_any_non_empty() {
     let t = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
         pairs
