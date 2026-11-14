@@ -9,7 +9,7 @@ mod writes;
 
 use axum::http::{Method, StatusCode};
 use serde_json::{json, Value};
-use writes::{city, odata, send, stored, CITY};
+use writes::{city, exchange, odata, send, stored, CITY};
 
 const PAST: &str = "/x/views/past/odata/v4";
 const T0: &str = "2026-10-01T10:00:00Z";
@@ -373,13 +373,14 @@ async fn a_history_takes_no_write_and_exists_only_beside_the_temporal_query() {
         (Method::PUT, row.clone()),
         (Method::DELETE, row),
     ] {
-        let (status, answer) =
-            send(&app, method.clone(), &format!("{PAST}/{path}"), Some(&body)).await;
+        let (status, headers, answer) =
+            exchange(&app, method.clone(), &format!("{PAST}/{path}"), Some(&body)).await;
         assert_eq!(
             status,
             StatusCode::METHOD_NOT_ALLOWED,
             "{method} {path}: {answer}"
         );
+        assert_eq!(headers["allow"], "GET", "{method} {path}");
     }
     assert_eq!(
         stored(&app, "urn:ngsi-ld:Car:7").await,

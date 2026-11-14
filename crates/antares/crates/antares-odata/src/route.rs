@@ -12,8 +12,8 @@ use crate::read::{
 };
 use crate::write::{change, create, delete};
 use antares_ops::{Caller, OperationId};
-use axum::http::header::{IF_MATCH, IF_NONE_MATCH};
-use axum::http::{HeaderMap, Method, StatusCode};
+use axum::http::header::{ALLOW, IF_MATCH, IF_NONE_MATCH};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use odata_axum::{json_level, ODataErrorResponse, ODataRequest};
 use odata_json::{Ctx, WriteKind};
@@ -162,30 +162,19 @@ async fn write(
     };
     // A history is read only, whatever the view offers (T-5908).
     if history_set(reads, path).is_some() {
-        return refused(StatusCode::METHOD_NOT_ALLOWED, version).into_response();
+        return odata_axum::read_only(version);
     }
-    let form = match (method, path.as_slice()) {
-        (&Method::POST, [Segment::EntitySet(set)]) => Form::Create(set),
-        (&Method::PATCH, [Segment::EntitySet(set), Segment::Key(key)]) => {
-            Form::Change(set, key, WriteKind::Update)
-        }
-        (&Method::PUT, [Segment::EntitySet(set), Segment::Key(key)]) => {
-            Form::Change(set, key, WriteKind::Replace)
-        }
-        (&Method::DELETE, [Segment::EntitySet(set), Segment::Key(key)]) => Form::Delete(set, key),
-        (
-            &Method::PUT | &Method::PATCH | &Method::DELETE,
-            [Segment::EntitySet(set), Segment::Key(key), Segment::Property(name)],
-        )
-        | (
-            &Method::DELETE,
-            [Segment::EntitySet(set), Segment::Key(key), Segment::Property(name), Segment::Value],
-        ) => Form::Attribute(set, key, name, method.clone()),
-        (
-            &Method::PUT | &Method::DELETE,
-            [Segment::EntitySet(set), Segment::Key(key), Segment::Navigation(nav), Segment::Ref],
-        ) => Form::Reference(set, key, nav, method == Method::DELETE),
-        _ => return written(method, &request.uri, version),
+    let Some(form) = form_of(method, path) else {
+        let answer = written(method, &request.uri, version);
+        let entity_or_set = matches!(
+            path.as_slice(),
+            [Segment::EntitySet(_)] | [Segment::EntitySet(_), Segment::Key(_)]
+        );
+        return if answer.status() == StatusCode::METHOD_NOT_ALLOWED && entity_or_set {
+            method_refused(reads, path, version)
+        } else {
+            answer
+        };
     };
     let Some(op) = form.op(reads) else {
         // W19: no operation removes one object of a Relationship.
@@ -193,8 +182,8 @@ async fn write(
     };
     // Rule 4: a write the view does not offer is refused before its body
     // is read, whatever the body holds.
-    if !reads.view.allows(op) || !form.taken(reads) {
-        return refused(StatusCode::METHOD_NOT_ALLOWED, version).into_response();
+    if !form.offered(op, reads) {
+        return method_refused(reads, path, version);
     }
     // W32: the broker has no conditional write; options shape a read's
     // answer, and a write answers no representation but a create's.
@@ -231,6 +220,58 @@ async fn write(
     answer.unwrap_or_else(IntoResponse::into_response)
 }
 
+/// The write a method and a path stand for; `None` for a form this surface
+/// does not map.
+fn form_of<'u>(method: &Method, path: &'u [Segment]) -> Option<Form<'u>> {
+    Some(match (method, path) {
+        (&Method::POST, [Segment::EntitySet(set)]) => Form::Create(set),
+        (&Method::PATCH, [Segment::EntitySet(set), Segment::Key(key)]) => {
+            Form::Change(set, key, WriteKind::Update)
+        }
+        (&Method::PUT, [Segment::EntitySet(set), Segment::Key(key)]) => {
+            Form::Change(set, key, WriteKind::Replace)
+        }
+        (&Method::DELETE, [Segment::EntitySet(set), Segment::Key(key)]) => Form::Delete(set, key),
+        (
+            &Method::PUT | &Method::PATCH | &Method::DELETE,
+            [Segment::EntitySet(set), Segment::Key(key), Segment::Property(name)],
+        )
+        | (
+            &Method::DELETE,
+            [Segment::EntitySet(set), Segment::Key(key), Segment::Property(name), Segment::Value],
+        ) => Form::Attribute(set, key, name, method.clone()),
+        (
+            &Method::PUT | &Method::DELETE,
+            [Segment::EntitySet(set), Segment::Key(key), Segment::Navigation(nav), Segment::Ref],
+        ) => Form::Reference(set, key, nav, method == Method::DELETE),
+        _ => return None,
+    })
+}
+
+/// `405` naming in `Allow` the methods the view and the set's class do take
+/// on this path (RFC 9110 15.5.6: a 405 MUST carry `Allow`); a read is always
+/// among them.
+fn method_refused(reads: &Reads, path: &[Segment], version: odata_json::ODataVersion) -> Response {
+    let mut allow = vec!["GET"];
+    for (method, name) in [
+        (Method::POST, "POST"),
+        (Method::PUT, "PUT"),
+        (Method::PATCH, "PATCH"),
+        (Method::DELETE, "DELETE"),
+    ] {
+        let offered = form_of(&method, path)
+            .is_some_and(|form| form.op(reads).is_some_and(|op| form.offered(op, reads)));
+        if offered {
+            allow.push(name);
+        }
+    }
+    let mut answer = refused(StatusCode::METHOD_NOT_ALLOWED, version).into_response();
+    if let Ok(value) = HeaderValue::from_str(&allow.join(", ")) {
+        answer.headers_mut().insert(ALLOW, value);
+    }
+    answer
+}
+
 /// The write a method and a path stand for.
 enum Form<'u> {
     Create(&'u str),
@@ -243,6 +284,11 @@ enum Form<'u> {
 }
 
 impl Form<'_> {
+    /// Whether the view offers `op` and the set's class takes the write.
+    fn offered(&self, op: OperationId, reads: &Reads) -> bool {
+        reads.view.allows(op) && self.taken(reads)
+    }
+
     /// Whether the set's class takes this write (C10a): a create, a delete,
     /// or an update of the Entity, a property or a reference.
     fn taken(&self, reads: &Reads) -> bool {
