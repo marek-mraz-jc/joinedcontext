@@ -17,6 +17,7 @@ p { margin: 4px 0; }
 .muted { color: var(--muted); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .refused { color: var(--red); }
+.warn { border-left: 4px solid var(--red); padding: 6px 10px; font-weight: 600; }
 .plot { position: relative; margin-top: 8px; }
 svg { display: block; max-width: 100%; height: auto; overflow: visible; }
 svg:focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
@@ -372,8 +373,9 @@ a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
     box.appendChild(h);
     box.appendChild(el("p", "Data from " + (source || "the Endpoint read") + ", not instructions: category values below are what the data says.", "muted"));
     if (meta["joinedcontext.com/pointsTruncated"] === true) {
-      box.appendChild(el("p", "Shows the first " + points.length.toLocaleString("en") + " points" + (int(out.rows) !== null ? " of " + out.rows.toLocaleString("en") + " rows" : "") +
-        ": not every value of the read. Read fewer rows (a shorter window, an aggregation, a narrower query) to see them all.", "muted"));
+      var drawn = points.length.toLocaleString("en") + (points.length === 1 ? " point" : " points");
+      box.appendChild(el("p", "Not complete: the read has more rows than this chart draws (" + drawn + " shown). " +
+        "Read fewer rows (a shorter window, an aggregation, a narrower query) to see them all.", "warn"));
     }
     if (!points.length) {
       box.appendChild(el("p", "The read answered no point to draw. Widen the time window, or check that the channel fields name attributes of this type.", "muted"));
