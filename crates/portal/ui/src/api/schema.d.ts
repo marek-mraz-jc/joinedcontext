@@ -1441,6 +1441,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/organization/portal-hosts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Portal Hosts
+         * @description Each Organization the caller may propose a Portal in (its administrators, the installation's for every one), with the hosts the operator listed for its portals and its open data base address (ODP-08, ODP-15). A Portal naming another host is refused at propose with 422 on spec.host.
+         */
+        get: operations["list_portal_hosts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/organization/setup": {
         parameters: {
             query?: never;
@@ -11930,6 +11950,22 @@ export interface components {
             /** Format: int32 */
             port: number;
         };
+        /** @description The Organizations the caller makes portals in, by name. */
+        PortalHosts: {
+            items: components["schemas"]["PortalOrganization"][];
+        };
+        /** @description One Organization the caller manages portals of. */
+        PortalOrganization: {
+            /** @description The hosts the operator listed for its portals, e.g. `mobility.bratislava.sk`. */
+            hosts: string[];
+            /**
+             * @description Its open data portal's public base, e.g. `https://opendata.bratislava.sk`; absent when
+             *     this Portal knows none.
+             */
+            opendata?: string | null;
+            /** @description The Organization's name, the `spec.organizationRef` of its portals, e.g. `bratislava`. */
+            organization: string;
+        };
         Preferences: {
             /**
              * @description Whether manifest forms show the fields a `UiSchema` marks `advanced` (CC-29, UI-02).
@@ -17458,6 +17494,44 @@ export interface operations {
             };
             /** @description No Keycloak admin client */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    list_portal_hosts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's Organizations, by name */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortalHosts"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The caller makes portals in no Organization */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

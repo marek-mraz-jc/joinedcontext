@@ -92,6 +92,7 @@ pub mod permissions;
 pub mod pipeline_templates;
 pub mod pipeline_test;
 pub mod pipelines;
+pub mod portal_hosts;
 pub mod preferences;
 pub mod projects;
 pub mod quality;
@@ -200,6 +201,7 @@ pub fn router() -> Router<AppState> {
         .merge(sync_sources::router())
         .merge(validation::router())
         .merge(health_checks::router())
+        .merge(portal_hosts::router())
         .merge(endpoint_usage::router())
         .merge(visualization_templates::router())
         .merge(organization_limits::router())

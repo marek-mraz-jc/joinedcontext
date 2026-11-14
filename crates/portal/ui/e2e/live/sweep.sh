@@ -29,7 +29,9 @@ spending='/(excel_assistant|assistant-paths|assistant-evals|app-generated-full|b
 # critic-* walks, which record shots for the UI critic tasks and took 1,619 s of its first hour.
 skip=${SWEEP_SKIP:-'^$'}
 # Timing runs by hand, one environment at a time (T-6541): their budgets are a measurement, not a gate.
-byhand='/(open-data-times)\.spec\.ts$'
+# portals makes, approves and removes a Portal, each counting toward the deployment's portals.max
+# (ODP-09, T-6875): run by hand after a deploy, never hourly.
+byhand='/(open-data-times|portals)\.spec\.ts$'
 mapfile -t specs < <(ls e2e/live/*.spec.ts | grep -vE "$spending" | grep -vE "$byhand" | grep -vE -- "$skip")
 
 # SWEEP_LIST=1 only lists the tests the sweep would run ("Total: N tests in M files"): the release

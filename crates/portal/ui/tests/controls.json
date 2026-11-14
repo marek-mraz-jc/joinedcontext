@@ -2144,6 +2144,16 @@
         "policies_try_a_person.test.tsx"
       ]
     },
+    "src/pages/portals/PortalsArea.tsx": {
+      "controls": {
+        "Button": 2,
+        "Checkbox": 3,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "portals_area.test.tsx"
+      ]
+    },
     "src/pages/repositories/PullsView.tsx": {
       "controls": {
         "Button": 1
