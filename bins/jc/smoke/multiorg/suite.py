@@ -1364,7 +1364,10 @@ class Suite:
     def check_portal_sources(self, org, other, tag):
         """`org`'s admin proposes its own Portal with a source reaching `other`: an `endpoints`
         source naming `other`'s project, a `dcat-ap` source at `other`'s private Endpoint
-        address. Both 422 naming the source; the same Portal with no source dry-runs 200."""
+        address. Both 422 naming the source and the rule that stops it; the same Portal with no
+        source dry-runs 200. The `dcat-ap` case asserts the allow-list reason: the judge has no
+        other check on a url, so any refusal (a malformed body, a loopback guard) proves nothing
+        about ODP-12; the other Organization's API host must never be harvestable."""
         h = self.session(f"{org}-admin")
         def propose(sources):
             body = json.loads(portal_manifest(f"{tag}-{org}", org, sources, path=tag))
@@ -1377,6 +1380,9 @@ class Suite:
         cases = {"foreign-project": [{"name": "theirs", "type": "endpoints", "projects": projects[:1]}] if projects else None,
                  "foreign-endpoint": [{"name": "theirs", "type": "dcat-ap", "url": f"https://{api}/api/endpoint/{closed[0]}/",
                                        "allowedHosts": [api]}] if closed else None}
+        # the member the refusal names and a phrase of its reason (crates/portal/src/portals.rs)
+        reasons = {"foreign-project": ("spec.sources[0].projects", "no project of"),
+                   "foreign-endpoint": ("spec.sources[0].allowedHosts", "harvest allow-list")}
         for case, sources in cases.items():
             rid = f"portals.{org}-admin.source.{case}.{other}"
             if sources is None:
@@ -1387,10 +1393,11 @@ class Suite:
             # refused at the door (422) or by the dry run's verdict (200, valid false, a finding)
             refusal = json.dumps(raw if st == 422 else (raw or {}).get("verdict", {}).get("findings", []))
             refused = st == 422 or (st == 200 and (raw or {}).get("valid") is False)
+            member, reason = reasons[case]
             self.row(rid, f"{org}->{other}", f"POST /api/v1/projects/org/portals?dryRun=All ({case} of {other})",
-                     "refused naming spec.sources[0]: 422, or a dry run valid false (the Portal without it valid)",
+                     f"refused naming {member} ({reason}): 422, or a dry run valid false (the Portal without it valid)",
                      f"{st} {refusal[:200]}, control {control}",
-                     (refused and "spec.sources[0]" in refusal) if control == 200 else None,
+                     (refused and member in refusal and reason in refusal) if control == 200 else None,
                      "" if control == 200 else f"no control: the Portal without sources answered {control}")
 
     def check_portal_addresses(self):

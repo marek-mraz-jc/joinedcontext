@@ -366,6 +366,9 @@ pub(crate) struct EndpointRow {
     pub space: String,
     pub name: String,
     pub slug: String,
+    /// The manifest carries a `publish` block: the Endpoint opted in (ODP-02). A dataset's
+    /// `generated_by` alone is a value any `package_create` caller can write in its extras.
+    pub published: bool,
 }
 
 /// Every Endpoint manifest of the mirror's projects.
@@ -386,6 +389,7 @@ pub(crate) fn endpoints_in(mirror: &Mirror) -> Vec<EndpointRow> {
                     space: space.to_owned(),
                     name: envelope.metadata.name.clone(),
                     slug: slug.to_owned(),
+                    published: !spec["publish"].is_null(),
                 });
             }
         }
@@ -395,7 +399,8 @@ pub(crate) fn endpoints_in(mirror: &Mirror) -> Vec<EndpointRow> {
 
 /// Whether the `endpoints` source `source` lists `dataset` of its Organization's `default`
 /// catalogue: a dataset the Portal published from an Endpoint (never a harvested or hand-made
-/// one, never an Endpoint without `publish`), of an Endpoint of `endpoints`, inside every
+/// one, never an Endpoint without `publish`), of an Endpoint of `endpoints` whose manifest
+/// publishes it, inside every
 /// narrowing the source names (each list one of its values; an empty list narrows nothing).
 pub(crate) fn selects(source: &PortalSource, dataset: &Dataset, endpoints: &[EndpointRow]) -> bool {
     if source.kind != PortalSourceType::Endpoints
@@ -407,7 +412,10 @@ pub(crate) fn selects(source: &PortalSource, dataset: &Dataset, endpoints: &[End
         .endpoint_url
         .as_deref()
         .and_then(|url| url.trim_end_matches('/').rsplit('/').next());
-    let Some(endpoint) = endpoints.iter().find(|e| Some(e.slug.as_str()) == slug) else {
+    let Some(endpoint) = endpoints
+        .iter()
+        .find(|e| e.published && Some(e.slug.as_str()) == slug)
+    else {
         return false;
     };
     let within = |list: &[String], value: &str| list.is_empty() || list.iter().any(|v| v == value);

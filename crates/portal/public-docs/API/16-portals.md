@@ -16,6 +16,7 @@ A `Portal` is an Organization-scoped manifest kind (ODP-08): one open data porta
 | Read one portal | `GET /api/v1/projects/org/portals/{name}` | the same |
 | Propose a new or changed portal | `POST /api/v1/projects/org/changes` with the `Portal` manifest | Organization administrators; operators |
 | Propose deleting a portal | `DELETE /api/v1/projects/org/portals/{name}` | Organization administrators; operators |
+| List the hosts a portal may take | `GET /api/v1/organization/portal-hosts`: per Organization the caller may propose a Portal in, its `organization`, the `hosts` the operator listed and its `opendata` base address; `403` when there is none (ODP-15, T-6875) | Organization administrators; operators |
 
 A request without a session answers `401`. A person who is not an administrator of the portal's Organization answers `403` on every write, and a read of another Organization's portal answers `404`, as if it did not exist (ODP-12). An Organization administrator's Change touches only that Organization's portals.
 

@@ -1179,6 +1179,8 @@ mod tests {
             ("air", "mobility", true),
             ("bikes", "mobility", false),
             ("noise", "noise", true),
+            // marked published by its extras, but its Endpoint manifest has no publish block
+            ("forged", "mobility", true),
         ] {
             let package = endpoint_package(name, &format!("{name}slug"), tag, published);
             let made = action(
@@ -1190,12 +1192,13 @@ mod tests {
             );
             assert!(made.await.is_success(), "{name}");
         }
-        let endpoints: Vec<EndpointRow> = ["air", "bikes", "noise", "parking"]
+        let endpoints: Vec<EndpointRow> = ["air", "bikes", "noise", "parking", "forged"]
             .map(|n| EndpointRow {
                 project: "doprava".into(),
                 space: "mesto".into(),
                 name: n.into(),
                 slug: format!("{n}slug"),
+                published: n != "forged",
             })
             .into();
         let mut mobility: jc_core::kinds::PortalSpec = serde_json::from_value(serde_json::json!({
@@ -1229,6 +1232,11 @@ mod tests {
             "another tag"
         );
         assert_eq!(shown("parking").await, axum::http::StatusCode::NOT_FOUND);
+        assert_eq!(
+            shown("forged").await,
+            axum::http::StatusCode::NOT_FOUND,
+            "generated_by written by the caller, no publish block on the Endpoint"
+        );
         mobility.sources.clear();
         served.insert("city-mobility".into(), mobility);
         portals::list_endpoints(&writer, &orgs, &served, &endpoints, &mut listing).await;

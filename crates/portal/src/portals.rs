@@ -211,16 +211,10 @@ pub fn check(
 }
 
 /// Whether `project` is a project of Organization `org`: its `Project` manifest names `org`,
-/// or names no Organization (a single-Organization installation).
+/// or names no Organization and `org` is the installation's (ADR-N-058 section 2.3).
 fn project_of(mirror: &Mirror, project: &str, org: &str) -> bool {
-    mirror
-        .get(ORG_NAMESPACE, "Project", project)
-        .is_some_and(|p| {
-            p.spec
-                .get("organizationRef")
-                .and_then(crate::resource::reference_name)
-                .is_none_or(|o| o == org)
-        })
+    mirror.get(ORG_NAMESPACE, "Project", project).is_some()
+        && crate::permissions::organization_of(mirror, project).as_deref() == Some(org)
 }
 
 /// How many portals the deployment holds with `spec` written as `name`: every Organization's
@@ -458,7 +452,9 @@ mod tests {
             p
         };
         check(&mirror, None, &listing("doprava")).expect("its own project");
-        for foreign in ["kosice-air", "nowhere"] {
+        // a project naming no Organization is the installation's (ADR-N-058), never every one's
+        mirror.upsert(envelope("Project", "legacy", json!({})));
+        for foreign in ["kosice-air", "nowhere", "legacy"] {
             let detail = field(check(&mirror, None, &listing(foreign)).unwrap_err());
             assert!(
                 detail.starts_with(&format!(

@@ -330,8 +330,8 @@ class PortalJc:
     """A jc answering the Portal rows (check_portals): `leaky`, it answers as if isolation were
     broken: every Organization's Portals readable, writable and listing each other's datasets."""
 
-    def __init__(self, orgs, leaky):
-        self.orgs, self.leaky = orgs, leaky
+    def __init__(self, orgs, leaky, wrong_reason=False):
+        self.orgs, self.leaky, self.wrong_reason = orgs, leaky, wrong_reason
 
     def ours(self, org, other):
         return self.leaky or org == other
@@ -346,9 +346,14 @@ class PortalJc:
                 spec = body["spec"]
                 if not jc.ours(org, spec["organizationRef"]):
                     return 403, {"detail": "not yours"}
+                if spec["sources"] and jc.wrong_reason:
+                    # refused for a reason that is not the isolation rule (a loopback guard)
+                    return 422, {"detail": "spec.sources[0].url: loopback address refused"}
                 if spec["sources"] and not jc.leaky:
-                    return 200, {"valid": False, "verdict": {"ok": False, "findings": [
-                        {"level": "error", "path": "spec.sources[0].projects", "message": "no project of yours"}]}}
+                    finding = ({"path": "spec.sources[0].projects", "message": "x is no project of yours"}
+                               if spec["sources"][0]["type"] == "endpoints" else
+                               {"path": "spec.sources[0].allowedHosts", "message": "x is not in the deployment's harvest allow-list"})
+                    return 200, {"valid": False, "verdict": {"ok": False, "findings": [{"level": "error", **finding}]}}
                 return 200, {}
 
             def call(self, method, path, headers=None):
@@ -395,6 +400,24 @@ def test_the_portal_rows_pass_on_an_isolated_jc_and_each_fails_where_isolation_b
     assert {got[r] for r in isolation} == {"fail" if leaky else "pass"}, got
     assert got["portals.hel-admin.read.own"] == got["portals.hel.listed"] == "pass"
     assert next(r for r in s.rows if r["id"] == "portals.hel-admin.read.zilina")["target"] == "hel->zilina"
+
+
+def test_a_source_refused_for_another_reason_does_not_pass_the_source_rows(tmp_path):
+    # T-6877 review: a refusal naming spec.sources[0] for a reason other than the isolation rule
+    # (a loopback guard, a malformed url) proves nothing about ODP-12.
+    s = suite.Suite(args(tmp_path))
+    s.a.sync_timeout = 0
+    orgs = ("hel", "zilina")
+    s.exp = {"hel": {"projects": {"helsinki": EMPTY | {"closed": {"hslug": ("bikes", "organization")}}}},
+             "zilina": {"projects": {"zilina": EMPTY | {"closed": {"zslug": ("air", "organization")}}}}}
+    s.hosts = {o: {k: f"{k}.{o}.localhost" for k in ("portal", "opendata", "api", "mcp")} for o in orgs}
+    jc = PortalJc(orgs, False, wrong_reason=True)
+    s.session, s.client = jc.session, jc.client
+    s.check_portals()
+    got = {r["id"]: r["result"] for r in s.rows}
+    sources = [r for r in got if ".source." in r]
+    assert len(sources) == 4 and {got[r] for r in sources} == {"fail"}, got
+    assert {got[r] for r in got if ".source." not in r} == {"pass"}, got
 
 
 _cspec = importlib.util.spec_from_file_location("smoke_multiorg_compose", HERE.parent / "compose.py")
