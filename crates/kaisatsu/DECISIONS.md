@@ -73,9 +73,10 @@
 3. **K3 client roles keep T-2725.** `view-clients` alone cannot write roles; a role write on a client is also
    allowed when the `Application` Update decision allows it (portal-api writing `managed-by: joinedcontext`
    App client roles through fine-grained permissions). Roles of any other client answer 404.
-4. **Outbox sender in `serve`.** `kaisatsu serve --smtp-password-file F` runs `OutboxDispatcher` every
+4. **Outbox sender in `serve`.** `kaisatsu serve --smtp-password-file F --smtp-host H` runs `OutboxDispatcher` every
    `--outbox-interval-secs` (default 10) with `RealmSmtpSender` (each realm's `smtpServer`, the password
-   from the mount). Without the file, `serve` logs one warning and queued mails stay pending. `jc` does
+   from the mount). A realm whose `smtpServer.host` is not `H` gets no mail: the deployment's password
+   goes only to the deployment's host, and every send times out after 10 s. Without the file, `serve` logs one warning and queued mails stay pending. `jc` does
    not run the dispatcher yet (STATUS limitations).
 5. **SCIM never carries proof of an address.** A SCIM create, PUT or PATCH that sets or changes `emails`
    leaves the person `emailVerified=false`, because account linking trusts a verified address.

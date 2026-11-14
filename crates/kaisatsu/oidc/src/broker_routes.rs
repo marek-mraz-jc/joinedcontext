@@ -502,8 +502,16 @@ async fn broker_endpoint_confirm_post(
         .await?;
     if let Some(pw_cred) = creds.iter().find(|c| c.credential_type == "password") {
         let submitted = form.password.as_deref().unwrap_or_default();
-        let outcome = verify_and_maybe_rehash(submitted, pw_cred)?;
-        if !outcome.valid {
+        // The login page's brute-force protector: a locked account gets the wrong-password
+        // answer after the same hashing work, and each wrong password counts.
+        let bf = crate::brute_force::BruteForceProtector::new(state.store.clone());
+        let ip = client_ip.as_deref();
+        let locked = bf.is_locked(&realm, Some(&existing.id), ip).await?;
+        let valid = verify_and_maybe_rehash(submitted, pw_cred)?.valid && !locked;
+        if !valid {
+            if !locked {
+                bf.record_failure(&realm, Some(&existing.id), ip).await?;
+            }
             return render_broker_link_confirm_page(
                 &state,
                 &mount,
@@ -517,6 +525,7 @@ async fn broker_endpoint_confirm_post(
             )
             .await;
         }
+        bf.record_success(&realm, &existing.id).await?;
     }
 
     let attr_key = idp_link_attribute(&alias);
