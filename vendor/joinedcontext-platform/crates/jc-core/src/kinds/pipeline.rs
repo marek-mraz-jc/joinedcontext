@@ -1922,11 +1922,17 @@ mod runner_registry_tests {
     /// refused at save, naming the step's field and the processor.
     #[test]
     fn a_processor_the_runner_does_not_build_is_refused_naming_it() {
-        let err = super::validate_processor("spec.steps", &json!({ "jq": { "query": "." } }))
-            .expect_err("jq is not built by the runner")
+        let err = super::validate_processor("spec.steps", &json!({ "couchbase": {} }))
+            .expect_err("couchbase is not built by the runner")
             .to_string();
-        assert!(err.contains("spec.steps") && err.contains("`jq`"), "{err}");
-        assert!(err.contains("mapping") && !err.contains(", jq,"), "{err}");
+        assert!(
+            err.contains("spec.steps") && err.contains("`couchbase`"),
+            "{err}"
+        );
+        assert!(
+            err.contains("mapping") && !err.contains(", couchbase,"),
+            "{err}"
+        );
         super::validate_processor("spec.steps", &json!({ "mapping": "root = this" }))
             .expect("mapping is built by the runner");
     }
