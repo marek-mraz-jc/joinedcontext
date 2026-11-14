@@ -5,6 +5,7 @@ import { ApiError, api, queryKeys, unwrap } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
 import { Badge, Button } from "../ui";
 import { useWorkspace } from "./WorkspaceContext";
+import { isWorkspaceOwner } from "../../pages/workspaces/owner";
 
 /** A day in the reader's own language; the raw value when the API sent something unparseable. */
 function onDay(value: string, locale: string): string {
@@ -85,7 +86,7 @@ export function WorkspaceBar({ project }: { project: string }): React.JSX.Elemen
   if (new Date(expiresAt).getTime() <= workspace.dataUpdatedAt) {
     return notice(t("workspaces.bar.expired", { date: onDay(expiresAt, locale) }));
   }
-  const mine = !!identity && (owner === identity.email || owner === identity.username);
+  const mine = isWorkspaceOwner(identity, owner);
   const display = title ?? wsName;
   const date = onDay(createdAt, locale);
   const changeCount = changes ?? 0;

@@ -468,15 +468,15 @@ function windowProps(full: boolean, label: string): JSX.IntrinsicElements["div"]
 }
 
 /** The endpoint's published schema: its index, the JSON Schema of the newest version and its model. */
-export function useEndpointSchema(base: string, slug: string) {
+export function useEndpointSchema(base: string) {
   const index = useQuery({
-    queryKey: ["endpoint-schema-index", slug],
+    queryKey: ["endpoint-schema-index", base],
     retry: false,
     queryFn: () => fetchJson(`${base}/index.json`) as Promise<SchemaIndex>,
   });
   const version = index.data?.models?.[0]?.version ?? 1;
   const schema = useQuery({
-    queryKey: ["endpoint-schema-artifact", slug, version, "json-schema"],
+    queryKey: ["endpoint-schema-artifact", base, version, "json-schema"],
     enabled: index.isSuccess,
     retry: false,
     queryFn: () => fetchJson(`${base}/v${version}/json-schema`),
@@ -485,7 +485,7 @@ export function useEndpointSchema(base: string, slug: string) {
   // The published model names and orders the columns (T-5192); an endpoint without one, or a read
   // that fails, keeps the schema's own attribute names.
   const model = useQuery({
-    queryKey: ["endpoint-schema-artifact", slug, version, "linkml"],
+    queryKey: ["endpoint-schema-artifact", base, version, "linkml"],
     enabled: index.isSuccess,
     retry: false,
     queryFn: async () => {
@@ -809,7 +809,7 @@ export function EndpointDataView({
   // rows the person cannot read.
   const [refused, setRefused] = useState(false);
   const root = origin ?? window.location.origin;
-  const base = `${root}/api/endpoint/${slug}/schema`;
+  const base = `${root}/api/endpoint/${encodeURIComponent(slug)}/schema`;
   // Another origin is read anonymously: a cross-origin fetch with `same-origin` credentials sends no cookie.
   const source = useMemo(
     () => (origin ? sourceFor({ kind: "endpoint", slug }, originTransport((path, init) => fetch(origin + String(path), init)), i18n.language) : undefined),
@@ -818,12 +818,12 @@ export function EndpointDataView({
   // The group headers count through the same door the rows come from.
   const countSource = useMemo(() => source ?? sourceFor({ kind: "endpoint", slug }, originTransport(), i18n.language), [source, slug, i18n.language]);
 
-  const { index, schema, model } = useEndpointSchema(base, slug);
+  const { index, schema, model } = useEndpointSchema(base);
   // The publisher's widget defaults (EP-163, EP-164); none, or an error, leaves the model's.
   const widget = useQuery({
-    queryKey: ["endpoint-widget", slug],
+    queryKey: ["endpoint-widget", root, slug],
     retry: false,
-    queryFn: () => fetchJson(`${root}/api/endpoint/${slug}/widget.json`),
+    queryFn: () => fetchJson(`${root}/api/endpoint/${encodeURIComponent(slug)}/widget.json`),
   });
   // The space's toolbar over this grid (T-6303), its state held by the toolbar's own hook.
   const tools = useDataToolbarState();

@@ -36,8 +36,8 @@ export async function copyIntoPreview(
   previewSlug: string,
   fetcher: Fetch = (input, init) => fetch(input, { credentials: "same-origin", ...init }),
 ): Promise<CopyResult> {
-  const origin = `/api/endpoint/${originSlug}/ngsi-ld/v1`;
-  const preview = `/api/endpoint/${previewSlug}/ngsi-ld/v1`;
+  const origin = `/api/endpoint/${encodeURIComponent(originSlug)}/ngsi-ld/v1`;
+  const preview = `/api/endpoint/${encodeURIComponent(previewSlug)}/ngsi-ld/v1`;
   const json = { Accept: "application/json" };
   const result: CopyResult = { copied: {} };
 

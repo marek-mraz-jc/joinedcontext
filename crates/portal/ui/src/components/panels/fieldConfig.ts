@@ -99,6 +99,31 @@ function apply(settings: FieldSettings, id: string, value: unknown): void {
   }
 }
 
+const compiled = new Map<string, RegExp | null>();
+
+/**
+ * A dashboard's pattern compiled once, or null for one this browser refuses, one over 256
+ * characters, or a quantified group that is itself quantified (`(a+)+`): such a pattern can hold
+ * the page for minutes on one cell, and JavaScript cannot stop a running match.
+ * ponytail: a syntactic check, not a proof of linear time; a pattern engine with a step limit is the upgrade.
+ */
+export function safeRegExp(pattern: string): RegExp | null {
+  let regex = compiled.get(pattern);
+  if (regex === undefined) {
+    regex = null;
+    if (pattern.length <= 256 && !/\([^()]*[*+}][^()]*\)[*+{]|\\\d/.test(pattern)) {
+      try {
+        regex = new RegExp(pattern);
+      } catch {
+        // A pattern this browser does not take matches nothing.
+      }
+    }
+    if (compiled.size >= 128) compiled.clear();
+    compiled.set(pattern, regex);
+  }
+  return regex;
+}
+
 /** Whether an override's matcher picks `field` (byName, byRegexp, byType, byFrameRefID). */
 function matches(matcher: { id?: string; options?: unknown } | undefined, field: FrameField, name: string, refId?: string): boolean {
   const options = matcher?.options;
@@ -106,11 +131,7 @@ function matches(matcher: { id?: string; options?: unknown } | undefined, field:
     case "byName":
       return options === name || options === field.name;
     case "byRegexp":
-      try {
-        return typeof options === "string" && new RegExp(options).test(name);
-      } catch {
-        return false;
-      }
+      return typeof options === "string" && (safeRegExp(options)?.test(name) ?? false);
     case "byType":
       return options === field.type;
     case "byFrameRefID":
@@ -232,16 +253,10 @@ export function mapValue(mappings: ValueMapping[], value: unknown): { text?: str
       const to = typeof options.to === "number" ? options.to : Infinity;
       if (Number.isFinite(number) && number >= from && number <= to) return options.result as { text?: string; color?: string };
     } else if (mapping.type === "regex" && typeof options.pattern === "string") {
-      try {
-        const pattern = new RegExp(options.pattern);
-        const text = String(value ?? "");
-        const match = pattern.exec(text);
-        if (match) {
-          const result = (options.result ?? {}) as { text?: string; color?: string };
-          return { ...result, text: result.text?.replace(/\$(\d)/g, (_, n: string) => match[Number(n)] ?? "") };
-        }
-      } catch {
-        // A pattern this browser does not take maps nothing.
+      const match = safeRegExp(options.pattern)?.exec(String(value ?? ""));
+      if (match) {
+        const result = (options.result ?? {}) as { text?: string; color?: string };
+        return { ...result, text: result.text?.replace(/\$(\d)/g, (_, n: string) => match[Number(n)] ?? "") };
       }
     } else if (mapping.type === "special") {
       const match = options.match;
