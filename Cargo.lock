@@ -6406,6 +6406,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jc-chart"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "flate2",
+ "serde_json",
+]
+
+[[package]]
 name = "jc-core"
 version = "0.1.0"
 dependencies = [
@@ -6741,6 +6750,7 @@ dependencies = [
  "futures-util",
  "hickory-resolver",
  "hmac 0.12.1",
+ "jc-chart",
  "jc-core",
  "jcctl",
  "jsonschema",

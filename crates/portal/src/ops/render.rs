@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use base64::Engine as _;
 use serde_json::{json, Map, Value};
 
-use super::chart::{self, Cell, Channel, Chart, Mark, Point, Scale};
+use super::chart::{self, Chart};
 use super::data_query::{self, DataQueryInput};
 use super::{parse_input, Caller, OpError, Operation, OperationAnnotations};
 use crate::change::Lane;
@@ -34,14 +34,25 @@ use jc_core::kinds::dashboard::VEGA_LITE_WIDGET;
 use jc_core::kinds::visualization::VisualizationData;
 use jc_core::kinds::Widget;
 
+use jc_chart::spec::{
+    look_of, mark_name, members, rows_of, schema_of, text, Charted, Door, Refusal, Spec, MAX_TITLE,
+    MIN_SIDE,
+};
+
 pub const NAME: &str = "jc_render";
 const MAX_SIDE: u32 = 4000;
-const MIN_SIDE: u32 = 50;
 const MAX_PNG: usize = 2 * 1024 * 1024;
 const MAX_POINTS: usize = 20_000;
 /// The most points the chart view (MCP Apps, T-6866) is handed; the PNG draws all of them.
 const MAX_VIEW_POINTS: usize = 2_000;
-const MAX_TITLE: usize = 120;
+/// This door's words and caps for the shared subset ([`jc_chart::spec`], T-6881).
+const DOOR: Door = Door {
+    tool: NAME,
+    read: "data.query",
+    max_side: MAX_SIDE,
+    max_points: MAX_POINTS,
+    max_view_points: MAX_VIEW_POINTS,
+};
 pub(crate) const TIME_CAP: Duration = Duration::from_secs(10);
 /// Renders at once in this process: each holds at most a 4000 x 4000 RGB canvas (48 MiB).
 const RENDER_SLOTS: usize = 2;
@@ -57,13 +68,19 @@ const TOP: &[&str] = &[
     "encoding",
     "data",
 ];
-const CHANNELS: &[&str] = &["x", "y", "color", "size", "theta", "tooltip"];
-const FIELD: &[&str] = &["field", "type", "title"];
 /// The rows one widget draws, as the Portal's own widget reads them (vegaLiteSource.ts).
 const WIDGET_ROWS: usize = 5_000;
 /// A page of a widget's source: the broker's and the surfaces' own ceiling.
 const WIDGET_PAGE: usize = 1_000;
 const WIDGET_REF: &[&str] = &["dashboard", "page", "widget"];
+
+/// A refusal of the shared subset as this door's 422.
+impl From<Refusal> for OpError {
+    fn from(refusal: Refusal) -> Self {
+        let (path, message) = refusal.describe(&DOOR);
+        OpError::InvalidInput { path, message }
+    }
+}
 
 fn invalid(path: impl Into<String>, message: impl Into<String>) -> OpError {
     OpError::InvalidInput {
@@ -72,122 +89,20 @@ fn invalid(path: impl Into<String>, message: impl Into<String>) -> OpError {
     }
 }
 
-/// Why a member is refused, in words a caller can act on.
-fn refused_member(at: &str, key: &str, allowed: &[&str]) -> OpError {
-    let why = match key {
-        "url" | "href" | "values" | "name" | "sequence" | "graticule" | "sphere" => {
-            "jc_render reads no URL and no inline rows: name the Endpoint read in data.query"
-                .to_owned()
-        }
-        "transform" | "params" | "selection" | "calculate" | "filter" | "expr" | "signal"
-        | "condition" => {
-            "jc_render evaluates no expression; filter in data.query (q, attrs, temporal)"
-                .to_owned()
-        }
-        _ => format!(
-            "not in the jc_render subset of Vega-Lite; allowed here: {}",
-            allowed.join(", ")
-        ),
-    };
-    invalid(format!("{at}/{key}"), why)
+fn side(value: Option<&Value>, at: &str, default: u32) -> Result<u32, OpError> {
+    Ok(jc_chart::spec::side(value, at, default, MAX_SIDE)?)
 }
 
-/// `value` as an object holding only `allowed` members.
-fn members<'a>(
-    value: &'a Value,
-    at: &str,
-    allowed: &[&str],
-) -> Result<&'a Map<String, Value>, OpError> {
-    let object = value
-        .as_object()
-        .ok_or_else(|| invalid(if at.is_empty() { "/" } else { at }, "an object"))?;
-    match object.keys().find(|key| !allowed.contains(&key.as_str())) {
-        Some(key) => Err(refused_member(at, key, allowed)),
-        None => Ok(object),
-    }
+/// The chart of `spec` over `rows` within this door's caps.
+fn chart_of(spec: &Spec, rows: &[Map<String, Value>]) -> Charted {
+    jc_chart::spec::chart_of(spec, rows, &DOOR)
 }
 
-fn text(value: &Value, at: &str) -> Result<String, OpError> {
-    let text = value.as_str().ok_or_else(|| invalid(at, "a string"))?;
-    if text.chars().count() > MAX_TITLE || text.chars().any(char::is_control) {
-        return Err(invalid(
-            at,
-            format!("at most {MAX_TITLE} characters on one line"),
-        ));
-    }
-    Ok(text.to_owned())
+/// What the chart view draws beside the PNG (T-6866), within this door's caps.
+fn view_of(spec: &Spec, charted: &Charted) -> Value {
+    jc_chart::spec::view_of(spec, charted, &DOOR)
 }
 
-/// One field channel: the row member it reads, its scale and its axis title.
-#[derive(Debug, Clone)]
-struct Field {
-    field: String,
-    scale: Scale,
-    title: String,
-}
-
-fn field_name(value: &Value, at: &str) -> Result<String, OpError> {
-    let name = value
-        .as_str()
-        .ok_or_else(|| invalid(at, "a field name, e.g. pm10"))?;
-    let ok = !name.is_empty()
-        && name.len() <= 128
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "_.:@-".contains(c));
-    if ok {
-        Ok(name.to_owned())
-    } else {
-        Err(invalid(
-            at,
-            "a field name of letters, digits and _ . : @ -, e.g. pm10",
-        ))
-    }
-}
-
-fn field(value: &Value, at: &str) -> Result<Field, OpError> {
-    let object = members(value, at, FIELD)?;
-    let name = field_name(
-        object.get("field").unwrap_or(&Value::Null),
-        &format!("{at}/field"),
-    )?;
-    let scale = match object.get("type").and_then(Value::as_str) {
-        Some("quantitative") => Scale::Quantitative,
-        Some("temporal") => Scale::Temporal,
-        Some("nominal") => Scale::Nominal,
-        _ => {
-            return Err(invalid(
-                format!("{at}/type"),
-                "quantitative, temporal or nominal",
-            ))
-        }
-    };
-    let title = match object.get("title") {
-        Some(title) => text(title, &format!("{at}/title"))?,
-        None => name.clone(),
-    };
-    Ok(Field {
-        field: name,
-        scale,
-        title,
-    })
-}
-
-/// A checked spec: what to draw.
-#[derive(Debug, Clone)]
-struct Spec {
-    mark: Mark,
-    title: String,
-    width: u32,
-    height: u32,
-    x: Option<Field>,
-    y: Option<Field>,
-    color: Option<Field>,
-    size: Option<Field>,
-    theta: Option<Field>,
-}
-
-/// A saved Dashboard's widget: its name, the page and the widget on it, each counted from 0.
 #[derive(Debug, Clone)]
 struct WidgetRef {
     dashboard: String,
@@ -208,136 +123,6 @@ enum Request {
     },
     /// A whole saved Dashboard by name (T-6867).
     Dashboard(String),
-}
-
-fn side(value: Option<&Value>, at: &str, default: u32) -> Result<u32, OpError> {
-    let Some(value) = value else {
-        return Ok(default);
-    };
-    value
-        .as_u64()
-        .and_then(|v| u32::try_from(v).ok())
-        .filter(|v| (MIN_SIDE..=MAX_SIDE).contains(v))
-        .ok_or_else(|| invalid(at, format!("pixels, {MIN_SIDE} to {MAX_SIDE}")))
-}
-
-fn mark_of(value: Option<&Value>, at: &str) -> Result<Mark, OpError> {
-    let (name, at) = match value {
-        Some(Value::String(name)) => (name.as_str(), format!("{at}/mark")),
-        Some(object @ Value::Object(_)) => {
-            let object = members(object, &format!("{at}/mark"), &["type"])?;
-            (
-                object
-                    .get("type")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-                format!("{at}/mark/type"),
-            )
-        }
-        _ => ("", format!("{at}/mark")),
-    };
-    Ok(match name {
-        "line" => Mark::Line,
-        "bar" => Mark::Bar,
-        "area" => Mark::Area,
-        "point" => Mark::Point,
-        "arc" => Mark::Arc,
-        "rule" => Mark::Rule,
-        "image" => return Err(invalid(at, "the image mark loads a URL and is refused")),
-        _ => return Err(invalid(at, "one of line, bar, area, point, arc, rule")),
-    })
-}
-
-/// A `$schema` is only named, never fetched: Vega-Lite 5 or none.
-fn schema_of(top: &Map<String, Value>, at: &str) -> Result<(), OpError> {
-    let ok = top.get("$schema").is_none_or(|schema| {
-        schema
-            .as_str()
-            .is_some_and(|s| s.starts_with("https://vega.github.io/schema/vega-lite/v5"))
-    });
-    if ok {
-        Ok(())
-    } else {
-        Err(invalid(
-            format!("{at}/$schema"),
-            "https://vega.github.io/schema/vega-lite/v5.json or none",
-        ))
-    }
-}
-
-/// The drawing members of `top` (everything but `data`), each refusal under `at`; `width` and
-/// `height` default to `size`.
-fn look_of(top: &Map<String, Value>, at: &str, size: (u32, u32)) -> Result<Spec, OpError> {
-    schema_of(top, at)?;
-    let title = match top.get("title") {
-        Some(title) => text(title, &format!("{at}/title"))?,
-        None => String::new(),
-    };
-    if let Some(description) = top.get("description") {
-        text(description, &format!("{at}/description"))?;
-    }
-    let mark = mark_of(top.get("mark"), at)?;
-    let empty = json!({});
-    let encoding = members(
-        top.get("encoding").unwrap_or(&empty),
-        &format!("{at}/encoding"),
-        CHANNELS,
-    )?;
-    let channel = |name: &str| -> Result<Option<Field>, OpError> {
-        encoding
-            .get(name)
-            .map(|v| field(v, &format!("{at}/encoding/{name}")))
-            .transpose()
-    };
-    let (x, y, color, size_channel, theta) = (
-        channel("x")?,
-        channel("y")?,
-        channel("color")?,
-        channel("size")?,
-        channel("theta")?,
-    );
-    let needs = |what: &str| {
-        invalid(
-            format!("{at}/encoding"),
-            format!("a {} mark needs {what}", mark_name(mark)),
-        )
-    };
-    match mark {
-        Mark::Arc
-            if theta
-                .as_ref()
-                .is_none_or(|t| t.scale != Scale::Quantitative) =>
-        {
-            return Err(needs("a quantitative theta"))
-        }
-        Mark::Rule if x.is_none() && y.is_none() => return Err(needs("x or y")),
-        Mark::Line | Mark::Bar | Mark::Area | Mark::Point if x.is_none() || y.is_none() => {
-            return Err(needs("x and y"))
-        }
-        _ => {}
-    }
-    for (name, channel) in [("size", &size_channel), ("theta", &theta)] {
-        if channel
-            .as_ref()
-            .is_some_and(|c| c.scale != Scale::Quantitative)
-        {
-            return Err(invalid(
-                format!("{at}/encoding/{name}/type"),
-                "quantitative",
-            ));
-        }
-    }
-    Ok(Spec {
-        mark,
-        title,
-        width: side(top.get("width"), &format!("{at}/width"), size.0)?,
-        height: side(top.get("height"), &format!("{at}/height"), size.1)?,
-        x,
-        y,
-        color,
-        size: size_channel,
-        theta,
-    })
 }
 
 fn widget_ref(value: &Value) -> Result<WidgetRef, OpError> {
@@ -446,7 +231,7 @@ fn spec_of(input: &Value) -> Result<Request, OpError> {
                 .transpose()?,
         });
     }
-    let look = look_of(top, "", (800, 450))?;
+    let look = look_of(top, "", (800, 450), &DOOR)?;
     let query = data
         .get("query")
         .ok_or_else(|| invalid("/data/query", "the jc_data_query read that fills the chart, e.g. {\"endpoint\": \"air\", \"type\": \"AirQualityObserved\"}, or data.widget naming a saved Dashboard widget"))?;
@@ -485,282 +270,6 @@ fn query_of(query: &Value, at: &str) -> Result<DataQueryInput, OpError> {
         other => other,
     })?;
     Ok(query)
-}
-
-fn mark_name(mark: Mark) -> &'static str {
-    match mark {
-        Mark::Line => "line",
-        Mark::Bar => "bar",
-        Mark::Area => "area",
-        Mark::Point => "point",
-        Mark::Arc => "arc",
-        Mark::Rule => "rule",
-    }
-}
-
-/// The entities of one read as flat rows: a current read gives one row per entity, a history
-/// one row per value with `observedAt` (an aggregate's period start) and the value under the
-/// attribute's name and, aggregated, `<attribute>.<method>`.
-fn rows_of(entities: &[Value]) -> Vec<Map<String, Value>> {
-    let mut rows = Vec::new();
-    for entity in entities {
-        let Some(object) = entity.as_object() else {
-            continue;
-        };
-        let mut base = Map::new();
-        for key in ["id", "type"] {
-            if let Some(v) = object.get(key) {
-                base.insert(key.to_owned(), v.clone());
-            }
-        }
-        let mut series = false;
-        for (attr, value) in object {
-            if attr == "id" || attr == "type" || attr == "@context" {
-                continue;
-            }
-            let instances: Vec<&Value> = match value {
-                Value::Array(items) => items.iter().collect(),
-                other => vec![other],
-            };
-            for instance in instances {
-                let Some(held) = instance.as_object() else {
-                    continue;
-                };
-                if let Some(values) = held.get("values").and_then(Value::as_array) {
-                    series = true;
-                    for pair in values {
-                        let mut row = base.clone();
-                        row.insert(attr.clone(), pair[0].clone());
-                        row.insert("observedAt".into(), pair[1].clone());
-                        rows.push(row);
-                    }
-                }
-                for (method, values) in held {
-                    let Some(values) = values
-                        .as_array()
-                        .filter(|_| !["type", "values"].contains(&method.as_str()))
-                    else {
-                        continue;
-                    };
-                    series = true;
-                    for triple in values {
-                        let mut row = base.clone();
-                        row.insert(format!("{attr}.{method}"), triple[0].clone());
-                        row.insert(attr.clone(), triple[0].clone());
-                        row.insert("observedAt".into(), triple[1].clone());
-                        row.insert("method".into(), json!(method));
-                        rows.push(row);
-                    }
-                }
-            }
-        }
-        if !series {
-            let mut row = base;
-            for (attr, value) in object {
-                // A normalized attribute holds its value under `value`.
-                let value = value.get("value").unwrap_or(value);
-                row.entry(attr.clone()).or_insert_with(|| value.clone());
-            }
-            rows.push(row);
-        }
-    }
-    rows
-}
-
-/// The category values of one nominal channel, in order of first appearance, with their index
-/// by value so a read of 20,000 distinct values stays linear.
-#[derive(Default)]
-struct Categories(Vec<String>, std::collections::HashMap<String, usize>);
-
-impl Categories {
-    fn index(&mut self, value: &Value) -> Option<usize> {
-        let key = match value {
-            Value::String(s) => s.clone(),
-            Value::Number(_) | Value::Bool(_) => value.to_string(),
-            _ => return None,
-        };
-        let next = self.0.len();
-        let at = *self.1.entry(key.clone()).or_insert(next);
-        if at == next {
-            self.0.push(key);
-        }
-        Some(at)
-    }
-}
-
-fn cell(value: Option<&Value>, scale: Scale, cats: &mut Categories) -> Option<Cell> {
-    let value = value?;
-    match scale {
-        Scale::Quantitative => value.as_f64().filter(|v| v.is_finite()).map(Cell::Number),
-        Scale::Temporal => match value {
-            Value::String(s) => chrono::DateTime::parse_from_rfc3339(s)
-                .ok()
-                .map(|t| Cell::Number(t.timestamp_millis() as f64)),
-            other => other.as_f64().map(Cell::Number),
-        },
-        Scale::Nominal => cats.index(value).map(Cell::Category),
-    }
-}
-
-fn scale_name(scale: Scale) -> &'static str {
-    match scale {
-        Scale::Quantitative => "quantitative",
-        Scale::Temporal => "temporal",
-        Scale::Nominal => "nominal",
-    }
-}
-
-/// A chart and what the answer says of it.
-struct Charted {
-    chart: Chart,
-    /// The category values it numbered, by channel.
-    categories: Value,
-    /// More rows than [`MAX_POINTS`] were read.
-    truncated: bool,
-    /// The drawn points as the chart view reads them: only the channels' numbers and the time.
-    view_points: Vec<Value>,
-}
-
-/// One drawn point for the chart view: its channel values as numbers (a category as its index,
-/// a time as epoch milliseconds) and the row's `observedAt` as RFC 3339, nothing else of the row.
-fn view_point(point: &Point, row: &Map<String, Value>) -> Value {
-    let mut out = Map::new();
-    let cells = [("x", point.x), ("y", point.y)];
-    for (name, cell) in cells {
-        if let Some(cell) = cell {
-            let v = match cell {
-                Cell::Number(v) => json!(v),
-                Cell::Category(i) => json!(i),
-            };
-            out.insert(name.into(), v);
-        }
-    }
-    if let Some(color) = point.color {
-        out.insert("color".into(), json!(color));
-    }
-    for (name, v) in [("size", point.size), ("theta", point.theta)] {
-        if let Some(v) = v.filter(|v| v.is_finite()) {
-            out.insert(name.into(), json!(v));
-        }
-    }
-    let observed = row
-        .get("observedAt")
-        .and_then(Value::as_str)
-        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok());
-    if let Some(t) = observed {
-        let utc = t.with_timezone(&chrono::Utc);
-        out.insert(
-            "observedAt".into(),
-            json!(utc.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
-        );
-    }
-    Value::Object(out)
-}
-
-/// What the chart view draws, beside the PNG: the checked spec, at most [`MAX_VIEW_POINTS`]
-/// points and whether some were left out. The answer carries it in `_meta`, never in
-/// `structuredContent` or the text (T-6866).
-fn view_of(spec: &Spec, charted: &Charted) -> Value {
-    let channel = |f: &Option<Field>| {
-        f.as_ref()
-            .map(|f| json!({ "scale": scale_name(f.scale), "title": f.title }))
-    };
-    let points: Vec<&Value> = charted.view_points.iter().take(MAX_VIEW_POINTS).collect();
-    json!({
-        "joinedcontext.com/chartSpec": {
-            "mark": mark_name(spec.mark),
-            "title": spec.title,
-            "width": spec.width,
-            "height": spec.height,
-            "x": channel(&spec.x),
-            "y": channel(&spec.y),
-            "color": channel(&spec.color),
-            "size": channel(&spec.size),
-            "theta": channel(&spec.theta),
-        },
-        "joinedcontext.com/chartPoints": points,
-        "joinedcontext.com/pointsTruncated":
-            charted.truncated || charted.view_points.len() > MAX_VIEW_POINTS,
-    })
-}
-
-/// The chart of `spec` over `rows`, the category values it numbered and its view points.
-fn chart_of(spec: &Spec, rows: &[Map<String, Value>]) -> Charted {
-    let (mut xc, mut yc, mut cc) = (
-        Categories::default(),
-        Categories::default(),
-        Categories::default(),
-    );
-    let mut points = Vec::new();
-    let mut view_points = Vec::new();
-    for row in rows.iter().take(MAX_POINTS) {
-        let get = |f: &Option<Field>| f.as_ref().and_then(|f| row.get(&f.field));
-        let x = spec
-            .x
-            .as_ref()
-            .and_then(|f| cell(row.get(&f.field), f.scale, &mut xc));
-        let y = spec
-            .y
-            .as_ref()
-            .and_then(|f| cell(row.get(&f.field), f.scale, &mut yc));
-        let color = get(&spec.color).and_then(|v| cc.index(v));
-        let size = get(&spec.size).and_then(Value::as_f64);
-        let theta = get(&spec.theta).and_then(Value::as_f64);
-        let drawn = match spec.mark {
-            Mark::Arc => theta.is_some(),
-            Mark::Rule => x.is_some() || y.is_some(),
-            _ => x.is_some() && y.is_some(),
-        };
-        if drawn {
-            let point = Point {
-                x,
-                y,
-                color,
-                size,
-                theta,
-            };
-            // One more than the view takes, so the view knows some were left out.
-            if view_points.len() <= MAX_VIEW_POINTS {
-                view_points.push(view_point(&point, row));
-            }
-            points.push(point);
-        }
-    }
-    let channel = |f: &Option<Field>, cats: &Categories| {
-        f.as_ref().map(|f| Channel {
-            scale: f.scale,
-            title: f.title.clone(),
-            categories: cats.0.len(),
-        })
-    };
-    let mut categories = Map::new();
-    for (name, cats) in [("x", &xc), ("y", &yc), ("color", &cc)] {
-        if !cats.0.is_empty() {
-            let numbered: Vec<Value> = cats
-                .0
-                .iter()
-                .enumerate()
-                .map(|(i, v)| json!({ "label": format!("#{}", i + 1), "value": v }))
-                .collect();
-            categories.insert(name.to_owned(), Value::Array(numbered));
-        }
-    }
-    let chart = Chart {
-        mark: spec.mark,
-        width: spec.width,
-        height: spec.height,
-        title: spec.title.clone(),
-        x: channel(&spec.x, &xc),
-        y: channel(&spec.y, &yc),
-        colors: cc.0.len(),
-        points,
-    };
-    Charted {
-        chart,
-        categories: Value::Object(categories),
-        truncated: rows.len() > MAX_POINTS,
-        view_points,
-    }
 }
 
 fn limited() -> OpError {
@@ -1226,7 +735,7 @@ fn widget_look(spec: Option<&Value>) -> Result<Spec, OpError> {
             "a widget reads {\"name\": \"source\"}, the rows of its source",
         ));
     }
-    look_of(top, AT, (800, 450))
+    Ok(look_of(top, AT, (800, 450), &DOOR)?)
 }
 
 /// Takes out every title of `spec` (another person's words) and names each in the answer; an
