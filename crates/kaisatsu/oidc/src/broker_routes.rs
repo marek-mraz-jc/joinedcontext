@@ -641,6 +641,11 @@ async fn issue_broker_session_and_code(
     user: &UserRepresentation,
     client_ip: &ClientIp,
 ) -> Result<Response> {
+    // The upstream sign-in is the first factor only: a person who needs a second factor goes
+    // on to the local one-time code (or its enrolment) before any code is issued.
+    if crate::second_factor_required(state, realm, user).await? {
+        return continue_with_second_factor(state, mount, realm, auth_session, user).await;
+    }
     let now = Utc::now();
     let sso_id = uuid::Uuid::now_v7().to_string();
     let sso_handle = random_handle_256();
@@ -736,4 +741,45 @@ async fn issue_broker_session_and_code(
         .map_err(|_| KaisatsuError::Storage("invalid session cookie".into()))?;
     resp.headers_mut().append(header::SET_COOKIE, cookie);
     Ok(resp)
+}
+
+/// Hands a brokered sign-in to the login pages at the second-factor step: the one-time code
+/// when the person has an authenticator, its enrolment when not.
+async fn continue_with_second_factor(
+    state: &OidcState,
+    mount: &Mount,
+    realm: &RealmConfig,
+    mut auth_session: AuthSession,
+    user: &UserRepresentation,
+) -> Result<Response> {
+    let has_totp = state
+        .store
+        .list_credentials(&realm.id, &user.id)
+        .await?
+        .iter()
+        .any(|c| c.credential_type == "otp");
+    let step = if has_totp {
+        serde_json::json!({ "step": "SecondFactorOtp", "user_id": user.id, "first_factor_passed": true })
+    } else {
+        serde_json::json!({ "step": "EnrolTotp", "user_id": user.id, "first_factor_passed": true })
+    };
+    auth_session.step_state_json = step.to_string();
+    auth_session.user_id = Some(user.id.clone());
+    auth_session.amr = vec!["fed".into()];
+    auth_session.acr_achieved = "pwd".into();
+    auth_session.broker_state_json = None;
+    let location = format!(
+        "{}/realms/{}/login-actions/authenticate?session_code={}&client_id={}",
+        mount.path_prefix, realm.realm, auth_session.id, auth_session.client_id
+    );
+    state.store.put_auth_session(auth_session).await?;
+    Ok((
+        StatusCode::SEE_OTHER,
+        [
+            (header::LOCATION, location),
+            (header::CACHE_CONTROL, "no-store".to_owned()),
+        ],
+        "",
+    )
+        .into_response())
 }

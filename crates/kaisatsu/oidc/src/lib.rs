@@ -46,4 +46,6 @@ pub use dpop_guard::{
 pub use guard::{ClusterCredentials, OutboundGuard, OutboundPolicy};
 pub use handlers::{OidcState, dispatch_backchannel_logout, oidc_router, redirect_with_params};
 pub use redirect::{validate_post_logout_redirect_uri, validate_redirect_uri};
-pub use second_factor::{ORG_SECOND_FACTOR_ATTRIBUTE, SecondFactor, second_factor_required};
+pub use second_factor::{
+    ORG_SECOND_FACTOR_ATTRIBUTE, SecondFactor, second_factor_required, sso_session_suffices,
+};

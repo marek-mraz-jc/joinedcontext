@@ -1,7 +1,7 @@
 //! Whether a person must pass a second factor at sign-in. One check for the login flow, the
 //! password grant, the refresh grant and the account console, so no grant asks less than another.
 
-use kaisatsu_core::{RealmConfig, Result, UserRepresentation};
+use kaisatsu_core::{RealmConfig, Result, SsoSession, UserRepresentation};
 use serde::Deserialize;
 
 use crate::OidcState;
@@ -17,7 +17,7 @@ pub enum SecondFactor {
     Required,
 }
 
-/// The attribute that asks a second factor of every member when `required`: on a kaisatsu
+/// The attribute that asks a second factor of every member unless it says `optional`: on a kaisatsu
 /// Organization, or on a group of the person (the Portal's reconciler writes it on the groups
 /// that carry an Organization's `jc_org`).
 pub const ORG_SECOND_FACTOR_ATTRIBUTE: &str = "jc.secondFactor";
@@ -46,8 +46,9 @@ pub async fn second_factor_required(
         &group_roles,
         &all_roles,
     );
+    // Fails closed: any value other than `optional` (a typo, an empty string) asks the factor.
     let says_required =
-        |values: Option<&Vec<String>>| values.is_some_and(|v| v.iter().any(|s| s == "required"));
+        |values: Option<&Vec<String>>| values.is_some_and(|v| v.iter().any(|s| s != "optional"));
     // The Portal's reconciler writes the attribute on the groups that carry `jc_org`.
     if eff_roles.iter().any(|r| r == "mfa-required")
         || user_groups
@@ -75,4 +76,25 @@ pub async fn second_factor_required(
         }
     }
     Ok(false)
+}
+
+/// True when an existing SSO session may stand in for a sign-in (silent SSO, `prompt=none`,
+/// device approval): it passed a second factor, or its person needs none. A session from
+/// before the rule covered the person signs in again instead of minting a code.
+pub async fn sso_session_suffices(
+    state: &OidcState,
+    realm: &RealmConfig,
+    sso: &SsoSession,
+) -> Result<bool> {
+    if sso.acr == "mfa" {
+        return Ok(true);
+    }
+    match state
+        .store
+        .get_user_by_id(&realm.id, None, &sso.user_id)
+        .await?
+    {
+        Some(user) => Ok(!second_factor_required(state, realm, &user).await?),
+        None => Ok(false),
+    }
 }

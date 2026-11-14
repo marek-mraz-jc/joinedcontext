@@ -820,7 +820,7 @@ async fn authorize_get(
     }
 
     // Check existing SSO session cookie unless `prompt=login` or `prompt=select_account`
-    let existing_sso = if let Some(raw_handle) = read_sso_cookie(&headers, &mount) {
+    let mut existing_sso = if let Some(raw_handle) = read_sso_cookie(&headers, &mount) {
         state
             .store
             .get_sso_session_by_handle(&realm.id, &sha256_hex(&raw_handle))
@@ -828,6 +828,13 @@ async fn authorize_get(
     } else {
         None
     };
+    // A session signed in without a second factor the person now needs mints no code: the
+    // person signs in again (prompt=none answers login_required).
+    if let Some(sso) = &existing_sso
+        && !crate::sso_session_suffices(&state, &realm, sso).await?
+    {
+        existing_sso = None;
+    }
 
     let now_unix = Utc::now().timestamp();
     let force_reauth = prompt.as_deref().is_some_and(|p| {
@@ -2197,6 +2204,12 @@ async fn handle_device_code_grant(
         .await?
         .filter(|u| u.enabled)
         .ok_or_else(|| KaisatsuError::invalid_grant("User disabled or not found"))?;
+    // A device approved before the second factor covered the person gets no tokens.
+    if rec.acr != "mfa" && crate::second_factor_required(state, realm, &user).await? {
+        return Err(KaisatsuError::invalid_grant(
+            "A second factor is now required: sign in again",
+        ));
+    }
     // The tokens hang on the session the person allowed the device in: a logout since ends them.
     let mut sso = state
         .store
@@ -2658,6 +2671,15 @@ async fn handle_token_exchange_grant(
         .await?
         .filter(|u| u.enabled)
         .ok_or_else(|| KaisatsuError::invalid_request("Invalid token"))?;
+    // A subject token from a sign-in without the second factor the person now needs exchanges
+    // for nothing.
+    if subj_claims.get("acr").and_then(Value::as_str) != Some("mfa")
+        && crate::second_factor_required(state, realm, &user).await?
+    {
+        return Err(KaisatsuError::invalid_grant(
+            "A second factor is now required: sign in again",
+        ));
+    }
 
     let (active_scopes, granted_scope_str) = resolve_scopes_for_client(
         &state.store,

@@ -340,3 +340,82 @@ async fn k12_upstream_oidc_broker_happy_path_pkce_state_nonce_and_link_confirmat
             .contains("code=")
     );
 }
+
+#[tokio::test]
+async fn a_brokered_sign_in_under_the_floor_goes_on_to_the_second_factor() {
+    let (up_issuer, up_state) = start_fake_upstream().await;
+    let (_, store, kek) = setup_dev_realm_state().await;
+    store
+        .upsert_idp(IdentityProviderRepresentation {
+            internal_id: "idp-entra".into(),
+            realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
+            alias: "entra".into(),
+            provider_id: "oidc".into(),
+            enabled: true,
+            trust_email: true,
+            first_broker_login_flow_alias: "first broker login".into(),
+            config: BTreeMap::from([
+                ("issuer".into(), up_issuer.clone()),
+                ("authorizationUrl".into(), format!("{up_issuer}/authorize")),
+                ("tokenUrl".into(), format!("{up_issuer}/token")),
+                ("jwksUrl".into(), format!("{up_issuer}/jwks")),
+                ("clientId".into(), "kaisatsu-broker-client".into()),
+                ("clientSecret".into(), "broker-secret-xyz".into()),
+            ]),
+            managed_by: None,
+        })
+        .await
+        .unwrap();
+    let guard = OutboundGuard::new(OutboundPolicy {
+        in_cluster_hosts: vec!["127.0.0.1".into()],
+        ..OutboundPolicy::default()
+    });
+    let state = KaisatsuState::new(
+        store.clone() as Arc<dyn Store>,
+        kek,
+        guard,
+        Arc::new(LocalAuthorizer),
+    )
+    .with_second_factor(kaisatsu_server::SecondFactor::Required);
+    let app = router(state, mount()).layer(Extension(mount()));
+
+    let (session_code, auth_cookie) = start_auth_session(&app).await;
+    let (_, hdrs, _) = get_with_ck(
+        &app,
+        &format!("/realms/dev/broker/entra/login?session_code={session_code}"),
+        &auth_cookie,
+    )
+    .await;
+    let up = url::Url::parse(hdrs[header::LOCATION].to_str().unwrap()).unwrap();
+    let qp: BTreeMap<String, String> = up.query_pairs().into_owned().collect();
+    let now = chrono::Utc::now().timestamp();
+    *up_state.next_claims.lock().unwrap() = json!({
+        "iss": up_issuer,
+        "sub": "entra-sub-floor",
+        "aud": "kaisatsu-broker-client",
+        "nonce": qp["nonce"],
+        "email": "floor.broker@hel.fi",
+        "email_verified": true,
+        "iat": now,
+        "exp": now + 300
+    });
+    let (st, h, _) = get_with_ck(
+        &app,
+        &format!(
+            "/realms/dev/broker/entra/endpoint?code=c1&state={}",
+            qp["state"]
+        ),
+        &auth_cookie,
+    )
+    .await;
+    // No code: the upstream sign-in counts as the first factor only.
+    assert_eq!(st, StatusCode::SEE_OTHER);
+    let next = h[header::LOCATION].to_str().unwrap().to_owned();
+    assert!(!next.contains("?code=") && !next.contains("&code="), "{next}");
+    assert!(next.contains("/login-actions/authenticate"), "{next}");
+    // The person has no authenticator yet: the login page enrols one.
+    let (st, _, html) = get_with_ck(&app, &next, &auth_cookie).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(html.contains("kc-totp-settings-form"), "{html}");
+}
