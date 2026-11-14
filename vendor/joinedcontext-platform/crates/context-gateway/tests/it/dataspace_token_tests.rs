@@ -223,7 +223,7 @@ fn organizations() -> BTreeMap<String, String> {
 fn provenance() -> context_gateway::store::Provenance {
     context_gateway::store::Provenance {
         organizations: organizations(),
-        ..Default::default()
+        ..context_gateway::store::Provenance::without_organizations()
     }
 }
 

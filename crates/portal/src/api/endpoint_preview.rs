@@ -17,7 +17,7 @@ use utoipa::ToSchema;
 
 use axum::http::HeaderMap;
 use context_gateway::auth::subject::{
-    admission, anonymous_with, person, with_endpoint_roles, Outside,
+    admission, anonymous_with, judged_organizations, person, with_endpoint_roles, Outside,
 };
 use context_gateway::auth::token::{Claims, RealmAccess};
 use jc_core::kinds::{Audience, EndpointSpec};
@@ -254,7 +254,7 @@ pub async fn endpoint_admission(
         &caller.groups,
         caller.member_of_organization,
         |project| organization_of(&state, project),
-        Some(&organizations(&state)),
+        organizations(&state).as_ref(),
     ) {
         Ok(_) => Ok(Json(Admission { admitted: true })),
         Err(Outside::Audience) => Ok(Json(Admission { admitted: false })),
@@ -466,7 +466,7 @@ pub(crate) fn subject(
         &caller.groups,
         caller.member_of_organization,
         |project| organization_of(state, project),
-        Some(&organizations(state)),
+        organizations(state).as_ref(),
     )
     .map_err(|_| {
         ApiError::Denied(
@@ -524,21 +524,24 @@ fn organization_of(state: &AppState, project: &str) -> Option<String> {
         .map(|spec| spec.organization_ref.name().to_owned())
 }
 
-/// Each Organization manifest the mirror holds, its domain by name: what the gateway judges an
-/// `organization` audience against (I-4), so the preview admits whom the gateway does.
-fn organizations(state: &AppState) -> std::collections::BTreeMap<String, String> {
-    state
+/// The Organizations the mirror holds, judged by the gateway's one rule (I-4,
+/// [`context_gateway::auth::subject::judged_organizations`]): only an Organization whose spec
+/// parses is one a project can be of, and one that does not parse keeps I-4 on. `None` admits
+/// nobody to an `organization` Endpoint, so the preview admits whom the gateway does.
+fn organizations(state: &AppState) -> Option<std::collections::BTreeMap<String, String>> {
+    let envelopes = state
         .mirror
-        .matching(|envelope| envelope.kind == "Organization")
+        .matching(|envelope| envelope.kind == "Organization");
+    let declared = envelopes.len();
+    let parsed = envelopes
         .into_iter()
-        .map(|envelope| {
-            let domain = envelope.spec.get("domain").and_then(Value::as_str);
-            (
-                envelope.metadata.name,
-                domain.unwrap_or_default().to_owned(),
-            )
+        .filter_map(|envelope| {
+            let spec =
+                serde_json::from_value::<jc_core::kinds::OrganizationSpec>(envelope.spec).ok()?;
+            Some((envelope.metadata.name, spec.domain))
         })
-        .collect()
+        .collect();
+    judged_organizations(declared, &parsed).cloned()
 }
 
 /// Percent-encoded UTF-8 with the RFC 3986 unreserved characters kept, so a diacritic travels

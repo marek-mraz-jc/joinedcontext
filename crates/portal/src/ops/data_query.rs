@@ -29,7 +29,7 @@ const MAX_BODY: usize = 8 * 1024 * 1024;
 /// The query string of one gateway read, as key and value pairs.
 pub type Query = Vec<(String, String)>;
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DataQueryInput {
     pub endpoint: String,
@@ -61,7 +61,7 @@ pub struct DataQueryInput {
     pub cursor: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Temporal {
     pub timerel: String,
@@ -76,7 +76,7 @@ pub struct Temporal {
     pub aggr_period_duration: Option<String>,
 }
 
-fn input_schema() -> Value {
+pub(super) fn input_schema() -> Value {
     use bounds::*;
     json!({
         "type": "object",

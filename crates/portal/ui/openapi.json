@@ -29424,6 +29424,512 @@
         }
       }
     },
+    "/api/v1/projects/{project}/ops/jc_render": {
+      "post": {
+        "description": "Draws one Endpoint read (a jc_data_query) as a PNG chart from a Vega-Lite subset: marks line, bar, area, point, arc, rule",
+        "operationId": "jc_render",
+        "parameters": [
+          {
+            "description": "Project slug",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "data": {
+                  "query": {
+                    "endpoint": "example"
+                  }
+                },
+                "mark": "line"
+              },
+              "schema": {
+                "additionalProperties": false,
+                "description": "A Vega-Lite 5 subset. data.query is a jc_data_query read; no url, no transform, no expression",
+                "properties": {
+                  "$schema": {
+                    "description": "https://vega.github.io/schema/vega-lite/v5.json, never fetched",
+                    "maxLength": 2048,
+                    "pattern": "^https://vega\\.github\\.io/schema/vega-lite/v5",
+                    "type": "string"
+                  },
+                  "data": {
+                    "additionalProperties": false,
+                    "description": "Where the rows come from: one Endpoint read",
+                    "properties": {
+                      "query": {
+                        "additionalProperties": false,
+                        "description": "The jc_data_query arguments, e.g. {\"endpoint\": \"air\", \"type\": \"AirQualityObserved\", \"attrs\": [\"pm10\"], \"temporal\": {\"timerel\": \"after\", \"timeAt\": \"2026-11-13T00:00:00Z\"}}",
+                        "properties": {
+                          "attrs": {
+                            "description": "The attributes answered, e.g. [\"count\"]",
+                            "items": {
+                              "maxLength": 128,
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "coordinates": {
+                            "description": "GeoJSON coordinates, longitude first, e.g. [19.146, 48.736]",
+                            "type": "array"
+                          },
+                          "count": {
+                            "description": "Answer the total of matching entities too",
+                            "type": "boolean"
+                          },
+                          "cursor": {
+                            "description": "The nextCursor of the previous page",
+                            "maxLength": 128,
+                            "type": "string"
+                          },
+                          "endpoint": {
+                            "description": "Endpoint name or public slug, e.g. city-counters",
+                            "maxLength": 253,
+                            "type": "string"
+                          },
+                          "format": {
+                            "description": "keyValues answers plain values",
+                            "enum": [
+                              "normalized",
+                              "concise",
+                              "keyValues"
+                            ],
+                            "type": "string"
+                          },
+                          "geometry": {
+                            "description": "The GeoJSON type of coordinates",
+                            "enum": [
+                              "Point",
+                              "LineString",
+                              "Polygon",
+                              "MultiPoint",
+                              "MultiLineString",
+                              "MultiPolygon"
+                            ],
+                            "type": "string"
+                          },
+                          "georel": {
+                            "description": "near;maxDistance==500, within, intersects, contains, disjoint, equals or overlaps",
+                            "maxLength": 128,
+                            "type": "string"
+                          },
+                          "id": {
+                            "description": "One entity's id, e.g. urn:ngsi-ld:BikeCounter:c1",
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          "limit": {
+                            "description": "Entities per page; 0 with count answers the total alone",
+                            "maximum": 1000,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "orderBy": {
+                            "description": "attr or attr;desc, e.g. modifiedAt;desc",
+                            "maxLength": 128,
+                            "type": "string"
+                          },
+                          "q": {
+                            "description": "An NGSI-LD q, e.g. count>40;name~=\"Most\"",
+                            "maxLength": 2048,
+                            "type": "string"
+                          },
+                          "temporal": {
+                            "additionalProperties": false,
+                            "description": "History instead of current values",
+                            "properties": {
+                              "aggrMethods": {
+                                "description": "Aggregates; per aggrPeriodDuration when given",
+                                "items": {
+                                  "enum": [
+                                    "avg",
+                                    "min",
+                                    "max",
+                                    "sum",
+                                    "totalCount",
+                                    "distinctCount",
+                                    "stddev",
+                                    "sumsq"
+                                  ],
+                                  "type": "string"
+                                },
+                                "maxItems": 8,
+                                "type": "array"
+                              },
+                              "aggrPeriodDuration": {
+                                "description": "ISO 8601 duration, e.g. PT1H",
+                                "maxLength": 128,
+                                "type": "string"
+                              },
+                              "endTimeAt": {
+                                "description": "ISO 8601, the end of a between",
+                                "maxLength": 128,
+                                "type": "string"
+                              },
+                              "lastN": {
+                                "description": "The newest N per attribute",
+                                "maximum": 1000,
+                                "minimum": 1,
+                                "type": "integer"
+                              },
+                              "timeAt": {
+                                "description": "ISO 8601, e.g. 2026-10-27T00:00:00Z",
+                                "maxLength": 128,
+                                "type": "string"
+                              },
+                              "timerel": {
+                                "description": "Against timeAt (and endTimeAt)",
+                                "enum": [
+                                  "before",
+                                  "after",
+                                  "between"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "timerel",
+                              "timeAt"
+                            ],
+                            "type": "object"
+                          },
+                          "type": {
+                            "description": "The entity type, e.g. BikeCounter",
+                            "maxLength": 128,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "endpoint"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "query"
+                    ],
+                    "type": "object"
+                  },
+                  "description": {
+                    "description": "Not drawn; a note for the reader, e.g. Daily PM10 means",
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "encoding": {
+                    "additionalProperties": false,
+                    "description": "The channels: x, y, color, size, theta",
+                    "properties": {
+                      "color": {
+                        "additionalProperties": false,
+                        "description": "One channel: a row member and how to read it",
+                        "properties": {
+                          "field": {
+                            "description": "A row member, e.g. pm10, observedAt or id",
+                            "maxLength": 128,
+                            "type": "string"
+                          },
+                          "title": {
+                            "description": "The axis title, e.g. PM10 (µg/m³)",
+                            "maxLength": 120,
+                            "type": "string"
+                          },
+                          "type": {
+                            "description": "How the member is read",
+                            "enum": [
+                              "quantitative",
+                              "temporal",
+                              "nominal"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "field",
+                          "type"
+                        ],
+                        "type": "object"
+                      },
+                      "size": {
+                        "additionalProperties": false,
+                        "description": "One channel: a row member and how to read it",
+                        "properties": {
+                          "field": {
+                            "description": "A row member, e.g. pm10, observedAt or id",
+                            "maxLength": 128,
+                            "type": "string"
+                          },
+                          "title": {
+                            "description": "The axis title, e.g. PM10 (µg/m³)",
+                            "maxLength": 120,
+                            "type": "string"
+                          },
+                          "type": {
+                            "description": "How the member is read",
+                            "enum": [
+                              "quantitative",
+                              "temporal",
+                              "nominal"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "field",
+                          "type"
+                        ],
+                        "type": "object"
+                      },
+                      "theta": {
+                        "additionalProperties": false,
+                        "description": "One channel: a row member and how to read it",
+                        "properties": {
+                          "field": {
+                            "description": "A row member, e.g. pm10, observedAt or id",
+                            "maxLength": 128,
+                            "type": "string"
+                          },
+                          "title": {
+                            "description": "The axis title, e.g. PM10 (µg/m³)",
+                            "maxLength": 120,
+                            "type": "string"
+                          },
+                          "type": {
+                            "description": "How the member is read",
+                            "enum": [
+                              "quantitative",
+                              "temporal",
+                              "nominal"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "field",
+                          "type"
+                        ],
+                        "type": "object"
+                      },
+                      "tooltip": {
+                        "description": "Accepted and ignored"
+                      },
+                      "x": {
+                        "additionalProperties": false,
+                        "description": "One channel: a row member and how to read it",
+                        "properties": {
+                          "field": {
+                            "description": "A row member, e.g. pm10, observedAt or id",
+                            "maxLength": 128,
+                            "type": "string"
+                          },
+                          "title": {
+                            "description": "The axis title, e.g. PM10 (µg/m³)",
+                            "maxLength": 120,
+                            "type": "string"
+                          },
+                          "type": {
+                            "description": "How the member is read",
+                            "enum": [
+                              "quantitative",
+                              "temporal",
+                              "nominal"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "field",
+                          "type"
+                        ],
+                        "type": "object"
+                      },
+                      "y": {
+                        "additionalProperties": false,
+                        "description": "One channel: a row member and how to read it",
+                        "properties": {
+                          "field": {
+                            "description": "A row member, e.g. pm10, observedAt or id",
+                            "maxLength": 128,
+                            "type": "string"
+                          },
+                          "title": {
+                            "description": "The axis title, e.g. PM10 (µg/m³)",
+                            "maxLength": 120,
+                            "type": "string"
+                          },
+                          "type": {
+                            "description": "How the member is read",
+                            "enum": [
+                              "quantitative",
+                              "temporal",
+                              "nominal"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "field",
+                          "type"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "height": {
+                    "description": "Pixels, 450 when absent",
+                    "maximum": 4000,
+                    "minimum": 50,
+                    "type": "integer"
+                  },
+                  "mark": {
+                    "description": "The chart kind",
+                    "enum": [
+                      "line",
+                      "bar",
+                      "area",
+                      "point",
+                      "arc",
+                      "rule"
+                    ],
+                    "type": "string"
+                  },
+                  "title": {
+                    "description": "Drawn above the chart, e.g. PM10 at Kallio",
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "width": {
+                    "description": "Pixels, 800 when absent",
+                    "maximum": 4000,
+                    "minimum": 50,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "mark",
+                  "data"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "categories": {
+                      "description": "The numbered category values the picture shows as #1, #2, ...: data other people wrote",
+                      "type": "object"
+                    },
+                    "height": {
+                      "type": "integer"
+                    },
+                    "mark": {
+                      "type": "string"
+                    },
+                    "rows": {
+                      "type": "integer"
+                    },
+                    "sources": {
+                      "items": {
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "untrusted": {
+                      "type": "boolean"
+                    },
+                    "width": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "rows",
+                    "sources",
+                    "untrusted"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The operation's answer"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The change the operation opened, waiting for a person's approval"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden: the caller lacks what x-jc-requires names"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The project or an object the input names is not there"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The input does not match the schema; the problem names the path"
+          }
+        },
+        "summary": "Render Chart",
+        "tags": [
+          "ops"
+        ],
+        "x-jc-requires": {
+          "checkedBy": "project",
+          "kind": "Endpoint",
+          "verb": "read"
+        }
+      }
+    },
     "/api/v1/projects/{project}/ops/jc_repository_commit": {
       "post": {
         "description": "One commit: message, author, parents and the files it changed with their diff",

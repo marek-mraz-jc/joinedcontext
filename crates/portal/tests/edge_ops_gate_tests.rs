@@ -450,7 +450,7 @@ fn not_one_operation_is_open_to_a_caller_with_no_binding() {
     for op in ops::registry() {
         match ops::permitted(op, &nobody, &state, PROJECT) {
             Ok(()) => assert!(
-                waved_through.contains(&op.name) || op.name == DATA_QUERY,
+                waved_through.contains(&op.name) || ops::ENDPOINT_READS.contains(&op.name),
                 "{} is open to a caller with no binding and is not checked by its route",
                 op.name,
             ),
@@ -503,7 +503,7 @@ fn a_binding_of_one_project_does_not_reach_another_and_a_viewer_writes_nothing()
     let waved_through = joinedcontext_portal::ops::resources::CHECKED_BY_THE_ROUTE;
 
     for op in ops::registry() {
-        if !waved_through.contains(&op.name) && op.name != DATA_QUERY {
+        if !waved_through.contains(&op.name) && !ops::ENDPOINT_READS.contains(&op.name) {
             assert!(
                 ops::permitted(op, &elsewhere, &state, PROJECT).is_err(),
                 "{} let a steward of another project in",
@@ -550,7 +550,7 @@ async fn the_gate_answers_before_the_input_is_looked_at() {
     let waved_through = joinedcontext_portal::ops::resources::CHECKED_BY_THE_ROUTE;
 
     for op in ops::registry() {
-        if waved_through.contains(&op.name) || op.name == DATA_QUERY {
+        if waved_through.contains(&op.name) || ops::ENDPOINT_READS.contains(&op.name) {
             continue; // Their own route function decides; `call` is not their gate.
         }
         for nonsense in [

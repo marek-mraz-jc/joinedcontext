@@ -181,7 +181,9 @@ fn audited(message: &Value) -> (String, Option<String>) {
     let target: Vec<String> = [
         word(&args["project"]).or_else(|| word(&params["project"])),
         word(&args["kind"]),
-        word(&args["name"]).or_else(|| word(&args["endpoint"])),
+        word(&args["name"])
+            .or_else(|| word(&args["endpoint"]))
+            .or_else(|| word(&args["data"]["query"]["endpoint"])),
     ]
     .into_iter()
     .flatten()
@@ -490,16 +492,17 @@ async fn judge(
         }
         "tools/call" => {
             let name = params["name"].as_str().unwrap_or("");
+            let args = target_args(name, &params["arguments"]);
             let target = match (crate::ops::find(name), project.as_deref()) {
                 (Some(op), Some(project)) => connector
-                    .admits(op, project, &params["arguments"], &|kind, name| {
+                    .admits(op, project, args, &|kind, name| {
                         crate::connectors::space_now(&state.mirror, project, kind, name)
                     })
                     .and_then(|()| {
                         if honoured {
                             Ok(())
                         } else {
-                            ceiling.admits(connector, op, project, &params["arguments"])
+                            ceiling.admits(connector, op, project, args)
                         }
                     })
                     .err(),
@@ -515,7 +518,7 @@ async fn judge(
             let client = caller.identity.client.clone();
             let shows = project
                 .as_deref()
-                .is_some_and(|p| connector.shows_personal(p, &params["arguments"]));
+                .is_some_and(|p| connector.shows_personal(p, args));
             if !shows {
                 if let Err(why) =
                     indicator_stays_open(state, project.as_deref(), name, params).await
@@ -807,9 +810,19 @@ fn caller(
     }
 }
 
-/// An indicator read from an Endpoint folds entities the answer never carries, so the answer's
-/// filter sees nothing: one built on a personal attribute, by its fold or its `q`, is refused
-/// before the read (AG-158). Rows a client sends are already its own.
+/// The arguments the door's scope, ceiling and personal-data checks read: `jc_render` names its
+/// Endpoint read in `data.query` (T-6860), every other tool at the top of its arguments.
+fn target_args<'a>(tool: &str, args: &'a Value) -> &'a Value {
+    match tool {
+        crate::ops::render::NAME => args.pointer("/data/query").unwrap_or(args),
+        _ => args,
+    }
+}
+
+/// An indicator or a chart read from an Endpoint folds entities the answer never carries, so
+/// the answer's filter sees nothing: one built on a personal attribute, by its fold, a chart
+/// channel or its `q`, is refused before the read (AG-158). Rows a client sends are already
+/// its own.
 async fn indicator_stays_open(
     state: &AppState,
     project: Option<&str>,
@@ -817,15 +830,23 @@ async fn indicator_stays_open(
     params: &Value,
 ) -> Result<(), String> {
     let args = &params["arguments"];
-    if tool != "jc_kpi_compute" || args.get("endpoint").is_none() {
-        return Ok(());
-    }
-    let text = |key: &str| args[key].as_str().unwrap_or("");
+    let text = |at: &str| args.pointer(at).and_then(Value::as_str).unwrap_or("");
+    let texts: Vec<&str> = match tool {
+        "jc_kpi_compute" if args.get("endpoint").is_some() => vec![text("/attribute"), text("/q")],
+        crate::ops::render::NAME => {
+            let channels = args["encoding"].as_object().into_iter().flatten();
+            channels
+                .filter_map(|(_, channel)| channel["field"].as_str())
+                .chain([text("/data/query/q")])
+                .collect()
+        }
+        _ => return Ok(()),
+    };
     let marks = match project {
         Some(project) => personal_data::of_project(state, project).await?,
         None => return Err("a call that reads an Endpoint names its project".to_owned()),
     };
-    match personal_data::mentioned(&marks, &[text("attribute"), text("q")]) {
+    match personal_data::mentioned(&marks, &texts) {
         Some(name) => Err(format!(
             "the models mark {name} personal, so this connector computes nothing from it; a scope item with personalData ticked reaches it"
         )),
