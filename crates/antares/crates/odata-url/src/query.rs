@@ -224,7 +224,8 @@ impl<'m, M: Model> Query<'_, '_, '_, 'm, M> {
         // escaped quote `''` toggles twice and keeps the literal open; `%27`
         // is a quote as well. A `$search` phrase is in double quotes (`%22`) and may hold an
         // apostrophe, as a string literal may hold a double quote: each quote counts only
-        // outside the other.
+        // outside the other. A custom option's value (`qchar-no-AMP`) holds no literal, so
+        // its quotes count for nothing.
         let rest = self.c.rest().as_bytes();
         let (mut single, mut double) = (false, false);
         let quote_at = |at: usize, raw: u8, escaped: &[u8]| {
@@ -233,11 +234,20 @@ impl<'m, M: Model> Query<'_, '_, '_, 'm, M> {
                     .get(at..at.saturating_add(3))
                     .is_some_and(|t| t.eq_ignore_ascii_case(escaped))
         };
+        let custom_at = |at: usize| !(quote_at(at, b'$', b"%24") || quote_at(at, b'@', b"%40"));
+        let mut blind = custom_at(0);
         let starts: Vec<usize> = std::iter::once(0)
             .chain((0..rest.len()).filter_map(|at| {
-                single ^= !double && quote_at(at, b'\'', b"%27");
-                double ^= !single && quote_at(at, b'"', b"%22");
-                (rest.get(at) == Some(&b'&') && !single && !double).then_some(at.saturating_add(1))
+                if !blind {
+                    single ^= !double && quote_at(at, b'\'', b"%27");
+                    double ^= !single && quote_at(at, b'"', b"%22");
+                }
+                let next = at.saturating_add(1);
+                let ends = rest.get(at) == Some(&b'&') && !single && !double;
+                if ends {
+                    blind = custom_at(next);
+                }
+                ends.then_some(next)
             }))
             .collect();
         for at in starts {
