@@ -65,6 +65,8 @@ export interface HistoryPoint {
   value: unknown;
   /** When a later version replaced this one; only in a `versions` answer (DM-114). */
   supersededAt?: string;
+  /** The instance's `datasetId`, where the attribute keeps several; only in a `versions` answer. */
+  datasetId?: string;
   /** Who wrote this version, through what and why (ADR-N-054 §2.3); only in a `versions` answer. */
   provenance?: Provenance;
 }
@@ -99,6 +101,8 @@ export interface AttributeAccess {
   read: boolean;
   write: boolean;
   delete: boolean;
+  /** Whether the caller reads the attribute's temporal values (`retrieveTemporal`, T-6878); absent from an older gateway. */
+  history?: boolean;
   reason: AccessReason;
 }
 
@@ -115,7 +119,8 @@ export function accessOf(body: unknown): AttributeAccess[] {
     const row = (raw ?? {}) as Record<string, unknown>;
     if (typeof row.name !== "string" || row.name === "") return [];
     const reason = REASONS.find((known) => known === row.reason) ?? "no_grant";
-    return [{ name: row.name, read: row.read === true, write: row.write === true, delete: row.delete === true, reason }];
+    const history = row.history === undefined ? {} : { history: row.history === true };
+    return [{ name: row.name, read: row.read === true, write: row.write === true, delete: row.delete === true, ...history, reason }];
   });
 }
 
@@ -308,10 +313,11 @@ export function historyOf(body: unknown, attr: string): HistoryPoint[] {
   const attribute = typeof body === "object" && body !== null ? (body as Record<string, unknown>)[attr] : undefined;
   if (Array.isArray(attribute)) {
     return attribute.flatMap((instance) => {
-      const { observedAt: at, value, supersededAt, provenance } = (instance ?? {}) as Record<string, unknown>;
+      const { observedAt: at, value, supersededAt, datasetId, provenance } = (instance ?? {}) as Record<string, unknown>;
       if (typeof at !== "string") return [];
       const point: HistoryPoint = { at, value };
       if (typeof supersededAt === "string") point.supersededAt = supersededAt;
+      if (typeof datasetId === "string") point.datasetId = datasetId;
       const kept = provenanceOf(provenance);
       if (kept) point.provenance = kept;
       return [point];

@@ -124,6 +124,10 @@ export interface GridLabels {
   moreNext?: string;
   /** The entry that opens one attribute's history, and the panel's own labels (T-1431). */
   history: string;
+  /** A column header's mark where the person reads the attribute's history (T-6878). */
+  historyAvailable: string;
+  /** A cell's mark where its value changed: opens that value's history (T-6878). */
+  historyOfValue: string;
   /** A geo column's filter cell: draw an area on the map, and take it away again. */
   areaPick: string;
   /** The pager's page-size picker: "Rows per page". */
@@ -386,6 +390,8 @@ export const DEFAULT_LABELS: GridLabels = {
   rowsShown: "Rows {first}–{last}",
   moreNext: "more may follow",
   history: "History",
+  historyAvailable: "History available",
+  historyOfValue: "Show the history of this value (key H)",
   areaPick: "Pick area on map",
   rowsPerPage: "Rows per page",
   areaClear: "Clear area",

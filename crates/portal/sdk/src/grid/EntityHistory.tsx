@@ -62,6 +62,11 @@ export interface HistoryLabels {
   supersededAt: string;
   changedBy: string;
   reason: string;
+  /** The switch on a public grid: the versions carry values and times, never who changed them (T-6878). */
+  versionsPublic: string;
+  /** What a public grid says when the history cannot be read, without naming a role or a right. */
+  unavailable: string;
+  datasetId: string;
 }
 
 export const DEFAULT_HISTORY_LABELS: HistoryLabels = {
@@ -85,6 +90,9 @@ export const DEFAULT_HISTORY_LABELS: HistoryLabels = {
   supersededAt: "Replaced",
   changedBy: "Changed by",
   reason: "Reason",
+  versionsPublic: "Every version of each value",
+  unavailable: "No history can be shown for this value.",
+  datasetId: "Dataset",
 };
 
 /** Who wrote a version, as one line: the channel, then the actor where the broker names one. */
@@ -269,6 +277,11 @@ export interface EntityHistoryProps {
   versions?: boolean;
   /** Start on every version (an attribute's own view: who changed it and when, owner 2026-11-01). */
   versionsFirst?: boolean;
+  /**
+   * A public or anonymous reader (T-6878): the versions show values and times only, never a column
+   * naming who changed a value or why, and a refusal says only that no history can be shown.
+   */
+  publicView?: boolean;
   /** A host's own picture of a kind of history, in place of the built-in one (null draws only the table). */
   views?: Partial<Record<HistoryKind, (points: HistoryPoint[]) => React.ReactNode>>;
   onClose?: () => void;
@@ -315,12 +328,12 @@ export function EntityHistory(props: EntityHistoryProps): React.JSX.Element {
           setAllVersions(false);
           return;
         }
-        setError({ text: text ? `${labels.refused} (${text})` : labels.refused, retry: false });
+        setError(props.publicView ? { text: labels.unavailable, retry: false } : { text: text ? `${labels.refused} (${text})` : labels.refused, retry: false });
       } else {
         setError({ text: text ? `${labels.error}: ${text}` : labels.error, retry: true });
       }
     }
-  }, [source, id, attr, choice, custom, maxPoints, now, allVersions, labels.error, labels.refused]);
+  }, [source, id, attr, choice, custom, maxPoints, now, allVersions, labels.error, labels.refused, labels.unavailable, props.publicView]);
 
   useEffect(() => {
     void read();
@@ -348,6 +361,8 @@ export function EntityHistory(props: EntityHistoryProps): React.JSX.Element {
     };
   }, [locale, digits, choice]);
   const heading = props.heading ?? `${labels.title}: ${attr}`;
+  // A Dataset column only where an attribute keeps several instances: one series needs none.
+  const datasets = allVersions && (points ?? []).some((point) => point.datasetId !== undefined);
   // The line follows the values that hold today: a replaced version is a row of the table only.
   const series = points ? numericSeries(points.filter((point) => !point.supersededAt)) : null;
   const shown = (value: unknown): string => valueText(value, number);
@@ -379,13 +394,14 @@ export function EntityHistory(props: EntityHistoryProps): React.JSX.Element {
         ))}
       </fieldset>
 
-      {props.versions && (
+      {/* A public reader refused the versions sees no switch at all, rather than a note on rights. */}
+      {props.versions && !(props.publicView && versionsDenied) && (
         <label className="jc-grid-history-versions">
           <input type="checkbox" checked={allVersions} disabled={versionsDenied} onChange={(e) => setAllVersions(e.target.checked)} />
-          {labels.versions}
+          {props.publicView ? labels.versionsPublic : labels.versions}
         </label>
       )}
-      {props.versions && versionsDenied && <p className="jc-grid-history-note">{labels.versionsRefused}</p>}
+      {props.versions && versionsDenied && !props.publicView && <p className="jc-grid-history-note">{labels.versionsRefused}</p>}
 
       {choice === "custom" && (
         <fieldset>
@@ -440,8 +456,9 @@ export function EntityHistory(props: EntityHistoryProps): React.JSX.Element {
                 {allVersions && (
                   <>
                     <th>{labels.supersededAt}</th>
-                    <th>{labels.changedBy}</th>
-                    <th>{labels.reason}</th>
+                    {datasets && <th>{labels.datasetId}</th>}
+                    {!props.publicView && <th>{labels.changedBy}</th>}
+                    {!props.publicView && <th>{labels.reason}</th>}
                   </>
                 )}
               </tr>
@@ -457,8 +474,9 @@ export function EntityHistory(props: EntityHistoryProps): React.JSX.Element {
                   {allVersions && (
                     <>
                       <td>{point.supersededAt ? <time dateTime={point.supersededAt}>{stamp(point.supersededAt)}</time> : ""}</td>
-                      <td>{changedBy(point)}</td>
-                      <td>{point.provenance?.reason ?? ""}</td>
+                      {datasets && <td>{point.datasetId ?? ""}</td>}
+                      {!props.publicView && <td>{changedBy(point)}</td>}
+                      {!props.publicView && <td>{point.provenance?.reason ?? ""}</td>}
                     </>
                   )}
                 </tr>
