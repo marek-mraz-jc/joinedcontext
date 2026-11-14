@@ -17,6 +17,7 @@ pub mod admin;
 pub mod administration;
 pub(crate) mod bounds;
 pub mod changes;
+pub mod chart;
 pub mod compute;
 pub mod data_query;
 pub mod data_views;
@@ -35,6 +36,7 @@ pub mod plans;
 pub mod policy_names;
 pub mod previews;
 pub mod proposals;
+pub mod render;
 pub mod replace_check;
 pub mod repositories;
 pub mod resources;
@@ -73,6 +75,11 @@ use crate::auth::session::Identity;
 use crate::change::Lane;
 use crate::error::ApiError;
 use crate::state::AppState;
+
+/// The operations that read an Endpoint's rows on the caller's own token: the gateway and the
+/// Endpoint's Policy decide them, so they are offered and tried without a right in the project
+/// (ADR-N-067 §2.4, T-6413, T-6860).
+pub const ENDPOINT_READS: [&str; 2] = [data_query::NAME, render::NAME];
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -569,7 +576,8 @@ pub fn permitted(
         // An Endpoint shared with the caller's Organization or a group of theirs is read without
         // a right in its project (ADR-N-067 §2.4, T-6413): the gateway decides that read on the
         // caller's own token, and the operation answers a refused one as a missing Endpoint.
-        (_, None) if op.name == data_query::NAME => {}
+        // A render reads its rows through the same data read (T-6860).
+        (_, None) if ENDPOINT_READS.contains(&op.name) => {}
         // A read of a project the caller may not read is the answer of a project that is not
         // there (PF-59, R20); a write keeps its 403, which names what is missing (PF-50).
         (_, None) if !effective.may_read_project() && op.annotations.read_only_hint => {
@@ -789,6 +797,7 @@ pub struct EmptyInput {}
 fn init_registry() -> Vec<Operation> {
     let mut operations = compute::operations();
     operations.extend(data_query::operations());
+    operations.extend(render::operations());
     operations.extend(data_write::operations());
     operations.extend(proposals::operations());
     operations.extend(changes::operations());
@@ -1162,7 +1171,8 @@ mod tests {
         // T-5608).
         let list = listing(&viewer_caller, &state, "ovzdusie");
         let names: Vec<_> = list.iter().map(|o| o.name.as_str()).collect();
-        let reads: Vec<_> = std::iter::once(data_query::NAME)
+        let reads: Vec<_> = ENDPOINT_READS
+            .into_iter()
             .chain(
                 resources::CHECKED_BY_THE_ROUTE
                     .iter()

@@ -1809,6 +1809,57 @@
         }
       }
     ],
+    "jc_render": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "data",
+            "$Nullable": false,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "description",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "encoding",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
+            "$Name": "height",
+            "$Nullable": true,
+            "$Type": "Edm.Int64"
+          },
+          {
+            "$Name": "mark",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "title",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "width",
+            "$Nullable": true,
+            "$Type": "Edm.Int64"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
     "jc_repository_commit": [
       {
         "$IsBound": true,
