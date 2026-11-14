@@ -63,6 +63,33 @@ An approved delete of a portal other than `default` removes the portal's dataset
 
 Each JC Organization has its own dataroom organization id, so the catalogue store's row level security and the cross-organization harvest check keep two Organizations apart in the database (ODP-12). The proof runs as a `NOSUPERUSER NOBYPASSRLS` role: a query bound to Organization A's catalogue counts none of Organization B's rows, and a harvest run of A cannot write into B's catalogue.
 
+## 6. Sources, runs and datasets
+
+These routes serve the Sources and Datasets tabs of the Portals area (ODP-15). `{name}` is the Portal manifest's `metadata.name` and `{source}` a `spec.sources[].name` of it.
+
+| Operation | Route | Right on the Portal manifest | Answer |
+|---|---|---|---|
+| Test a source's connection | `POST /api/v1/projects/org/portals/{name}/sources/{source}/test` | propose | `200` with `outcome`, one of `ok`, `unreachable`, `refused host`, `not the expected format`, `too large` |
+| Run a source now | `POST /api/v1/projects/org/portals/{name}/sources/{source}/runs` | propose | `202` when the run started; `409` while a run of this source is active |
+| List a source's last runs | `GET /api/v1/projects/org/portals/{name}/sources/{source}/runs` | read | `200` with at most 50 runs, newest first: `id`, `state`, `startedAt`, `finishedAt`, the created, updated, unchanged, withdrawn and skipped counts, and `error`, one word |
+| List a portal's datasets | `GET /api/v1/projects/org/portals/{name}/datasets?offset=0&limit=50` | read | `200` with `total` and `items`: `name`, `title`, `source` (the harvest source, or `endpoints`) and `hidden` (named in `spec.hidden`) |
+
+The test fetches the source's first page once through the harvest guard, the same guard a run uses: `https` only, the host inside the source's `allowedHosts` and the deployment's harvest allow-list, every address of the pinned DNS answer public, every redirect hop checked again. It reads at most the source's byte budget and stops after 10 seconds. It writes nothing. The answer is one word: no remote address, status line, header or body reaches it or the log.
+
+A run's `error` is one word too: `unreachable`, `refused host`, `not the expected format`, `too large`, `over budget`, `past the time cap` or `failed`. The run log of the catalogue keeps the detail for the operator.
+
+Refusals:
+
+| Case | Answer |
+|---|---|
+| no session | `401` |
+| a member of the portal's Organization without the right in the table | `403` |
+| a portal or source of another Organization, or one that does not exist | `404`, the same body for both |
+| more than 3 tests at once, or more than 6 a minute, by one person | `429` with `Retry-After` |
+| this installation serves no open data catalogue | `503` |
+
+The limits (6 tests a minute with a burst of 3, 50 runs, 10 seconds) are constants of the deployment.
+
 ## Related
 
 - [API/01: Portal API](01-portal-api.md)

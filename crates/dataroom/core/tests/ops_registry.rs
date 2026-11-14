@@ -208,7 +208,7 @@ fn field(r: &Result<Value>, name: &str) -> bool {
 #[tokio::test]
 async fn registry_lookup_by_name_tool_and_command() {
     let ops = all_operations();
-    assert_eq!(ops.len(), 25);
+    assert_eq!(ops.len(), 27);
     for op in &ops {
         for key in [op.name, op.mcp_tool, op.cli_command] {
             assert_eq!(find_operation(key).map(|d| d.name), Some(op.name), "{key}");
@@ -992,6 +992,113 @@ async fn harvest_operations_are_for_members_with_rights() {
         .await
         .unwrap();
     assert_eq!(all["logs"].as_array().unwrap().len(), 2);
+}
+
+fn stored_run(w: &World, cat: CatalogueId, id: &str, started: &str, error: Option<&str>) -> HarvestRun {
+    serde_json::from_value(json!({
+        "orgId": w.org, "catalogueId": cat, "id": id, "sourceId": "hs-nkod",
+        "state": if error.is_some() { "failed" } else { "succeeded" },
+        "startedAt": started, "createdCount": 2, "updatedCount": 1,
+        "unchangedCount": 0, "withdrawnCount": 0, "error": error,
+    }))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn run_list_is_newest_first_and_only_this_catalogue() {
+    let w = world().await;
+    let src = json!({"source": {"name": "nkod", "kind": "dcat-ap",
+        "url": "https://nkod.example/feed.ttl", "publisherId": "city",
+        "allowedHosts": ["nkod.example"]}});
+    w.run(&w.admin(), "harvest_source.propose", src).await.unwrap();
+    let ctx = w.admin();
+    for (id, at, error) in [
+        ("run-old", "2026-11-01T10:00:00Z", None),
+        (
+            "run-new",
+            "2026-11-03T10:00:00Z",
+            Some("fetch https://10.0.0.7/feed.ttl: connection refused"),
+        ),
+        ("run-mid", "2026-11-02T10:00:00Z", None),
+    ] {
+        w.store
+            .upsert_harvest_run(&ctx, stored_run(&w, w.cat, id, at, error))
+            .await
+            .unwrap();
+    }
+    let other = CatalogueId::from_uuid(Uuid::now_v7());
+    let elsewhere = RequestCtx::new(w.org, other, ctx.subject.clone());
+    w.store
+        .upsert_harvest_run(
+            &elsewhere,
+            stored_run(&w, other, "run-elsewhere", "2026-11-04T10:00:00Z", None),
+        )
+        .await
+        .unwrap();
+    for _ in 0..60 {
+        let id = format!("run-{}", Uuid::now_v7());
+        w.store
+            .upsert_harvest_run(&ctx, stored_run(&w, w.cat, &id, "2026-10-01T10:00:00Z", None))
+            .await
+            .unwrap();
+    }
+    let listed = w
+        .run(&w.admin(), "harvest_run.list", json!({"source": "nkod"}))
+        .await
+        .unwrap();
+    let runs = listed["runs"].as_array().unwrap();
+    assert_eq!(runs.len(), 50, "at most 50");
+    let ids: Vec<&str> = runs.iter().filter_map(|r| r["id"].as_str()).collect();
+    assert_eq!(ids[..3], ["run-new", "run-mid", "run-old"]);
+    assert!(!ids.contains(&"run-elsewhere"));
+    assert_eq!(runs[0]["error"], "unreachable", "one word, no address");
+    assert!(!listed.to_string().contains("10.0.0.7"));
+    assert_eq!(runs[1]["created"], 2);
+    assert!(is_not_found(
+        &w.run(&w.admin(), "harvest_run.list", json!({"source": "none"}))
+            .await
+    ));
+    let r = w.run(&w.member(), "harvest_run.list", json!({})).await;
+    assert!(is_forbidden(&r), "member: {r:?}");
+    let r = w.run(&w.anonymous(), "harvest_run.list", json!({})).await;
+    assert!(is_not_found(&r), "anonymous: {r:?}");
+}
+
+#[tokio::test]
+async fn source_test_needs_the_harvest_right_and_a_runner() {
+    let w = world().await;
+    let src = json!({"source": {"name": "nkod", "kind": "dcat-ap",
+        "url": "https://nkod.example/feed.ttl", "publisherId": "city",
+        "allowedHosts": ["nkod.example"]}});
+    w.run(&w.admin(), "harvest_source.propose", src).await.unwrap();
+    let r = w
+        .run(&w.member(), "harvest_source.test", json!({"source": "nkod"}))
+        .await;
+    assert!(is_forbidden(&r), "{r:?}");
+    assert!(field(&w.run(&w.admin(), "harvest_source.test", json!({})).await, "source"));
+    let r = w
+        .run(&w.admin(), "harvest_source.test", json!({"source": "nkod"}))
+        .await;
+    assert!(matches!(r, Err(DataroomError::NotSupported(_))), "{r:?}");
+}
+
+#[test]
+fn a_stored_run_error_reads_as_one_word() {
+    use dataroom_core::ops::run_error_word;
+    for (error, word) in [
+        ("the run read 900 records, past its budget of 10; nothing is written or withdrawn", "over budget"),
+        ("the run passed its deadline of 3600 s", "past the time cap"),
+        ("https://a.example/x body exceeded cap of 512 bytes", "too large"),
+        ("https://a.example/x answered HTTP 503", "unreachable"),
+        ("host 'b.example' is not in the harvest source's allowedHosts", "refused host"),
+        ("host 'b.example' resolved to internal address 10.0.0.7", "refused host"),
+        ("scheme 'http' is refused; only https:// is allowed", "refused host"),
+        ("DNS resolution failed for 'b.example': no such host", "unreachable"),
+        ("invalid Hub JSON: expected value", "not the expected format"),
+        ("publisher 'x' does not exist", "failed"),
+    ] {
+        assert_eq!(run_error_word(error), word, "{error}");
+    }
 }
 
 #[tokio::test]
