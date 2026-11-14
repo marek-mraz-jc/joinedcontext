@@ -2245,14 +2245,14 @@
     - proves: deny
       via: connector
       call: jc_render
-      args: { mark: bar, encoding: { x: { field: id, type: nominal } }, data: { query: { endpoint: '{project}-reports', type: PotholeReport, orderBy: 'contactEmail;desc' } } }
+      args: { mark: bar, encoding: { x: { field: id, type: nominal }, y: { field: count, type: quantitative } }, data: { query: { endpoint: '{project}-reports', type: PotholeReport, orderBy: 'contactEmail;desc' } } }
       refused: true
       contains: ['contactEmail personal']
       absent: ['image/png']
     - proves: deny
       via: connector
       call: jc_render
-      args: { mark: bar, encoding: { x: { field: id, type: nominal } }, data: { query: { endpoint: '{project}-reports', type: PotholeReport, attrs: [contactEmail] } } }
+      args: { mark: bar, encoding: { x: { field: id, type: nominal }, y: { field: count, type: quantitative } }, data: { query: { endpoint: '{project}-reports', type: PotholeReport, attrs: [contactEmail] } } }
       refused: true
       contains: ['contactEmail personal']
       absent: ['image/png']
