@@ -7,10 +7,13 @@
 mod common;
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use axum::http::StatusCode;
 use common::doors::{self, mcp, run, session, steward, stranger, viewer, PROJECT};
 use common::state_on;
+use joinedcontext_portal::config::Config;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
 use wiremock::matchers::{method, path, query_param};
@@ -76,6 +79,11 @@ fn blob(content: &[u8]) -> Value {
 /// A forge holding the project's configuration repository, its application's repository, and
 /// another project's application.
 async fn world() -> (MockServer, AppState) {
+    world_on(None).await
+}
+
+/// [`world`] with the forge's public address (`JC_SHAKO_PUBLIC_URL`) set to `public`.
+async fn world_on(public: Option<&str>) -> (MockServer, AppState) {
     let server = MockServer::start().await;
     get(
         &server,
@@ -205,7 +213,21 @@ async fn world() -> (MockServer, AppState) {
     .await;
     get(&server, "/odata/PackageVersions", json!({ "value": [] })).await;
 
-    let state = doors::state_with(state_on(&server));
+    let state = match public {
+        None => state_on(&server),
+        Some(public) => {
+            let mut client = ShakoClient::new(
+                server.uri().parse().expect("mock url"),
+                "test-owner",
+                "test-repo",
+                "token-xyz",
+            )
+            .expect("client");
+            client.public_base = public.parse().expect("public url");
+            AppState::new(Config::for_tests(), None).with_shako(Arc::new(client))
+        }
+    };
+    let state = doors::state_with(state);
     state.mirror.set_layout(2);
     state.mirror.set_repositories(BTreeMap::from([
         (PROJECT.to_owned(), "ovzdusie-config".to_owned()),
@@ -394,6 +416,19 @@ async fn a_file_is_text_as_data_binary_by_its_bytes_and_a_large_one_unread() {
 }
 
 #[tokio::test]
+async fn the_clone_url_is_the_public_address() {
+    let (_server, state) = world_on(Some("https://jc.example/git/")).await;
+    let name = "jc_repository_get";
+    let repo = doors::call(name, &session(steward()), &state, input(name))
+        .await
+        .body;
+    assert_eq!(
+        repo["cloneUrl"],
+        "https://jc.example/git/test-owner/ovzdusie-config.git"
+    );
+}
+
+#[tokio::test]
 async fn the_reads_answer_in_the_shapes_the_pages_draw() {
     let (_server, state) = world().await;
     let call = |name: &str| {
@@ -408,7 +443,10 @@ async fn the_reads_answer_in_the_shapes_the_pages_draw() {
     let repo = call("jc_repository_get").await;
     assert_eq!(repo["readme"]["text"], XSS);
     assert_eq!(repo["lastCommit"]["message"], "Change b");
-    assert_eq!(repo["cloneUrl"], "https://git.example/ovzdusie-config.git");
+    assert_eq!(
+        repo["cloneUrl"], "https://git.example/ovzdusie-config.git",
+        "no public address: the forge's own CloneUrl, never the dial address"
+    );
     let tree = call("jc_repository_tree").await;
     assert_eq!(tree["entries"][0]["path"], "src/page.html");
     let commit = call("jc_repository_commit").await;
