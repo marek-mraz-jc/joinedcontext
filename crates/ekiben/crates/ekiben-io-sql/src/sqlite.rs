@@ -9,6 +9,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use ekiben_bloblang::Value;
 use ekiben_core::CoreError;
+use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+use rusqlite::limits::Limit;
 use rusqlite::types::ValueRef;
 use rusqlite::{Connection, OpenFlags};
 
@@ -86,10 +88,20 @@ fn msg(e: rusqlite::Error) -> String {
 
 impl SqliteDb {
     pub fn open(t: &SqliteTarget) -> Result<Self, String> {
-        let conn = match &t.path {
+        let mut conn = match &t.path {
             Some(p) => Connection::open_with_flags(p, t.flags),
             None => Connection::open_in_memory_with_flags(t.flags),
         }
+        .map_err(msg)?;
+        // The DSN's path was held under the file root; ATTACH DATABASE and VACUUM INTO (which
+        // attaches its target) in a query or init_statement would name any other path. No
+        // database may be attached, and the authorizer refuses the statement while it compiles.
+        conn.set_limit(Limit::SQLITE_LIMIT_ATTACHED, 0)
+            .map_err(msg)?;
+        conn.authorizer(Some(|ctx: AuthContext<'_>| match ctx.action {
+            AuthAction::Attach { .. } | AuthAction::Detach { .. } => Authorization::Deny,
+            _ => Authorization::Allow,
+        }))
         .map_err(msg)?;
         for (name, val) in &t.pragmas {
             // Both parts were checked to be identifier and literal characters in parse_dsn.
@@ -258,6 +270,44 @@ mod tests {
         assert!(parse_dsn("x.db?_pragma=a;drop", None).is_err());
         assert!(parse_dsn("x.db?_pragma=journal_mode(wal;drop)", None).is_err());
         assert!(parse_dsn(":memory:", None).unwrap().path.is_none());
+    }
+
+    #[test]
+    fn attach_and_vacuum_into_cannot_leave_the_root() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let db = SqliteDb::open(&parse_dsn("file:in.db", Some(root.path())).unwrap()).unwrap();
+        let guard = db.0.lock().unwrap();
+        let c = guard.as_ref().unwrap();
+        exec(
+            c,
+            "CREATE TABLE t (a integer); INSERT INTO t VALUES (1)",
+            &[],
+        )
+        .unwrap();
+        for sql in [
+            format!(
+                "ATTACH DATABASE '{}' AS x",
+                outside.path().join("a.db").display()
+            ),
+            format!("VACUUM INTO '{}'", outside.path().join("v.db").display()),
+            format!(
+                "VACUUM main INTO '{}'",
+                outside.path().join("w.db").display()
+            ),
+            "ATTACH ':memory:' AS m".to_string(),
+            "DETACH DATABASE main".to_string(),
+        ] {
+            assert!(exec(c, &sql, &[]).is_err(), "{sql} ran");
+        }
+        assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+        let mut n = 0;
+        query(c, "SELECT a FROM t", &[], |_| {
+            n += 1;
+            true
+        })
+        .unwrap();
+        assert_eq!(n, 1);
     }
 
     #[test]

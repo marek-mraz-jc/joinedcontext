@@ -241,6 +241,65 @@ async fn jq_no_output_drops_the_message_and_limits_hold() {
     assert!(build_yaml("jq:\n  query: '.foo |'\n").is_err());
 }
 
+#[tokio::test]
+async fn jq_recursion_loops_and_deep_results_fail_the_message_not_the_process() {
+    for (query, want) in [
+        ("def f: 1 + f; f", "limit reached"),
+        ("last(range(1e15))", "limit reached"),
+        ("last(repeat(1))", "limit reached"),
+        ("[range(1e9)] | length", "limit reached"),
+        (
+            "reduce range(100000) as $i (null; [.])",
+            "nested deeper than",
+        ),
+        // As deep as the step budget lets a value grow: dropping it fits the thread's stack.
+        ("reduce range(1e8) as $i (null; [.])", "limit reached"),
+        ("reduce range(40) as $i (\"ab\"; . + .)", "limit reached"),
+        ("\"x\" * 1000000000000", "limit reached"),
+        (
+            "reduce range(40) as $i ([1]; . + .) | length",
+            "limit reached",
+        ),
+        (
+            "reduce range(60) as $i (0; [., .]) | tojson",
+            "limit reached",
+        ),
+        (
+            "[reduce range(60) as $i (0; [., .]) | ..] | length",
+            "limit reached",
+        ),
+        (
+            "[range(2) | reduce range(60) as $i (0; [., .])] | .[0] == .[1]",
+            "limit reached",
+        ),
+        (
+            "[range(2) | reduce range(60) as $i (0; [., .])] | sort | length",
+            "limit reached",
+        ),
+        (
+            "[range(2) | reduce range(60) as $i (0; [., .])] | unique | length",
+            "limit reached",
+        ),
+    ] {
+        let conf = format!("jq:\n  query: '{query}'\n");
+        let out = run(&conf, &["{}"]).await;
+        let err = out[0][0].error_get().expect(query).to_string();
+        // Which limit stops a query first depends on the host's speed; each is a stop.
+        assert!(err.contains(want), "{query}: {err}");
+    }
+    // An error value is printed short.
+    let out = run(
+        "jq:\n  query: 'error(reduce range(60) as $i (0; [., .]))'\n",
+        &["{}"],
+    )
+    .await;
+    let err = out[0][0].error_get().expect("errored").to_string();
+    assert!(err.len() < 5000 && err.ends_with("..."), "{}", err.len());
+    // The budget is per message: the next message of the same processor runs.
+    let out = run("jq:\n  query: '[limit(3; repeat(1))]'\n", &["{}"]).await;
+    assert_eq!(bytes(&out[0][0]), "[1,1,1]");
+}
+
 // processor_jmespath_test.go
 
 #[tokio::test]
@@ -426,6 +485,22 @@ async fn grok_refuses_cycles_traversal_and_reports_no_match() {
             .unwrap();
     let comp = ComponentConfig::from_json_value(&conf, "noop", None).unwrap();
     assert!(reg.build_processor_list(&[comp], &c).is_err());
+    // A file that is not a pattern file: the error names the file and line, not the text.
+    std::fs::write(dir.path().join("mounted"), "# header\nsecret-value-1234\n").unwrap();
+    let conf: serde_json::Value =
+        serde_norway::from_str("grok:\n  expressions: ['%{WORD}']\n  pattern_paths: ['mounted']\n")
+            .unwrap();
+    let comp = ComponentConfig::from_json_value(&conf, "noop", None).unwrap();
+    let err = reg
+        .build_processor_list(&[comp], &c)
+        .err()
+        .expect("refused")
+        .to_string();
+    assert!(
+        err.contains("mounted line 2: no pattern after its name"),
+        "{err}"
+    );
+    assert!(!err.contains("secret-value"), "{err}");
     let out = run("grok:\n  expressions: ['%{INT:n}']\n", &["no digits"]).await;
     assert_eq!(
         out[0][0].error_get().expect("errored").to_string(),

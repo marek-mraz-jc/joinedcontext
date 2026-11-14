@@ -122,8 +122,14 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring",
 rustls-pki-types = "1"
 # sql_* inputs and outputs (T-6834): postgres and mysql over sqlx, TLS on ring like the rest; sqlite over
 # rusqlite (bundled SQLite 3.54.1: sqlx 0.9 pins libsqlite3-sys < 0.38, which RUSTSEC-2026-0459 affects).
-rusqlite = { version = "0.41.1", default-features = false, features = ["bundled", "column_decltype"] }
+rusqlite = { version = "0.41.1", default-features = false, features = ["bundled", "column_decltype", "hooks", "limits"] }
 # The driver crates without the sqlx umbrella: its optional sqlx-sqlite links sqlite3 too (cargo #7880).
 sqlx-core = { version = "=0.9.0", default-features = false, features = ["_rt-tokio", "_tls-rustls-ring-native-roots", "json"] }
 sqlx-postgres = { version = "=0.9.0", default-features = false, features = ["chrono", "json"] }
 sqlx-mysql = { version = "=0.9.0", default-features = false, features = ["chrono", "json"] }
+
+# jaq-core 3.1.2 and jaq-json 2.0.3 with an evaluation budget (steps, deadline, stack, bytes) for
+# the jq processor (vendor/SOURCES.md at the jc root).
+[patch.crates-io]
+jaq-core = { path = "../../vendor/jaq-core" }
+jaq-json = { path = "../../vendor/jaq-json" }

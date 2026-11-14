@@ -198,14 +198,16 @@ fn add_patterns_from_path(
     }
     for f in files {
         let text = std::fs::read_to_string(&f).map_err(|e| e.to_string())?;
-        for l in text.lines() {
+        for (n, l) in text.lines().enumerate() {
             if l.is_empty() || l.starts_with('#') {
                 continue;
             }
-            // Go's `names[1]` panics on a line without a space; refuse the file instead.
-            let (name, pattern) = l
-                .split_once(' ')
-                .ok_or_else(|| format!("line '{l}' has no pattern after its name"))?;
+            // Go's `names[1]` panics on a line without a space; refuse the file instead. The error
+            // names the file and line, never its text: the file root is shared, the log is too.
+            let (name, pattern) = l.split_once(' ').ok_or_else(|| {
+                let file = f.file_name().unwrap_or_default().to_string_lossy();
+                format!("{file} line {}: no pattern after its name", n + 1)
+            })?;
             patterns.insert(name.to_string(), pattern.to_string());
         }
     }

@@ -53,7 +53,7 @@ members = [
 ]
 # Joined repositories keep their own workspace (lockfile, lints, standalone binaries) for now; jc
 # depends on their crates by path. Making them members is a later step (bins/jc/STATUS.md).
-exclude = ["crates/ekiben", "crates/antares", "crates/portal", "vendor/joinedcontext-platform", "vendor/ngsild", "vendor/oxrdfxml", "vendor/tikv-jemalloc-ctl", "vendor/paste"]
+exclude = ["crates/ekiben", "crates/antares", "crates/portal", "vendor/joinedcontext-platform", "vendor/ngsild", "vendor/oxrdfxml", "vendor/tikv-jemalloc-ctl", "vendor/paste", "vendor/jaq-core", "vendor/jaq-json", "vendor/sqlx-sqlite"]
 
 # Antares pins rumqttc 0.25.1 with rustls-webpki 0.103 (crates/antares/vendor/rumqttc/README.md); a
 # patch only takes effect from the root manifest.
@@ -69,6 +69,13 @@ tikv-jemalloc-ctl = { path = "vendor/tikv-jemalloc-ctl" }
 kreuzberg = { path = "vendor/joinedcontext-platform/vendor/kreuzberg" }
 # paste 1.0.15 as a re-export of pastey 0.1.1 (RUSTSEC-2024-0436; vendor/SOURCES.md).
 paste = { path = "vendor/paste" }
+# jaq-core 3.1.2 and jaq-json 2.0.3 with an evaluation budget (steps, deadline, stack, bytes) for
+# ekiben's jq processor (vendor/SOURCES.md).
+jaq-core = { path = "vendor/jaq-core" }
+jaq-json = { path = "vendor/jaq-json" }
+# sqlx-sqlite 0.9.0 admitting libsqlite3-sys 0.39: it is locked, never compiled (no sqlite feature),
+# and its <0.38 range collided by `links` with ekiben-io-sql's rusqlite 0.41 (vendor/SOURCES.md).
+sqlx-sqlite = { path = "vendor/sqlx-sqlite" }
 
 [workspace.package]
 edition = "2024"

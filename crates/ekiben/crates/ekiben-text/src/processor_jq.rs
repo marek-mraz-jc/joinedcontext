@@ -8,11 +8,15 @@
 //!
 //! Limits gojq lacks, so one config cannot exhaust the process: a query of at most
 //! [`MAX_QUERY_BYTES`], at most [`MAX_OUTPUTS`] values per message and [`MAX_OUTPUT_BYTES`] of raw
-//! output. ponytail: jaq has no fuel, so a single value built in one step (`[range(1e9)]`) is not
-//! interrupted; a fuel counter in jaq-core is the upgrade path.
+//! output; per message at most [`MAX_STEPS`] evaluation steps, [`MAX_TIME`], [`MAX_EVAL_STACK`]
+//! of stack and [`MAX_BUILT_BYTES`] of strings, array slots and JSON text built (jc's jaq-core and
+//! jaq-json budget patch, vendor/SOURCES.md). A batch runs on a thread of its own
+//! with a [`THREAD_STACK`] stack, off the async workers, so a deep recursion (`def f: 1 + f; f`) or
+//! an endless loop (`last(range(1e15))`) fails its message and leaves the process running.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use ekiben_bloblang::Value;
@@ -27,6 +31,18 @@ use crate::fields::Fields;
 pub const MAX_QUERY_BYTES: usize = 64 * 1024;
 pub const MAX_OUTPUTS: usize = 100_000;
 pub const MAX_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_STEPS: u64 = 10_000_000;
+pub const MAX_TIME: Duration = Duration::from_secs(5);
+pub const MAX_EVAL_STACK: usize = 64 << 20;
+pub const MAX_BUILT_BYTES: usize = 256 << 20;
+/// An error value is printed into the message's error at most this long.
+const MAX_ERROR_BYTES: usize = 4096;
+/// The evaluation thread's stack: [`MAX_EVAL_STACK`] for jaq, the rest for converting and dropping
+/// the values a query built (both recurse over their nesting). Reserved, touched only as used.
+pub const THREAD_STACK: usize = 1 << 30;
+/// Deepest result a message may carry: the stream serializes it later on an async worker's stack.
+/// Go's `encoding/json` reads at most 10000 levels; Bento writes any depth.
+pub const MAX_DEPTH: usize = 1000;
 
 /// gojq built-ins jaq lacks or defines otherwise: `env` (empty, as gojq without an environ
 /// loader), `@json`, and gojq's `@csv` and `@tsv` (`funcToCSV`, `funcToTSV`).
@@ -57,7 +73,7 @@ pub fn register(registry: &Registry) {
 
 /// Implements `jq`.
 pub struct JqProcessor {
-    filter: JqFilter,
+    filter: Arc<JqFilter>,
     in_raw: bool,
     out_raw: bool,
 }
@@ -69,14 +85,14 @@ impl JqProcessor {
         let in_raw = f.bool("raw")?.unwrap_or(false);
         let out_raw = f.bool("output_raw")?.unwrap_or(false);
         Ok(Self {
-            filter: compile(&query).map_err(CoreError::config)?,
+            filter: Arc::new(compile(&query).map_err(CoreError::config)?),
             in_raw,
             out_raw,
         })
     }
 
-    /// Bento's `Process`: `Ok(None)` drops the message.
-    pub fn process(&self, part: &mut Part) -> Result<Option<()>, String> {
+    /// Bento's `Process`: `Ok(None)` drops the message. Runs on the [`THREAD_STACK`] thread only.
+    fn process(&self, part: &mut Part) -> Result<Option<()>, String> {
         let input = if self.in_raw {
             Val::from(String::from_utf8_lossy(&part.as_bytes()).into_owned())
         } else {
@@ -139,9 +155,37 @@ impl Processor for JqProcessor {
         ctx: &ProcContext,
         batch: Batch,
     ) -> Result<Vec<Batch>, CoreError> {
+        let this = Self {
+            filter: self.filter.clone(),
+            in_raw: self.in_raw,
+            out_raw: self.out_raw,
+        };
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        std::thread::Builder::new()
+            .name("ekiben-jq".into())
+            .stack_size(THREAD_STACK)
+            .spawn(move || {
+                let results: Vec<_> = batch
+                    .into_iter()
+                    .map(|mut part| {
+                        // A panic inside jaq fails this message, not the batch.
+                        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            this.process(&mut part)
+                        }))
+                        .unwrap_or_else(|_| Err("jq query failed inside the evaluator".into()));
+                        (part, r)
+                    })
+                    .collect();
+                // The receiver is gone only when the stream stopped; the results go with it.
+                let _ = tx.send(results);
+            })
+            .map_err(|e| CoreError::other(format!("jq: cannot start its thread: {e}")))?;
+        let results = rx
+            .await
+            .map_err(|_| CoreError::other("jq: its thread ended without a result"))?;
         let mut out = Batch::new();
-        for mut part in batch {
-            match self.process(&mut part) {
+        for (mut part, r) in results {
+            match r {
                 Ok(Some(())) => out.push(part),
                 Ok(None) => {}
                 Err(e) => {
@@ -208,17 +252,36 @@ pub fn compile(query: &str) -> Result<JqFilter, String> {
         })
 }
 
-/// gojq's `Run` iterator, collected; the first error stops it.
-pub fn run(filter: &JqFilter, input: Val, meta: Val) -> Result<Vec<Value>, String> {
+/// gojq's `Run` iterator, collected; the first error stops it, and so does the budget.
+fn run(filter: &JqFilter, input: Val, meta: Val) -> Result<Vec<Value>, String> {
+    let limits = jaq_core::budget::Limits {
+        steps: MAX_STEPS,
+        time: MAX_TIME,
+        stack: MAX_EVAL_STACK,
+        bytes: MAX_BUILT_BYTES,
+    };
+    let (out, exhausted) = jaq_core::budget::limit(limits, || run_query(filter, input, meta));
+    match exhausted {
+        Some(e) => Err(format!(
+            "jq query stopped: {e} ({MAX_STEPS} steps, {} s, {} MiB of stack, {} MiB built per message)",
+            MAX_TIME.as_secs(),
+            MAX_EVAL_STACK >> 20,
+            MAX_BUILT_BYTES >> 20
+        )),
+        None => out,
+    }
+}
+
+fn run_query(filter: &JqFilter, input: Val, meta: Val) -> Result<Vec<Value>, String> {
     let env = Val::obj(Default::default());
     let ctx = Ctx::<JustLut<Val>>::new(&filter.lut, Vars::new([meta, env]));
     let mut out = Vec::new();
     for v in filter.id.run((ctx, input)) {
         match v {
-            Ok(v) => out.push(from_val(&v)?),
+            Ok(v) => out.push(from_val(&v, 0)?),
             Err(e) => {
                 let e = match e.get_err() {
-                    Ok(e) => e.to_string(),
+                    Ok(e) => capped_text(&e),
                     Err(_) => "jq query halted".to_string(),
                 };
                 return Err(e);
@@ -231,6 +294,32 @@ pub fn run(filter: &JqFilter, input: Val, meta: Val) -> Result<Vec<Value>, Strin
         }
     }
     Ok(out)
+}
+
+/// `e` as text, cut at [`MAX_ERROR_BYTES`]: `error(v)` may carry any value, shared parts of it
+/// printed again each time they occur.
+fn capped_text(e: &impl std::fmt::Display) -> String {
+    struct Capped(String);
+    impl std::fmt::Write for Capped {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            let room = MAX_ERROR_BYTES - self.0.len();
+            if s.len() > room {
+                let mut end = room;
+                while !s.is_char_boundary(end) {
+                    end -= 1;
+                }
+                self.0.push_str(&s[..end]);
+                return Err(std::fmt::Error);
+            }
+            self.0.push_str(s);
+            Ok(())
+        }
+    }
+    let mut out = Capped(String::new());
+    if std::fmt::write(&mut out, format_args!("{e}")).is_err() {
+        out.0.push_str("...");
+    }
+    out.0
 }
 
 /// A value as gojq receives it from Bento (`gojq.normalizeNumbers` on `json.Number`).
@@ -278,7 +367,12 @@ fn number_val(s: &str) -> Val {
 }
 
 /// A gojq result as Bento holds it: integers as `int`, big integers verbatim, floats as `float64`.
-pub fn from_val(v: &Val) -> Result<Value, String> {
+fn from_val(v: &Val, depth: usize) -> Result<Value, String> {
+    if depth > MAX_DEPTH {
+        return Err(format!(
+            "jq result is nested deeper than {MAX_DEPTH} levels"
+        ));
+    }
     Ok(match v {
         Val::Null => Value::Null,
         Val::Bool(b) => Value::Bool(*b),
@@ -291,7 +385,7 @@ pub fn from_val(v: &Val) -> Result<Value, String> {
         Val::TStr(b) | Val::BStr(b) => Value::String(String::from_utf8_lossy(b).into_owned()),
         Val::Arr(a) => Value::Array(
             a.iter()
-                .map(from_val)
+                .map(|v| from_val(v, depth + 1))
                 .collect::<Result<Vec<_>, _>>()?
                 .into(),
         ),
@@ -302,7 +396,7 @@ pub fn from_val(v: &Val) -> Result<Value, String> {
                     Val::TStr(b) | Val::BStr(b) => String::from_utf8_lossy(b).into_owned(),
                     other => return Err(format!("object key {other} is not a string")),
                 };
-                m.insert(key, from_val(v)?);
+                m.insert(key, from_val(v, depth + 1)?);
             }
             Value::Object(m.into())
         }

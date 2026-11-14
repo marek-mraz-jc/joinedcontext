@@ -289,7 +289,8 @@ impl ConnSettings {
         let idle = u32::try_from(self.max_idle_conns.max(0))
             .unwrap_or(0)
             .min(max_open);
-        // ponytail: sqlx needs a finite pool; "unlimited" is 64 connections, raise with conn_max_open.
+        // ponytail: sqlx needs a finite pool; "unlimited" and any larger conn_max_open are 64
+        // connections.
         (max_open.min(64), idle.min(max_open.min(64)))
     }
 }
@@ -337,7 +338,7 @@ impl Db {
 
 /// What a DSN connects to, before the outbound rule judges it.
 pub enum Target {
-    Postgres(PgConnectOptions),
+    Postgres(PgDsn),
     MySql(MySqlConnectOptions),
     Sqlite(crate::sqlite::SqliteTarget),
 }
@@ -350,7 +351,14 @@ pub fn dsn_error(driver: Driver, why: impl std::fmt::Display) -> CoreError {
 /// Parses a lib/pq DSN, a URL (`postgres://u:p@host:5432/db?sslmode=disable`) or key=value
 /// pairs (`host=h port=5432 user=u`), as lib/pq does: `sslmode` defaults to `require`, and a
 /// parameter lib/pq does not know is a run-time parameter sent at startup.
-pub fn parse_postgres_dsn(dsn: &str) -> Result<PgConnectOptions, CoreError> {
+/// A parsed lib/pq DSN.
+pub struct PgDsn {
+    pub opts: PgConnectOptions,
+    /// lib/pq's `connect_timeout` in seconds; `0` or unset waits as long as the pool does.
+    pub connect_timeout: Option<std::time::Duration>,
+}
+
+pub fn parse_postgres_dsn(dsn: &str) -> Result<PgDsn, CoreError> {
     let err = |why: &str| dsn_error(Driver::Postgres, why);
     let mut pairs: Vec<(String, String)> = Vec::new();
     if dsn.starts_with("postgres://") || dsn.starts_with("postgresql://") {
@@ -385,6 +393,7 @@ pub fn parse_postgres_dsn(dsn: &str) -> Result<PgConnectOptions, CoreError> {
         .password("")
         .ssl_mode(PgSslMode::Require);
     let mut user = None;
+    let mut connect_timeout = None;
     let mut runtime: Vec<(String, String)> = Vec::new();
     for (k, v) in pairs {
         opts = match k.as_str() {
@@ -411,7 +420,13 @@ pub fn parse_postgres_dsn(dsn: &str) -> Result<PgConnectOptions, CoreError> {
                 ))
             }
             "fallback_application_name" | "application_name" => opts.application_name(&v),
-            "connect_timeout" => opts,
+            "connect_timeout" => {
+                let secs: u64 = v
+                    .parse()
+                    .map_err(|_| err("connect_timeout is not a number of seconds"))?;
+                connect_timeout = (secs > 0).then(|| std::time::Duration::from_secs(secs));
+                opts
+            }
             "disable_prepared_binary_result" | "binary_parameters" | "krbsrvname" | "krbspn" => {
                 opts
             }
@@ -425,7 +440,10 @@ pub fn parse_postgres_dsn(dsn: &str) -> Result<PgConnectOptions, CoreError> {
     if !runtime.is_empty() {
         opts = opts.options(runtime);
     }
-    Ok(opts)
+    Ok(PgDsn {
+        opts,
+        connect_timeout,
+    })
 }
 
 fn percent_decode(s: &str) -> String {
@@ -626,9 +644,16 @@ pub async fn open(
     }
     let _ = min_idle;
     let db = match target {
-        Target::Postgres(o) => {
+        Target::Postgres(PgDsn {
+            opts: o,
+            connect_timeout,
+        }) => {
             ekiben_io_http::outbound::resolve_host_checked(o.get_host(), o.get_port(), org).await?;
-            Db::Postgres(pool!(PgPoolOptions).connect_lazy_with(o.clone()))
+            let mut pool = pool!(PgPoolOptions);
+            if let Some(t) = connect_timeout {
+                pool = pool.acquire_timeout(*t);
+            }
+            Db::Postgres(pool.connect_lazy_with(o.clone()))
         }
         Target::MySql(o) => {
             ekiben_io_http::outbound::resolve_host_checked(o.get_host(), o.get_port(), org).await?;
@@ -715,12 +740,16 @@ mod tests {
             "postgres://foouser:foo%40pass@db.example.com:5433/foodb?sslmode=disable&search_path=x",
         )
         .unwrap();
+        assert_eq!(o.connect_timeout, None);
+        let o = o.opts;
         assert_eq!(o.get_host(), "db.example.com");
         assert_eq!(o.get_port(), 5433);
         assert_eq!(o.get_username(), "foouser");
         assert_eq!(o.get_database(), Some("foodb"));
         assert!(matches!(o.get_ssl_mode(), PgSslMode::Disable));
-        let o = parse_postgres_dsn("host=h port=6000 user='a b' dbname=d").unwrap();
+        let o = parse_postgres_dsn("host=h port=6000 user='a b' dbname=d")
+            .unwrap()
+            .opts;
         assert_eq!(
             (o.get_host(), o.get_port(), o.get_username()),
             ("h", 6000, "a b")
@@ -730,12 +759,20 @@ mod tests {
             "lib/pq requires TLS by default"
         );
         assert!(parse_postgres_dsn("host=/var/run/postgresql").is_err());
+        let t = |dsn| parse_postgres_dsn(dsn).map(|d| d.connect_timeout);
+        assert_eq!(
+            t("host=h connect_timeout=7").unwrap(),
+            Some(std::time::Duration::from_secs(7))
+        );
+        assert_eq!(t("host=h connect_timeout=0").unwrap(), None);
+        assert!(t("host=h connect_timeout=soon").is_err());
     }
 
     #[test]
     fn dsn_errors_never_echo_the_dsn() {
         let e = parse_postgres_dsn("postgres://u:s3cret@[bad")
-            .unwrap_err()
+            .err()
+            .expect("refused")
             .to_string();
         assert!(!e.contains("s3cret"), "{e}");
         let e = parse_mysql_dsn("u:s3cret@tcp(h:1)/db?bogus=1")

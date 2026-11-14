@@ -1511,6 +1511,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7354288c522e7e980fafd2075d63d1285794c3a6a16cdd492f189ea406e5f18b"
 
 [[package]]
+name = "bzip2"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3a53fac24f34a81bc9954b5d6cfce0c21e18ec6959f44f56e8e90e4bb7c346c"
+dependencies = [
+ "libbz2-rs-sys",
+]
+
+[[package]]
 name = "calamine"
 version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3251,6 +3260,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
+ "bzip2",
  "chrono",
  "csv",
  "ekiben-bloblang",
@@ -3258,12 +3268,17 @@ dependencies = [
  "flate2",
  "futures",
  "glob",
+ "lz4_flex",
+ "quick-xml 0.42.0",
+ "regex",
  "serde",
  "serde_json",
+ "snap",
  "tar",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "zstd",
 ]
 
 [[package]]
@@ -3346,6 +3361,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "ekiben-io-sql"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "ekiben-bloblang",
+ "ekiben-core",
+ "ekiben-io-file",
+ "ekiben-io-http",
+ "futures",
+ "glob",
+ "rusqlite",
+ "serde_json",
+ "sqlx-core",
+ "sqlx-mysql",
+ "sqlx-postgres",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "ekiben-parquet"
 version = "0.1.0"
 dependencies = [
@@ -3410,6 +3447,7 @@ dependencies = [
  "ekiben-io-http",
  "ekiben-io-nats",
  "ekiben-io-ngsild",
+ "ekiben-io-sql",
  "ekiben-parquet",
  "ekiben-processors",
  "ekiben-protobuf",
@@ -3445,6 +3483,7 @@ dependencies = [
  "jmespath",
  "regex",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -3633,6 +3672,18 @@ dependencies = [
  "smallvec",
  "zune-inflate",
 ]
+
+[[package]]
+name = "fallible-iterator"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
+
+[[package]]
+name = "fallible-streaming-iterator"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
 name = "fancy-regex"
@@ -6240,8 +6291,6 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jaq-core"
 version = "3.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "723ad9253808e95daa2d10ad5b258ac4e65c07003e223e08d1d8734c2942d606"
 dependencies = [
  "dyn-clone",
  "once_cell",
@@ -6251,8 +6300,6 @@ dependencies = [
 [[package]]
 name = "jaq-json"
 version = "2.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4be2f53207ffb1313a2d2ad819cfa8bfaa7936cb85a110eda10fd5da822cec94"
 dependencies = [
  "bstr 1.13.1",
  "bytes",
@@ -7268,6 +7315,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "libbz2-rs-sys"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32f454fd6831a29c0e827ed075bca2a15be201bd57f4168f0fd1041124eab17e"
+
+[[package]]
 name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7310,10 +7363,11 @@ dependencies = [
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.37.0"
+version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f111c8c41e7c61a49cd34e44c7619462967221a6443b0ec299e0ac30cfb9b1"
+checksum = "14a5f01b87b92705d07b433c06f96cbc764637d81a0bffb5734ce17cf0f9a2b3"
 dependencies = [
+ "cc",
  "pkg-config",
  "vcpkg",
 ]
@@ -10480,6 +10534,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rusqlite"
+version = "0.41.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da9bba6f3506135e120a6586df05be18b48d18896600646a4bec8f993d91a594"
+dependencies = [
+ "bitflags 2.13.2",
+ "fallible-iterator",
+ "fallible-streaming-iterator",
+ "libsqlite3-sys",
+ "smallvec",
+]
+
+[[package]]
 name = "rust-embed"
 version = "8.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11844,8 +11911,6 @@ dependencies = [
 [[package]]
 name = "sqlx-sqlite"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "488e99c397a62007e4229aec669a179816339afc6d2620ca6fa420dbee2e982c"
 dependencies = [
  "atoi",
  "chrono",
