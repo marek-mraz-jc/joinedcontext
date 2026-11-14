@@ -1259,7 +1259,8 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
         setRows((loaded) => {
           const seen = new Set(loaded.map((row) => row.id));
           const next = [...loaded, ...page.rows.filter((row) => !seen.has(row.id))].slice(0, MAX_VIRTUAL_ROWS);
-          setMore(next.length < MAX_VIRTUAL_ROWS && hasMore(next.length, page.total, page.rows.length, limit));
+          // a page of rows already loaded (inserts moved them) ends it: asked again, it would repeat
+          setMore(next.length > loaded.length && next.length < MAX_VIRTUAL_ROWS && hasMore(next.length, page.total, page.rows.length, limit));
           return next;
         });
         if (page.total !== undefined) setTotal(page.total);
