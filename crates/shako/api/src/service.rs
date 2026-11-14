@@ -124,6 +124,23 @@ async fn record_new_repo(
     Ok(created)
 }
 
+/// Measures `repo` on disk again after a write and moves its Organization's git usage by the
+/// change, so the storage quota sees what a push, an API commit or a merge added.
+pub async fn record_repo_size(
+    state: &ShakoState,
+    repo: &mut RepoRecord,
+    disk_path: &std::path::Path,
+) {
+    let new_size = compute_repo_size_bytes(disk_path);
+    let delta = new_size as i64 - repo.size_bytes as i64;
+    repo.size_bytes = new_size;
+    let _ = state.store().update_repo(repo.clone()).await;
+    let _ = state
+        .store()
+        .adjust_quota_usage(repo.instance_id, repo.org_id, 0, delta, 0)
+        .await;
+}
+
 /// Creates a repository; one of the same owner and name already there is `Conflict` (409).
 pub async fn create_repository(
     state: &ShakoState,
@@ -201,6 +218,18 @@ pub async fn import_repository(
     )
     .await?;
     check_org_write(state, ctx, &req.owner)?;
+    let instance = state.instance_for(ctx.instance_id, ctx.org_id).await;
+    let usage = state
+        .store()
+        .get_quota_usage(ctx.instance_id, ctx.org_id)
+        .await?;
+    check_repo_count_quota(&instance, &usage)?;
+    if usage.total_bytes().saturating_add(origin.size_bytes) > instance.max_storage_bytes {
+        return Err(ShakoError::QuotaExceeded {
+            resource: "storage_bytes".into(),
+            limit: instance.max_storage_bytes,
+        });
+    }
     refuse_existing(state, ctx, &req.owner, &req.name).await?;
 
     let new_id = RepoId::new();
@@ -622,8 +651,7 @@ pub async fn commit_files(
     let (disk, b, msg) = (disk_path.clone(), branch.clone(), req.message);
     let commit_sha =
         blocking(move || commit_file_changes(&disk, &b, &msg, &author, &committer, &ops)).await?;
-    repo.size_bytes = compute_repo_size_bytes(&disk_path);
-    let _ = state.store().update_repo(repo.clone()).await;
+    record_repo_size(state, &mut repo, &disk_path).await;
     drop(guard);
 
     let payload = build_push_webhook_payload(
@@ -1116,8 +1144,7 @@ pub async fn merge_pull_request(
     pr.merge_commit_sha = merge_sha.clone();
     pr.closed_at = Some(Utc::now());
     let saved = state.store().update_pull_request(pr).await?;
-    repo.size_bytes = compute_repo_size_bytes(&disk_path);
-    let _ = state.store().update_repo(repo.clone()).await;
+    record_repo_size(state, &mut repo, &disk_path).await;
     let payload = build_pr_webhook_payload(&repo, &saved, "closed", &ctx.subject.username);
     let _ = emit_and_dispatch_event(
         state,
@@ -1332,16 +1359,6 @@ pub async fn add_webhook(
             created_at: Utc::now(),
         })
         .await
-}
-
-/// The disk path of a repository the caller reads, for read-only git work.
-pub async fn readable_repo(
-    state: &ShakoState,
-    ctx: &RequestCtx,
-    owner: &str,
-    name: &str,
-) -> ShakoResult<(RepoRecord, PathBuf)> {
-    resolve_and_authorize_repo(state, ctx, owner, name, Action::Read).await
 }
 
 // =========================================================================

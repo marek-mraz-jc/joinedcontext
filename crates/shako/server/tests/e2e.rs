@@ -850,6 +850,23 @@ async fn s5_s7_s10_s11_s14_s15_portal_change_lane_webhooks_mirrors_and_backup() 
     );
 }
 
+/// The standalone binary's store starts empty: `fsck` and `compact` say they found nothing to
+/// check and fail, so a cron job never reads a check that did not run as green.
+#[test]
+fn standalone_fsck_and_compact_fail_when_they_find_no_repository() {
+    let root = tempfile::tempdir().unwrap();
+    for cmd in ["fsck", "compact"] {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_shako"))
+            .args([cmd, "--repo-root"])
+            .arg(root.path())
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "{cmd}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("found no repository"), "{cmd}: {err}");
+    }
+}
+
 /// Contract S8, S9, S13, S18, S19, S21: OData 4.01 service, OCI registry + cosign signing,
 /// generic packages, MCP tools, read-only web views, and security threats T1, T4, T6, T13, T14.
 #[tokio::test]
@@ -1124,6 +1141,56 @@ async fn s8_s9_s13_s18_s19_s21_odata_registry_mcp_web_and_security_threats() {
             .signing_key()
             .verify_cosign_payload(&payload_bytes, sig_b64)
     );
+    // The signature manifest's config blob is pullable too: cosign and crane fetch it.
+    let config_digest = sig_man["config"]["digest"].as_str().unwrap();
+    let config_resp = world
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v2/joinedcontext/bikes/blobs/{config_digest}"))
+                .header("authorization", format!("Bearer {reg_jwt}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(config_resp.status(), StatusCode::OK);
+    assert_eq!(
+        &config_resp.into_body().collect().await.unwrap().to_bytes()[..],
+        b"{}"
+    );
+    // A blob past the organization's storage quota is refused before it is stored.
+    let (inst, org_a) = (world.state.default_instance_id, OrgId::from_u128(10));
+    let used = world
+        .state
+        .store()
+        .get_quota_usage(inst, org_a)
+        .await
+        .unwrap();
+    let mut full = world.state.instance_for(inst, org_a).await;
+    let roomy = full.clone();
+    full.max_storage_bytes = used.total_bytes();
+    world.state.store().upsert_instance(full).await.unwrap();
+    let extra: &[u8] = b"one-more-layer";
+    let over_quota = world
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/v2/joinedcontext/bikes/blobs/uploads/?digest=sha256:{}",
+                    shako_core::sha256_hex(extra)
+                ))
+                .header("authorization", format!("Bearer {reg_jwt}"))
+                .body(Body::from(extra))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(over_quota.status(), StatusCode::FORBIDDEN);
+    world.state.store().upsert_instance(roomy).await.unwrap();
 
     // Row 12: Generic package PUT and 409 on overwrite
     let put_gen = world

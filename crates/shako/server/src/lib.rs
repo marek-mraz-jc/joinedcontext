@@ -31,7 +31,10 @@ use shako_web::web_router;
 #[derive(Clone)]
 struct DefaultMount(Mount);
 
-/// Per-response CSP nonce and security headers middleware (THINK-CHECKLIST 3, S18, S21).
+/// The content security policy of every shako answer that sets none of its own.
+const CSP: &str = "default-src 'none'; style-src 'self'; img-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'";
+
+/// Security headers middleware (THINK-CHECKLIST 3, S18, S21).
 async fn security_and_mount_headers(
     Extension(default_mount): Extension<DefaultMount>,
     mut req: Request<Body>,
@@ -49,18 +52,12 @@ async fn security_and_mount_headers(
     let public_base = mount.public_base();
     let cookie_name = mount.cookie_name("shako_session");
 
-    let mut nonce_bytes = [0u8; 16];
-    rand::fill(&mut nonce_bytes);
-    let nonce = hex::encode(nonce_bytes);
-    let csp = format!(
-        "default-src 'none'; style-src 'self' 'nonce-{nonce}'; img-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
-    );
-
     let mut resp = next.run(req).await;
     let headers = resp.headers_mut();
-    if let Ok(hv) = HeaderValue::from_str(&csp) {
-        headers.entry("content-security-policy").or_insert(hv);
-    }
+    // No page of shako carries an inline style, so the policy needs no per-request nonce.
+    headers
+        .entry("content-security-policy")
+        .or_insert_with(|| HeaderValue::from_static(CSP));
     headers
         .entry("x-content-type-options")
         .or_insert_with(|| HeaderValue::from_static("nosniff"));

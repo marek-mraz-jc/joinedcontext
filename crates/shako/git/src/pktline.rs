@@ -103,13 +103,6 @@ pub fn write_text_line(mut out: impl Write, text: &str) -> ShakoResult<()> {
     Ok(())
 }
 
-/// Writes a raw binary/data pkt-line without altering trailing bytes.
-pub fn write_data_line(mut out: impl Write, data: &[u8]) -> ShakoResult<()> {
-    encode::data_to_write(data, &mut out)
-        .map_err(|e| ShakoError::Git(format!("pkt-line data write failed: {e}")))?;
-    Ok(())
-}
-
 /// Writes `0000` flush-pkt.
 pub fn write_flush(mut out: impl Write) -> ShakoResult<()> {
     encode::flush_to_write(&mut out)

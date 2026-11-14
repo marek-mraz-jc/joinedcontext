@@ -599,6 +599,12 @@ fn parse_odata_options_with_expand(
         }
     }
 
+    // Only pull requests expand (Files, Reviews): an ignored `$expand` would answer less than asked.
+    if let Some(prop) = expand_props.first().filter(|_| set_name != "PullRequests") {
+        return Err(ShakoError::BadRequest(format!(
+            "{set_name} has no navigation property '{prop}' to $expand"
+        )));
+    }
     let cleaned_q = filtered_pairs.join("&");
     let uri = if cleaned_q.is_empty() {
         set_name.to_owned()

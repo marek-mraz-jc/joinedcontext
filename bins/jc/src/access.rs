@@ -126,6 +126,18 @@ fn plain(id: &str) -> bool {
     (8..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
+/// Bytes of a request path an access line keeps: a caller's long path costs one short line.
+const LOGGED_PATH: usize = 256;
+
+/// `path` cut to [`LOGGED_PATH`] bytes on a character boundary.
+fn logged(path: &str) -> &str {
+    let mut end = path.len().min(LOGGED_PATH);
+    while !path.is_char_boundary(end) {
+        end -= 1;
+    }
+    &path[..end]
+}
+
 fn fresh() -> String {
     let mut bytes = [0u8; 16];
     // A failed draw leaves zeros: still a well-formed id, never a reason to refuse the call.
@@ -236,6 +248,7 @@ async fn access(module: &'static str, door: Door, mut req: Request, next: Next) 
         let code = status.as_u16();
         if status.is_server_error() || status.is_client_error() {
             let reason = status.canonical_reason().unwrap_or("refused");
+            let path = logged(&path);
             tracing::info!(target: "jc::access", module, %method, path, status = code, ms, reason, "refused");
         } else if let Door::Outer(sampler) = &door {
             let unlogged = match traced {
@@ -243,6 +256,7 @@ async fn access(module: &'static str, door: Door, mut req: Request, next: Next) 
                 None if probe => sampler.admit(&method, PROBE_KEY, started),
                 None => sampler.admit(&method, &path, started),
             };
+            let path = logged(&path);
             match unlogged {
                 Some(0) => {
                     tracing::info!(target: "jc::access", module, %method, path, status = code, ms, "answered");
@@ -383,6 +397,22 @@ mod tests {
             lines[0].contains("status=401") && lines[0].contains("reason=\"Unauthorized\""),
             "{log}"
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_long_path_is_cut_in_its_access_line() {
+        let long = format!("/{}", "a".repeat(4000));
+        let (response, log) = call(&long, Some("smokelogs-long-path-01")).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let line = log
+            .lines()
+            .find(|l| l.contains("smokelogs-long-path-01") && l.contains("jc::access"))
+            .expect("access line");
+        assert!(
+            line.contains(&format!("path=\"/{}\"", "a".repeat(255))),
+            "{line}"
+        );
+        assert!(line.len() < 1024, "{line}");
     }
 
     #[tokio::test(flavor = "current_thread")]

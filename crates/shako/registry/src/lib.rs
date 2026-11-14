@@ -37,13 +37,43 @@ use shako_core::{
 };
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
+use std::time::{Duration, Instant};
 
 pub const MAX_OCI_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
 pub use shako_api::service::MAX_PACKAGE_BLOB_BYTES;
 use shako_api::service::{self, authorize_package, blob_disk_path};
 
-/// Open chunked upload sessions: upload id -> `(owner, image, bytes received so far)`.
-type ChunkedUploads = RwLock<BTreeMap<String, (String, String, Vec<u8>)>>;
+/// Open chunked upload sessions: upload id -> `(owner, image, opened at, bytes received so far)`.
+type ChunkedUploads = RwLock<Uploads>;
+
+/// Open chunked uploads at most, process-wide; past it a new upload is 429 until one finishes.
+const MAX_OPEN_UPLOADS: usize = 32;
+/// Bytes all open chunked uploads may hold in memory together.
+const MAX_OPEN_UPLOAD_BYTES: usize = 2 * MAX_PACKAGE_BLOB_BYTES;
+/// An upload not finished in this time is dropped with its bytes.
+const UPLOAD_TTL: Duration = Duration::from_secs(3600);
+
+type Uploads = BTreeMap<String, (String, String, Instant, Vec<u8>)>;
+
+fn open_upload_bytes(map: &Uploads) -> usize {
+    map.values().map(|(_, _, _, b)| b.len()).sum()
+}
+
+/// Drops the expired uploads of `map`, then whether a new one holding `len` bytes fits.
+fn admit_upload(map: &mut Uploads, len: usize, now: Instant) -> bool {
+    map.retain(|_, (_, _, opened, _)| now.duration_since(*opened) < UPLOAD_TTL);
+    map.len() < MAX_OPEN_UPLOADS
+        && open_upload_bytes(map).saturating_add(len) <= MAX_OPEN_UPLOAD_BYTES
+}
+
+fn too_many_uploads() -> Response {
+    oci_error_response(
+        StatusCode::TOO_MANY_REQUESTS,
+        "TOOMANYREQUESTS",
+        "too many open uploads, finish one and retry",
+        None,
+    )
+}
 
 static CHUNKED_UPLOADS: LazyLock<ChunkedUploads> = LazyLock::new(|| RwLock::new(BTreeMap::new()));
 
@@ -496,10 +526,16 @@ async fn oci_post_blob_upload(
         .await
         .unwrap_or_default();
     let len = initial_bytes.len();
-    CHUNKED_UPLOADS.write().insert(
-        upload_uuid.clone(),
-        (owner.clone(), image.clone(), initial_bytes),
-    );
+    {
+        let mut map = CHUNKED_UPLOADS.write();
+        if !admit_upload(&mut map, len, Instant::now()) {
+            return too_many_uploads();
+        }
+        map.insert(
+            upload_uuid.clone(),
+            (owner.clone(), image.clone(), Instant::now(), initial_bytes),
+        );
+    }
     let loc = format!("/v2/{owner}/{image}/blobs/uploads/{upload_uuid}");
     let range = if len > 0 {
         format!("0-{}", len - 1)
@@ -550,7 +586,8 @@ async fn oci_patch_blob_upload(
         );
     };
     let mut map = CHUNKED_UPLOADS.write();
-    let Some((u_owner, u_image, buf)) = map.get_mut(&upload_uuid) else {
+    let buffered = open_upload_bytes(&map);
+    let Some((u_owner, u_image, _, buf)) = map.get_mut(&upload_uuid) else {
         return oci_error_response(
             StatusCode::NOT_FOUND,
             "BLOB_UPLOAD_UNKNOWN",
@@ -574,6 +611,9 @@ async fn oci_patch_blob_upload(
             "blob exceeds the package size limit",
             None,
         );
+    }
+    if buffered.saturating_add(chunk.len()) > MAX_OPEN_UPLOAD_BYTES {
+        return too_many_uploads();
     }
     buf.extend_from_slice(&chunk);
     let end = buf.len().saturating_sub(1);
@@ -639,7 +679,7 @@ async fn oci_put_blob_upload(
             None,
         );
     };
-    let Some((u_owner, u_image, mut buf)) = CHUNKED_UPLOADS.write().remove(&upload_uuid) else {
+    let Some((u_owner, u_image, _, mut buf)) = CHUNKED_UPLOADS.write().remove(&upload_uuid) else {
         return oci_error_response(
             StatusCode::NOT_FOUND,
             "BLOB_UPLOAD_UNKNOWN",
@@ -652,6 +692,14 @@ async fn oci_put_blob_upload(
             StatusCode::NOT_FOUND,
             "BLOB_UPLOAD_UNKNOWN",
             "upload unknown",
+            None,
+        );
+    }
+    if buf.len().saturating_add(final_chunk.len()) > MAX_PACKAGE_BLOB_BYTES {
+        return oci_error_response(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "SIZE_INVALID",
+            "blob exceeds the package size limit",
             None,
         );
     }
@@ -685,6 +733,21 @@ async fn finish_blob_store(
             StatusCode::BAD_REQUEST,
             "DIGEST_INVALID",
             "blob bytes do not match declared digest",
+            None,
+        );
+    }
+    let instance = state.instance_for(instance_id, org_id).await;
+    let left = match state.store().get_quota_usage(instance_id, org_id).await {
+        Ok(usage) => instance
+            .max_storage_bytes
+            .saturating_sub(usage.total_bytes()),
+        Err(e) => return gitea_error_response(state, &e),
+    };
+    if bytes.len() as u64 > left {
+        return oci_error_response(
+            StatusCode::FORBIDDEN,
+            "DENIED",
+            "the organization's storage quota is used up",
             None,
         );
     }
@@ -929,25 +992,32 @@ async fn store_cosign_signature_tag(
     let sig_b64 = state.signing_key().sign_cosign_payload(&payload_bytes);
     let payload_digest = format!("sha256:{}", sha256_hex(&payload_bytes));
 
-    // Store the simple-signing payload as a blob
-    let disk_path = blob_disk_path(state, owner, &payload_digest);
-    if let Some(p) = disk_path.parent() {
-        let _ = tokio::fs::create_dir_all(p).await;
+    // Store the simple-signing payload and the empty config (`{}`) the manifest names as blobs
+    let config_bytes: &[u8] = b"{}";
+    let config_digest = format!("sha256:{}", sha256_hex(config_bytes));
+    for (digest, bytes) in [
+        (&payload_digest, payload_bytes.as_slice()),
+        (&config_digest, config_bytes),
+    ] {
+        let disk_path = blob_disk_path(state, owner, digest);
+        if let Some(p) = disk_path.parent() {
+            let _ = tokio::fs::create_dir_all(p).await;
+        }
+        let _ = tokio::fs::write(&disk_path, bytes).await;
+        let _ = state
+            .store()
+            .upsert_blob(BlobRecord {
+                id: uuid::Uuid::now_v7(),
+                instance_id,
+                org_id,
+                owner: owner.to_owned(),
+                repo_name: image.to_owned(),
+                digest: digest.clone(),
+                size_bytes: bytes.len() as u64,
+                created_at: Utc::now(),
+            })
+            .await;
     }
-    let _ = tokio::fs::write(&disk_path, &payload_bytes).await;
-    let _ = state
-        .store()
-        .upsert_blob(BlobRecord {
-            id: uuid::Uuid::now_v7(),
-            instance_id,
-            org_id,
-            owner: owner.to_owned(),
-            repo_name: image.to_owned(),
-            digest: payload_digest.clone(),
-            size_bytes: payload_bytes.len() as u64,
-            created_at: Utc::now(),
-        })
-        .await;
 
     let sig_tag = format!("sha256-{hex_digest}.sig");
     let sig_manifest = json!({
@@ -955,8 +1025,8 @@ async fn store_cosign_signature_tag(
         "mediaType": "application/vnd.oci.image.manifest.v1+json",
         "config": {
             "mediaType": "application/vnd.oci.image.config.v1+json",
-            "size": 2,
-            "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+            "size": config_bytes.len(),
+            "digest": config_digest
         },
         "layers": [{
             "mediaType": "application/vnd.dev.cosign.simplesigning.v1+json",
@@ -1290,4 +1360,37 @@ pub fn stripped_v2_registry_routes() -> Router<ShakoState> {
             get(oci_list_referrers),
         )
         .merge(oci_v2_routes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_uploads_are_capped_in_number_and_bytes_and_expire() {
+        let now = Instant::now();
+        let mut map = Uploads::new();
+        let open = |map: &mut Uploads, id: usize, at: Instant, len: usize| {
+            map.insert(id.to_string(), ("o".into(), "i".into(), at, vec![0; len]));
+        };
+        for id in 0..MAX_OPEN_UPLOADS {
+            open(&mut map, id, now, 0);
+        }
+        assert!(
+            !admit_upload(&mut map, 0, now),
+            "the open-upload count is capped"
+        );
+        let later = now + UPLOAD_TTL;
+        assert!(
+            admit_upload(&mut map, 0, later),
+            "expired uploads are dropped"
+        );
+        assert!(map.is_empty());
+        open(&mut map, 0, later, MAX_OPEN_UPLOAD_BYTES);
+        assert!(
+            !admit_upload(&mut map, 1, later),
+            "the buffered bytes are capped"
+        );
+        assert!(admit_upload(&mut map, 0, later));
+    }
 }

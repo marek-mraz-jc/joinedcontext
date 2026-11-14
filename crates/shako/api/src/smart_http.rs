@@ -18,8 +18,8 @@ use axum::routing::{get, post};
 use serde::Deserialize;
 use shako_core::{Action, PACK_OPERATION_WEIGHT_BYTES, ShakoError, remaining_storage_allowance};
 use shako_git::{
-    PushGuard, advertise_receive_pack, advertise_upload_pack, compute_repo_size_bytes,
-    handle_receive_pack, handle_upload_pack, push_mirror_over_https,
+    PushGuard, advertise_receive_pack, advertise_upload_pack, handle_receive_pack,
+    handle_upload_pack, push_mirror_over_https,
 };
 
 #[derive(Debug, Deserialize)]
@@ -260,14 +260,7 @@ async fn handle_post_receive_pack(
     };
 
     if !outcome.updated_refs.is_empty() {
-        let new_size = compute_repo_size_bytes(&disk_path);
-        let delta = new_size as i64 - repo.size_bytes as i64;
-        repo.size_bytes = new_size;
-        let _ = state.store().update_repo(repo.clone()).await;
-        let _ = state
-            .store()
-            .adjust_quota_usage(repo.instance_id, repo.org_id, 0, delta, 0)
-            .await;
+        crate::service::record_repo_size(&state, &mut repo, &disk_path).await;
 
         for cmd in &outcome.updated_refs {
             let payload = build_push_webhook_payload(

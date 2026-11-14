@@ -24,6 +24,8 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 const HOOK_URL: &str = "https://portal.city.example/api/v1/webhooks/shako";
+/// A hook that answers after 200 ms, so two dispatches overlap.
+const SLOW_HOOK_URL: &str = "https://portal.city.example/api/v1/webhooks/slow";
 const HOOK_SECRET: &str = "odata-hook-secret-value";
 const R: &str = "/odata/Repositories(Owner='joinedcontext',Name='helsinki')";
 
@@ -84,7 +86,10 @@ fn world() -> World {
         allowed_hosts: Some(vec!["github.com".into(), "portal.city.example".into()]),
         allow_loopback_for_tests: false,
         mock_handler: Some(Arc::new(move |_method, url, headers, body| {
-            if url == HOOK_URL {
+            if url == SLOW_HOOK_URL {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            if url == HOOK_URL || url == SLOW_HOOK_URL {
                 sink.lock().push((headers.to_vec(), body.to_vec()));
                 return Some((202, Vec::new()));
             }
@@ -673,6 +678,55 @@ async fn mirrors_packages_and_tags() {
     assert!(tags["value"].as_array().unwrap().is_empty());
 }
 
+/// `$expand` on a set without navigation properties is a 400, never a silently smaller answer.
+#[tokio::test]
+async fn an_expand_on_a_set_that_expands_nothing_is_400() {
+    let w = world();
+    create_repo(&w, "helsinki").await;
+    let (st, body, _) = call(
+        &w.app,
+        "GET",
+        "/odata/Repositories?$expand=Branches",
+        Some("portal-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    let (st, body, _) = call(
+        &w.app,
+        "GET",
+        &format!("{R}/PullRequests?$expand=Files,Reviews"),
+        Some("portal-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+}
+
+/// Every answer carries one fixed content security policy: no page holds an inline style, so
+/// there is no nonce to draw per request.
+#[tokio::test]
+async fn every_answer_carries_the_fixed_content_security_policy() {
+    let w = world();
+    let resp = w
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/odata/Repositories")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let csp = resp.headers()["content-security-policy"].to_str().unwrap();
+    assert!(
+        csp.starts_with("default-src 'none'; style-src 'self'; "),
+        "{csp}"
+    );
+    assert!(!csp.contains("nonce"), "{csp}");
+}
+
 /// Every write and read the Portal makes, without a token: 401.
 #[tokio::test]
 async fn no_token_is_401_on_every_portal_call() {
@@ -793,6 +847,50 @@ async fn a_rename_onto_a_taken_name_is_409_and_a_new_default_branch_moves_head()
         shako_core::repo_disk_path(w.state.repo_root(), InstanceId::from_u128(1), id).unwrap();
     let head = std::fs::read_to_string(disk.join("HEAD")).unwrap();
     assert_eq!(head.trim(), "ref: refs/heads/release");
+}
+
+#[tokio::test]
+async fn api_commits_count_against_the_quota_and_an_import_keeps_to_it() {
+    let w = world();
+    let (inst, org) = (InstanceId::from_u128(1), OrgId::from_u128(10));
+    create_repo(&w, "helsinki").await;
+    let usage = || async { w.state.store().get_quota_usage(inst, org).await.unwrap() };
+    let size = || async {
+        let (_, repo, _) = call(&w.app, "GET", R, Some("portal-token"), None).await;
+        repo["SizeBytes"].as_u64().unwrap()
+    };
+    assert_eq!(usage().await.git_bytes, size().await);
+    let big: String = (0..40_000u32)
+        .map(|i| format!("{:x}", i.wrapping_mul(2_654_435_761)))
+        .collect();
+    let (st, body) = commit(
+        &w,
+        R,
+        "main",
+        json!([{"operation": "create", "path": "data.txt", "content": b64(&big)}]),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let grown = size().await;
+    assert_eq!(usage().await.git_bytes, grown, "the commit's bytes count");
+
+    let mut limits = shako_core::InstanceRecord::default_for(inst, org, "localhost");
+    limits.max_repos = 1;
+    w.state.store().upsert_instance(limits).await.unwrap();
+    let (st, body, _) = call(
+        &w.app,
+        "POST",
+        "/odata/ImportRepository",
+        Some("portal-token"),
+        Some(json!({"SourceOwner": "joinedcontext", "SourceName": "helsinki", "RepoOwner": "joinedcontext", "RepoName": "helsinki-copy"})),
+    )
+    .await;
+    assert_eq!(
+        st,
+        StatusCode::FORBIDDEN,
+        "an import past max_repos: {body}"
+    );
+    assert_eq!(usage().await.repo_count, 1);
 }
 
 #[tokio::test]
@@ -933,6 +1031,55 @@ async fn a_hook_of_another_repository_is_not_redelivered() {
     .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(w.delivered.lock().len(), before + 1);
+}
+
+/// Writes of one Organization at once deliver each event once, even when a hook is slow.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_commits_deliver_each_event_once() {
+    let w = world();
+    create_repo(&w, "helsinki").await;
+    let (st, hook, _) = call(
+        &w.app,
+        "POST",
+        &format!("{R}/Shako.AddWebhook"),
+        Some("portal-token"),
+        Some(json!({"Url": SLOW_HOOK_URL, "Secret": HOOK_SECRET})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{hook}");
+    let before = w.delivered.lock().len();
+    // Each write on a runtime of its own: the slow hook blocks only its own thread.
+    let writes: Vec<_> = (0..3)
+        .map(|i| {
+            let app = w.app.clone();
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                rt.block_on(async move {
+                let files = json!([{"operation": "create", "path": format!("f{i}.txt"), "content": b64("x\n")}]);
+                call(
+                    &app,
+                    "POST",
+                    &format!("{R}/Shako.CommitFiles"),
+                    Some("portal-token"),
+                    Some(json!({"Branch": "main", "Message": "one file", "Files": files})),
+                )
+                .await
+                .0
+                })
+            })
+        })
+        .collect();
+    for write in writes {
+        assert_eq!(write.join().unwrap(), StatusCode::OK);
+    }
+    assert_eq!(
+        w.delivered.lock().len() - before,
+        3,
+        "one delivery per commit"
+    );
 }
 
 /// A hook's target address can carry its own credential, so hooks and their deliveries are
