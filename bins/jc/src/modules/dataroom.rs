@@ -379,6 +379,7 @@ pub async fn build_with_writer(
                 scheme: mount.scheme.clone(),
                 opendata: org.hosts.opendata.clone(),
                 listed: org.hosts.portals.clone(),
+                harvest_hosts: cfg.harvest_hosts(),
             })
             .collect(),
         shutdown,
@@ -736,6 +737,8 @@ pub async fn seed_harvest(
                 converted,
                 gateway,
                 modified: now,
+                budget: None,
+                position: 0,
             },
         )
         .await

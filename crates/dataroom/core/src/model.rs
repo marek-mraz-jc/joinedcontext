@@ -825,7 +825,21 @@ pub struct HarvestSource {
     /// `schema/index.json` is read from it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway: Option<String>,
+    /// The most one run reads before it fails and changes nothing (ODP-13); `None`, no budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<HarvestBudget>,
+    /// Its place in its portal's source list: of two sources harvesting one `dct:identifier`,
+    /// the one listed first keeps the record (ODP-14).
+    #[serde(default)]
+    pub position: u32,
     pub modified: DateTime<Utc>,
+}
+
+/// A harvest run's budget (ODP-13): records gathered and bytes of the records kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct HarvestBudget {
+    pub records: u64,
+    pub bytes: u64,
 }
 
 /// One converted dataset of `od-datasets.json`: its open-data Endpoint, the entity type its

@@ -1953,6 +1953,7 @@ impl Config {
         let portal_settings = crate::portals::parse(
             &lookup("JC_PORTAL_PORTAL_HOSTS").unwrap_or_default(),
             lookup("JC_PORTAL_PORTALS_MAX").as_deref(),
+            &lookup("JC_PORTAL_HARVEST_HOSTS").unwrap_or_default(),
         )
         .map_err(|reason| ConfigError::Invalid {
             var: "JC_PORTAL_PORTAL_HOSTS",

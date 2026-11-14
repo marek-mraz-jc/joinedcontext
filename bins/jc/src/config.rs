@@ -340,6 +340,9 @@ pub struct DataroomSection {
     /// The most Portals all Organizations of the deployment hold together, each `default`
     /// included (ODP-09); left out, three per `[[organizations]]` entry (at least three).
     pub portals_max: Option<usize>,
+    /// The deployment's harvest allow-list (ODP-10): every host a Portal source may read,
+    /// beside the hosts the `[[dataroom.harvest]]` seeds read.
+    pub harvest_allowed_hosts: Vec<String>,
 }
 
 impl DataroomSection {
@@ -347,6 +350,19 @@ impl DataroomSection {
     #[must_use]
     pub fn portals_max(&self, organizations: usize) -> usize {
         self.portals_max.unwrap_or(3 * organizations.max(1))
+    }
+
+    /// [`Self::harvest_allowed_hosts`] and every host a seed reads, lower-cased, once each.
+    #[must_use]
+    pub fn harvest_hosts(&self) -> Vec<String> {
+        let all = self.harvest_allowed_hosts.iter();
+        let mut hosts: Vec<String> = all
+            .chain(self.harvest.iter().flat_map(|seed| &seed.allowed_hosts))
+            .map(|h| h.trim().to_ascii_lowercase())
+            .collect();
+        hosts.sort();
+        hosts.dedup();
+        hosts
     }
 }
 
@@ -484,6 +500,7 @@ impl Default for DataroomSection {
             publishers: BTreeMap::new(),
             branding: DataroomBranding::default(),
             portals_max: None,
+            harvest_allowed_hosts: Vec::new(),
         }
     }
 }

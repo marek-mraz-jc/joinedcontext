@@ -1229,6 +1229,8 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
                     schedule: "23 3 * * *".into(),
                     enabled: true,
                     modified: Utc::now(),
+                    budget: None,
+                    position: 0,
                 },
             )
             .await

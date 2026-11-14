@@ -19,12 +19,26 @@ pub struct PortalSettings {
     pub hosts: BTreeMap<String, Vec<String>>,
     /// `portals.max` (`JC_PORTAL_PORTALS_MAX`); `None`: no cap known here.
     pub max: Option<usize>,
+    /// The deployment's harvest allow-list (`JC_PORTAL_HARVEST_HOSTS`, hosts separated by
+    /// commas): each `allowedHosts` entry of a source is one of these (ODP-10).
+    pub harvest_hosts: Vec<String>,
 }
 
 /// `JC_PORTAL_PORTAL_HOSTS` and `JC_PORTAL_PORTALS_MAX`, checked: a plain host each, no host
 /// listed twice, a positive cap.
-pub fn parse(hosts: &str, max: Option<&str>) -> Result<PortalSettings, String> {
+pub fn parse(
+    hosts: &str,
+    max: Option<&str>,
+    harvest: &str,
+) -> Result<PortalSettings, String> {
     let mut out = PortalSettings::default();
+    for host in harvest.split(',').map(str::trim).filter(|h| !h.is_empty()) {
+        let host = host.to_ascii_lowercase();
+        if !is_portal_host(&host) {
+            return Err(format!("harvest host '{host}' is not a plain host name"));
+        }
+        out.harvest_hosts.push(host);
+    }
     let mut seen = Vec::new();
     for pair in hosts.split(',').map(str::trim).filter(|p| !p.is_empty()) {
         let (org, host) = pair
@@ -136,6 +150,21 @@ pub fn check(
             ));
         }
     }
+    for (i, source) in spec.sources.iter().enumerate() {
+        if let Some(host) = source
+            .allowed_hosts
+            .iter()
+            .find(|h| !settings.harvest_hosts.iter().any(|a| a.eq_ignore_ascii_case(h)))
+        {
+            return Err(refused(
+                &format!("spec.sources[{i}].allowedHosts"),
+                format!(
+                    "{host} is not in the deployment's harvest allow-list; ask the operator to \
+                     add it"
+                ),
+            ));
+        }
+    }
     if let Some(max) = settings.max {
         if count_after(mirror, name, &spec) > max {
             return Err(refused(
@@ -214,7 +243,7 @@ mod tests {
     }
 
     fn settings(max: usize) -> PortalSettings {
-        parse("ba=mobility.ba.sk", Some(&max.to_string())).expect("settings")
+        parse("ba=mobility.ba.sk", Some(&max.to_string()), "data.kosice.sk").expect("settings")
     }
 
     fn field(err: ApiError) -> String {
@@ -281,9 +310,28 @@ mod tests {
 
     #[test]
     fn the_settings_refuse_a_url_a_twice_listed_host_and_a_zero_cap() {
-        assert!(parse("ba=https://x.sk", None).is_err());
-        assert!(parse("ba=x.sk,ke=x.sk", None).is_err());
-        assert!(parse("", Some("0")).is_err());
-        assert_eq!(parse(" ", None).unwrap(), PortalSettings::default());
+        assert!(parse("ba=https://x.sk", None, "").is_err());
+        assert!(parse("ba=x.sk,ke=x.sk", None, "").is_err());
+        assert!(parse("", Some("0"), "").is_err());
+        assert!(parse("", None, "http://x.sk").is_err());
+        assert_eq!(parse(" ", None, " ").unwrap(), PortalSettings::default());
+    }
+
+    #[test]
+    fn allowed_hosts_outside_the_deployment_list_are_refused() {
+        let mirror = mirror();
+        let s = settings(10);
+        let source = |host: &str| {
+            let mut p = portal("ba-region", "ba", "region", None);
+            p.spec["sources"] = json!([{ "name": "ke", "type": "dcat-ap",
+                "url": format!("https://{host}/catalog.ttl"), "allowedHosts": [host] }]);
+            p
+        };
+        check(&mirror, Some(&s), &source("data.kosice.sk")).expect("a listed harvest host");
+        let detail = field(check(&mirror, Some(&s), &source("10.0.0.1.nip.io")).unwrap_err());
+        assert!(
+            detail.starts_with("spec.sources[0].allowedHosts: 10.0.0.1.nip.io is not in"),
+            "{detail}"
+        );
     }
 }

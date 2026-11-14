@@ -144,6 +144,10 @@ pub(crate) fn organization_vars(
         .collect();
     out.insert("JC_PORTAL_PORTAL_HOSTS".to_owned(), portal_hosts.join(","));
     out.insert(
+        "JC_PORTAL_HARVEST_HOSTS".to_owned(),
+        cfg.dataroom.harvest_hosts().join(","),
+    );
+    out.insert(
         "JC_PORTAL_PORTALS_MAX".to_owned(),
         cfg.dataroom.portals_max(cfg.organizations.len()).to_string(),
     );

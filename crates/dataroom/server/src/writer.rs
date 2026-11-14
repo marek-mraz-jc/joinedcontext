@@ -188,16 +188,24 @@ impl CatalogueWriter {
         Ok(deleted)
     }
 
-    /// Creates or updates a harvest source of the catalogue; the scheduler runs it on its
-    /// schedule from the next minute on.
+    /// Creates or updates a harvest source of the catalogue, and `publisher`, the CKAN
+    /// organisation its records land in, when it is missing; the scheduler runs the source on
+    /// its schedule from the next minute on.
     pub async fn upsert_harvest_source(
         &self,
         org: OrgId,
         id: CatalogueId,
         source: HarvestSource,
+        publisher: Option<Publisher>,
     ) -> Result<HarvestSource> {
         let ctx = self.live(org, id)?;
-        self.state.store.upsert_harvest_source(&ctx, source).await
+        let store = self.state.store.as_ref();
+        if let Some(publisher) = publisher {
+            if store.get_publisher(&ctx, &publisher.name).await?.is_none() {
+                store.upsert_publisher(&ctx, publisher).await?;
+            }
+        }
+        store.upsert_harvest_source(&ctx, source).await
     }
 
     /// Deletes a harvest source and its runs; `false` when the catalogue has none of that name.
