@@ -54,7 +54,13 @@ impl Secret {
 /// Compares two byte strings in time that depends only on their lengths.
 #[must_use]
 pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    // black_box keeps the optimiser from turning the fold into an early-exit comparison.
+    a.len() == b.len()
+        && std::hint::black_box(
+            a.iter()
+                .zip(b)
+                .fold(0u8, |acc, (x, y)| std::hint::black_box(acc | (x ^ y))),
+        ) == 0
 }
 
 impl PartialEq for Secret {
