@@ -1457,7 +1457,12 @@ pub fn jc_visualizations(
         let src = format!("{viz}/#{}&inline&lang={code_lang}", v.id);
         let embed = format!("{viz}/#{}&lang={code_lang}", v.id);
         let code = format!(
-            "<iframe src=\"{embed}\" title=\"{}\" width=\"100%\" height=\"480\" style=\"border:0\" loading=\"lazy\" referrerpolicy=\"no-referrer\" sandbox=\"{embed_sandbox}\"></iframe>",
+            "<iframe src=\"{}\" title=\"{}\" width=\"100%\" height=\"480\" style=\"border:0\" loading=\"lazy\" referrerpolicy=\"no-referrer\" sandbox=\"{embed_sandbox}\"></iframe>",
+            // The quotes and brackets of a stored id stay text; `&` stays as people copy it.
+            embed
+                .replace('"', "&quot;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;"),
             html_escape(&v.title)
         );
         out.push(ChartView {

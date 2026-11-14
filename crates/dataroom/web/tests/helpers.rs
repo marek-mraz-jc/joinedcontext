@@ -246,6 +246,15 @@ fn a_viz_frame_on_the_portals_origin_asks_for_no_origin() {
 }
 
 #[test]
+fn a_view_id_cannot_break_out_of_the_embed_snippet() {
+    let ds = live_ds(&ep(""));
+    let views = [view("v\" onload=\"alert(1)", "jc_visualization", "Air")];
+    let c = &jc_visualizations(&ds, &views, &branding(), "sk", "")[0];
+    assert!(!c.code.contains("\" onload"), "{}", c.code);
+    assert!(c.code.contains("&quot; onload"), "{}", c.code);
+}
+
+#[test]
 fn jc_explorer_and_developer_page_need_an_api_endpoint_address() {
     let b = branding();
     for url in [

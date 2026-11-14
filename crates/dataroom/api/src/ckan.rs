@@ -899,6 +899,16 @@ async fn answer_ckan_action(
             if !dec.allowed {
                 return ckan_err(&base, &action, decision_error(dec));
             }
+            if let Some(id) = payload
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+            {
+                // The id lands in links and embed snippets: a slug, as CKAN's generated ids are.
+                if let Err(e) = dataroom_core::validate_slug("id", id) {
+                    return ckan_err(&base, &action, e);
+                }
+            }
             let view = parse_resource_view(&payload, "", resource_id, view_type);
             // A create never takes over a stored view: that one is changed by resource_view_update,
             // decided on its own dataset.

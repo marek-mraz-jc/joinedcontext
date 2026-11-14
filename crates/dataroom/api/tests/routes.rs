@@ -872,6 +872,11 @@ async fn resource_view_create_cannot_take_over_another_datasets_view() {
         "{}",
         a.body
     );
+    // An id that is no slug is refused: it lands in links and embed snippets.
+    let body =
+        json!({"resource_id": "res-open-0", "view_type": "image_view", "id": "v\" onload=\"x"});
+    let a = ckan(app, "resource_view_create", Some("tok-editor"), body).await;
+    assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", a.body);
     // A create with a fresh id of its own still works.
     let body = json!({"resource_id": "res-open-0", "view_type": "image_view", "id": "view-new"});
     let a = ckan(app, "resource_view_create", Some("tok-editor"), body).await;
