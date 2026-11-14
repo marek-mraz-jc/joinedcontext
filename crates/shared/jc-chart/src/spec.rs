@@ -19,7 +19,10 @@ pub const MIN_SIDE: u32 = 50;
 pub struct Door {
     pub tool: &'static str,
     pub read: &'static str,
+    /// The widest `width`, in pixels.
     pub max_side: u32,
+    /// The tallest `height`, in pixels.
+    pub max_height: u32,
     pub max_points: usize,
     pub max_view_points: usize,
 }
@@ -326,7 +329,7 @@ pub fn look_of(
             top.get("height"),
             &format!("{at}/height"),
             size.1,
-            door.max_side,
+            door.max_height,
         )?,
         x,
         y,
@@ -624,6 +627,7 @@ mod tests {
         tool: "render_chart",
         read: "data.arguments",
         max_side: 1200,
+        max_height: 800,
         max_points: 3,
         max_view_points: 2,
     };

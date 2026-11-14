@@ -238,4 +238,19 @@ describe("chart view", () => {
     expect(doc.querySelector("svg")).not.toBeNull();
     expect(doc.querySelector("a")).toBeNull();
   });
+
+  it("keeps the Portal's truncation line on its door and says Not complete on the gateway's", () => {
+    const cut = (page?: string) => {
+      const { doc, post } = open(page);
+      const answer = result("line", TIMED, { rows: 9000 });
+      (answer._meta as Result)["joinedcontext.com/pointsTruncated"] = true;
+      post({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: answer });
+      return Array.from(doc.querySelectorAll("p"), (p) => p.textContent).join("\n");
+    };
+    expect(cut()).toContain("Shows the first 3 points of 9,000 rows; the picture in the chat draws up to 20,000.");
+    const raw = readFileSync(resolve(__dirname, "../../../shared/jc-chart/src/chart_view.html"), "utf8");
+    const gateway = cut(raw.replace("__PORTAL_ORIGIN__", "null"));
+    expect(gateway).toContain("Not complete: the read has more rows than this chart draws (3 points shown).");
+    expect(gateway).not.toContain("Shows the first");
+  });
 });

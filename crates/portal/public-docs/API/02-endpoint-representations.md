@@ -1187,7 +1187,7 @@ three arguments, nothing else:
 - `spec`: the closed Vega-Lite 5 subset the Portal's `jc_render` takes (API/14 §4): `mark` (line,
   bar, area, point, arc, rule), `encoding` with `x`, `y`, `color`, `size`, `theta` (each `{field,
   type, title?}`, `type` quantitative, temporal or nominal; `tooltip` ignored), `title`,
-  `description`, `width` and `height` (50 to 1200 px; 800 x 450 when absent) and `$schema`
+  `description`, `width` (50 to 1200 px) and `height` (50 to 800 px; 800 x 450 when absent) and `$schema`
   (named, never fetched).
 - `data`: `{tool, arguments}`, where `tool` is `query_entities` or `query_temporal` and
   `arguments` are that tool's arguments without `endpoint` and `count`.

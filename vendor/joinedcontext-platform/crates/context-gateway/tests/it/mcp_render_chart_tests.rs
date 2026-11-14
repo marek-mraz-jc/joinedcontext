@@ -395,7 +395,10 @@ async fn render_chart_refuses_a_personal_attribute_for_every_caller() {
     by_channel["spec"]["encoding"]["x"]["field"] = json!("ownerName");
     let mut by_attrs = bar(INNER);
     by_attrs["data"]["arguments"]["attrs"] = json!("pm10,ownerName");
-    for asked in [by_channel, by_attrs] {
+    // An aggregated history read names its row members `<attribute>.<method>`.
+    let mut aggregated = bar(INNER);
+    aggregated["spec"]["encoding"]["y"]["field"] = json!("ownerName.avg");
+    for asked in [by_channel, by_attrs, aggregated] {
         let text = refused(&render(app(&broker.url, &realm, true), Some(&token), asked).await);
         assert!(
             text.contains("personal") && text.contains("ownerName"),
@@ -440,6 +443,13 @@ async fn render_chart_caps_points_side_and_bytes() {
     let text = refused(&render(app(&broker.url, &realm, false), None, wide).await);
     assert!(
         text.contains("/spec/width") && text.contains("50 to 1200"),
+        "{text}"
+    );
+    let mut tall = bar(OPEN);
+    tall["spec"]["height"] = json!(801);
+    let text = refused(&render(app(&broker.url, &realm, false), None, tall).await);
+    assert!(
+        text.contains("/spec/height") && text.contains("50 to 800"),
         "{text}"
     );
     let mut big = bar(OPEN);

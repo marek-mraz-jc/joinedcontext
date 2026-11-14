@@ -5,7 +5,7 @@
 //! read as rows, under the same Policy, withheld attributes and anonymous bounds. No cursor is
 //! followed. An attribute the Endpoint's model marks personal is refused for every caller here.
 //!
-//! The work is bounded per gateway process: [`MAX_POINTS`] points, [`MAX_SIDE`] px a side, a
+//! The work is bounded per gateway process: [`MAX_POINTS`] points, [`MAX_SIDE`] x [`MAX_HEIGHT`] px, a
 //! PNG of [`MAX_PNG`] bytes, [`RENDER_CAP`] of drawing and [`SLOTS`] renders at once, inside the
 //! hub's ten-second call deadline. Category values come from the data: they are numbered on the
 //! picture and named in `categories`, and the answer says it is `untrusted`.
@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 
 pub(crate) const NAME: &str = "render_chart";
 const MAX_SIDE: u32 = 1200;
+const MAX_HEIGHT: u32 = 800;
 const MAX_POINTS: usize = 1_000;
 const MAX_PNG: usize = 256 * 1024;
 /// The drawing's own cap, well inside the call's [`server::MEMBER_DEADLINE`].
@@ -35,6 +36,7 @@ const DOOR: Door = Door {
     tool: NAME,
     read: "data.arguments",
     max_side: MAX_SIDE,
+    max_height: MAX_HEIGHT,
     max_points: MAX_POINTS,
     max_view_points: MAX_POINTS,
 };
@@ -170,7 +172,8 @@ fn asked(arguments: &Map<String, Value>) -> Result<Asked, String> {
 }
 
 /// The attributes `asked` names (its channels and its `attrs`) that `personal` lists, as
-/// `Class.attribute` entries.
+/// `Class.attribute` entries. An aggregated read names a row member `<attribute>.<method>`
+/// (`age.avg`), so a channel field counts by the attribute before its first dot.
 fn personal_named(asked: &Asked, personal: &[String]) -> Vec<String> {
     let attrs = match asked.arguments.get("attrs") {
         Some(Value::String(list)) => list.split(',').map(str::trim).collect(),
@@ -184,7 +187,7 @@ fn personal_named(asked: &Asked, personal: &[String]) -> Vec<String> {
         .filter(|name| {
             personal
                 .iter()
-                .any(|entry| entry.rsplit('.').next() == Some(name))
+                .any(|entry| entry.rsplit('.').next() == name.split('.').next())
         })
         .map(str::to_owned)
         .collect();
@@ -298,7 +301,7 @@ async fn draw(hub: &Hub, id: Value, arguments: &Map<String, Value>) -> Value {
     if truncated {
         view["joinedcontext.com/pointsTruncated"] = json!(true);
     }
-    let Some(_slot) = slot().await else {
+    let Some(slot) = slot().await else {
         return refusal(
             id,
             "busy, retry: every render slot is drawing; ask again in a second",
@@ -306,7 +309,13 @@ async fn draw(hub: &Hub, id: Value, arguments: &Map<String, Value>) -> Value {
     };
     let deadline = Instant::now() + RENDER_CAP;
     let chart = charted.chart;
-    let png = match tokio::task::spawn_blocking(move || raster::render(&chart, deadline)).await {
+    // The permit moves into the drawing: a call the deadline drops frees its slot only when the
+    // raster is done, so no more than RENDER_SLOTS draw at once.
+    let drawing = tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        raster::render(&chart, deadline)
+    });
+    let png = match drawing.await {
         Ok(Ok(png)) if png.len() <= MAX_PNG => png,
         Ok(Ok(_)) => {
             return refusal(
