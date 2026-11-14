@@ -902,7 +902,11 @@ impl WorkloadClientSync {
         }
         let host = self.serves_host();
         if host {
-            accounts.extend(host_pipeline_accounts(mirror, bentos, self.own_pipeline_clients));
+            accounts.extend(host_pipeline_accounts(
+                mirror,
+                bentos,
+                self.own_pipeline_clients,
+            ));
         }
         let mut secrets = BTreeMap::new();
         let wanted: BTreeSet<String> = accounts.iter().map(BoundAccount::label).collect();

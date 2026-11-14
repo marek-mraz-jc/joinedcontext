@@ -1874,7 +1874,10 @@ async fn a_pipeline_made_after_start_gets_its_own_client_when_streams_sign_in_as
         secrets.keys().collect::<Vec<_>>(),
         ["JC_PIPELINE_SECRET_ZILINA_PL_DREPO"]
     );
-    assert_eq!(secrets["JC_PIPELINE_SECRET_ZILINA_PL_DREPO"], "drepo-generated");
+    assert_eq!(
+        secrets["JC_PIPELINE_SECRET_ZILINA_PL_DREPO"],
+        "drepo-generated"
+    );
     assert!(
         !wrote(&keycloak)
             .await
