@@ -329,6 +329,7 @@ export function SpacesPage({ project }: { project: string }): JSX.Element {
   const addButton = (
     <PermissionGuard project={project} kind="ContextSpace" verb="propose">
       <Button
+        data-shortcut="new"
         variant="primary"
         disabled={quotaExceeded}
         // On the control, not only in the banner above it (UI-44): a hard-disabled button
