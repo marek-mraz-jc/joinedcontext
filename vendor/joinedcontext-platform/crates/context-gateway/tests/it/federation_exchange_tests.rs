@@ -199,6 +199,7 @@ fn gateway(
         Box::new(PolicyPdp),
         "hel.fi",
     )
+    .with_provenance(context_gateway::store::Provenance::without_organizations())
     .serve([
         endpoint(HUB_SLUG, HUB, Audience::Public),
         endpoint(MEMBER_SLUG, "air", Audience::Organization),

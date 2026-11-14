@@ -110,6 +110,7 @@ fn app_with(
         Box::new(PolicyPdp),
         "banskabystrica.sk",
     )
+    .with_provenance(context_gateway::store::Provenance::without_organizations())
     .serve(endpoints)
     .authenticate(
         Arc::new(realm.verifier()),
@@ -801,6 +802,7 @@ async fn a_kept_reach_is_per_token_and_a_reload_replaces_it() {
             Box::new(PolicyPdp),
             "banskabystrica.sk",
         )
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
         .serve(city())
         .authenticate(
             Arc::new(realm.verifier()),
@@ -1857,6 +1859,7 @@ async fn ten_thousand_generated_datasets_are_found_fast() {
         Box::new(PolicyPdp),
         "banskabystrica.sk",
     )
+    .with_provenance(context_gateway::store::Provenance::without_organizations())
     .serve(generated.iter().map(|g| g.endpoint.clone()))
     .authenticate(
         Arc::new(realm.verifier()),

@@ -118,10 +118,7 @@ async fn fixture_of(name: &str, organizations_known: bool) -> Fixture {
     let provenance = if organizations_known {
         organizations()
     } else {
-        Provenance {
-            loaded: true,
-            ..Default::default()
-        }
+        Provenance::without_organizations()
     };
     fixture_serving(name, endpoint(), Some(provenance)).await
 }

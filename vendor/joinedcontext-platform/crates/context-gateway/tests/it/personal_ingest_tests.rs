@@ -99,6 +99,7 @@ async fn write(keys: Option<PathBuf>) -> (StatusCode, Value, Vec<common::Hop>) {
         Box::new(PolicyPdp),
         "banskabystrica.sk",
     )
+    .with_provenance(context_gateway::store::Provenance::without_organizations())
     .serve(vec![endpoint()])
     .authenticate(
         Arc::new(realm.verifier()),

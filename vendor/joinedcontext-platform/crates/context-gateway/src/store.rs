@@ -65,6 +65,15 @@ pub struct Provenance {
 }
 
 impl Provenance {
+    /// What a repository holding no Organization manifest says: one Organization, whose
+    /// `organization` Endpoints admit every member as before ADR-N-058 (T-6806, I-4).
+    pub fn without_organizations() -> Self {
+        Self {
+            loaded: true,
+            ..Self::default()
+        }
+    }
+
     /// The Organizations an `organization` audience is judged against (I-4): `None` until the
     /// repository loads, then each one's domain by name, empty on an installation without any.
     pub fn known_organizations(&self) -> Option<&BTreeMap<String, String>> {

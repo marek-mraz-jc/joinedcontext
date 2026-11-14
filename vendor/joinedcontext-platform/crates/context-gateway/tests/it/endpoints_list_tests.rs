@@ -115,6 +115,7 @@ fn app(broker: &str, realm: &common::Realm, slugs: &[&str]) -> Router {
         Box::new(PolicyPdp),
         "banskabystrica.sk",
     )
+    .with_provenance(context_gateway::store::Provenance::without_organizations())
     .serve(slugs.iter().map(|slug| endpoint(slug)))
     .authenticate(
         Arc::new(realm.verifier()),
@@ -291,6 +292,7 @@ async fn each_listed_endpoint_names_the_broker_its_space_lives_on() {
         ..Default::default()
     });
     let gateway = Gateway::new(broker, Box::new(PolicyPdp), "banskabystrica.sk")
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
         .serve(SLUGS.iter().map(|slug| endpoint(slug)))
         .authenticate(
             Arc::new(realm.verifier()),

@@ -175,6 +175,48 @@ pub fn inject_space(value: &mut serde_json::Value, segments: &[String]) {
     }
 }
 
+/// Writes the owner of a stream's ids into every string of it where a mapping reads them:
+/// `env("JC_ORG_ID")` and `env("JC_ORG_DOMAIN")` as Bloblang strings, `${JC_ORG_ID}` and
+/// `${JC_ORG_DOMAIN}` as the bare values, from `domain`, the domain of the Organization owning
+/// the stream's project (ADR-N-068). One runner serves every Organization's projects, so its
+/// own variables name the installation's: a project of another Organization, or one moved to
+/// another, would mint that owner, which the gateway counts as `urn_owner_mismatched` and refuses
+/// once the warn window ends (T-6852). A `domain` that is no hostname (a quote, a space) is
+/// written nowhere, so a manifest's text never becomes Bloblang: the runner's own stays.
+pub fn inject_owner(value: &mut serde_json::Value, domain: &str) {
+    let hostname = !domain.is_empty()
+        && domain
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-');
+    if !hostname {
+        return;
+    }
+    let id = jc_core::names::org_id(domain);
+    inject_values(value, &[(ORG_ID_VAR, &id), (ORG_DOMAIN_VAR, domain)]);
+}
+
+/// Writes each `(variable, value)` into every string of `value` that reads the variable.
+fn inject_values(value: &mut serde_json::Value, values: &[(&str, &str)]) {
+    match value {
+        serde_json::Value::String(text) => {
+            for (var, owner) in values {
+                if text.contains(var) {
+                    *text = text
+                        .replace(&format!("env(\"{var}\")"), &format!("\"{owner}\""))
+                        .replace(&format!("${{{var}}}"), owner);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => items
+            .iter_mut()
+            .for_each(|item| inject_values(item, values)),
+        serde_json::Value::Object(map) => map
+            .values_mut()
+            .for_each(|item| inject_values(item, values)),
+        _ => {}
+    }
+}
+
 /// Every line of a Bento file that writes one of `names` as a string literal, as
 /// `(1-based line, the name)` (CC-83).
 ///

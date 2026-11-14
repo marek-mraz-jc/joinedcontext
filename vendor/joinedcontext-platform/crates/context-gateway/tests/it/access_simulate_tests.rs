@@ -136,6 +136,7 @@ fn app_of(realm: &common::Realm) -> axum::Router {
             Box::new(PolicyPdp),
             "banskabystrica.sk",
         )
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
         .serve([
             endpoint(OPEN, Audience::Public),
             endpoint(CLOSED, Audience::Organization),
@@ -407,6 +408,7 @@ fn view_app(realm: &common::Realm, upstream: String) -> axum::Router {
             Box::new(PolicyPdp),
             "banskabystrica.sk",
         )
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
         .serve([
             endpoint(OPEN, Audience::Public),
             endpoint(CLOSED, Audience::Organization),
@@ -587,6 +589,7 @@ async fn view_an_endpoint_without_a_view_is_simulated_by_nobody() {
             Box::new(PolicyPdp),
             "banskabystrica.sk",
         )
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
         .serve([unviewable])
         .authenticate(
             Arc::new(realm.verifier()),

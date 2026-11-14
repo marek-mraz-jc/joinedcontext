@@ -89,6 +89,7 @@ fn app(broker: &str, realm: &common::Realm) -> Router {
         Box::new(PolicyPdp),
         "banskabystrica.sk",
     )
+    .with_provenance(context_gateway::store::Provenance::without_organizations())
     .serve(vec![
         endpoint(AIR, Audience::Organization, "steward"),
         endpoint(OPEN, Audience::Public, "public"),
@@ -610,6 +611,7 @@ async fn read_versions_reaches_the_broker_only_on_the_spaces_grant() {
                 Box::new(PolicyPdp),
                 "banskabystrica.sk",
             )
+            .with_provenance(context_gateway::store::Provenance::without_organizations())
             .serve(vec![endpoint])
             .authenticate(
                 Arc::new(realm.verifier()),
@@ -666,6 +668,7 @@ async fn a_capability_block_lists_version_reads_and_keeps_its_attributes() {
         Box::new(PolicyPdp),
         "banskabystrica.sk",
     )
+    .with_provenance(context_gateway::store::Provenance::without_organizations())
     .serve(vec![air])
     .authenticate(
         Arc::new(realm.verifier()),
@@ -747,6 +750,7 @@ fn writer_app(broker: &str, realm: &common::Realm) -> Router {
         Box::new(PolicyPdp),
         "banskabystrica.sk",
     )
+    .with_provenance(context_gateway::store::Provenance::without_organizations())
     .serve(vec![air])
     .authenticate(
         Arc::new(realm.verifier()),

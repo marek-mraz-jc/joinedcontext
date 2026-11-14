@@ -146,6 +146,7 @@ fn app_of(realm: &common::Realm) -> axum::Router {
             Box::new(PolicyPdp),
             "banskabystrica.sk",
         )
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
         .serve([
             endpoint(OPEN, Audience::Public),
             endpoint(CLOSED, Audience::Organization),

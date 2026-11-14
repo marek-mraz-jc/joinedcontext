@@ -148,6 +148,7 @@ async fn fixture(name: &str, audience: Audience, account_project: &str) -> Fixtu
             Box::new(PolicyPdp),
             "banskabystrica.sk",
         )
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
         .serve([endpoint(audience)])
         .authenticate(Arc::new(realm.verifier()), accounts, None),
     ));
