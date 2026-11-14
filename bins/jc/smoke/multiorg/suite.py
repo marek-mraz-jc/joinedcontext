@@ -1006,6 +1006,73 @@ class Suite:
         self.row("hosts.unknown", "-", "GET /api/v1/projects on a host nobody serves",
                  "421, no Organization named", f"{st}, names {named}", st == 421 and not named)
 
+    def check_forged(self):
+        """A forged Host or X-Forwarded-Host never switches the Organization (I-7, I-8): A's session
+        sent with B's host answers what it answers plainly (the control, 200) or is refused, never
+        anything of B; a token's iss and aud never follow a forged host. Host mode: the forged
+        X-Forwarded-Host on A's own host (A's cookies on B's host are `hosts.cookie`). Path mode:
+        one domain, so a forged Host as well, with A's cookies."""
+        everything = {p for o in self.exp.values() for p in o["projects"]}
+        forged = {o: self.hosts[o]["portal"] if self.hosts else f"portal.{o}.localhost" for o in self.exp}
+
+        def projects(h, headers=None):
+            st, body = h.json("GET", "/api/v1/projects", headers=headers)
+            return st, sorted({i["name"] for i in (body or {}).get("items", [])} if st == 200 else ())
+
+        for a in self.exp:
+            h = self.session(f"{a}-admin")
+            st_c, control = projects(h)
+            mine = set(self.exp[a]["projects"])
+            ok_c = st_c == 200 and mine <= set(control)
+            self.row(f"forged.{a}-admin.control", a, "GET /api/v1/projects (no forged header)",
+                     f"200 listing {sorted(mine)}", f"{st_c}, {control[:6]}", ok_c)
+            for b in self.exp:
+                if b == a:
+                    continue
+                forms = {"xfh": {"X-Forwarded-Host": forged[b]}}
+                if not self.hosts:
+                    forms["host"] = {"Host": forged[b]}
+                for form, headers in forms.items():
+                    st, seen = projects(h, headers)
+                    theirs = sorted((set(seen) - set(control)) & everything)
+                    self.row(f"forged.{a}-admin.{form}.{b}", f"{a}->{b}",
+                             f"GET /api/v1/projects with {next(iter(headers))}: {forged[b]}",
+                             "the control's answer, or 401/403/404/421; nothing of another Organization",
+                             f"{st}, {len(seen)} projects, beyond the control {theirs[:4]}",
+                             (st in (401, 403, 404, 421) or (st == 200 and seen == control)) if ok_c else None,
+                             "" if ok_c else "no control: the plain call failed")
+        # kaisatsu builds issuer and audience from the request's host (I-7): a forged one must not
+        # reach a discovery document or a token.
+        h = self.client()
+        well_known = f"/id/realms/{self.realm}/.well-known/openid-configuration"
+        st0, plain = h.json("GET", well_known)
+        issuer = (plain or {}).get("issuer") if st0 == 200 else None
+        token_call = f"/id/realms/{self.realm}/protocol/openid-connect/token"
+        grant = {"grant_type": "client_credentials", "client_id": "portal-api",
+                 "client_secret": R.read_secret(self.state, "portal-client-secret")} if self.state else None
+        st_t, tok = h.json("POST", token_call, form=grant) if grant else (None, None)
+        plain_claims = claims(tok["access_token"]) if st_t == 200 and isinstance(tok, dict) else {}
+        evil = "portal.mo-forged.localhost"
+        forms = {"xfh": {"X-Forwarded-Host": evil}}
+        if not self.hosts:
+            forms["host"] = {"Host": evil}
+        for form, headers in forms.items():
+            st, body = h.json("GET", well_known, headers=headers)
+            got = (body or {}).get("issuer") if st == 200 else None
+            self.row(f"forged.issuer.{form}", "all", f"GET {well_known} with {next(iter(headers))}: {evil}",
+                     f"the issuer {issuer}, or a refusal", f"{st} {got}",
+                     (st in (400, 404, 421) or got == issuer) if issuer else None,
+                     "" if issuer else f"no control: the plain discovery answered {st0}")
+            if not grant:
+                continue
+            st, body = h.json("POST", token_call, form=grant, headers=headers)
+            c = claims(body["access_token"]) if st == 200 and isinstance(body, dict) and body.get("access_token") else {}
+            self.row(f"forged.token.{form}", "all", f"POST {token_call} (client_credentials) with {next(iter(headers))}: {evil}",
+                     f"iss {plain_claims.get('iss')} and aud as without it, or a refusal",
+                     f"{st}, iss {c.get('iss')}, aud {c.get('aud')}",
+                     (st in (400, 401, 404, 421) or (c.get("iss"), c.get("aud")) == (plain_claims.get("iss"), plain_claims.get("aud")))
+                     if plain_claims else None, "" if plain_claims else f"no control: the plain token answered {st_t}")
+
     def check_prefixes(self, org: str, orgs: list):
         """The prefixed form on `org`'s own bound hosts: the API answers in place, a page is 308 to
         the prefix-less form; another Organization's prefix there is the 404 of an unknown path."""
@@ -1134,15 +1201,21 @@ class Suite:
                                      f"{st}{', names it' if leaked else ''}", st in DENIED)
 
     def check_operators(self):
-        """No Organization holds the installation role: the operators are the platform-admins group.
-        They propose an Organization, a RoleBinding and a Group at the org namespace (a dry run: no
-        Change is filed) and read the pages that fell back to the installation's Organization; no
-        Organization's admin reaches the org namespace."""
-        if self.installation:
+        """The installation's Organization holds no data (PF-121: ops), so it is the operators'
+        alone: the platform-admins group and that Organization's admin. They propose an
+        Organization, a RoleBinding and a Group at the org namespace (a dry run: no Change is
+        filed) and read the pages that fall back to the installation's Organization; no data
+        Organization's admin reaches the org namespace. An installation that holds data has no
+        operators' Organization: its admin is judged by the per-Organization rows."""
+        if self.installation and self.exp[self.installation]["projects"]:
             return
+        operators = {"platform": "operators.platform"}
+        if self.installation:
+            operators[f"{self.installation}-admin"] = f"operators.installation.{self.installation}-admin"
+        data = [o for o in self.exp if o != self.installation]
         tag = f"mo-op-{secrets.token_hex(3)}"
         me = self.people["platform"]["id"]
-        target = next(iter(self.exp))
+        target = data[0]
         def manifest(kind, spec):
             return {"apiVersion": "joinedcontext.com/v1alpha1", "kind": kind,
                     "metadata": {"name": tag, "namespace": "org"}, "spec": spec}
@@ -1155,32 +1228,36 @@ class Suite:
         }
         for plural, body in bodies.items():
             call = f"/api/v1/projects/org/{plural}?dryRun=All"
-            st, raw = self.session("platform").json("POST", call, body=body)
-            control = st == 200
-            self.row(f"operators.platform.propose.{plural}", "platform", f"POST {call}",
-                     "200: the dry run of an operator's proposal", f"{st} {str(raw)[:160]}" if not control else "200", control)
-            for org in self.exp:
+            control = False
+            for key, rid in operators.items():
+                st, raw = self.session(key).json("POST", call, body=body)
+                control = control or st == 200
+                self.row(f"{rid}.propose.{plural}", key, f"POST {call} as mo-{key}",
+                         "200: the dry run of an operator's proposal", f"{st} {str(raw)[:160]}" if st != 200 else "200",
+                         st == 200)
+            for org in data:
                 st, raw = self.session(f"{org}-admin").json("POST", call, body=body)
                 self.row(f"operators.{org}-admin.propose.{plural}", org, f"POST {call} as mo-{org}-admin",
                          "403/404 (the operator's dry run 200)", f"{st} {str(raw)[:120]}" if st not in DENIED else str(st),
                          (st in DENIED) if control else None, "" if control else "no control: the operator's dry run failed")
-        # The pages that answered with the installation's Organization: an operator's answer now.
+        # The pages that answer with the installation's Organization: an operator's answer.
         everyone = {f"mo-{o}-{k}" for o in self.exp for k in ("admin", "member")}
-        st, body = self.session("platform").json("GET", "/api/v1/organization/people?max=100")
-        names = set(users(i.get("email", "") for i in (body or {}).get("items", []))) if st == 200 else set()
-        self.row("operators.platform.people", "platform", "GET /api/v1/organization/people",
-                 "200 naming the people of every Organization", f"{st}, missing {len(everyone - names)}",
-                 st == 200 and everyone <= names)
-        for path in ("/api/v1/organization/widgets", "/api/v1/organization/setup"):
-            st, body = self.session("platform").json("GET", path)
-            self.row(f"operators.platform.{path}", "platform", f"GET {path}", "200",
-                     f"{st} {str(body)[:120]}" if st != 200 else "200", st == 200)
-        st, _, raw = self.session("platform").call("GET", "/api/v1/", headers={"OData-MaxVersion": "4.0",
-                                                                                 "Accept": "application/json"})
-        self.row("operators.platform.odata", "platform", "GET /api/v1/ (OData service document)",
-                 "200, or 404 naming no Organization (path mode has no Organization of the request)",
-                 f"{st} {raw[:120]!r}", st == 200 or (st == 404 and not any(o in raw.decode(errors='replace') for o in self.exp)))
-        for org in self.exp:
+        for key, rid in operators.items():
+            st, body = self.session(key).json("GET", "/api/v1/organization/people?max=100")
+            names = set(users(i.get("email", "") for i in (body or {}).get("items", []))) if st == 200 else set()
+            self.row(f"{rid}.people", key, f"GET /api/v1/organization/people as mo-{key}",
+                     "200 naming the people of every Organization", f"{st}, missing {len(everyone - names)}",
+                     st == 200 and everyone <= names)
+            for path in ("/api/v1/organization/widgets", "/api/v1/organization/setup"):
+                st, body = self.session(key).json("GET", path)
+                self.row(f"{rid}.{path}", key, f"GET {path} as mo-{key}", "200",
+                         f"{st} {str(body)[:120]}" if st != 200 else "200", st == 200)
+            st, _, raw = self.session(key).call("GET", "/api/v1/", headers={"OData-MaxVersion": "4.0",
+                                                                             "Accept": "application/json"})
+            self.row(f"{rid}.odata", key, f"GET /api/v1/ (OData service document) as mo-{key}",
+                     "200, or 404 naming no Organization (path mode has no Organization of the request)",
+                     f"{st} {raw[:120]!r}", st == 200 or (st == 404 and not any(o in raw.decode(errors='replace') for o in data)))
+        for org in data:
             for plural in ("rolebindings", "groups", "organizations"):
                 call = f"/api/v1/projects/org/{plural}"
                 st, body = self.session(f"{org}-admin").json("GET", call)
@@ -1361,7 +1438,7 @@ class Suite:
             return
         steps = (self.check_projects, self.check_hosts, self.check_project_reads, self.check_writes, self.check_people,
                  self.check_mcp, self.check_connectors, self.check_data, self.check_catalogue, self.check_dashboards,
-                 self.check_global, self.check_operators)
+                 self.check_global, self.check_operators, self.check_forged)
         if self.a.shots:
             steps += (self.check_ui,)
         for step in steps:
@@ -1405,7 +1482,7 @@ def main(argv):
     ap.add_argument("--state", help="the rehearsal's state dir (realm admin client, forge token)")
     ap.add_argument("--admin-token-file", help="unused: persons are made through --state")
     ap.add_argument("--person-token-file", help="unused: persons are made through --state")
-    ap.add_argument("--only", help="comma list of check groups: projects,hosts,project_reads,writes,people,mcp,connectors,data,catalogue,dashboards,global,operators,ui")
+    ap.add_argument("--only", help="comma list of check groups: projects,hosts,project_reads,writes,people,mcp,connectors,data,catalogue,dashboards,global,operators,forged,ui")
     ap.add_argument("--shots", action="store_true", help="browser shots 1440/400 per persona (Playwright)")
     ap.add_argument("--sync-timeout", type=int, default=180)
     ap.add_argument("--composed", action="store_true",

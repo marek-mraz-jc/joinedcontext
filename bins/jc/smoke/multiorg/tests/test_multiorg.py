@@ -243,14 +243,19 @@ def export(root, orgs, projects, installation=None):
     return root
 
 
-def test_compose_makes_organizations_of_named_projects_and_empty_controls_with_no_installation(tmp_path):
+def test_compose_makes_organizations_of_named_projects_and_empty_controls_with_an_operators_installation(tmp_path):
     src = export(tmp_path / "src", ["hel"], {"helsinki": "hel", "bbsk": "hel", "praha": "hel"}, installation="hel")
-    orgs = compose.parse_orgs(["hel=" + str(src) + ":helsinki", f"bbsk={src}:bbsk", "ctl-a="])
-    summary = compose.compose(src, orgs, tmp_path / "out", 0, per_space=2, installation=False)
-    assert {o: v["projects"] for o, v in summary["organizations"].items()} == {"hel": ["helsinki"], "bbsk": ["bbsk"], "ctl-a": []}
+    orgs = compose.parse_orgs(["ops=", "hel=" + str(src) + ":helsinki", f"bbsk={src}:bbsk", "ctl-a="])
+    summary = compose.compose(src, orgs, tmp_path / "out", 0, per_space=2, installation="ops")
+    assert {o: v["projects"] for o, v in summary["organizations"].items()} == \
+        {"ops": [], "hel": ["helsinki"], "bbsk": ["bbsk"], "ctl-a": []}
     cfg = tmp_path / "out/gitea/files/joinedcontext/configuration"
-    assert sorted(f.stem for f in (cfg / "organizations").glob("*.yaml")) == ["bbsk", "ctl-a", "hel"]
-    assert not any("installation" in f.read_text() for f in (cfg / "organizations").glob("*.yaml"))
+    assert sorted(f.stem for f in (cfg / "organizations").glob("*.yaml")) == ["bbsk", "ctl-a", "hel", "ops"]
+    # PF-121: exactly one Organization holds the role, the operators' one with no data
+    held = [f.stem for f in (cfg / "organizations").glob("*.yaml") if "installation: true" in f.read_text()]
+    assert held == ["ops"] and "\nspec:\n  installation: true\n" in (cfg / "organizations/ops.yaml").read_text()
+    with pytest.raises(SystemExit, match="--installation ops: no --org ops"):
+        compose.compose(src, compose.parse_orgs([f"hel={src}"]), tmp_path / "o", 0, installation="ops")
     bbsk = (cfg / "organizations/bbsk.yaml").read_text()
     assert "name: bbsk" in bbsk and "domain: bbsk.sk" in bbsk and "title: { en: City bbsk }" in bbsk
     assert "domain: ctl-a.example" in (cfg / "organizations/ctl-a.yaml").read_text()

@@ -48,7 +48,10 @@ pub(crate) fn is_candidate_manifest(path: &str) -> bool {
     // Each Organization of the installation has a file of its own beside the legacy `org.yaml`
     // (PF-121, ADR-N-058). A DelegationPolicy lives in `users/delegation/` (AG-150); left out here,
     // no policy reached the mirror and every connector was held to the data-read default (T-6025).
+    // The Environment overlays (`environments/{name}.yaml`, CC-73) the loader merges as
+    // JC_ENVIRONMENT names one; left out here, a set JC_ENVIRONMENT stopped every sync (T-6850).
     clean.starts_with("projects/")
+        || clean.starts_with("environments/")
         || clean.starts_with("organizations/")
         || clean.starts_with("users/roles/")
         || clean.starts_with("users/groups/")
