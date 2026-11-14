@@ -2241,6 +2241,21 @@
       refused: true
       contains: ['contactEmail personal']
       absent: ['jana@example.org', 'image/png']
+    # Ordered or picked by a personal attribute, a chart ranks entities by it (AG-158).
+    - proves: deny
+      via: connector
+      call: jc_render
+      args: { mark: bar, encoding: { x: { field: id, type: nominal } }, data: { query: { endpoint: '{project}-reports', type: PotholeReport, orderBy: 'contactEmail;desc' } } }
+      refused: true
+      contains: ['contactEmail personal']
+      absent: ['image/png']
+    - proves: deny
+      via: connector
+      call: jc_render
+      args: { mark: bar, encoding: { x: { field: id, type: nominal } }, data: { query: { endpoint: '{project}-reports', type: PotholeReport, attrs: [contactEmail] } } }
+      refused: true
+      contains: ['contactEmail personal']
+      absent: ['image/png']
     # The whole Dashboard (T-6867): the door saw only its name, so the render runs the door's checks
     # again on each widget; the personal one is its own refused tile and the other still draws.
     - proves: deny
