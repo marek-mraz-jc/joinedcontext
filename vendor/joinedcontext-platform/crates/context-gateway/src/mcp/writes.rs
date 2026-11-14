@@ -251,11 +251,11 @@ pub(crate) fn problem_text(body: &[u8]) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Whether the broker tool only reads: a broker tool of [`TOOLS`] none of whose operations writes
-/// (Antares `docs/src/mcp.md` section 2); any other name is a write.
 /// The broker's second name of `get_type`.
 pub(crate) const DESCRIBE_TYPE: &str = "describe_type";
 
+/// Whether the broker tool only reads: a broker tool of [`TOOLS`] none of whose operations writes
+/// (Antares `docs/src/mcp.md` section 2); any other name is a write.
 pub(crate) fn is_read_tool(tool: &str) -> bool {
     // The broker lists `get_type` answered with its guide as `describe_type` too (antares-mcp).
     let tool = if tool == DESCRIBE_TYPE {
