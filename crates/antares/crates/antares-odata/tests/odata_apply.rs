@@ -780,6 +780,26 @@ async fn the_metadata_hides_what_the_engine_hides() -> Result<(), String> {
     Ok(())
 }
 
+/// A model document asked by an escaped name is the narrowed one or none.
+#[tokio::test]
+async fn an_escaped_metadata_name_never_reads_the_whole_model() -> Result<(), String> {
+    let (_b, app) = broker(true).await?;
+    for path in ["%24metadata", "$metadata/", "./$metadata", "$Metadata"] {
+        let (status, body) = send(&app, Method::GET, &format!("{ROOT}/{path}"), None).await;
+        assert!(!body.to_string().contains("owner"), "{path}: {status} {body}");
+        let members = json!({"requests": [{"id": "1", "method": "get", "url": path}]});
+        let (_, body) = send(
+            &app,
+            Method::POST,
+            &format!("{ROOT}/$batch"),
+            Some(members.to_string()),
+        )
+        .await;
+        assert!(!body.to_string().contains("owner"), "batch {path}: {body}");
+    }
+    Ok(())
+}
+
 /// A `$batch` member reading `$metadata` or the service document is shown the
 /// same narrowed model as the request alone.
 #[tokio::test]
