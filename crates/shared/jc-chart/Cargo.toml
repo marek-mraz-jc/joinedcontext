@@ -11,3 +11,10 @@ description = "The closed Vega-Lite subset and the PNG raster both chart doors s
 chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 flate2 = "1"
 serde_json = "1"
+
+[build-dependencies]
+# The chart library's checksums (build.rs, T-6887).
+sha2 = "0.10"
+
+[dev-dependencies]
+sha2 = "0.10"

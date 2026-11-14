@@ -10,8 +10,8 @@ import type { TopLevelSpec } from "vega-lite";
 import "../src/i18n";
 import { loadVega } from "../src/components/panels/VegaChart";
 import type { Spec } from "../src/components/panels/specs";
-import { autoPoints, spanned, barChartSpec, gaugeSpec, heatmapSpec, histogramSpec, pieChartSpec, stateTimelineSpec, timeSeriesSpec } from "../src/components/panels/specs";
-import { FALLBACK } from "../src/components/panels/palette";
+import { autoPoints, configOf, spanned, barChartSpec, gaugeSpec, heatmapSpec, histogramSpec, pieChartSpec, stateTimelineSpec, timeSeriesSpec } from "../src/components/panels/specs";
+import { chartTheme } from "../src/components/panels/VegaChart";
 import { PanelView, plainText } from "../src/components/panels/PanelView";
 import type { PanelDefinition } from "../src/components/panels/PanelView";
 import { barGradient, BarGaugePanel, DEFAULT_THRESHOLDS, globalRange, shownValues, StatPanel } from "../src/components/panels/ValuePanels";
@@ -30,7 +30,7 @@ import builderFile from "../../tests/fixtures/grafana-builder/bike-stations.json
 import recordedPm25 from "./fixtures/frames/helsinki-2.json";
 import recordedBikes from "./fixtures/frames/helsinki-4.json";
 
-const theme = { ...FALLBACK, font: "sans-serif" };
+const theme = chartTheme("light");
 
 /** The chart as SVG text, drawn headless the way the page draws it (interpreter, no loads). */
 async function svgOf(spec: Spec): Promise<string> {
@@ -45,6 +45,19 @@ async function svgOf(spec: Spec): Promise<string> {
 function count(text: string, pattern: RegExp): number {
   return [...text.matchAll(new RegExp(pattern.source, "g"))].length;
 }
+
+describe("the chart theme (T-6886)", () => {
+  it("draws every panel in the theme file's config, light and dark, on the card's own surface", async () => {
+    const file = (await import("../../../shared/jc-chart/src/theme.json")).default;
+    for (const mode of ["light", "dark"] as const) {
+      const config = configOf(chartTheme(mode)) as Record<string, unknown>;
+      expect(config.range).toEqual(file[mode].range);
+      expect(config.axis).toEqual(file[mode].axis);
+      expect(config.font).toBe(file[mode].font);
+      expect(config.background).toBeNull();
+    }
+  });
+});
 
 describe("timeseries", () => {
   it("draws one line per label set of the context-broker request rate, its axis in req/s", async () => {

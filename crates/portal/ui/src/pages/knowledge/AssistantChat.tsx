@@ -1,12 +1,14 @@
 import { reasonOf } from "../../api/client";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { FormEvent, JSX, KeyboardEvent, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { CodeBlock, Alert, Button, Checkbox, ExternalLink, Field, Table, Textarea } from "../../components/ui";
 import { useBranding } from "../../branding";
 import { RecordsGrid } from "../../components/grid/RecordsGrid";
-import { askAssistant, cellText, dataChart, embedSnippet, launcherSnippet } from "./knowledge";
-import type { ChatEvent, ChatTurn, Citation, DataChart, DataTable } from "./knowledge";
+import { askAssistant, cellText, chartSpec, dataChart, embedSnippet, launcherSnippet } from "./knowledge";
+import type { ChatEvent, ChatTurn, Citation, DataTable, Spec, Visual } from "./knowledge";
+import { VegaChart, chartTheme } from "../../components/panels/VegaChart";
+import { narrowConfig } from "../../components/panels/palette";
 import { label, markdown, sources } from "./answerFormat";
 import type { Block, Inline } from "./answerFormat";
 
@@ -19,6 +21,8 @@ interface Shown {
   scripts: { code: string; result: string }[];
   citations: Citation[];
   data: DataTable[];
+  /** The assistant's checked chart; `null` when it sent one this page refused (the table rule draws then). */
+  visual?: Visual | null;
   error?: string;
 }
 
@@ -136,47 +140,34 @@ function Sources({ citations, ids, label: name }: { citations: Citation[]; ids: 
 }
 
 /**
- * A data round's one numeric column as a small line or bar chart (T-4198), the widget's drawing.
- * The table above it is the text alternative, so the drawing is hidden from screen readers.
+ * A data round's chart (T-4198, T-6889), drawn by Vega with the chart theme (T-6886): the table's
+ * one numeric column by the widget's rule, or the assistant's checked `visualization`. The table
+ * above it holds the same values as text; when Vega cannot draw, a line says so and the table stays.
  */
-function Chart({ chart }: { chart: DataChart }): JSX.Element {
-  const W = 300;
-  const H = 90;
-  const top = 14;
-  const base = top + H;
-  const values = chart.points.map((p) => p.value);
-  const low = Math.min(0, ...values);
-  const high = Math.max(0, ...values);
-  const span = high - low || 1;
-  const y = (v: number) => top + H - ((v - low) / span) * H;
-  const step = W / chart.points.length;
+function Chart({ spec, label }: { spec: Spec; label: string }): JSX.Element {
+  const { t } = useTranslation();
+  const drawn = useMemo(
+    () => ({
+      width: "container",
+      autosize: { type: "fit", contains: "padding" },
+      ...spec,
+      config: { ...chartTheme().config, ...narrowConfig(), background: null },
+    }),
+    [spec],
+  );
+  const height = typeof spec.height === "number" ? spec.height : 180;
   return (
-    <svg viewBox={`0 0 ${W} ${base + 14}`} aria-hidden="true" focusable="false" className="mt-2 block h-auto w-full" data-testid="assistant-chart">
-      <line x1={0} x2={W} y1={y(0)} y2={y(0)} className="stroke-border" />
-      {chart.kind === "line" ? (
-        <polyline
-          points={chart.points.map((p, i) => `${(i * step + step / 2).toFixed(1)},${y(p.value).toFixed(1)}`).join(" ")}
-          className="fill-none stroke-primary-soft-fg"
-          strokeWidth={2}
-        />
-      ) : (
-        chart.points.map((p, i) => {
-          const a = y(Math.max(p.value, 0));
-          const b = y(Math.min(p.value, 0));
-          return <rect key={i} x={i * step + step * 0.1} width={step * 0.8} y={a} height={Math.max(b - a, 1)} className="fill-primary-soft-fg" />;
-        })
-      )}
-      <text x={0} y={10} fontSize={10} className="fill-fg-muted">{`${chart.value} ${Number(high.toPrecision(4))}`}</text>
-      <text x={0} y={base + 12} fontSize={10} className="fill-fg-muted">{chart.points[0].label}</text>
-      <text x={W} y={base + 12} textAnchor="end" fontSize={10} className="fill-fg-muted">{chart.points[chart.points.length - 1].label}</text>
-    </svg>
+    <div className="mt-2" data-testid="assistant-chart">
+      <VegaChart spec={drawn} label={label} height={height} failure={t("knowledge.chat.chartUnavailable")} />
+    </div>
   );
 }
 
 /** A data round's rows as the widget shows them (T-4140): a table, its chart and its links. */
-function Data({ table }: { table: DataTable }): JSX.Element {
+function Data({ table, charted }: { table: DataTable; charted: boolean }): JSX.Element {
   const { t } = useTranslation();
-  const chart = dataChart(table);
+  const chart = charted ? null : dataChart(table);
+  const spec = useMemo(() => (chart ? chartSpec(chart) : null), [chart]);
   return (
     <figure className="mt-2 text-caption">
       <RecordsGrid
@@ -188,7 +179,7 @@ function Data({ table }: { table: DataTable }): JSX.Element {
         storageKey={`knowledge.chat.data.${table.columns.join(",")}`}
         empty={t("knowledge.chat.noRows")}
       />
-      {chart ? <Chart chart={chart} /> : null}
+      {chart && spec ? <Chart spec={spec} label={t("knowledge.chat.chart", { value: chart.value, by: chart.by })} /> : null}
       {table.dataset || table.download ? (
         <p className="mt-1 flex flex-wrap gap-3">
           {table.dataset ? <ExternalLink href={table.dataset}>{t("knowledge.chat.dataset")}</ExternalLink> : null}
@@ -219,6 +210,8 @@ function apply(turn: Shown, event: ChatEvent): Shown {
       return { ...turn, citations: event.citations };
     case "data":
       return { ...turn, data: [...turn.data, event.data] };
+    case "visualization":
+      return { ...turn, visual: event.visual };
     case "error":
       return { ...turn, error: event.detail, reading: undefined };
     default:
@@ -352,8 +345,9 @@ export function AssistantChat({
             ) : null}
             {turn.text && turn.role === "user" ? <p className="whitespace-pre-wrap">{turn.text}</p> : null}
             {turn.data.map((table, n) => (
-              <Data key={n} table={table} />
+              <Data key={n} table={table} charted={!!turn.visual} />
             ))}
+            {turn.visual ? <Chart spec={turn.visual.spec} label={t("knowledge.chat.visual")} /> : null}
             {turn.text && turn.role === "assistant" ? <Answer text={turn.text} citations={turn.citations} ids={`${ids}-${index}`} /> : null}
             {turn.error ? (
               <>

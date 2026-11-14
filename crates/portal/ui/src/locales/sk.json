@@ -9686,6 +9686,9 @@
     "chat": {
       "ask": "Opýtať sa",
       "askOf": "Opýtať sa {name}",
+      "chart": "Graf {value} podľa {by}; tabuľka vyššie obsahuje tie isté hodnoty",
+      "chartUnavailable": "Graf sa tu nedá zobraziť. Tabuľka vyššie obsahuje tie isté hodnoty.",
+      "visual": "Graf asistenta; tabuľka vyššie obsahuje tie isté hodnoty",
       "asYou": "Asistent vám odpovedá ako vám: číta interné zdroje a Endpointy, ktoré smiete čítať vy.",
       "asVisitor": "Asistent vám odpovedá presne tak, ako návštevníkovi stránky: iba verejné zdroje a verejné Endpointy. Každá otázka sa počíta do jeho rozpočtu.",
       "connectors": "Živé dáta, ktoré smie asistent čítať",

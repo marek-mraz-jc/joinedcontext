@@ -962,7 +962,9 @@
     frame.title = title;
     frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-downloads allow-popups allow-popups-to-escape-sandbox");
     frame.setAttribute("referrerpolicy", "no-referrer");
-    var message = { type: "jc-viz-show", spec: JCRender.vizSpec(payload.spec, lang, payload.labels), rows: payload.rows, lang: lang };
+    // The chat's own scheme, so the chart draws in the theme's light or dark (T-6886).
+    var dark = document.documentElement.getAttribute("data-scheme") !== "light" && !!window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    var message = { type: "jc-viz-show", spec: JCRender.vizSpec(payload.spec, lang, payload.labels), rows: payload.rows, lang: lang, theme: dark ? "dark" : "light" };
     frame.addEventListener("load", function () {
       frame.contentWindow.postMessage(message, VIZ);
     });

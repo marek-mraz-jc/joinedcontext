@@ -21,7 +21,7 @@ struct View {
     name: &'static str,
     title: &'static str,
     description: &'static str,
-    page: &'static str,
+    page: fn() -> &'static str,
     /// The tools whose answer the view renders.
     tools: &'static [&'static str],
 }
@@ -32,7 +32,7 @@ const VIEWS: &[View] = &[
         name: "plan-view",
         title: "Plan and sample view",
         description: "Renders a plan's diff or a mapping's sample records; links to the Portal",
-        page: include_str!("plan_view.html"),
+        page: || include_str!("plan_view.html"),
         tools: &["jc_change_plan", "jc_pipeline_try_mapping"],
     },
     View {
@@ -40,7 +40,7 @@ const VIEWS: &[View] = &[
         name: "chart-view",
         title: "Chart view",
         description: "Draws a jc_render chart live from the answer's points; connects nowhere",
-        page: jc_chart::VIEW_PAGE,
+        page: jc_chart::view_page,
         tools: &["jc_render"],
     },
 ];
@@ -97,7 +97,7 @@ pub fn contents(uri: &str, public_base_url: &url::Url) -> Option<Value> {
     Some(json!([{
         "uri": view.uri,
         "mimeType": MIME,
-        "text": view.page.replace("__PORTAL_ORIGIN__", &literal),
+        "text": (view.page)().replace("__PORTAL_ORIGIN__", &literal),
         "_meta": meta()
     }]))
 }
@@ -107,10 +107,12 @@ mod tests {
     use super::*;
 
     /// The chart view draws from the posted numbers alone (T-6866): no script engine, no markup
-    /// sink, no request and no URL but the one Portal link.
+    /// sink, no request and no URL but the one Portal link and the answer's own PNG. The grep
+    /// reads the page's own code; the chart library it inlines is held to its checksums
+    /// (jc-chart `the_chart_view_inlines_the_checksummed_libraries`, T-6887).
     #[test]
     fn chart_view_page_has_no_eval_innerhtml_or_url_sinks() {
-        let page = jc_chart::VIEW_PAGE;
+        let page = jc_chart::VIEW_SOURCE;
         for sink in [
             "eval(",
             "new Function",
@@ -120,7 +122,6 @@ mod tests {
             "document.write",
             "setAttribute(\"href\"",
             "xlink",
-            ".src =",
             "<img",
             "fetch(",
             "XMLHttpRequest",
@@ -134,6 +135,16 @@ mod tests {
             assert!(!page.contains(sink), "the chart view holds {sink}");
         }
         assert_eq!(page.matches(".href =").count(), 1, "one Portal link");
+        // The one picture is the answer's PNG, base64 checked before it is used.
+        assert_eq!(page.matches(".src =").count(), 1, "one picture");
+        assert!(page.contains(r#"img.src = "data:image/png;base64," + png.data;"#));
+        assert!(page.contains(r#"/^[A-Za-z0-9+/]+={0,2}$/.test(c.data)"#));
+        // The library draws through Vega's interpreter, with a loader that loads nothing.
+        assert!(page.contains("expr: vega.expressionInterpreter"));
+        assert!(page.contains("{ ast: true }"));
+        assert!(page.contains(
+            "var LOADER = { load: refused, sanitize: refused, http: refused, file: refused };"
+        ));
         assert!(page.contains("a.href = url;"));
         assert!(page.contains("var url = PORTAL + \"/projects/\""));
         // Messages only from the parent frame, and only JSON-RPC 2.0.
