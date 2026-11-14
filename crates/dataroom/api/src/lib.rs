@@ -16,8 +16,10 @@ mod aliases;
 pub mod ckan;
 pub mod feeds;
 pub mod odata_routes;
+mod portals;
 
 pub use aliases::{aliased, check_aliases, with_dataset_aliases};
+pub use portals::{synthetic_host, PortalAddress, PortalTables};
 
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
@@ -190,6 +192,8 @@ pub struct DataroomState {
     /// Each catalogue's canonical public URL (scheme, host, prefix): every absolute id and link
     /// names it, whichever registered host the catalogue was read on, so an id never moves.
     pub catalogue_bases: Arc<std::sync::RwLock<BTreeMap<CatalogueId, String>>>,
+    /// The further portals' slug addresses and own hosts (ODP-08), swapped at runtime.
+    pub portals: PortalTables,
 }
 
 /// Where a request came in, as the host's router resolved it (`jc_router::Mount`: the scheme
@@ -203,6 +207,8 @@ pub struct RequestOrigin {
     pub path_prefix: String,
     /// The Organization the router decided for the request, if any.
     pub organization: Option<String>,
+    /// The portal of the Organization a slug address `/-/{path}/` named (ODP-08).
+    pub portal: Option<String>,
 }
 
 impl RequestOrigin {
@@ -225,10 +231,19 @@ pub fn request_origin() -> Option<RequestOrigin> {
 async fn with_origin(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
     match req.extensions().get::<jc_router::Mount>() {
         Some(m) => {
+            let portal = req
+                .extensions()
+                .get::<portals::PortalPath>()
+                .map(|p| p.0.clone());
+            let path_prefix = match &portal {
+                Some(path) => format!("{}/-/{path}", m.path_prefix),
+                None => m.path_prefix.clone(),
+            };
             let origin = RequestOrigin {
                 scheme: m.scheme.clone(),
                 host: m.host.to_ascii_lowercase(),
-                path_prefix: m.path_prefix.clone(),
+                path_prefix,
+                portal,
                 organization: req
                     .extensions()
                     .get::<jc_router::Organization>()
@@ -267,6 +282,7 @@ impl DataroomState {
             catalogue_branding: Arc::default(),
             organization_catalogues: Arc::default(),
             catalogue_bases: Arc::default(),
+            portals: PortalTables::default(),
         }
     }
 
@@ -389,7 +405,16 @@ impl DataroomState {
 
         let decided = origin.as_ref().and_then(|o| o.organization.as_deref());
         let mut cat = if let Some(org) = decided {
-            let known = read(&self.organization_catalogues).get(org).copied();
+            let own = read(&self.organization_catalogues).get(org).copied();
+            // A slug address names its portal; a portal's own host names it unless it is
+            // another Organization's (the router decided this one).
+            let known = match origin.as_ref().and_then(|o| o.portal.as_deref()) {
+                Some(path) => self.portals.slug(org, path).map(|a| (a.org_id, a.id)),
+                None => host
+                    .and_then(|h| self.portals.host(h))
+                    .filter(|(o, _)| own.is_some_and(|(mine, _)| mine == *o))
+                    .or(own),
+            };
             let found = match known {
                 Some((org, id)) => self.store.get_catalogue(org, id).await?,
                 None => None,
@@ -570,7 +595,8 @@ pub fn mount(prefix: &str, state: DataroomState) -> Router {
 
 /// Builds the complete Axum [`Router`] for `dataroom` (mountable standalone or under `/catalogue`, G1).
 pub fn router(state: DataroomState) -> Router {
-    Router::new()
+    let tables = state.portals.clone();
+    let app = Router::new()
         // CKAN Action API v3
         .route(
             "/api/3/action/{action}",
@@ -667,7 +693,8 @@ pub fn router(state: DataroomState) -> Router {
         // catch-all conflicts with the `/{lang}/...` routes in the router's matcher.
         .fallback(handle_ui_dispatch_fallback)
         .with_state(state)
-        .layer(axum::middleware::from_fn(with_origin))
+        .layer(axum::middleware::from_fn(with_origin));
+    portals::with_portal_slugs(app, tables)
 }
 
 #[derive(Debug, Deserialize)]

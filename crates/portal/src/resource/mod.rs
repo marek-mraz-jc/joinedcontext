@@ -411,6 +411,8 @@ mod tests {
                 "Environment",
                 "Dashboard",
                 "Layer",
+                // One open data portal of an Organization (ODP-08, T-6873).
+                "Portal",
             ],
             "jc-core's catalogue changed: check PORTAL_ONLY_KINDS and the UI navigation"
         );
