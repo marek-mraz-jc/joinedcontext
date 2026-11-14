@@ -865,8 +865,8 @@ pub async fn create_review(
             .await
             .unwrap_or_default();
         if policy
-            .matching_branch_rule(&pr.base_ref)
-            .is_some_and(|rule| rule.required_approvals > 0)
+            .matching_branch_rules(&pr.base_ref)
+            .any(|rule| rule.required_approvals > 0)
         {
             return Err(ShakoError::Unprocessable(
                 "pull request author cannot approve their own pull request".into(),
