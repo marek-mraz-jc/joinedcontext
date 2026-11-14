@@ -1164,14 +1164,16 @@ CKAN_URL = re.compile(rb"^(\s+url:\s*)\S+", re.M)
 REHEARSAL_CATALOGUE = b"https://catalogue.rehearsal.invalid"
 
 
-_CATALOGUE_URL = re.compile(r"https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+")
+# An origin, optionally with the path a slug-mode dataroom answers under (https://<host>/opendata).
+_CATALOGUE_URL = re.compile(r"https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(/[a-z0-9][a-z0-9_-]*)*")
 
 
 def catalogue_url(value: str) -> bytes:
-    """--catalogue-url: the instance's own catalogue (a cluster import), an https origin and
-    nothing else, since it lands verbatim in every CkanInstance's YAML."""
+    """--catalogue-url: the instance's own catalogue (a cluster import), an https origin and the
+    dataroom's path (a slug-mode jc serves it at /opendata, and the base host answers no CKAN
+    document), nothing else, since it lands verbatim in every CkanInstance's YAML."""
     if not _CATALOGUE_URL.fullmatch(value):
-        raise SystemExit(f"--catalogue-url {value!r}: give https://<host> only, no port, path or user")
+        raise SystemExit(f"--catalogue-url {value!r}: give https://<host>[/<path>] only, no port, query or user")
     return value.encode()
 
 
