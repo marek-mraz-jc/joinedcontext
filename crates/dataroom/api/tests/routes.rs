@@ -1467,6 +1467,19 @@ async fn ckan_organization_writes() {
         a.json()["result"]["uri"],
         format!("https://{HOST}/organization/dept2")
     );
+    // A new organization's id never names a stored one: datasets name their publisher by it.
+    for id in ["city", "org-dept"] {
+        let a = ckan(
+            app,
+            "organization_create",
+            Some("tok-admin"),
+            json!({"name": "dept3", "id": id}),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::CONFLICT, "{id}: {}", a.body);
+    }
+    let a = ckan(app, "package_show", None, json!({"id": "open"})).await;
+    assert_eq!(a.json()["result"]["organization"]["name"], "city");
 
     // organization_update / patch: by id or name, an instance renames only its own organization.
     let a = ckan(

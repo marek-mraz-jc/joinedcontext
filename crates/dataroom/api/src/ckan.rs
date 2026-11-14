@@ -1123,6 +1123,26 @@ async fn answer_ckan_action(
                 }
                 Err(e) => return ckan_err(&base, &action, e),
             }
+            let id = payload
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map_or_else(|| format!("org-{name}"), str::to_owned);
+            // Nor on an id that names a stored organization: datasets name their publisher by
+            // it, so that one's datasets would resolve to (and be decided on) this record.
+            match state.store.get_publisher(&ctx, &id).await {
+                Ok(None) => {}
+                Ok(Some(_)) => {
+                    return ckan_err(
+                        &base,
+                        &action,
+                        DataroomError::Conflict(format!(
+                            "an organization with id or name '{id}' exists"
+                        )),
+                    )
+                }
+                Err(e) => return ckan_err(&base, &action, e),
+            }
             let title_str = payload.get("title").and_then(Value::as_str).unwrap_or(name);
             let desc_str = payload
                 .get("description")
@@ -1139,11 +1159,7 @@ async fn answer_ckan_action(
             let pub_rec = Publisher {
                 org_id: ctx.org_id,
                 catalogue_id: ctx.catalogue_id,
-                id: payload
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| format!("org-{name}")),
+                id,
                 name: name.to_owned(),
                 title: BTreeMap::from([(cat.default_language.clone(), title_str.to_owned())]),
                 description: if desc_str.is_empty() {
