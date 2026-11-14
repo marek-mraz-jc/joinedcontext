@@ -275,9 +275,16 @@ pub(crate) fn shared_endpoints(
                 }
                 _ => None,
             }?;
-            let foreign = endpoint.metadata.namespace.as_deref() != Some(project);
-            (foreign && endpoint_access(&endpoint.spec, project).is_allowed())
-                .then_some((reference, endpoint))
+            let owner = endpoint.metadata.namespace.as_deref()?;
+            // Audience organization admits the members of the Endpoint's own Organization only,
+            // as the gateway's door does (`endpoint_reach::not_admitted`).
+            let same_organization = || {
+                crate::permissions::organization_of(mirror, owner)
+                    == crate::permissions::organization_of(mirror, project)
+            };
+            let admitted = endpoint_access(&endpoint.spec, project).is_allowed()
+                && (endpoint.spec["audience"] != "organization" || same_organization());
+            (owner != project && admitted).then_some((reference, endpoint))
         })
         .collect()
 }
@@ -1493,6 +1500,37 @@ mod tests {
             (
                 "classes",
                 "https://smartdatamodels.org/BikeHireDockingStation".to_owned(),
+    /// TEN-07: audience organization admits the Endpoint's own Organization; a reference from a
+    /// project of another Organization opens nothing, while one of the same Organization does.
+    #[test]
+    fn an_organization_endpoint_is_shared_only_inside_its_organization() {
+        let state = shared_world();
+        let org = crate::permissions::ORG_NAMESPACE;
+        for name in ["hel", "bb"] {
+            state
+                .mirror
+                .upsert(envelope("Organization", org, name, json!({})));
+        }
+        let project = |name: &str, organization: &str| {
+            envelope(
+                "Project",
+                org,
+                name,
+                json!({ "organizationRef": organization }),
+            )
+        };
+        state.mirror.upsert(project("helsinki", "hel"));
+        state.mirror.upsert(project("banskabystrica", "bb"));
+        assert!(crate::api::assistant::shared_endpoints(&state.mirror, "helsinki").is_empty());
+
+        state.mirror.upsert(project("banskabystrica", "hel"));
+        let shared: Vec<_> = crate::api::assistant::shared_endpoints(&state.mirror, "helsinki")
+            .into_iter()
+            .map(|(_, endpoint)| endpoint.metadata.name)
+            .collect();
+        assert_eq!(shared, ["app-banskabystrica-ovzdusie"]);
+    }
+
             ),
         ];
         assert_eq!(score(&fields, &words("change the color to black")).0, 0);
