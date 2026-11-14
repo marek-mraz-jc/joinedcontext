@@ -2629,7 +2629,10 @@ async fn internal_chat_withholds_personal_slots_from_model_and_transcript() {
     let mcp = || {
         Mock::given(method("POST"))
             .and(path(format!("/api/endpoint/{HIDDEN_SLUG}/mcp")))
-            .and(header("authorization", format!("Bearer {PERSON_TOKEN}").as_str()))
+            .and(header(
+                "authorization",
+                format!("Bearer {PERSON_TOKEN}").as_str(),
+            ))
     };
     mcp().and(body_string_contains("tools/list"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"jsonrpc": "2.0", "id": 1, "result": {"tools": [
@@ -2644,15 +2647,29 @@ async fn internal_chat_withholds_personal_slots_from_model_and_transcript() {
         .with_priority(1)
         .mount(&w.gateway).await;
     let rows = json!({"entities": [{"id": "urn:ngsi-ld:Record:1", "type": "Record", "open": 3, "reporterEmail": "jana@example.org"}]});
-    mcp().and(body_string_contains("\"query_entities\""))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"jsonrpc": "2.0", "id": 1, "result": {
-            "content": [{"type": "text", "text": rows.to_string()}]
-        }})))
-        .mount(&w.gateway).await;
-    script(&w.proxy, vec![
-        completion(tool_call("c1", "query_entities", json!({"endpoint": "interne"})), 500),
-        completion(json!({"role": "assistant", "content": "Otvorené sú 3 [1]."}), 600),
-    ]).await;
+    mcp()
+        .and(body_string_contains("\"query_entities\""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"jsonrpc": "2.0", "id": 1, "result": {
+                "content": [{"type": "text", "text": rows.to_string()}]
+            }}),
+        ))
+        .mount(&w.gateway)
+        .await;
+    script(
+        &w.proxy,
+        vec![
+            completion(
+                tool_call("c1", "query_entities", json!({"endpoint": "interne"})),
+                500,
+            ),
+            completion(
+                json!({"role": "assistant", "content": "Otvorené sú 3 [1]."}),
+                600,
+            ),
+        ],
+    )
+    .await;
     let (status, events, _) = answer_of(
         &w.app,
         ask_in_portal(
