@@ -1227,6 +1227,8 @@ mod tests {
             opendata: host.clone(),
             listed: Vec::new(),
             harvest_hosts: Vec::new(),
+            config_dir: None,
+            own_gateway: None,
         }];
         writer.upsert(default).await.unwrap();
         for (name, tag, published) in [
@@ -1771,6 +1773,8 @@ mod tests {
         let docs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs");
         let seeds = prod_seeds();
         let refs: Vec<&HarvestSeed> = seeds.iter().collect();
+        let elsewhere = super::super::portals::default_portal_of("ops", &refs, None).unwrap_err();
+        assert!(elsewhere.contains("not beside jc.toml"), "{elsewhere}");
         let spec = super::super::portals::default_portal_of("ops", &refs, Some(&docs)).unwrap();
         let yaml = jc_core::envelope::ResourceEnvelope::new(
             jc_core::envelope::ObjectMeta::new("ops-default", "org"),
