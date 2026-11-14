@@ -196,6 +196,14 @@ routes:
   - route: POST /mcp
     rule: "mcp-dispatch"
     expect: [401, 401, 401, 401, 401, 401, 401, allow]
+  - route: GET /git/{owner}/{repo}/info/refs
+    rule: "bearer:git-read (a person's access token in the header; members of the project, the installation repository platform administrators alone)"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "the read-only git door answers 404 for every refusal, and a session is no bearer; the clone itself is crates/shako/server/tests/portal_git_door.rs (T-6896)"
+  - route: POST /git/{owner}/{repo}/git-upload-pack
+    rule: "bearer:git-read (a person's access token in the header; members of the project, the installation repository platform administrators alone)"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "the read-only git door answers 404 for every refusal, and a session is no bearer; the clone itself is crates/shako/server/tests/portal_git_door.rs (T-6896)"
   - route: POST /live-notify/{key}
     rule: "public"
     expect: [404, 404, 404, 404, 404, 404, 404, 404]

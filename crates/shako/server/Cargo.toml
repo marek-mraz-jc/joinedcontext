@@ -38,6 +38,10 @@ uuid = { version = ">=1.28, <1.29.1", features = ["v4", "v7", "serde"] }
 joinedcontext-portal = { path = "../../portal" }
 base64 = "0.22"
 hmac = "0.12"
+# tests/portal_git_door.rs signs the Keycloak access tokens the Portal's read door verifies.
+jsonwebtoken = "9"
+p256 = { version = "0.13", features = ["pkcs8", "jwk"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
 http-body-util = "0.1"
 ipnet = "2.12"
 parking_lot = "0.12"

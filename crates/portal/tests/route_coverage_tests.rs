@@ -83,6 +83,8 @@ const ROUTE_COVERAGE: &[(&str, &str, &str)] = &[
 ("GET", "/mcp", "the MCP door itself, which dispatches this registry"),
 ("POST", "/mcp", "the MCP door itself, which dispatches this registry"),
 ("GET", "/metrics", "the Prometheus scrape"),
+("GET", "/git/{owner}/{repo}/info/refs", "git's clone advertisement through the read-only git door: a person's bearer in the header, members only, 404 for every refusal (T-6896); an agent reads a repository with jc_repository_get and jc_repository_tree"),
+("POST", "/git/{owner}/{repo}/git-upload-pack", "git's pack request through the read-only git door (T-6896); an agent reads a repository with jc_repository_get and jc_repository_tree"),
 ("POST", "/live-notify/{key}", "the gateway's delivery of the Portal's own live-update notifications: a broker calls it, nobody else (API/01 §32)"),
 ("GET", "/openapi.json", "the API document"),
 ("GET", "/organization/portal-hosts", "the Portals editor's Domain dropdown: the hosts the operator listed per Organization the caller makes portals in (T-6875); an agent proposes a Portal through jc_resource_propose and the judge checks the host"),
