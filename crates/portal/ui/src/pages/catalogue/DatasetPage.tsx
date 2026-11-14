@@ -427,7 +427,7 @@ export function DatasetData({ endpoint }: { endpoint: NonNullable<DatasetDetail[
         <p role="status">{t("app.loading")}</p>
       ) : (
         <Suspense fallback={<p role="status">{t("app.loading")}</p>}>
-          <EndpointDataView project="catalogue" slug={slug} csv={endpoint.representations.includes("csv")} origin={origin} />
+          <EndpointDataView project="catalogue" slug={slug} csv={endpoint.representations.includes("csv")} origin={origin} anonymous={status === "anonymous"} />
         </Suspense>
       )}
     </section>
