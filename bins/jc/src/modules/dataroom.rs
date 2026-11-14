@@ -28,7 +28,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// The configured store: Postgres (refused unless the boot check passes) or memory.
-async fn open_store(cfg: &DataroomSection) -> Result<Arc<dyn Store>, StartError> {
+async fn open_store(
+    cfg: &DataroomSection,
+    moves: &[(OrgId, OrgId, CatalogueId)],
+) -> Result<Arc<dyn Store>, StartError> {
     let err = |e: &dyn std::fmt::Display| StartError::module(Module::Dataroom, e);
     let Some(db) = &cfg.database else {
         return Ok(Arc::new(MemoryStore::new()));
@@ -49,16 +52,37 @@ async fn open_store(cfg: &DataroomSection) -> Result<Arc<dyn Store>, StartError>
         .execute(&pool)
         .await
         .map_err(|e| err(&format!("grant to {role}: {e}")))?;
+        // ODP-12: an Organization's catalogue made under the installation's OrgId moves to the
+        // Organization's own, as the owner, once (a later start finds nothing to move).
+        let owner = PgStore::from_pool_unchecked(pool.clone());
+        for &(from, to, catalogue) in moves {
+            let moved = owner
+                .move_catalogue(from, to, catalogue)
+                .await
+                .map_err(|e| err(&e))?;
+            if moved > 0 {
+                tracing::info!(%catalogue, %to, moved, "dataroom catalogue moved to its Organization's OrgId");
+            }
+        }
         pool.close().await;
     }
     let pool = crate::pg::connect(db.app_options().map_err(|e| err(&e))?, db.max_connections())
         .await
         .map_err(|e| err(&e))?;
-    Ok(Arc::new(
-        PgStore::connect_and_verify(pool)
-            .await
-            .map_err(|e| err(&e))?,
-    ))
+    let store = PgStore::connect_and_verify(pool)
+        .await
+        .map_err(|e| err(&e))?;
+    // Without the migration owner nothing moved: a catalogue still under the installation's
+    // OrgId would be served to no Organization, so the start stops and names the fix.
+    for &(from, _, catalogue) in moves {
+        if store.get_catalogue(from, catalogue).await.map_err(|e| err(&e))?.is_some() {
+            return Err(err(&format!(
+                "catalogue {catalogue} still sits under [dataroom] org_id: start once with the \
+                 migration owner ([dataroom.database] migrate) so it moves to its Organization (ODP-12)"
+            )));
+        }
+    }
+    Ok(Arc::new(store))
 }
 
 /// The assistant widget the catalogue docks (G2): the assistant's page of `deployment` when the
@@ -162,7 +186,18 @@ pub async fn build(
         .map_err(|e| err(&format!("[dataroom.aliases] {e}")))?;
     let org_id = OrgId::parse_verified(&cfg.org_id).map_err(|e| err(&e))?;
     let catalogue_id = CatalogueId::parse_verified(&cfg.catalogue_id).map_err(|e| err(&e))?;
-    let store = open_store(cfg).await?;
+    // ODP-12: each Organization's catalogue lives under its own OrgId, so row level security and
+    // the cross-organization harvest check keep Organizations apart; the deployment-wide
+    // catalogue stays under `[dataroom] org_id`, the installation's own.
+    let mut own_org = BTreeMap::new();
+    let mut moves = Vec::new();
+    for org in organizations {
+        let own = OrgId::of_organization(org_id, &org.name);
+        let id = CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| err(&e))?;
+        own_org.insert(org.name.clone(), own);
+        moves.push((org_id, own, id));
+    }
+    let store = open_store(cfg, &moves).await?;
     hold_default_host(store.as_ref(), org_id, catalogue_id, &mount.host)
         .await
         .map_err(|e| err(&e))?;
@@ -190,11 +225,12 @@ pub async fn build(
                 org.name
             )));
         }
+        let tenant = own_org[&org.name];
         let host = bare_host(&org.hosts.opendata);
-        dataroom_server::ensure_catalogue(store.as_ref(), org_id, id, &org.name, host)
+        dataroom_server::ensure_catalogue(store.as_ref(), tenant, id, &org.name, host)
             .await
             .map_err(|e| err(&e))?;
-        ensure_publisher(store.as_ref(), org_id, id, org, &mount.scheme)
+        ensure_publisher(store.as_ref(), tenant, id, org, &mount.scheme)
             .await
             .map_err(|e| err(&e))?;
         if let Some(token) = tokens.get(&org.name) {
@@ -208,7 +244,7 @@ pub async fn build(
                     org.name
                 )));
             }
-            let (binding, grant) = dataroom_api::portal_publisher_on(token, org_id, id, &org.name)
+            let (binding, grant) = dataroom_api::portal_publisher_on(token, tenant, id, &org.name)
                 .map_err(|e| err(&e))?;
             bindings.push(binding);
             grants.push(grant);
@@ -221,7 +257,7 @@ pub async fn build(
     let mut catalogues = vec![(org_id, catalogue_id)];
     for org in organizations {
         catalogues.push((
-            org_id,
+            own_org[&org.name],
             CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| err(&e))?,
         ));
     }
@@ -230,8 +266,8 @@ pub async fn build(
     }
     let own_gateway = own_gateway(&live, siblings);
     for seed in &cfg.harvest {
-        let (cat, site) = match &seed.organization {
-            None => (catalogue_id, mount.public_base()),
+        let (org, cat, site) = match &seed.organization {
+            None => (org_id, catalogue_id, mount.public_base()),
             Some(name) => {
                 let org = organizations
                     .iter()
@@ -243,6 +279,7 @@ pub async fn build(
                         ))
                     })?;
                 (
+                    own_org[&org.name],
                     CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| err(&e))?,
                     format!("{}://{}", mount.scheme, org.hosts.opendata),
                 )
@@ -250,7 +287,7 @@ pub async fn build(
         };
         seed_harvest(
             store.as_ref(),
-            org_id,
+            org,
             cat,
             seed,
             &site,
@@ -279,7 +316,7 @@ pub async fn build(
     let mut bases = BTreeMap::new();
     for org in organizations {
         let id = CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| err(&e))?;
-        by_organization.insert(org.name.clone(), id);
+        by_organization.insert(org.name.clone(), (own_org[&org.name], id));
         bases.insert(id, format!("{}://{}", mount.scheme, org.hosts.opendata));
     }
     let state = DataroomState::new(store, authorizer, org_id, catalogue_id)
@@ -688,6 +725,158 @@ mod tests {
     use dataroom_core::ops::HarvestRunner;
     use dataroom_harvest::{MapFetcher, validate_outbound_url};
     use std::collections::BTreeSet;
+
+    /// ODP-12 on real Postgres (`DATAROOM_TEST_DATABASE_URL`, a superuser that only prepares):
+    /// two Organizations' catalogues written as before the split, under the installation's one
+    /// OrgId, then a start of the module as its NOSUPERUSER migration and request roles. Every
+    /// dataset URL answers as before, each catalogue now sits under its Organization's own
+    /// OrgId, and Organization A's tenant sees none of B's rows.
+    #[tokio::test]
+    async fn every_dataset_url_answers_after_the_org_split() {
+        use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+        use std::str::FromStr;
+        use tower::ServiceExt;
+        let Ok(admin_url) = std::env::var("DATAROOM_TEST_DATABASE_URL") else {
+            println!("SKIP every_dataset_url_answers_after_the_org_split: DATAROOM_TEST_DATABASE_URL is unset");
+            return;
+        };
+        let base = PgConnectOptions::from_str(&admin_url).unwrap();
+        let admin = PgPoolOptions::new().max_connections(1).connect_with(base.clone()).await.unwrap();
+        let db = format!("jc_split_{}", std::process::id());
+        let dir = tempfile::tempdir().unwrap();
+        for statement in [
+            format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+            format!("CREATE DATABASE {db}"),
+        ] {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(statement))
+                .execute(&admin)
+                .await
+                .unwrap();
+        }
+        let mut urls = Vec::new();
+        for role in ["split_app", "split_owner"] {
+            let pw = format!("pw-{role}-{}", std::process::id());
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "DO $$ BEGIN CREATE ROLE {role}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+                 ALTER ROLE {role} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '{pw}';
+                 GRANT CREATE, CONNECT ON DATABASE {db} TO {role};"
+            )))
+            .execute(&admin)
+            .await
+            .unwrap();
+            let file = dir.path().join(role);
+            std::fs::write(&file, &pw).unwrap();
+            std::fs::set_permissions(
+                &file,
+                std::os::unix::fs::PermissionsExt::from_mode(0o600),
+            )
+            .unwrap();
+            let url = format!("postgres://{role}@{}:{}/{db}", base.get_host(), base.get_port());
+            urls.push((url, file));
+        }
+        let database = crate::pg::DatabaseSection {
+            url: urls[0].0.clone(),
+            password_file: urls[0].1.clone(),
+            max_connections: Some(2),
+            migrate_url: Some(urls[1].0.clone()),
+            migrate_password_file: Some(urls[1].1.clone()),
+        };
+        let cfg = DataroomSection { database: Some(database), ..DataroomSection::default() };
+        let installation = OrgId::parse_verified(&cfg.org_id).unwrap();
+        let organizations: Vec<OrganizationSection> = ["city-a", "city-b"]
+            .iter()
+            .enumerate()
+            .map(|(n, name)| OrganizationSection {
+                name: (*name).into(),
+                hosts: crate::config::OrganizationHosts {
+                    portal: format!("portal.{name}.test"),
+                    opendata: format!("data.{name}.test"),
+                    api: format!("api.{name}.test"),
+                    mcp: format!("mcp.{name}.test"),
+                },
+                catalogue_id: format!("6f1c0b2e-5d3a-4c1e-9a8b-7e2d4f6a1b{n:02}"),
+                portal_token_file: None,
+            })
+            .collect();
+
+        // Before ODP-12: the schema, and both catalogues with a public dataset under the
+        // installation's OrgId, as every jc wrote them.
+        let owner = crate::pg::connect(cfg.database.as_ref().unwrap().migrate_options().unwrap().unwrap(), 1)
+            .await
+            .unwrap();
+        PgStore::from_pool_unchecked(owner.clone()).migrate().await.unwrap();
+        sqlx::raw_sql(
+            "GRANT USAGE ON SCHEMA dataroom TO split_app;
+             GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA dataroom TO split_app;",
+        )
+        .execute(&owner)
+        .await
+        .unwrap();
+        owner.close().await;
+        let app = crate::pg::connect(cfg.database.as_ref().unwrap().app_options().unwrap(), 1)
+            .await
+            .unwrap();
+        let before = PgStore::connect_and_verify(app.clone()).await.unwrap();
+        for org in &organizations {
+            let cat = CatalogueId::parse_verified(&org.catalogue_id).unwrap();
+            dataroom_server::ensure_catalogue(&before, installation, cat, &org.name, &org.hosts.opendata)
+                .await
+                .unwrap();
+            let ctx = RequestCtx::new(installation, cat, Subject::anonymous());
+            before
+                .upsert_publisher(&ctx, serde_json::from_value(serde_json::json!({
+                    "orgId": installation, "catalogueId": cat, "id": "", "name": "city",
+                    "title": {"sk": "Mesto"}, "description": {}, "uri": "https://example.org/city",
+                    "state": "active", "editorGrants": [],
+                    "created": "2026-11-01T10:00:00Z", "modified": "2026-11-01T10:00:00Z"
+                })).unwrap())
+                .await
+                .unwrap();
+            before
+                .upsert_dataset(&ctx, serde_json::from_value(serde_json::json!({
+                    "orgId": installation, "catalogueId": cat, "id": "",
+                    "name": format!("air-{}", org.name), "title": {"sk": "Ovzdušie"},
+                    "description": {"sk": "Popis"}, "publisherId": "city",
+                    "visibility": "public", "state": "active", "tags": [], "distributions": [],
+                    "issued": "2026-11-01T10:00:00Z", "modified": "2026-11-02T10:00:00Z"
+                })).unwrap())
+                .await
+                .unwrap();
+        }
+
+        let (setup, secrets) = (crate::setup::Setup::default(), crate::config::Secrets::default());
+        let siblings = crate::siblings::Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
+        let ctx = crate::modules::BuildCtx { setup: &setup, siblings: &siblings, secrets: &secrets, door: None };
+        let (shutdown, tasks) = (tokio_util::sync::CancellationToken::new(), tokio_util::task::TaskTracker::new());
+        let router = build(&cfg, &organizations, ctx, Mount::default(), None, &shutdown, &tasks)
+            .await
+            .expect("the module starts and moves both catalogues");
+        shutdown.cancel();
+
+        for org in &organizations {
+            let request = axum::http::Request::get(format!("/api/3/action/package_show?id=air-{}", org.name))
+                .header("host", &org.hosts.opendata)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let answer = router.clone().oneshot(request).await.unwrap();
+            assert_eq!(answer.status(), axum::http::StatusCode::OK, "{}", org.name);
+        }
+        let own = |n: usize| OrgId::of_organization(installation, &organizations[n].name);
+        let cat = |n: usize| CatalogueId::parse_verified(&organizations[n].catalogue_id).unwrap();
+        assert_ne!(own(0), own(1));
+        for n in 0..2 {
+            assert!(before.get_catalogue(installation, cat(n)).await.unwrap().is_none(), "moved");
+            assert!(before.get_catalogue(own(n), cat(n)).await.unwrap().is_some());
+        }
+        let a_on_b = RequestCtx::new(own(0), cat(1), Subject::anonymous());
+        assert!(before.get_dataset(&a_on_b, "air-city-b").await.unwrap().is_none());
+        assert!(before.get_catalogue(own(0), cat(1)).await.unwrap().is_none());
+        app.close().await;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)")))
+            .execute(&admin)
+            .await
+            .unwrap();
+    }
 
     /// prod's open data catalogue: the base its datasets' `isPartOf` names.
     const SITE: &str = "https://opendata.smartcity.joinedcontext.com";

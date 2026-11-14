@@ -85,6 +85,59 @@ impl PgStore {
         Ok(())
     }
 
+    /// Moves every row of `catalogue` from tenant `from` to tenant `to` in one transaction, as
+    /// the schema owner (ODP-12: each JC Organization's catalogue gets the Organization's own
+    /// `OrgId`). Forced row level security binds the owner too, so the transaction lifts it per
+    /// table around its one `UPDATE` and forces it again before the commit; a failure rolls back
+    /// both, rows and settings. Deletes nothing; returns the number of rows moved (0 when the
+    /// catalogue is not under `from`, so a second start moves nothing).
+    pub async fn move_catalogue(
+        &self,
+        from: OrgId,
+        to: OrgId,
+        catalogue: CatalogueId,
+    ) -> Result<u64> {
+        let fail = |e: sqlx::Error| DataroomError::Storage(format!("move catalogue {catalogue}: {e}"));
+        let mut tx = self.pool.begin().await.map_err(fail)?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('jc-migrate-dataroom'))")
+            .execute(&mut *tx)
+            .await
+            .map_err(fail)?;
+        let mut moved = 0;
+        for table in REQUIRED_RLS_TABLES {
+            let column = if table == "cat_catalogue" { "id" } else { "catalogue_id" };
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "ALTER TABLE dataroom.{table} NO FORCE ROW LEVEL SECURITY"
+            )))
+            .execute(&mut *tx)
+            .await
+            .map_err(fail)?;
+            moved += sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE dataroom.{table}
+                 SET org_id = $1,
+                     doc = CASE WHEN doc ? 'orgId'
+                                THEN jsonb_set(doc, '{{orgId}}', to_jsonb($1::text))
+                                ELSE doc END
+                 WHERE org_id = $2 AND {column} = $3"
+            )))
+            .bind(to.as_uuid())
+            .bind(from.as_uuid())
+            .bind(catalogue.as_uuid())
+            .execute(&mut *tx)
+            .await
+            .map_err(fail)?
+            .rows_affected();
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "ALTER TABLE dataroom.{table} FORCE ROW LEVEL SECURITY"
+            )))
+            .execute(&mut *tx)
+            .await
+            .map_err(fail)?;
+        }
+        tx.commit().await.map_err(fail)?;
+        Ok(moved)
+    }
+
     /// Opens a transaction with `jc.org` and `jc.catalogue` set locally via `set_config(..., true)`.
     async fn begin_tenant(
         &self,

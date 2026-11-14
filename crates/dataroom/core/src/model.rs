@@ -58,6 +58,13 @@ impl OrgId {
     pub const fn as_uuid(self) -> Uuid {
         self.0
     }
+
+    /// The `OrgId` of the JC Organization `name` in the installation `installation` (ODP-12):
+    /// a UUID v5 under the installation's id, so it is the same on every start and differs for
+    /// every Organization and every installation, with nothing stored.
+    pub fn of_organization(installation: OrgId, name: &str) -> Self {
+        Self(Uuid::new_v5(&installation.0, name.as_bytes()))
+    }
 }
 
 impl fmt::Display for OrgId {

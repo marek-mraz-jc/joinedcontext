@@ -184,8 +184,8 @@ pub struct DataroomState {
     /// appearance changes (UIX-16, T-6777).
     pub catalogue_branding: Arc<std::sync::RwLock<BTreeMap<CatalogueId, BrandingBlock>>>,
     /// The catalogue of each Organization the host router may decide for a request
-    /// (`jc_router::Organization`).
-    pub organization_catalogues: Arc<BTreeMap<String, CatalogueId>>,
+    /// (`jc_router::Organization`), under the Organization's own `OrgId` (ODP-12).
+    pub organization_catalogues: Arc<BTreeMap<String, (OrgId, CatalogueId)>>,
     /// Each catalogue's canonical public URL (scheme, host, prefix): every absolute id and link
     /// names it, whichever registered host the catalogue was read on, so an id never moves.
     pub catalogue_bases: Arc<BTreeMap<CatalogueId, String>>,
@@ -270,7 +270,10 @@ impl DataroomState {
     }
 
     /// The catalogue of each Organization, by its name.
-    pub fn with_organization_catalogues(mut self, by: BTreeMap<String, CatalogueId>) -> Self {
+    pub fn with_organization_catalogues(
+        mut self,
+        by: BTreeMap<String, (OrgId, CatalogueId)>,
+    ) -> Self {
         self.organization_catalogues = Arc::new(by);
         self
     }
@@ -386,7 +389,7 @@ impl DataroomState {
         let decided = origin.as_ref().and_then(|o| o.organization.as_deref());
         let mut cat = if let Some(org) = decided {
             let found = match self.organization_catalogues.get(org) {
-                Some(id) => self.store.get_catalogue(self.default_org_id, *id).await?,
+                Some(&(org, id)) => self.store.get_catalogue(org, id).await?,
                 None => None,
             };
             // The same answer as an unknown host: the name is not echoed.
@@ -1428,7 +1431,7 @@ async fn moved_home(state: &DataroomState, here: &RequestCtx, gone: &Dataset) ->
             .map(str::to_owned)
     };
     let wanted = slug(gone)?;
-    for id in state.organization_catalogues.values() {
+    for (org, id) in state.organization_catalogues.values() {
         let base = match state.catalogue_bases.get(id) {
             Some(base) => Some(base.clone()),
             None if *id == state.default_catalogue_id => state.public_base.clone(),
@@ -1437,7 +1440,7 @@ async fn moved_home(state: &DataroomState, here: &RequestCtx, gone: &Dataset) ->
         let Some(base) = base.filter(|_| *id != here.catalogue_id) else {
             continue;
         };
-        let ctx = RequestCtx::new(state.default_org_id, *id, Subject::anonymous());
+        let ctx = RequestCtx::new(*org, *id, Subject::anonymous());
         let Some(ds) = state
             .store
             .get_dataset(&ctx, &gone.name)
