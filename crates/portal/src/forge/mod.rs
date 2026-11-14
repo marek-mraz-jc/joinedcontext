@@ -1,4 +1,5 @@
 pub mod config_mirror;
+pub mod git_door;
 pub mod github_mirror;
 pub mod shako;
 

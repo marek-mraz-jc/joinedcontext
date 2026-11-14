@@ -734,6 +734,43 @@ impl ShakoClient {
             .map_err(|e| GitError::Transport(e.to_string()))
     }
 
+    /// git's smart HTTP read of this client's repository, as its machine user (T-6896): `rest` is
+    /// `info/refs?service=git-upload-pack` (`body` `None`) or `git-upload-pack`. The read door
+    /// ([`super::git_door`]) has already checked who may read it; a pack may take minutes.
+    pub async fn upload_pack(
+        &self,
+        rest: &str,
+        git_protocol: Option<&str>,
+        body: Option<Vec<u8>>,
+    ) -> Result<reqwest::Response, GitError> {
+        let url = format!(
+            "{}/{}/{}.git/{rest}",
+            self.base.as_str().trim_end_matches('/'),
+            self.owner,
+            self.repo
+        );
+        let mut builder = match body {
+            Some(body) => self
+                .http
+                .post(url)
+                .header(
+                    reqwest::header::CONTENT_TYPE,
+                    "application/x-git-upload-pack-request",
+                )
+                .body(body),
+            None => self.http.get(url),
+        };
+        if let Some(protocol) = git_protocol {
+            builder = builder.header("git-protocol", protocol);
+        }
+        crate::request_id::forward(builder)
+            .bearer_auth(&self.token)
+            .timeout(Duration::from_secs(300))
+            .send()
+            .await
+            .map_err(|e| GitError::Transport(e.to_string()))
+    }
+
     /// One read of the forge's OData service, `{base}/odata/{path}` with `query`, as this
     /// client's machine user, the body refused past `limit` bytes. The repository pages read
     /// shako only through this (`ops/repositories.rs`); `path` is built from checked parts.
