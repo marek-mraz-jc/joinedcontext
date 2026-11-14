@@ -360,6 +360,14 @@ pub async fn build_with_writer(
         by_organization.insert(org.name.clone(), (own_org[&org.name], id));
         bases.insert(id, format!("{}://{}", mount.scheme, org.hosts.opendata));
     }
+    #[cfg(feature = "portal")]
+    let followed = portal_orgs(
+        cfg,
+        organizations,
+        &own_org,
+        &mount,
+        own_gateway.as_ref().map(|(public, _)| public.clone()),
+    );
     let state = DataroomState::new(store, authorizer.clone(), org_id, catalogue_id)
         .with_harvester(engine)
         .with_organization_catalogues(by_organization)
@@ -380,28 +388,71 @@ pub async fn build_with_writer(
     let _ = (shutdown, tasks);
     let writer = dataroom_server::CatalogueWriter::new(state.clone(), authorizer, harvested);
     #[cfg(feature = "portal")]
-    super::portals::follow(
-        writer.clone(),
-        organizations
-            .iter()
-            .map(|org| super::portals::OrganizationPortals {
-                name: org.name.clone(),
-                org_id: own_org[&org.name],
-                catalogue_id: CatalogueId::parse_verified(&org.catalogue_id)
-                    .unwrap_or(catalogue_id),
-                scheme: mount.scheme.clone(),
-                opendata: org.hosts.opendata.clone(),
-                listed: org.hosts.portals.clone(),
-                harvest_hosts: cfg.harvest_hosts(),
-            })
-            .collect(),
-        shutdown,
-        tasks,
-    );
+    super::portals::follow(writer.clone(), followed, shutdown, tasks);
     Ok((
         dataroom_api::with_dataset_aliases(dataroom_api::router(state), cfg.aliases.clone()),
         writer,
     ))
+}
+
+/// What the Portal reconciler serves: each `[[organizations]]` entry, or without any the
+/// installation's Organization, whose `default` portal is the `[dataroom]` catalogue at the
+/// dataroom's own address (ODP-09).
+#[cfg(feature = "portal")]
+fn portal_orgs(
+    cfg: &DataroomSection,
+    organizations: &[OrganizationSection],
+    own_org: &BTreeMap<String, OrgId>,
+    mount: &Mount,
+    own_gateway: Option<String>,
+) -> Vec<super::portals::OrganizationPortals> {
+    let default_catalogue = CatalogueId::parse_verified(&cfg.catalogue_id).ok();
+    let entry = |name: &str, org_id, catalogue_id, opendata: String, listed| {
+        super::portals::OrganizationPortals {
+            name: name.to_owned(),
+            org_id,
+            catalogue_id,
+            scheme: mount.scheme.clone(),
+            opendata,
+            listed,
+            harvest_hosts: cfg.harvest_hosts(),
+            config_dir: cfg.config_dir.clone(),
+            own_gateway: own_gateway.clone(),
+        }
+    };
+    if organizations.is_empty() {
+        let (Ok(org_id), Some(catalogue_id)) =
+            (OrgId::parse_verified(&cfg.org_id), default_catalogue)
+        else {
+            return Vec::new();
+        };
+        let base = mount.public_base();
+        let opendata = base
+            .split_once("://")
+            .map_or(base.as_str(), |(_, rest)| rest);
+        return vec![super::portals::OrganizationPortals::installation(entry(
+            "",
+            org_id,
+            catalogue_id,
+            opendata.trim_end_matches('/').to_owned(),
+            Vec::new(),
+        ))];
+    }
+    organizations
+        .iter()
+        .filter_map(|org| {
+            let catalogue_id = CatalogueId::parse_verified(&org.catalogue_id)
+                .ok()
+                .or(default_catalogue)?;
+            Some(entry(
+                &org.name,
+                own_org[&org.name],
+                catalogue_id,
+                org.hosts.opendata.clone(),
+                org.hosts.portals.clone(),
+            ))
+        })
+        .collect()
 }
 
 /// The origin of this instance's gateway as the catalogue names it (`[dataroom.addresses]
@@ -759,7 +810,7 @@ pub async fn seed_harvest(
 
 /// The converted datasets of `path` (prod's `od-datasets.json`), each `dataset` URL moved from
 /// `base` to this catalogue's `site`, as prod's harvest CronJob replaces `datasetsBase`.
-fn converted_datasets(
+pub(crate) fn converted_datasets(
     path: &std::path::Path,
     base: Option<&str>,
     site: &str,
@@ -1709,6 +1760,67 @@ mod tests {
             .expect("catalogue");
         let (subject, _) = dataroom_harvest::harvest_principal(org, cat);
         (store, RequestCtx::new(org, cat, subject))
+    }
+
+    /// ODP-11: prod's two seeds moved into the installation's `default` Portal manifest (through
+    /// its YAML, as provisioning writes it) become the very harvest sources the seeds wrote,
+    /// converted datasets, skips, titles, spelling and columns included.
+    #[cfg(feature = "portal")]
+    #[tokio::test]
+    async fn every_seed_field_survives_the_migration() {
+        let docs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs");
+        let seeds = prod_seeds();
+        let refs: Vec<&HarvestSeed> = seeds.iter().collect();
+        let spec = super::super::portals::default_portal_of("ops", &refs, Some(&docs)).unwrap();
+        let yaml = jc_core::envelope::ResourceEnvelope::new(
+            jc_core::envelope::ObjectMeta::new("ops-default", "org"),
+            spec,
+        )
+        .to_yaml()
+        .unwrap();
+        let read =
+            jc_core::envelope::ResourceEnvelope::<jc_core::kinds::PortalSpec>::from_yaml(&yaml)
+                .unwrap();
+        read.validate().unwrap();
+        let (store, ctx) = catalogue().await;
+        let orgs = super::super::portals::named(
+            &[super::super::portals::OrganizationPortals::installation(
+                super::super::portals::OrganizationPortals {
+                    name: String::new(),
+                    org_id: ctx.org_id,
+                    catalogue_id: ctx.catalogue_id,
+                    scheme: "https".into(),
+                    opendata: SITE.trim_start_matches("https://").into(),
+                    listed: Vec::new(),
+                    harvest_hosts: DataroomSection {
+                        harvest: seeds.clone(),
+                        ..DataroomSection::default()
+                    }
+                    .harvest_hosts(),
+                    config_dir: Some(docs.clone()),
+                    own_gateway: None,
+                },
+            )],
+            Some("ops".into()),
+        );
+        let migrated = super::super::portals::harvest_sources_of(&read.spec, &orgs).unwrap();
+        assert_eq!(migrated.len(), seeds.len());
+        for (seed, (from_portal, _)) in seeds.iter().zip(migrated) {
+            let seeded = seed_harvest(&store, ctx.org_id, ctx.catalogue_id, seed, SITE, None)
+                .await
+                .unwrap();
+            assert!(
+                !from_portal.converted.is_empty(),
+                "{}: converted datasets",
+                seed.name
+            );
+            let same = HarvestSource {
+                modified: seeded.modified,
+                position: seeded.position,
+                ..from_portal
+            };
+            assert_eq!(same, seeded, "{}", seed.name);
+        }
     }
 
     #[tokio::test]

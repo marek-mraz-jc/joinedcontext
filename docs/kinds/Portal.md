@@ -58,6 +58,9 @@ One source of a portal (ODP-10). No source carries a credential in this version.
 |---|---|---|---|
 | `allowedHosts` | list of string | no | Every host a run may fetch from, the `url`'s own included. |
 | `budget` | [HarvestBudget](#harvestbudget) | no | Records and bytes one run may read. |
+| `convertedFile` | string | no | The deployment's file of converted datasets beside jc.toml, e.g. `od-datasets.json`: only those datasets are listed, with their Endpoint's distributions. |
+| `datasetsBase` | string | no | The catalogue base the converted file's dataset URLs name, replaced by this portal's own, e.g. `https://opendata.dev.joinedcontext.com/`. |
+| `enabled` | boolean | no | Whether the source runs on its schedule; `false` keeps it and its records without runs. |
 | `gateway` | string | no | The public base the Endpoints of converted datasets answer under. |
 | `name` | string | yes | Unique in the portal, a DNS label, e.g. `kosice`. |
 | `namePrefix` | string | no | A prefix for each record's name, e.g. `ke-`. |
