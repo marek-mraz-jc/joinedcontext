@@ -430,8 +430,12 @@ async fn every_token_check_refuses_a_token_that_breaks_only_it() {
     let (st, _) = rest(&app, Method::GET, "/", &forge(&|_| {}), None).await;
     assert_eq!(st, StatusCode::OK, "the unchanged copy is accepted");
 
-    let cases: [(&str, &ClaimEdit<'_>); 4] = [
+    let cases: [(&str, &ClaimEdit<'_>); 6] = [
         ("audience", &|c| c["aud"] = json!(["broker"])),
+        // A relying party's own token carries `account` too (full scope): it is not the
+        // console's, so it does not manage the person's account.
+        ("client", &|c| c["azp"] = json!("edge")),
+        ("delegated", &|c| c["act"] = json!({ "sub": "agent" })),
         ("issuer", &|c| {
             c["iss"] = json!(format!("{ISSUER_ORIGIN}/realms/other"));
         }),

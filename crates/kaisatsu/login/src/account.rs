@@ -97,7 +97,8 @@ async fn realm_of(state: &OidcState, name: &str) -> Result<RealmConfig> {
         .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))
 }
 
-/// Verifies the bearer token: this realm's issuer and keys, audience `account`, an access token,
+/// Verifies the bearer token: this realm's issuer and keys, audience `account`, an access token
+/// of the account console itself (`azp`, no `act`),
 /// DPoP when it is bound, not revoked, its SSO session alive and held by the token's person.
 async fn caller(
     state: &OidcState,
@@ -116,6 +117,15 @@ async fn caller(
         verify_jwt(raw_token, &keys, Some(&issuer), Some(ACCOUNT_AUDIENCE))?;
     if claims.get("typ").and_then(Value::as_str) != Some("Bearer") {
         return Err(KaisatsuError::Unauthorized("not an access token".into()));
+    }
+    // Every full-scope client's token names `account`; only the console's own, undelegated
+    // token manages the person's account.
+    if claims.get("azp").and_then(Value::as_str) != Some(ACCOUNT_CONSOLE_CLIENT)
+        || claims.get("act").is_some()
+    {
+        return Err(KaisatsuError::Unauthorized(
+            "not an account console token: sign in to the account console".into(),
+        ));
     }
     let htu = kaisatsu_oidc::external_htu(&mount, uri.path());
     kaisatsu_oidc::verify_resource_dpop(
