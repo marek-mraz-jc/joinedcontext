@@ -1013,6 +1013,36 @@ mod tests {
         }
     }
 
+    /// The writes that do not end as a commit, each with its reason (T-6893). A new write tool
+    /// either answers a Change, which the forge commits on approval, or joins this list.
+    const WRITES_OUTSIDE_GIT: &[(&str, &str)] = &[];
+
+    #[test]
+    fn every_mcp_write_operation_opens_a_change_or_is_allowlisted() {
+        let mut skipping = Vec::new();
+        for op in registry().iter().filter(|op| !op.annotations.read_only_hint) {
+            let answers_a_change = (op.output)().to_string().contains("\"changeId\"");
+            let listed = WRITES_OUTSIDE_GIT.iter().any(|(name, _)| *name == op.name);
+            assert!(
+                !(answers_a_change && listed),
+                "{} answers a Change: take it off WRITES_OUTSIDE_GIT",
+                op.name
+            );
+            if !answers_a_change && !listed {
+                skipping.push(op.name);
+            }
+        }
+        assert!(
+            skipping.is_empty(),
+            "these write operations neither answer a Change nor are listed in WRITES_OUTSIDE_GIT \
+             with the reason their write stays out of git: {skipping:?}"
+        );
+        for (name, reason) in WRITES_OUTSIDE_GIT {
+            assert!(find(name).is_some(), "{name} is listed but is no operation");
+            assert!(!reason.trim().is_empty(), "{name} is listed without a reason");
+        }
+    }
+
     #[test]
     fn registry_lists_all_operations() {
         // No count: a number every new operation edits tests nothing (T-1499). What must hold is

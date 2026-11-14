@@ -172,7 +172,7 @@ impl GithubMirror {
             None => Mirrored::Added,
         };
         forge
-            .add_push_mirror(&target, MIRROR_USER, &self.token)
+            .add_push_mirror(&target, MIRROR_USER, &self.token, None)
             .await?;
         forge.sync_push_mirrors().await?;
         Ok(outcome)

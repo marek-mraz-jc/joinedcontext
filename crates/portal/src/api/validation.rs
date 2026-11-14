@@ -225,15 +225,29 @@ pub async fn get_health(
                 .into(),
         ));
     }
-    let Some(dir) = state.config.health_dir.as_deref() else {
-        return Ok(Json(ValidationHealth { checks: Vec::new() }));
+    let mut checks = match state.config.health_dir.as_deref() {
+        Some(dir) => read_dir(Path::new(dir), Utc::now()).map_err(|err| {
+            tracing::warn!(error = %err, "the validation results directory cannot be read");
+            ApiError::Unavailable(
+                "the validation results cannot be read: check the jc-validation-results mount"
+                    .into(),
+            )
+        })?,
+        None => Vec::new(),
     };
-    let checks = read_dir(Path::new(dir), Utc::now()).map_err(|err| {
-        tracing::warn!(error = %err, "the validation results directory cannot be read");
-        ApiError::Unavailable(
-            "the validation results cannot be read: check the jc-validation-results mount".into(),
-        )
-    })?;
+    // The configuration's copy off the pod, as this replica last pushed it (T-6892).
+    if let Some(mirror) = &state.config_mirror {
+        let digest = mirror.digest(Utc::now());
+        checks.push(CheckHealth {
+            check: digest.check.clone(),
+            state: if digest.counts.fail > 0 {
+                CheckState::Red
+            } else {
+                CheckState::Green
+            },
+            result: Some(digest),
+        });
+    }
     Ok(Json(ValidationHealth { checks }))
 }
 

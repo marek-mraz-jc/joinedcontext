@@ -1062,6 +1062,7 @@ async fn push_mirrors_and_their_credential() {
         "https://github.com/hel-apps/helsinki_bikes.git",
         "x-access-token",
         "gh-secret",
+        None,
     )
     .await
     .unwrap();

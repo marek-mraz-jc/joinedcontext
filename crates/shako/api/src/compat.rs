@@ -390,6 +390,7 @@ async fn compat_add_push_mirror(
         secret_ref: req.secret_ref,
         interval: req.interval,
         sync_on_commit: req.sync_on_commit,
+        branch: None,
     };
     match service::add_push_mirror(&state, &ctx, &owner, &repo_name, new).await {
         Ok(saved) => (

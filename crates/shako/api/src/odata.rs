@@ -715,6 +715,7 @@ fn mirror_row(m: &PushMirrorRecord) -> Value {
         "RepoId": m.repo_id.to_string(),
         "Name": m.remote_name,
         "RemoteAddress": m.remote_address,
+        "Branch": m.branch,
         "LastSync": m.last_sync.map(|d| d.to_rfc3339()),
         "LastError": m.last_error,
     })
@@ -1909,6 +1910,7 @@ pub async fn exec_odata_operation(
                 secret_ref: text(&body, "SecretRef").filter(|s| !s.is_empty()),
                 interval: text(&body, "Interval"),
                 sync_on_commit: flag(&body, "SyncOnCommit").unwrap_or(true),
+                branch: text(&body, "Branch").filter(|s| !s.is_empty()),
             };
             let saved = service::add_push_mirror(state, ctx, &repo.owner, &repo.name, new).await?;
             Ok(mirror_row(&saved))
