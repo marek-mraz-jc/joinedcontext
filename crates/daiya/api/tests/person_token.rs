@@ -11,7 +11,9 @@ mod common;
 use axum::Router;
 use base64::Engine as _;
 use common::{FlakyStore, ORG, bindings, loopback, prometheus, tokens};
-use daiya_api::{DaiyaState, PERSON_TOKEN_HEADER, api_router, format_picked};
+use daiya_api::{
+    DaiyaState, PERSON_TOKEN_HEADER, READ_AS_HEADER, READ_AS_PUBLIC, api_router, format_picked,
+};
 use daiya_model::{InstallationId, InstanceId, PolicyAuthorizer, VariableModel};
 use http::{Request, StatusCode};
 use http_body_util::BodyExt;
@@ -96,7 +98,8 @@ impl World {
         Self { app }
     }
 
-    /// `method uri` with `authorization` and, when given, the person's token.
+    /// `method uri` with `authorization` and, when given, the person's token; with none, the
+    /// read is for the public ([`READ_AS_HEADER`]), as the Portal sends it.
     async fn send(
         &self,
         method: &str,
@@ -105,12 +108,29 @@ impl World {
         person: Option<&str>,
         body: Option<Value>,
     ) -> (StatusCode, Value) {
+        let header = match person {
+            Some(token) => (PERSON_TOKEN_HEADER, token),
+            None => (READ_AS_HEADER, READ_AS_PUBLIC),
+        };
+        self.send_with(method, uri, authorization, &[header], body)
+            .await
+    }
+
+    /// `method uri` with `authorization` and exactly `headers`.
+    async fn send_with(
+        &self,
+        method: &str,
+        uri: &str,
+        authorization: &str,
+        headers: &[(&str, &str)],
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
         let mut req = Request::builder()
             .method(method)
             .uri(uri)
             .header("authorization", authorization);
-        if let Some(token) = person {
-            req = req.header(PERSON_TOKEN_HEADER, token);
+        for (name, value) in headers {
+            req = req.header(*name, *value);
         }
         let body = match body {
             Some(b) => {
@@ -141,13 +161,12 @@ impl World {
         assert_eq!(status, StatusCode::OK, "{uri}: {answer}");
     }
 
-    /// The panel as the Portal reads it: server administrator, maybe for a person.
+    /// The panel as the Portal reads it: server administrator, for a person or the public.
     async fn panel(&self, uid: &str, person: Option<&str>) -> (StatusCode, Value) {
-        let basic = base64::engine::general_purpose::STANDARD.encode(format!("{ADMIN}:{PASSWORD}"));
         self.send(
             "GET",
             &format!("/api/dashboards/{uid}/render?panel=1&from=1700000000000&to=1700000600000"),
-            &format!("Basic {basic}"),
+            &admin_basic(),
             person,
             None,
         )
@@ -184,6 +203,12 @@ impl World {
         )
         .await;
     }
+}
+
+/// The server administrator's `Authorization`, as the Portal sends it.
+fn admin_basic() -> String {
+    let basic = base64::engine::general_purpose::STANDARD.encode(format!("{ADMIN}:{PASSWORD}"));
+    format!("Basic {basic}")
 }
 
 /// The pm25 values of a rendered panel.
@@ -288,6 +313,105 @@ async fn two_persons_reading_one_panel_never_get_each_others_frames() {
     assert_eq!(seen.lock().len(), 2, "{:?}", seen.lock());
 }
 
+#[tokio::test]
+async fn a_panel_request_without_a_person_token_is_refused() {
+    let pia = jwt("sub-pia", "endpoint:closedslug");
+    let (base, seen) = gateway(pia, "nobody".into()).await;
+    let w = World::new();
+    w.endpoint_board("closed", &base, "closedslug", true).await;
+    let ds_query = json!({ "from": "1700000000000", "to": "1700000600000", "queries": [{
+        "refId": "A", "datasource": { "type": "ngsild-grafana-datasource", "uid": "closed" },
+        "queryType": "entity", "entityType": "AirQualityObserved", "attributes": ["pm25"]
+    }]});
+    let reads = [
+        (
+            "GET",
+            "/api/dashboards/closed/render?panel=1&from=1700000000000&to=1700000600000",
+            None,
+        ),
+        ("POST", "/api/ds/query", Some(ds_query)),
+        (
+            "GET",
+            "/api/datasources/uid/closed/resources/entities",
+            None,
+        ),
+    ];
+    // No header, an empty person token, and a read-as value that is not `public`.
+    let missing: [&[(&str, &str)]; 3] = [
+        &[],
+        &[(PERSON_TOKEN_HEADER, " ")],
+        &[(READ_AS_HEADER, "admin")],
+    ];
+    for (method, uri, body) in &reads {
+        for headers in missing {
+            let (status, answer) = w
+                .send_with(method, uri, &admin_basic(), headers, body.clone())
+                .await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{uri} {headers:?}: {answer}");
+            assert!(answer.to_string().contains(PERSON_TOKEN_HEADER), "{answer}");
+        }
+    }
+    assert!(seen.lock().is_empty(), "the Endpoint was asked: {:?}", seen.lock());
+
+    // The server-administration routes read no data and stay open to the credential.
+    for uri in ["/api/datasources", "/api/search", "/api/dashboards/uid/closed"] {
+        let (status, answer) = w.send_with("GET", uri, &admin_basic(), &[], None).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {answer}");
+    }
+}
+
+#[tokio::test]
+async fn the_cache_never_keys_on_an_unverified_sub() {
+    // Two tokens claiming one `sub`: daiya verifies neither, so it must not take them for one person.
+    let pia = jwt("sub-pia", "endpoint:closedslug");
+    let forged = pia.replace(".signature", ".forged");
+    let (base, seen) = gateway(pia.clone(), forged.clone()).await;
+    let w = World::new();
+    w.endpoint_board("closed", &base, "closedslug", true).await;
+
+    let (_, first) = w.panel("closed", Some(&pia)).await;
+    let (_, second) = w.panel("closed", Some(&forged)).await;
+    assert_eq!(readings(&first), [json!(1)], "{first}");
+    assert_eq!(readings(&second), [json!(2)], "{second}");
+    assert_eq!(seen.lock().len(), 2, "{:?}", seen.lock());
+}
+
+#[tokio::test]
+async fn a_public_dashboard_reads_as_public_only() {
+    let pia = jwt("sub-pia", "endpoint:closedslug");
+    let (base, seen) = gateway(pia.clone(), "nobody".into()).await;
+    let w = World::new();
+    w.endpoint_board("closed", &base, "closedslug", true).await;
+    let (status, created) = w
+        .send(
+            "POST",
+            "/api/dashboards/uid/closed/public-dashboards",
+            "Bearer admin",
+            None,
+            Some(json!({ "uid": "pd-closed", "isEnabled": true })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let token = created["accessToken"].as_str().unwrap().to_owned();
+
+    // Even beside the server-admin credential and a person's token, the public door reads as the
+    // public: the Endpoint sees no Authorization and answers its public reading (0).
+    let (status, view) = w
+        .send_with(
+            "POST",
+            &format!("/api/public/dashboards/{token}/panels/1/query"),
+            &admin_basic(),
+            &[(PERSON_TOKEN_HEADER, &pia)],
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert!(!view.to_string().contains(&pia), "{view}");
+    let heads = seen.lock().clone();
+    assert_eq!(heads.len(), 1, "{heads:?}");
+    assert_eq!(bearer_of(&heads[0]), None, "{}", heads[0]);
+}
+
 fn variable(value: Value) -> VariableModel {
     serde_json::from_value(value).unwrap()
 }
@@ -347,7 +471,6 @@ async fn a_multi_value_variable_reaches_prometheus_as_a_regex_alternation() {
         }}),
     )
     .await;
-    let basic = base64::engine::general_purpose::STANDARD.encode(format!("{ADMIN}:{PASSWORD}"));
     for query in ["var-testid=r.1&var-testid=r2", "var-testid=%24__all"] {
         let (status, view) = w
             .send(
@@ -355,7 +478,7 @@ async fn a_multi_value_variable_reaches_prometheus_as_a_regex_alternation() {
                 &format!(
                     "/api/dashboards/k6/render?panel=1&from=1700000000000&to=1700000600000&{query}"
                 ),
-                &format!("Basic {basic}"),
+                &admin_basic(),
                 None,
                 None,
             )
