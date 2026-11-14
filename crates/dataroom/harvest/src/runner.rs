@@ -1692,7 +1692,7 @@ mod tests {
                 .await
                 .unwrap();
             fetcher.insert(
-                &format!(
+                format!(
                     "https://{hub}/api/search/v1/collections/dataset/items?limit=100&sortBy=properties.created"
                 ),
                 Some("application/json"),
