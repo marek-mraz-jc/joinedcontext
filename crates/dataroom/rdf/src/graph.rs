@@ -161,10 +161,16 @@ impl LiteralValue {
         }
     }
 
+    /// A language-tagged literal; a tag that is not of the BCP 47 shape
+    /// (`[a-zA-Z]{1,8}(-[a-zA-Z0-9]{1,8})*`) makes a plain string: the tag never reaches a serializer.
     pub fn lang(value: impl Into<String>, lang: impl Into<String>) -> Self {
+        let lang = lang.into().to_ascii_lowercase();
+        if !dataroom_core::is_language_tag(&lang) {
+            return Self::plain(value);
+        }
         Self {
             value: value.into(),
-            language: Some(lang.into().to_ascii_lowercase()),
+            language: Some(lang),
             datatype: ns::RDF_LANG_STRING.to_owned(),
         }
     }
