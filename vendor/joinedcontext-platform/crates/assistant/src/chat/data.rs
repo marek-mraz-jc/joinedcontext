@@ -815,6 +815,43 @@ mod tests {
         assert_eq!(tool_specs(&with_empty, false), tools);
     }
 
+    /// T-6884: the Endpoint connector's `render_chart` (T-6881) renders on the server; the public
+    /// assistant calls connectors without the visitor's address, so it must never offer it. The
+    /// widget's chart is `show_visualization`, drawn in the visitor's browser.
+    #[test]
+    fn render_chart_is_not_a_tool_the_public_assistant_offers() {
+        assert!(!READ_ONLY_TOOLS.contains(&"render_chart"));
+        assert_eq!(
+            LEFT_OUT,
+            [
+                "retrieve_temporal",
+                "get_attribute_value",
+                "describe_schema",
+                "describe_access"
+            ]
+        );
+        let listed = [
+            json!({"name": "query_entities", "description": "", "inputSchema": {"type": "object"}}),
+            json!({"name": "render_chart", "description": "", "inputSchema": {"type": "object"}}),
+        ];
+        let allowed: Vec<String> = READ_ONLY_TOOLS.iter().map(|t| (*t).to_owned()).collect();
+        let picked = super::super::mcp::picked(&listed, &allowed);
+        assert!(picked.iter().all(|t| t.name != "render_chart"));
+        // Even a connector that lists it is offered no such tool, and a call naming it is refused.
+        let lists_it = connector("ovzdusie", &["query_entities", "render_chart"]);
+        let names: Vec<String> = tool_specs(std::slice::from_ref(&lists_it), true)
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str().map(str::to_owned))
+            .collect();
+        assert_eq!(names, ["query_entities", super::super::viz::TOOL]);
+        assert!(super::super::standard::resolved(
+            std::slice::from_ref(&lists_it),
+            "render_chart",
+            json!({"endpoint": "ovzdusie"})
+        )
+        .is_err());
+    }
+
     /// T-4748: `endpoint` resolves among the deployment's connectors only: by name, without its
     /// `{project}/`, by slug or by title; a miss or a shared name is refused with the names.
     #[test]

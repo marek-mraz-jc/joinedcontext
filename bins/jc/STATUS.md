@@ -684,6 +684,14 @@ jc's dataroom, reading the wave's report.
   sibling or secret, or any build failure (DB, migrations, model load) logs one `assistant: off` warning with the
   reason; the mount answers 404 and the module leaves the sibling table, so the Portal gets no
   `JC_PORTAL_KNOWLEDGE_URL` and dataroom no launcher. jc keeps running.
+- Charts (T-6884): `vars` fills `JC_ASSISTANT_VIZ_URL` with the viz module's origin when it is
+  `https://viz.{domain}` without a port (host mode, https), the only renderer origin the assistant and its widget
+  accept. Then a public data answer may call `show_visualization` and the widget page's CSP frames that one origin
+  (`modules::assistant::tests::the_widget_page_frames_only_the_viz_origin`). Viz under a path (slug mode), on http
+  or not mounted leaves it unset: the answers stay text and tables. The environment's value wins. The Endpoint
+  connector's server-side `render_chart` (T-6881) is never offered to the public assistant (it is not in
+  `READ_ONLY_TOOLS`). Smoke: `run assistant --viz-origin https://viz.{domain}` checks the config, the frame-src and,
+  with the model stub, one `visualization` event.
 - Portal: `siblings::portal_vars` fills `JC_PORTAL_KNOWLEDGE_URL` with the module's loopback listener (G18).
 - dataroom: `BrandingBlock::assistant_widget` (serde-skipped, set only by the host) names the widget page
   `{assistant}/d/{catalogue_deployment}/widget` or `""` (off); the CSP's frame-src gains that origin when it is
