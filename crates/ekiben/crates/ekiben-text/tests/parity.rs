@@ -110,7 +110,10 @@ async fn text_processors_match_bento() {
                 _ => err.contains(want),
             };
             if !ok {
-                failed.push(format!("{}: want config error {want:?}\n  got {err:?}", case["name"]));
+                failed.push(format!(
+                    "{}: want config error {want:?}\n  got {err:?}",
+                    case["name"]
+                ));
             }
             continue;
         }
