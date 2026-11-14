@@ -174,8 +174,25 @@ def judge(status: int, frames, error: str, expect: str, why: str) -> tuple[str, 
     return SKIP, actual, f"no rows and nothing to compare with: {why}"
 
 
+# daiya refuses a server-administrator data read for nobody (T-6859): the smoke's admin render says
+# it reads as the public, as the Portal does for a panel no person token goes with.
+READ_AS_PUBLIC = {"x-daiya-read-as": "public"}
+
+
+def judge_no_person(status: int, frames, error: str) -> tuple[str, str, str]:
+    """(result, actual, reason) of a daiya render with the server-administrator credential and
+    neither a person token nor x-daiya-read-as: daiya must answer 401 and draw nothing."""
+    rows = frame_rows(frames)
+    actual = f"{status}, {len(frames or [])} frames, {rows} rows" + (f", error: {error}" if error else "")
+    if rows:
+        return FAIL, actual, "rows read as the server administrator for nobody"
+    if status == 401:
+        return PASS, actual, ""
+    return FAIL, actual, "daiya did not refuse an admin read without a person or read-as"
+
+
 def judge_closed(status: int, frames, error: str) -> tuple[str, str, str]:
-    """(result, actual, reason) of a daiya render, without a person, of a panel whose datasource
+    """(result, actual, reason) of a daiya render, read as the public, of a panel whose datasource
     passes the caller's token on (oauthPassThru) to a closed Endpoint: daiya then reads
     anonymously, and the gateway must refuse it. A row is a leak; the person's read is portal.panel."""
     rows = frame_rows(frames)
@@ -378,6 +395,7 @@ def main(argv=None) -> int:
         counts["dashboards"] += 1
         tgt = f"dashboard {d.project}/{d.uid}"
         src = ", ".join(d.sources)
+        refusal_checked = False
         if d.problem:
             res.check("dash.project", tgt, f"files {src}", "a project for the dashboard", d.problem, False)
             continue
@@ -420,7 +438,14 @@ def main(argv=None) -> int:
             exp_txt = f"200, frames, {'rows' if expect == 'data' else 'no rows' if expect == 'empty' else 'rows or skip'} ({why})"
             if org and held is not None:
                 q = urllib.parse.urlencode({"panel": pn.id, **window})
-                st, ans = s.json("GET", f"/dashboards/api/dashboards/{urllib.parse.quote(d.uid)}/render?{q}", headers=daiya.hdrs(org))
+                render = f"/dashboards/api/dashboards/{urllib.parse.quote(d.uid)}/render?{q}"
+                if not refusal_checked:
+                    refusal_checked = True
+                    st, ans = s.json("GET", render, headers=daiya.hdrs(org))
+                    r, act, reason = judge_no_person(st, *daiya_frames(ans))
+                    res.add("daiya.no-person", ptgt, f"GET {render.split('?')[0]}?panel={pn.id} (org {org}, admin, no person, no read-as)",
+                            "401, no frames", act, r, reason)
+                st, ans = s.json("GET", render, headers={**daiya.hdrs(org), **READ_AS_PUBLIC})
                 frames, err = daiya_frames(ans)
                 if st != 200 and not err and isinstance(ans, dict):
                     err = str(ans)[:160]
@@ -429,7 +454,7 @@ def main(argv=None) -> int:
                     daiya_exp = "refused upstream, no rows (closed Endpoint, no person token)"
                 else:
                     (r, act, reason), daiya_exp = judge(st, frames, err, expect, why), exp_txt
-                res.add("daiya.panel", ptgt, f"GET /dashboards/api/dashboards/{d.uid}/render?panel={pn.id}&from&to (org {org}, datasource {pn.ds_uid})",
+                res.add("daiya.panel", ptgt, f"GET /dashboards/api/dashboards/{d.uid}/render?panel={pn.id}&from&to (org {org}, read as public, datasource {pn.ds_uid})",
                         daiya_exp, act, r, reason)
             elif daiya.auth:
                 res.add("daiya.panel", ptgt, "render", exp_txt, "", FAIL, "the dashboard is not in daiya")
