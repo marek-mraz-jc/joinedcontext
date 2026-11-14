@@ -835,6 +835,7 @@ impl Store for PgStore {
                 "SELECT doc FROM dataroom.cat_dataset
                  WHERE org_id = $1 AND catalogue_id = $2
                    AND (id COLLATE \"C\" = $3 OR name COLLATE \"C\" = $3)
+                 ORDER BY (id COLLATE \"C\" = $3) DESC
                  LIMIT 1",
             )
             .bind(ctx.org_id.as_uuid())
@@ -1115,6 +1116,7 @@ impl Store for PgStore {
                 "SELECT doc FROM dataroom.cat_harvest_source
                  WHERE org_id = $1 AND catalogue_id = $2
                    AND (id COLLATE \"C\" = $3 OR name COLLATE \"C\" = $3)
+                 ORDER BY (id COLLATE \"C\" = $3) DESC
                  LIMIT 1",
             )
             .bind(ctx.org_id.as_uuid())

@@ -356,6 +356,58 @@ async fn catalogue_propose_without_admin_cannot_edit_branding_hosts_or_outbound_
 }
 
 #[tokio::test]
+async fn cross_publisher_id_collision_cannot_overwrite_dataset() {
+    let w = world().await;
+    let target = w
+        .store
+        .get_dataset(&w.admin(), "open")
+        .await
+        .unwrap()
+        .unwrap();
+    // A dataset of dept named after city's dataset id (seeded: the op refuses that name) ...
+    let mut bait = dataset(&target.id, "dept", "public", json!({}));
+    bait.id = "a-bait".into();
+    w.store.upsert_dataset(&w.admin(), bait).await.unwrap();
+    let r = w
+        .run(
+            &w.dept_editor(),
+            "dataset.propose",
+            json!({"dataset": dataset(&target.id, "dept", "public", json!({}))}),
+        )
+        .await;
+    assert!(r.is_err(), "a name equal to another publisher's id: {r:?}");
+    // ... then proposes under city's id, and under city's name.
+    for (id, name) in [(target.id.as_str(), "taken"), ("a-bait", "open")] {
+        let mut attack = dataset(name, "dept", "public", json!({}));
+        attack.id = id.into();
+        let r = w
+            .run(
+                &w.dept_editor(),
+                "dataset.propose",
+                json!({"dataset": attack}),
+            )
+            .await;
+        assert!(r.is_err(), "{id}/{name}: {r:?}");
+    }
+    let after = w
+        .store
+        .get_dataset(&w.admin(), &target.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(after, target, "city's dataset is unchanged");
+    assert_eq!(
+        w.store
+            .get_dataset(&w.admin(), "a-bait")
+            .await
+            .unwrap()
+            .unwrap()
+            .name,
+        target.id
+    );
+}
+
+#[tokio::test]
 async fn dataset_search_shows_each_caller_what_it_may_read() {
     let w = world().await;
     let anon = w

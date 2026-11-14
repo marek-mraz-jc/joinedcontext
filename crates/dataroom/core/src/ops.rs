@@ -926,6 +926,23 @@ pub async fn execute_operation(
                 let target = ObjectTarget::from_dataset(ex, ex_pub.as_ref());
                 enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Propose, &target))?;
             }
+            // The record the name names is decided too: the id and the name may name two.
+            if let Some(n) = non_empty("name") {
+                if let Some(named) = op_ctx.store.get_dataset(req_ctx, &n).await? {
+                    if existing.as_ref().is_none_or(|ex| ex.id != named.id) {
+                        let named_pub = op_ctx
+                            .store
+                            .get_publisher(req_ctx, &named.publisher_id)
+                            .await?;
+                        let target = ObjectTarget::from_dataset(&named, named_pub.as_ref());
+                        enforce_decision(op_ctx.authorizer.check(
+                            req_ctx,
+                            Action::Propose,
+                            &target,
+                        ))?;
+                    }
+                }
+            }
             let cat = op_ctx
                 .store
                 .get_catalogue(req_ctx.org_id, req_ctx.catalogue_id)

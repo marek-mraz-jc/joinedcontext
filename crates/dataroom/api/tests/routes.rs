@@ -853,6 +853,32 @@ async fn ckan_site_and_listing_actions() {
 }
 
 #[tokio::test]
+async fn resource_view_create_cannot_take_over_another_datasets_view() {
+    let w = world().await;
+    let app = &w.app;
+    let body = json!({"resource_id": "res-open-0", "view_type": "image_view", "id": "view-orphan", "title": "mine"});
+    let a = ckan(app, "resource_view_create", Some("tok-editor"), body).await;
+    assert_eq!(a.status, StatusCode::CONFLICT, "{}", a.body);
+    let a = ckan(
+        app,
+        "resource_view_show",
+        Some("tok-admin"),
+        json!({"id": "view-orphan"}),
+    )
+    .await;
+    assert_eq!(
+        a.json()["result"]["resource_id"],
+        "res-orphan-0",
+        "{}",
+        a.body
+    );
+    // A create with a fresh id of its own still works.
+    let body = json!({"resource_id": "res-open-0", "view_type": "image_view", "id": "view-new"});
+    let a = ckan(app, "resource_view_create", Some("tok-editor"), body).await;
+    assert_eq!(a.json()["result"]["id"], "view-new", "{}", a.body);
+}
+
+#[tokio::test]
 async fn ckan_get_refuses_every_write_and_purge_action() {
     let w = world().await;
     let app = &w.app;

@@ -900,6 +900,22 @@ async fn answer_ckan_action(
                 return ckan_err(&base, &action, decision_error(dec));
             }
             let view = parse_resource_view(&payload, "", resource_id, view_type);
+            // A create never takes over a stored view: that one is changed by resource_view_update,
+            // decided on its own dataset.
+            match state.store.get_resource_view(&ctx, &view.id).await {
+                Ok(None) => {}
+                Ok(Some(_)) => {
+                    return ckan_err(
+                        &base,
+                        &action,
+                        DataroomError::Conflict(format!(
+                            "a view with id '{}' exists: use resource_view_update",
+                            view.id
+                        )),
+                    )
+                }
+                Err(e) => return ckan_err(&base, &action, e),
+            }
             match state.store.upsert_resource_view(&ctx, view).await {
                 Ok(saved) => ckan_ok(&base, &action, resource_view_to_ckan(&saved), false),
                 Err(e) => ckan_err(&base, &action, e),
