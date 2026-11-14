@@ -208,10 +208,13 @@ test.describe("the public catalogue", () => {
   for (const width of [1440, 400]) {
     test(`a signed-out dataset marks the values with history and opens them (${width} px)`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
-      const temporal: string[] = [];
+      // Every request the page makes on its own (fetch and XHR), so the marks are shown to cost none.
+      const asked: string[] = [];
       page.on("request", (request) => {
-        if (request.url().includes("/temporal/")) temporal.push(request.url());
+        if (["fetch", "xhr"].includes(request.resourceType())) asked.push(`${request.method()} ${request.url()}`);
       });
+      const temporal = () => asked.filter((request) => request.includes("/temporal/"));
+      const capability = () => asked.filter((request) => request.includes("/access/attributes"));
       await stubApi(page, [], true);
       await page.goto("/catalogue/bbsk-kpi?lang=en");
       const data = page.locator('section[aria-labelledby="catalogue-data"]');
@@ -221,31 +224,39 @@ test.describe("the public catalogue", () => {
       const cell = grid.getByRole("button", { name: /^Show the history of this value/ });
       await expect(column).toHaveCount(1);
       await expect(cell).toHaveCount(1);
-      expect(temporal).toEqual([]);
+      await page.waitForLoadState("networkidle");
+      expect(temporal()).toEqual([]);
+      expect(capability().length).toBeGreaterThan(0);
+      const marked = [...asked].sort();
       const sideways = () => page.evaluate(() => document.scrollingElement!.scrollWidth - window.innerWidth);
       expect(await sideways()).toBeLessThanOrEqual(0);
       await data.scrollIntoViewIfNeeded();
       await shot(page, `t6878-grid-marks-${width}`);
+      const beforeOpen = asked.length;
       await cell.click();
       const panel = page.getByRole("region", { name: /History: / });
       await expect(panel.locator("svg polyline, svg path").first()).toBeVisible();
-      expect(temporal).toHaveLength(1);
+      expect(temporal()).toHaveLength(1);
+      expect(asked).toHaveLength(beforeOpen + 1);
       expect(await sideways()).toBeLessThanOrEqual(0);
       await panel.scrollIntoViewIfNeeded();
       await shot(page, `t6878-history-open-${width}`);
       await panel.getByRole("checkbox", { name: "Every version of each value" }).check();
       await expect(panel.getByRole("columnheader", { name: "Replaced" })).toBeVisible();
       await expect(panel.getByRole("columnheader", { name: /Changed by|Reason/ })).toHaveCount(0);
-      expect(temporal.at(-1)).toContain("versions=all");
+      expect(temporal().at(-1)).toContain("versions=all");
       expect(await axeViolations(page)).toEqual([]);
       await shot(page, `t6878-versions-open-${width}`);
       await page.unroute(`**/api/endpoint/${SLUG}/**`);
       await stubEndpoint(page, "rows", false);
-      temporal.length = 0;
+      asked.length = 0;
       await page.reload();
       await expect(grid.getByText("Unemployment")).toBeVisible();
       await expect(page.locator(".jc-grid-history-mark")).toHaveCount(0);
-      expect(temporal).toEqual([]);
+      await page.waitForLoadState("networkidle");
+      // The same requests with and without marks: the one capability read is the access table the grid reads anyway.
+      expect([...asked].sort()).toEqual(marked);
+      expect(temporal()).toEqual([]);
       await data.scrollIntoViewIfNeeded();
       await shot(page, `t6878-no-history-${width}`);
     });

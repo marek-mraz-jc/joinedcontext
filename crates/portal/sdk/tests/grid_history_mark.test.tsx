@@ -86,9 +86,9 @@ describe("the history mark (T-6878)", () => {
     const { paths, source } = endpoint({ name: false, pm10: true, stationName: false });
     render(<EntityGrid config={configOf()} source={source} publicView />);
     await screen.findByText("Námestie SNP");
-    const mark = await screen.findByRole("button", { name: `${DEFAULT_LABELS.historyAvailable}: PM10` });
+    const mark = await screen.findByRole("button", { name: `${DEFAULT_LABELS.historyAvailable}: PM10 — Námestie SNP` });
     expect(mark.closest("th")).not.toBeNull();
-    expect(screen.queryByRole("button", { name: `${DEFAULT_LABELS.historyAvailable}: Station` })).toBeNull();
+    expect(screen.queryByRole("button", { name: new RegExp(`^${DEFAULT_LABELS.historyAvailable}: Station`) })).toBeNull();
     // One page read and one capability read: the mark itself asks nothing.
     expect(paths.filter((path) => path.includes("/access/attributes"))).toHaveLength(1);
     expect(temporal(paths)).toEqual([]);
@@ -104,6 +104,7 @@ describe("the history mark (T-6878)", () => {
     await screen.findByText("Námestie SNP");
     const cell = await screen.findByRole("button", { name: `${DEFAULT_LABELS.historyOfValue}: PM10` });
     expect(cell.closest("td")).not.toBeNull();
+    expect(cell.getAttribute("aria-keyshortcuts")).toBe("h");
     // A value with no observedAt and no change after its creation wears none.
     expect(screen.queryByRole("button", { name: `${DEFAULT_LABELS.historyOfValue}: Station` })).toBeNull();
     expect(temporal(paths)).toEqual([]);

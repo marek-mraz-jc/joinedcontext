@@ -190,6 +190,7 @@ function GridCell({ view, row, rowIndex, col, colIndex, tone }: { view: GridView
         type="button"
         className="jc-grid-history-mark jc-grid-history-mark--cell"
         tabIndex={-1}
+        aria-keyshortcuts="h"
         aria-label={`${labels.historyOfValue}: ${col.label}`}
         title={labels.historyOfValue}
         onClick={(e) => {

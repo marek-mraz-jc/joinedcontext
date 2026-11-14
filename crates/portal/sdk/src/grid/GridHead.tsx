@@ -2,6 +2,7 @@ import React, { useLayoutEffect, useRef, useState } from "react";
 import { HeaderFilter } from "./AutoFilter";
 import { ColumnMenu, WIDTH_STEP } from "./ColumnMenu";
 import { complete } from "./filters";
+import { cellText } from "./model";
 import { GridFilterRow } from "./GridFilterRow";
 import { KIND_ICON, KIND_LABEL } from "./gridKinds";
 import { MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH, NAME_COLUMN } from "./useEntityGrid";
@@ -126,7 +127,7 @@ function ColumnHeader({ view, col, index: i }: { view: GridView; col: VisibleCol
       <button
         type="button"
         className="jc-grid-history-mark"
-        aria-label={`${labels.historyAvailable}: ${col.label}`}
+        aria-label={`${labels.historyAvailable}: ${col.label} — ${historyRowName(view)}`}
         title={labels.historyAvailable}
         onClick={() => openHistory(view, col)}
       />
@@ -190,9 +191,19 @@ function ColumnHeader({ view, col, index: i }: { view: GridView; col: VisibleCol
 }
 
 /** A column's history for the row the person is on, under the grid. */
-function openHistory(view: GridView, col: VisibleColumn & { attr: string }): void {
+/** The row the person is on, else the first: history belongs to one entity, and the panel names which. */
+function historyRow(view: GridView) {
   const { rows, state } = view.grid;
-  // The row the person is on, else the first: history belongs to one entity, and the panel names which.
-  view.openHistoryOf(col, rows[state.activeCell?.row ?? 0] ?? rows[0]);
+  return rows[state.activeCell?.row ?? 0] ?? rows[0];
+}
+
+/** The name of the row the header mark opens, so its label says whose history it is. */
+function historyRowName(view: GridView): string {
+  const row = historyRow(view);
+  return cellText(row?.cells.name) || (row?.id ?? "");
+}
+
+function openHistory(view: GridView, col: VisibleColumn & { attr: string }): void {
+  view.openHistoryOf(col, historyRow(view));
   view.setOpenMenu(null);
 }
