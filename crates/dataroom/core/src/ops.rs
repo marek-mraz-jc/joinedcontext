@@ -901,7 +901,14 @@ pub async fn execute_operation(
                     views.insert(dist.id.clone(), v);
                 }
             }
-            Ok(dataset_to_ckan(&ds, pub_rec.as_ref(), &views, "en"))
+            // In the catalogue's language, as package_show answers.
+            let lang = op_ctx
+                .store
+                .get_catalogue(req_ctx.org_id, req_ctx.catalogue_id)
+                .await?
+                .map(|c| c.default_language)
+                .unwrap_or_else(|| "en".into());
+            Ok(dataset_to_ckan(&ds, pub_rec.as_ref(), &views, &lang))
         }
         "dataset.propose" => {
             let raw_ds = input.get("dataset").cloned().unwrap_or(input);

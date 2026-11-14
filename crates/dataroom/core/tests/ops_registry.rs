@@ -475,6 +475,20 @@ async fn dataset_get_hides_what_the_caller_may_not_read() {
         .await
         .unwrap();
     assert_eq!(open["name"], "open");
+    // The title in the catalogue's language (sk), as package_show answers it.
+    let mut both = w
+        .store
+        .get_dataset(&w.admin(), "open")
+        .await
+        .unwrap()
+        .unwrap();
+    both.title.insert("en".into(), "Open data".into());
+    w.store.upsert_dataset(&w.admin(), both).await.unwrap();
+    let open = w
+        .run(&w.anonymous(), "dataset.get", json!({"id": "pkg-open"}))
+        .await
+        .unwrap();
+    assert_eq!(open["title"], "Dataset open", "{open}");
     for name in ["internal", "restricted"] {
         let r = w
             .run(&w.anonymous(), "dataset.get", json!({"name": name}))
