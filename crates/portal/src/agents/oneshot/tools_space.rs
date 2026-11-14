@@ -879,8 +879,10 @@ mod tests {
             "operations": ["jc_kpi_compute"],
             "kinds": [{ "kind": op.kind, "verbs": ["read", "propose"] }],
         } }));
-        let call = serde_json::from_value(json!({ "name": "bikes", "type": "Bike", "attribute": "n", "agg": "sum" }))
-            .expect("a call");
+        let call = serde_json::from_value(
+            json!({ "name": "bikes", "type": "Bike", "attribute": "n", "agg": "sum" }),
+        )
+        .expect("a call");
         let mut chosen = vec![crate::agents::endpoints::RunEndpoint {
             name: "bikes".into(),
             slug: "bikes".into(),

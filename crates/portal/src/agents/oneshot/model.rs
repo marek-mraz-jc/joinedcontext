@@ -600,11 +600,9 @@ impl Driver {
     // ponytail: reads the models per page; keep them on the Driver when runs read many pages.
     pub(super) async fn withhold_personal_in(&self, value: &mut Value) -> Result<(), String> {
         let mut projects = std::collections::BTreeSet::from([self.project.clone()]);
-        projects.extend(
-            self.endpoints
-                .iter()
-                .filter_map(|endpoint| super::tools_data::endpoint_project(&self.state, &endpoint.slug)),
-        );
+        projects.extend(self.endpoints.iter().filter_map(|endpoint| {
+            super::tools_data::endpoint_project(&self.state, &endpoint.slug)
+        }));
         for project in projects {
             let marks = crate::personal_data::of_project(&self.state, &project).await?;
             crate::personal_data::withhold(value, &marks);
@@ -1454,6 +1452,9 @@ mod personal_tests {
             status: None,
         });
         let refused = driver.samples(&types).await.expect("samples");
-        assert!(!refused.to_string().contains("jana@example.org"), "{refused}");
+        assert!(
+            !refused.to_string().contains("jana@example.org"),
+            "{refused}"
+        );
     }
 }

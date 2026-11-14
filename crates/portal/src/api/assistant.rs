@@ -1228,9 +1228,12 @@ mod tests {
             "city",
             json!({ "domain": "hel.fi", "installation": true }),
         ));
-        state
-            .mirror
-            .upsert(envelope("Organization", org, "bcn", json!({ "domain": "barcelona.cat" })));
+        state.mirror.upsert(envelope(
+            "Organization",
+            org,
+            "bcn",
+            json!({ "domain": "barcelona.cat" }),
+        ));
         state.mirror.upsert(envelope(
             "Project",
             org,
@@ -1240,8 +1243,14 @@ mod tests {
         state
             .mirror
             .upsert(envelope("Project", org, "helsinki", json!({})));
-        assert_eq!(crate::api::assistant::project_org_domain(&state, "mobility"), "barcelona.cat");
-        assert_eq!(crate::api::assistant::project_org_domain(&state, "helsinki"), "hel.fi");
+        assert_eq!(
+            crate::api::assistant::project_org_domain(&state, "mobility"),
+            "barcelona.cat"
+        );
+        assert_eq!(
+            crate::api::assistant::project_org_domain(&state, "helsinki"),
+            "hel.fi"
+        );
     }
 
     /// T-6435: the gateway binds Policy URNs on the installation Organization, so the first by
