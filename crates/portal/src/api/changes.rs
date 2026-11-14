@@ -2243,7 +2243,7 @@ async fn approve_every_file(
             .is_ok();
         let access = matches!(
             envelope.kind.as_str(),
-            "Role" | "RoleBinding" | "ServiceAccount"
+            "Role" | "RoleBinding" | "ServiceAccount" | "Group"
         );
         let namespace = envelope.metadata.namespace.as_deref().unwrap_or(&home);
         let was_public = state
@@ -2514,7 +2514,7 @@ pub async fn approve_change_for(
     // Access changes hold the approver to what they grant, and a removal to `delete` (PF-52).
     if matches!(
         data.kind.as_str(),
-        "Role" | "RoleBinding" | "ServiceAccount"
+        "Role" | "RoleBinding" | "ServiceAccount" | "Group"
     ) {
         match (data.operation, &data.head_envelope) {
             (Operation::Delete, _) => {

@@ -304,6 +304,61 @@ async fn a_grant_inside_the_proposers_own_rights_still_comes_back() {
     );
 }
 
+/// PF-52, PF-64: a member added to a group takes every binding naming the group, so a person
+/// who may write groups and holds nothing else adds nobody to the group `owns-everything` is
+/// bound to; dropping a member still passes, and a group no binding names takes anyone.
+#[tokio::test]
+async fn a_member_is_added_to_a_group_only_within_what_its_bindings_grant() {
+    let shako = forge_with_workspace().await;
+    let state = state_with(&shako);
+    state.mirror.upsert(common::envelope(
+        "Role",
+        "writes-groups",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Group"], "verbs": ["read", "propose", "approve"] }] }),
+    ));
+    for (name, subjects, role) in [
+        ("helpdesk", json!([{ "user": "steward@hel.fi" }]), "writes-groups"),
+        ("admins-own-everything", json!([{ "group": "admins" }]), "owns-everything"),
+    ] {
+        state.mirror.upsert(common::envelope(
+            "RoleBinding",
+            name,
+            ORG_NAMESPACE,
+            json!({ "subjects": subjects, "role": role, "scope": { "organization": "hel" } }),
+        ));
+    }
+    for name in ["admins", "readers"] {
+        state.mirror.upsert(common::envelope(
+            "Group",
+            name,
+            ORG_NAMESPACE,
+            json!({ "members": [{ "user": "admin@hel.fi" }, { "user": "left@hel.fi" }] }),
+        ));
+    }
+    let group = |name: &str, members: Value| {
+        json!({ "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Group",
+                "metadata": { "name": name, "namespace": ORG_NAMESPACE },
+                "spec": { "members": members } })
+    };
+    let steward = common::person("steward");
+    let joined = json!([{ "user": "admin@hel.fi" }, { "user": "steward@hel.fi" }]);
+    let within = |manifest: &Value| {
+        joinedcontext_portal::permissions::within_own_rights(
+            &state, &steward, manifest, None, "proposer",
+        )
+    };
+    assert!(
+        matches!(within(&group("admins", joined.clone())), Err(ApiError::Denied(_))),
+        "joining a group bound to owns-everything passed"
+    );
+    assert!(
+        within(&group("admins", json!([{ "user": "admin@hel.fi" }]))).is_ok(),
+        "dropping a member was refused"
+    );
+    assert!(within(&group("readers", joined)).is_ok(), "an unbound group was refused");
+}
+
 /// The refusal carries nothing of the manifest it refused: a binding is a `users/` file and a
 /// person reading the answer learns which verb is missing, not what else the file said.
 #[tokio::test]

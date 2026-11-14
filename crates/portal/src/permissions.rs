@@ -1906,6 +1906,56 @@ pub fn within_own_rights(
                 }
                 ("service account", grants)
             }
+            // A member added to a group takes every binding naming the group, so whoever adds
+            // one holds what those bindings grant (PF-52, PF-64); a change that only drops
+            // members or edits the description grants nothing new.
+            Some("Group") => {
+                let name = manifest
+                    .pointer("/metadata/name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let members = |group: &Value| -> BTreeSet<String> {
+                    group
+                        .pointer("/spec/members")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|member| member.get("user").and_then(Value::as_str))
+                        .map(str::to_owned)
+                        .collect()
+                };
+                let held_before = match before {
+                    Some(before) => members(before),
+                    None => mirror
+                        .get(ORG_NAMESPACE, "Group", name)
+                        .and_then(|held| serde_json::to_value(held).ok())
+                        .map(|held| members(&held))
+                        .unwrap_or_default(),
+                };
+                let mut grants = Vec::new();
+                if !members(manifest).is_subset(&held_before) {
+                    for binding in mirror.kind_where(ORG_NAMESPACE, "RoleBinding", |_| true) {
+                        let Ok(binding) = serde_json::from_value::<RoleBindingSpec>(binding.spec)
+                        else {
+                            continue;
+                        };
+                        if !binding
+                            .subjects
+                            .iter()
+                            .any(|subject| subject.group.as_deref() == Some(name))
+                        {
+                            continue;
+                        }
+                        let Some(target) = Reach::of(&binding.scope) else {
+                            continue;
+                        };
+                        if let Some(rules) = rules_at(&binding.role, &target) {
+                            grants.push((rules, target));
+                        }
+                    }
+                }
+                ("group", grants)
+            }
             _ => return Ok(()),
         };
     // A scope naming no Organization or project is refused after the rights, so a caller who may
