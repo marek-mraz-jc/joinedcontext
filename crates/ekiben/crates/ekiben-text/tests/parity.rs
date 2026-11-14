@@ -3,6 +3,7 @@
 //! message, its content (hex for `msgpack: from_json`) or `ERROR: ` and the error. A case marked
 //! `"compare": "failure"` only requires the message to fail, where the error text comes from the
 //! query library (gojq or go-jmespath there, jaq or jmespath.rs here) or the JSON parser (its `note`).
+//! A case Bento refused at config time (`expected.config_error`) must be refused here with that text.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -45,9 +46,15 @@ async fn run(case: &Json) -> (String, bool) {
         procs.push(serde_json::json!({"msgpack": {"operator": "to_json"}}));
     }
     let hexed = case["processor"]["msgpack"]["operator"] == "from_json" && procs.len() == 1;
-    let mut part = Part::new(Bytes::from(
-        case["input"].as_str().unwrap_or_default().to_string(),
-    ));
+    let input = match case["input_hex"].as_str() {
+        Some(h) => hex::decode(h).expect("input_hex"),
+        None => case["input"]
+            .as_str()
+            .unwrap_or_default()
+            .as_bytes()
+            .to_vec(),
+    };
+    let mut part = Part::new(Bytes::from(input));
     part.meta_set_str("source", "eea");
     let mut batch = vec![part];
     for conf in &procs {
@@ -90,6 +97,23 @@ async fn text_processors_match_bento() {
         serde_json::from_str(&std::fs::read_to_string(dir.join("cases.json")).unwrap()).unwrap();
     let mut failed = Vec::new();
     for case in &cases {
+        if let Some(want) = case["expected"]["config_error"].as_str() {
+            // Bento refused the config: ekiben must refuse it with the same text.
+            let (reg, c) = ctx();
+            let err = ComponentConfig::from_json_value(&case["processor"], "noop", None)
+                .and_then(|comp| reg.build_processor_list(&[comp], &c).map(|_| ()))
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default();
+            let ok = match case.get("compare").and_then(Json::as_str) {
+                Some("failure") => !err.is_empty(),
+                _ => err.contains(want),
+            };
+            if !ok {
+                failed.push(format!("{}: want config error {want:?}\n  got {err:?}", case["name"]));
+            }
+            continue;
+        }
         let want = case["expected"]["text"].as_str().expect("recorded");
         let (got, errored) = run(case).await;
         let ok = match case.get("compare").and_then(Json::as_str) {
