@@ -280,7 +280,7 @@ export function VisualizationForm({ project }: { project: string }): JSX.Element
   }
   const safe = safeHref(save.data?.openUrl);
   return (
-    <div className="grid items-start gap-card lg:grid-cols-2 [&>*]:min-w-0">
+    <div className="grid items-start gap-section lg:grid-cols-2 [&>*]:min-w-0">
       <Card>
         <CardHeader as="h2" title={t("grafana.form.title")} className="mb-3" />
         <form
