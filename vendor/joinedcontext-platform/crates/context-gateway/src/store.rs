@@ -62,6 +62,9 @@ pub struct Provenance {
     /// Whether this was read from the repository: before that nobody knows which Organizations
     /// exist, so an `organization` Endpoint of a project without one admits nobody (I-4).
     pub loaded: bool,
+    /// How many Organization manifests the repository holds, those whose spec does not parse
+    /// included: any at all keeps I-4 on (T-6868).
+    pub declared_organizations: usize,
 }
 
 impl Provenance {
@@ -75,9 +78,12 @@ impl Provenance {
     }
 
     /// The Organizations an `organization` audience is judged against (I-4): `None` until the
-    /// repository loads, then each one's domain by name, empty on an installation without any.
+    /// repository loads, then as [`crate::auth::subject::judged_organizations`] says.
     pub fn known_organizations(&self) -> Option<&BTreeMap<String, String>> {
-        self.loaded.then_some(&self.domains)
+        if !self.loaded {
+            return None;
+        }
+        crate::auth::subject::judged_organizations(self.declared_organizations, &self.domains)
     }
 }
 
@@ -107,6 +113,7 @@ pub fn provenance_of(repo: &Repository) -> Provenance {
                 }
             }
             "Organization" => {
+                out.declared_organizations += 1;
                 if let Some(spec) = spec_of::<OrganizationSpec>(&resource.manifest) {
                     out.domains.insert(id.name.clone(), spec.domain);
                 }
@@ -1580,6 +1587,78 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
+
+    /// T-6868 (I-4): an Organization manifest whose spec does not parse is no Organization a
+    /// project can be of, and never switches I-4 off: beside two good ones a project naming it
+    /// admits nobody; alone it leaves no Organization a member could pass by.
+    #[test]
+    fn an_unparseable_organization_manifest_keeps_i4_on() {
+        use crate::auth::subject::{admission, Outside};
+        use jc_core::kinds::Audience;
+        let header = "apiVersion: joinedcontext.com/v1alpha1\nkind:";
+        let organization = |name: &str, domain: &str| {
+            format!(
+                "{header} Organization\nmetadata:\n  name: {name}\nspec:\n  domain: {domain}\n  \
+                 locales: [en]\n  defaultLocale: en\n"
+            )
+        };
+        // No locales: the spec does not parse.
+        let broken = format!(
+            "{header} Organization\nmetadata:\n  name: broken\nspec:\n  domain: x.example\n"
+        );
+        let project = |name: &str, organization: &str| {
+            format!(
+                "{header} Project\nmetadata:\n  name: {name}\nspec:\n  organizationRef: {organization}\n"
+            )
+        };
+        let provenance = |files: &[(&str, String)]| {
+            let dir = std::env::temp_dir().join(format!(
+                "gw-i4-unparsed-{}-{:?}-{}",
+                std::process::id(),
+                std::thread::current().id(),
+                files.len()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("a repository");
+            for (file, body) in files {
+                std::fs::write(dir.join(file), body).expect("a manifest");
+            }
+            let tables = super::load(&dir).expect("the repository loads");
+            let _ = std::fs::remove_dir_all(&dir);
+            tables.11
+        };
+        let member_of = |provenance: &super::Provenance, project: &str| {
+            admission(
+                project,
+                Audience::Organization,
+                &[],
+                &Default::default(),
+                true,
+                |p| provenance.organizations.get(p).cloned(),
+                provenance.known_organizations(),
+            )
+        };
+        let three = provenance(&[
+            ("hel.yaml", organization("hel", "hel.fi")),
+            ("zilina.yaml", organization("zilina", "zilina.sk")),
+            ("broken.yaml", broken.clone()),
+            ("city.yaml", project("city", "broken")),
+            ("parks.yaml", project("parks", "hel")),
+        ]);
+        assert_eq!(three.declared_organizations, 3);
+        let known = three
+            .known_organizations()
+            .expect("two Organizations parse");
+        assert_eq!(known.keys().collect::<Vec<_>>(), ["hel", "zilina"]);
+        assert_eq!(member_of(&three, "city"), Err(Outside::Organization));
+        assert_eq!(member_of(&three, "parks"), Ok(String::new()));
+        let alone = provenance(&[
+            ("broken.yaml", broken),
+            ("city.yaml", project("city", "broken")),
+        ]);
+        assert_eq!(alone.known_organizations(), None);
+        assert_eq!(member_of(&alone, "city"), Err(Outside::Organization));
+    }
 
     /// P-18 (T-6736): an Endpoint with policyRefs binds the Policies it lists and the grant of
     /// a Pipeline naming it as its targetEndpoint; a Policy added for Endpoint A opens no
