@@ -43,6 +43,9 @@ pub struct AppState {
     /// Where application repositories are copied to on GitHub (AP-79). `None` when the
     /// installation keeps them on its forge alone.
     pub github_mirror: Option<Arc<crate::forge::github_mirror::GithubMirror>>,
+    /// Where the configuration repositories are pushed off the pod (T-6892). `None`: off, the
+    /// default.
+    pub config_mirror: Option<Arc<crate::forge::config_mirror::ConfigMirror>>,
     pub syncer: Option<Arc<Syncer>>,
     /// The `SyncSource` loop (MF-27…MF-32). `None` without a forge, or when the outbound HTTP
     /// client could not be built: the sync routes answer 503 and nothing syncs, rather than a
@@ -227,6 +230,7 @@ impl AppState {
             mirror: Arc::new(Mirror::new()),
             shako: None,
             github_mirror: None,
+            config_mirror: None,
             syncer: None,
             sync: None,
             db: None,
@@ -345,6 +349,10 @@ impl AppState {
         // of its variables are absent, a startup error when only one is.
         let github_mirror =
             crate::forge::github_mirror::GithubMirror::from_env(|key| std::env::var(key).ok())?;
+        // And for the configuration repositories' copy off the pod (T-6892).
+        let config_mirror =
+            crate::forge::config_mirror::ConfigMirror::from_env(|key| std::env::var(key).ok())?
+                .map(Arc::new);
         // A configured database that cannot be reached or migrated is fatal, like a half-configured
         // forge: better one clear startup error than a Portal that silently forgets preferences.
         let db = match config.database_url.as_deref() {
@@ -473,6 +481,10 @@ impl AppState {
             syncer = state.wire_service_accounts(syncer);
             syncer = state.wire_streams(syncer);
             syncer = state.wire_space_writers(syncer);
+            if let Some(mirror) = &config_mirror {
+                syncer = syncer.with_config_mirror(Arc::clone(mirror));
+                state.config_mirror = Some(Arc::clone(mirror));
+            }
             // The `SyncSource` loop needs the forge and a way out to the origins. Without the
             // second there is no loop at all: a driver that cannot fetch would report every
             // source as failing every minute (MF-27).

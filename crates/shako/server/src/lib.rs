@@ -324,6 +324,7 @@ pub async fn apply_manifest_bundle(
                     credential_secret_ref: m.credential_secret_ref.clone(),
                     interval: "8h0m0s".into(),
                     sync_on_commit: true,
+                    branch: String::new(),
                     last_sync: None,
                     last_error: String::new(),
                     created_at: now,

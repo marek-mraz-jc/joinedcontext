@@ -283,6 +283,8 @@ pub struct Syncer {
     source_loaded: std::sync::atomic::AtomicBool,
     /// The repositories whose branch rules this process set ([`Self::protect_repositories`]).
     protected: std::sync::Mutex<std::collections::BTreeSet<String>>,
+    /// Where the configuration repositories are pushed off the pod (T-6892).
+    config_mirror: Option<Arc<crate::forge::config_mirror::ConfigMirror>>,
     /// Each managed roles file the branch was seen holding as compiled, by path, as a hash of
     /// the text, and when: a run read every one from the forge on every sync to find it equal
     /// (jc-smoke-logs: 30 `Shako.File` reads a minute at a 10 s sync). Read again once
@@ -415,6 +417,7 @@ impl Syncer {
             warned_held: Default::default(),
             source_loaded: Default::default(),
             protected: Default::default(),
+            config_mirror: None,
             roles_held: Default::default(),
             activity: None,
             apps_cache_dir: None,
@@ -446,6 +449,15 @@ impl Syncer {
     /// Makes each run mint the scoped artifact-store credentials of every Organization it reads
     /// (PF-32, ADR-N-015). Without one the store is never touched, which is what a Portal
     /// outside a cluster does.
+    /// Pushes the installation and project repositories to the operator's remote (T-6892).
+    pub fn with_config_mirror(
+        mut self,
+        mirror: Arc<crate::forge::config_mirror::ConfigMirror>,
+    ) -> Self {
+        self.config_mirror = Some(mirror);
+        self
+    }
+
     pub fn with_artifact_store(mut self, store: Arc<crate::artifact_store::Client>) -> Self {
         self.artifact_store = Some(store);
         self
@@ -1499,6 +1511,18 @@ impl Syncer {
         //       failed one is tried again on the next run (T-6706).
         self.protect_repositories(&fresh_mirror).await;
         steps.mark("branch_rules");
+        // 5a-mirror. Every configuration repository has its copy off the pod; a failed push is
+        //       pushed again with backoff, never failing the run (T-6892).
+        if let Some(mirror) = &self.config_mirror {
+            let projects: Vec<ShakoClient> = fresh_mirror
+                .repositories()
+                .into_iter()
+                .filter(|(_, repository)| *repository != self.shako.repo)
+                .map(|(slug, repository)| self.shako.for_project(repository.as_str(), &slug))
+                .collect();
+            mirror.pass(&self.shako, &projects).await;
+            steps.mark("config_mirror");
+        }
 
         // 5a'. Resolve what every pipeline's `secretRef`s name and hand the values to the
         //      runner as one Secret (T-0927, PL-15). A pipeline whose reference does not
