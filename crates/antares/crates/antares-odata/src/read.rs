@@ -2206,6 +2206,17 @@ pub(crate) fn resource<'r>(
     Resource::new(&reads.state.model, name).ok_or_else(|| not_found(version))
 }
 
+/// The set `name` a request body is read against: the URL model, where a 4.0 document's open
+/// type still declares the `Edm.Untyped` members it serves as dynamic properties, so a write
+/// in either version takes them and a member no model names stays unknown.
+pub(crate) fn body_resource<'r>(
+    reads: &'r Reads,
+    name: &str,
+    version: ODataVersion,
+) -> Result<Resource<'r>, ODataErrorResponse> {
+    Resource::new(reads.state.url_model(), name).ok_or_else(|| not_found(version))
+}
+
 /// Whether `Prefer: odata.include-annotations` (Protocol 4.01 8.2.8.4) asks for an annotation
 /// of the surface's vocabulary: `*`, or a pattern of `Antares.NgsiLd` or its alias.
 fn annotated(headers: &HeaderMap) -> bool {
