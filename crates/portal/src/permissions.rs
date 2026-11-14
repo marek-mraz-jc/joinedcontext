@@ -236,7 +236,8 @@ pub fn effective(
     let mut own_settings = Vec::new();
     let mut grants: Vec<Grant> = in_force(mirror, identity, now)
         .into_iter()
-        .filter_map(|(reach, mut grant)| {
+        .flat_map(|(reach, mut grant)| {
+            let local = matches!(reach, Reach::Project(_) | Reach::Space(_));
             grant.space = match reach {
                 Reach::Organization(org)
                     if !foreign_namespace && organization_reaches(mirror, &org, project) =>
@@ -248,22 +249,26 @@ pub fn effective(
                         && (!foreign_namespace || pin.as_deref() == Some(org.as_str())) =>
                 {
                     own_settings.extend(narrowed_to_own_settings(mirror, &org, grant));
-                    return None;
+                    return Vec::new();
                 }
-                Reach::Organization(_) => return None,
+                Reach::Organization(_) => return Vec::new(),
                 Reach::Project(p) if p == project && !foreign_namespace => None,
-                Reach::Project(_) => return None,
+                Reach::Project(_) => return Vec::new(),
                 Reach::Space(space) => {
                     let held_by = home
                         .entry(space.clone())
                         .or_insert_with(|| project_of_space(mirror, &space));
                     if held_by.as_deref() != Some(project) {
-                        return None;
+                        return Vec::new();
                     }
                     Some(space)
                 }
             };
-            Some(grant)
+            if local {
+                administration_read_only(grant)
+            } else {
+                vec![grant]
+            }
         })
         .collect();
     grants.extend(own_settings);
@@ -774,6 +779,41 @@ fn organization_reaches(mirror: &Mirror, organization: &str, project: &str) -> b
         organization_of(mirror, project)
     };
     owner.as_deref() == Some(organization)
+}
+
+/// The kinds that administer the installation: who belongs where, the Organizations, the
+/// brokers and environments (PF-03, ADR-N-058 section 2.2). A binding scoped to one project or
+/// space reads them there and changes none of them, whatever its role lists, so a role bound in
+/// one project never proposes or approves the organization's people or settings from it.
+const ADMINISTRATION_KINDS: [&str; 7] = [
+    "Group",
+    "RoleBinding",
+    "Organization",
+    "Environment",
+    "ContextBroker",
+    "DelegationPolicy",
+    "Portal",
+];
+
+/// Narrows a grant of a project or space binding to `read` on [`ADMINISTRATION_KINDS`]: the
+/// rule keeps its other kinds and verbs, and gains a sibling read rule for the administration
+/// kinds it named when it granted `read`.
+fn administration_read_only(mut grant: Grant) -> Vec<Grant> {
+    let (held, kept): (Vec<String>, Vec<String>) = std::mem::take(&mut grant.rule.kinds)
+        .into_iter()
+        .partition(|kind| ADMINISTRATION_KINDS.contains(&kind.as_str()));
+    let read = (!held.is_empty() && grant.rule.verbs.contains(&Verb::Read)).then(|| {
+        let mut read = grant.clone();
+        read.rule.kinds = held;
+        read.rule.verbs = vec![Verb::Read];
+        read
+    });
+    grant.rule.kinds = kept;
+    (!grant.rule.kinds.is_empty())
+        .then_some(grant)
+        .into_iter()
+        .chain(read)
+        .collect()
 }
 
 /// In a project of an Organization other than the installation's, a grant reaches the project's
@@ -2402,6 +2442,59 @@ mod tests {
             };
             let grants = effective(&mirror, "portal-approver", &who, "espoo", Utc::now());
             assert_eq!(grants.check_converses("espoo").is_ok(), converses, "{role}");
+        }
+    }
+
+    /// PF-03: a role bound in one project, here one that lists the organization's groups and
+    /// bindings, reads them there and proposes or approves none of them; the same role bound
+    /// organization-wide still does, and the project's own kinds keep every verb.
+    #[test]
+    fn a_project_binding_changes_no_organization_group_or_binding() {
+        let mut mirror = Mirror::new();
+        mirror.upsert(org(
+            "Role",
+            "wide",
+            serde_json::json!({ "rules": [{ "kinds": ["Group", "RoleBinding", "Endpoint"],
+                                            "verbs": ["read", "propose", "approve"] }] }),
+        ));
+        for (who, scope) in [
+            ("here", serde_json::json!({ "project": "espoo" })),
+            ("space", serde_json::json!({ "contextSpace": "air" })),
+            ("everywhere", serde_json::json!({ "organization": "hel" })),
+        ] {
+            mirror.upsert(org(
+                "RoleBinding",
+                who,
+                serde_json::json!({ "subjects": [{ "user": format!("{who}@hel.fi") }],
+                                    "role": "wide", "scope": scope }),
+            ));
+        }
+        mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: "ContextSpace".to_owned(),
+            metadata: ObjectMeta::new("air", "espoo"),
+            spec: serde_json::json!({}),
+            status: None,
+        });
+        let person = |who: &str| Identity {
+            client: None,
+            subject: format!("f:1:{who}"),
+            username: format!("{who}@hel.fi"),
+            email: Some(format!("{who}@hel.fi")),
+            name: None,
+            roles: Vec::new(),
+            groups: Vec::new(),
+            second_factor: false,
+        };
+        for (who, administers) in [("here", false), ("space", false), ("everywhere", true)] {
+            let grants = effective(&mirror, "portal-approver", &person(who), "espoo", Utc::now());
+            for kind in ["Group", "RoleBinding"] {
+                assert!(grants.may(kind, Verb::Read), "{who} reads {kind}");
+                for verb in [Verb::Propose, Verb::Approve] {
+                    assert_eq!(grants.may(kind, verb), administers, "{who} {verb:?} {kind}");
+                }
+            }
+            assert!(grants.may("Endpoint", Verb::Approve), "{who} approves Endpoint");
         }
     }
 
