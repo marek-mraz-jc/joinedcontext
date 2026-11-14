@@ -658,6 +658,41 @@ async fn ranking_concat_and_search_never_reach_what_is_hidden() -> Result<(), St
 }
 
 #[tokio::test]
+async fn a_chain_of_compute_is_refused_before_it_outgrows_the_evaluator() -> Result<(), String> {
+    let (_b, app) = broker(false).await?;
+    // each step names the one before twice: 2^22 nodes once every name is replaced
+    let steps: Vec<String> = (0..22)
+        .map(|i| format!("compute(c{i} add c{i} as c{})", i + 1))
+        .collect();
+    let apply = format!("compute(seats as c0)/{}", steps.join("/")).replace(' ', "%20");
+    let started = std::time::Instant::now();
+    let (status, body) = send(
+        &app,
+        Method::GET,
+        &format!("{ROOT}/Car?$apply={apply}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.to_string().contains("TooComplexQuery"), "{body}");
+    assert!(
+        started.elapsed().as_millis() < 500,
+        "{:?}",
+        started.elapsed()
+    );
+    // a short chain is served
+    let (status, body) = send(
+        &app,
+        Method::GET,
+        &format!("{ROOT}/Car?$apply=compute(seats%20as%20c0)/compute(c0%20add%20c0%20as%20c1)"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_chain_of_concat_is_refused_before_it_outgrows_one_scan() -> Result<(), String> {
     let (_b, app) = broker(false).await?;
     // each step doubles the Entities: 2^40 of them would never fit in memory (T-4017)

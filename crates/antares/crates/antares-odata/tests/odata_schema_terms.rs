@@ -263,7 +263,10 @@ async fn a_property_path_reads_only_an_entity_of_its_set() {
     let (_b, app) = store().await.expect("broker");
     let (status, answer) = odata(&app, Method::GET, &format!("{LOG}/name"), None).await;
     assert_eq!(status, StatusCode::OK, "{answer}");
-    for path in ["Item('urn:ngsi-ld:Log:1')/name", "Item('urn:ngsi-ld:Log:1')/name/$value"] {
+    for path in [
+        "Item('urn:ngsi-ld:Log:1')/name",
+        "Item('urn:ngsi-ld:Log:1')/name/$value",
+    ] {
         let (status, answer) = odata(&app, Method::GET, path, None).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {answer}");
     }

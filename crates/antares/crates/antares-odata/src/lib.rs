@@ -159,7 +159,14 @@ async fn respond(ops: &Ops, req: Request) -> Response {
     );
     let served = if names_the_model {
         let visible = model_visible(&view, &caller).await;
-        assembled(&id, view.clone(), Some(&visible), version, service_root.clone()).map(Arc::new)
+        assembled(
+            &id,
+            view.clone(),
+            Some(&visible),
+            version,
+            service_root.clone(),
+        )
+        .map(Arc::new)
     } else {
         kept(&id, view.clone(), version, service_root.clone())
     };

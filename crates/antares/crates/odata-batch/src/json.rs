@@ -57,7 +57,11 @@ fn member(
             limits.max_headers_per_part,
         ));
     }
-    let bytes: usize = headers.iter().map(|(n, v)| n.len() + v.len() + 4).sum();
+    let bytes = headers.iter().fold(0usize, |sum, (n, v)| {
+        sum.saturating_add(n.len())
+            .saturating_add(v.len())
+            .saturating_add(4)
+    });
     if bytes > limits.max_part_header_bytes {
         return Err(BatchError::limit(
             BatchLimit::HeaderBytes,

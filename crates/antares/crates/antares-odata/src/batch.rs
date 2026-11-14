@@ -127,8 +127,8 @@ pub(crate) async fn serve(
             return bad("a batch member carries a header a member may not set").into_response();
         };
         let path = rest.split(['?', '#']).next().unwrap_or_default();
-        let names_the_model = matches!(member.method, odata_batch::Method::Get)
-            && matches!(path, "" | "$metadata");
+        let names_the_model =
+            matches!(member.method, odata_batch::Method::Get) && matches!(path, "" | "$metadata");
         checked.push((format!("{inner_root}{rest}"), headers, names_the_model));
     }
     let mut narrowed = Some(narrowed);
@@ -141,22 +141,22 @@ pub(crate) async fn serve(
     for (member, (target, headers, names_the_model)) in batch.requests.into_iter().zip(checked) {
         let id = member.id.clone();
         let skip = skipped(&member.depends_on, &failed, left).await;
-        let router = if !names_the_model {
-            Some(routed)
-        } else {
+        let serving = if names_the_model {
             if let Some(narrowed) = narrowed.take() {
                 model = Some(narrowed.await);
             }
             model.as_ref().and_then(Option::as_ref)
+        } else {
+            Some(routed)
         };
-        let answer = match (skip, router) {
+        let answer = match (skip, serving) {
             (Some(answer), _) => answer,
             (None, None) => {
                 member_refused(StatusCode::NOT_FOUND, "NotFound", "the view has no model").await
             }
-            (None, Some(router)) => {
+            (None, Some(serving)) => {
                 let budget = (max_query_len, &mut left);
-                run(router, ops, &parts, member, (&target, headers), budget).await
+                run(serving, ops, &parts, member, (&target, headers), budget).await
             }
         };
         let failure = answer.status >= 400;
