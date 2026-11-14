@@ -656,6 +656,8 @@ pub fn router(state: DataroomState) -> Router {
         .route("/feeds/tag/{file}", get(feeds::handle_tag_atom))
         // OData v4 & OpenAPI 3.1
         .route("/api/v1/openapi.json", get(odata_routes::handle_openapi))
+        .route("/odata/v4", get(odata_routes::handle_service_document))
+        .route("/odata/v4/", get(odata_routes::handle_service_document))
         .route("/odata/v4/$metadata", get(odata_routes::handle_metadata))
         .route("/odata/v4/{*rest}", get(odata_routes::handle_odata))
         // Branding endpoint (G4) & Logo upload (B3)

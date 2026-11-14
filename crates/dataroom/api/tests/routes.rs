@@ -3552,10 +3552,9 @@ async fn edge_answers_of_feeds_odata_pages_and_ckan() {
     assert_eq!(a.status, StatusCode::OK);
     assert!(!a.header("content-profile").is_empty());
 
-    // OData: the service root and paths without an entity set are not supported; a bad skip
-    // token is refused; a long set pages with a nextLink.
+    // OData: paths without an entity set are not supported (the service root answers the
+    // service document); a bad skip token is refused; a long set pages with a nextLink.
     for uri in [
-        "/odata/v4/",
         "/odata/v4/$count",
         "/odata/v4/Datasets('pkg-open')/Distributions",
         "/odata/v4/Datasets?$skiptoken=garbage",

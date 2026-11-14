@@ -2624,7 +2624,7 @@ async fn g1_g2_g3_g4_mountable_router_portal_and_jcctl_parity() {
     .await;
     assert_eq!(st_ttl, StatusCode::OK);
 
-    let (st_od, _, _) = send_json(
+    let (st_od, _, od_body) = send_json(
         &host_app,
         Method::GET,
         "/catalogue/odata/v4/Datasets",
@@ -2635,6 +2635,24 @@ async fn g1_g2_g3_g4_mountable_router_portal_and_jcctl_parity() {
     )
     .await;
     assert_eq!(st_od, StatusCode::OK);
+    let od: Value = serde_json::from_str(&od_body).unwrap();
+    assert_eq!(
+        od["@odata.context"],
+        "/catalogue/odata/v4/$metadata#Datasets"
+    );
+
+    // The service root lists the entity sets under the mount.
+    for root in ["/catalogue/odata/v4", "/catalogue/odata/v4/"] {
+        let (st, _, body) = send_json(&host_app, Method::GET, root, host, None, None, None).await;
+        assert_eq!(st, StatusCode::OK, "{root}");
+        let doc: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(doc["@odata.context"], "/catalogue/odata/v4/$metadata");
+        assert!(doc["value"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["name"] == "Datasets" && s["kind"] == "EntitySet"));
+    }
 
     // G4: GET /api/v1/branding answers the effective block in the Portal's shape (UI-30)
     let (st_br, _, br_body) = send_json(
