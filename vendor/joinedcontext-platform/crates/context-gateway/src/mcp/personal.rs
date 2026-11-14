@@ -169,10 +169,7 @@ impl Personal {
         if !answer.status().is_success() {
             return Err(format!("the Portal answered {}", answer.status()));
         }
-        let listed: Listed = answer
-            .json()
-            .await
-            .map_err(|error| error.without_url().to_string())?;
+        let listed: Listed = crate::previews::json_within(answer, crate::app::MAX_BODY).await?;
         let list = Arc::new(listed.connectors);
         let mut held = self.held.lock().await;
         if held.len() >= MAX_HELD {
@@ -293,6 +290,35 @@ pub async fn message(gateway: Arc<Gateway>, name: String, request: Request) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Portal answer past the gateway's body cap is an error, never read whole into memory.
+    #[tokio::test]
+    async fn an_oversized_portal_answer_is_an_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let url = format!(
+            "http://{}/internal/connectors",
+            listener.local_addr().expect("addr")
+        );
+        // Valid JSON an uncapped read takes: an empty list padded with blanks.
+        let body = format!("{{\"connectors\": [{}]}}", " ".repeat(crate::app::MAX_BODY));
+        let app = axum::Router::new().route(
+            "/internal/connectors/{sub}",
+            axum::routing::get(move || {
+                let body = body.clone();
+                async move {
+                    (
+                        [(axum::http::header::CONTENT_TYPE, "application/json")],
+                        body,
+                    )
+                }
+            }),
+        );
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let answer = Personal::new(url, None, KEEP).of("person-1").await;
+        assert!(answer.is_err(), "{answer:?}");
+    }
 
     #[test]
     fn a_sub_is_one_plain_segment() {

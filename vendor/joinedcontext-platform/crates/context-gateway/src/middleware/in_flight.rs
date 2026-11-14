@@ -363,7 +363,14 @@ fn is_plain_read(request: &Request) -> bool {
     (request.method() == Method::GET || request.method() == Method::HEAD)
         && !request.headers().contains_key(header::UPGRADE)
         && !path.contains("/file.")
+        && !is_csv_alias(path)
         && !path.contains("/ngsi-ld/v1/temporal/")
+}
+
+/// `entities.csv` and `feeds/….csv`: `file.csv`'s table under another name, built in the same
+/// bounded download slot (`files::build`).
+fn is_csv_alias(path: &str) -> bool {
+    path.ends_with("/entities.csv") || (path.contains("/feeds/") && path.ends_with(".csv"))
 }
 
 impl Default for InFlight {
@@ -851,6 +858,18 @@ mod tests {
         assert!(!is_plain_read(&request(
             Method::GET,
             "/api/endpoint/e/file.geojson"
+        )));
+        assert!(!is_plain_read(&request(
+            Method::GET,
+            "/api/endpoint/e/entities.csv"
+        )));
+        assert!(!is_plain_read(&request(
+            Method::GET,
+            "/api/endpoint/e/feeds/stations/rows.csv"
+        )));
+        assert!(is_plain_read(&request(
+            Method::GET,
+            "/api/endpoint/e/entities.json"
         )));
         assert!(!is_plain_read(&request(
             Method::GET,
