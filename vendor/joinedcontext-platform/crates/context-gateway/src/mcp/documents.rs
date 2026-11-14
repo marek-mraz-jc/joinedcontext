@@ -154,10 +154,7 @@ impl Documents {
         if !answer.status().is_success() {
             return Err(format!("the assistant answered {}", answer.status()));
         }
-        answer
-            .json()
-            .await
-            .map_err(|err| err.without_url().to_string())
+        crate::previews::json_within(answer, crate::app::MAX_BODY).await
     }
 
     /// What assistant `public_id` knows, as its context route answers any visitor (API/05
