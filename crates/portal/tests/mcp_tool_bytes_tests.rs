@@ -68,8 +68,10 @@ fn the_tool_definitions_a_model_reads_stay_under_their_byte_ratchet() {
 /// bytes): its five channels and its `data.query`, which is `jc_data_query`'s closed input, so
 /// the chart reads nothing the data read would not; 85,652 once `jc_render` took `data.widget`
 /// (T-6864, 624 bytes): a saved Dashboard widget drawn by reference, read as the caller; 85,854
-/// with `data.dashboard` (T-6867, 202 bytes): a whole Dashboard, each widget read as the caller.
-const RATCHET: usize = 85_855;
+/// with `data.dashboard` (T-6867, 202 bytes): a whole Dashboard, each widget read as the caller;
+/// 85,863 once jc-core catalogued `Portal` (T-6873, 9 bytes): the kind enum of the resource tools
+/// names it, so an Organization admin's agent can propose its open data portals.
+const RATCHET: usize = 85_864;
 
 /// The cut never opens a schema: every MCP input stays closed, and `project` stays bounded.
 #[test]

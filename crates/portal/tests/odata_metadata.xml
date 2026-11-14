@@ -483,6 +483,19 @@
         <Property Name="title" Type="Edm.String"/>
         <Property Name="url" Type="Edm.String"/>
       </EntityType>
+      <EntityType Name="Portal">
+        <Key>
+          <PropertyRef Name="name"/>
+        </Key>
+        <Property Name="kind" Type="Edm.String"/>
+        <Property Name="name" Type="Edm.String" Nullable="false"/>
+        <Property Name="notServing" Type="Edm.String"/>
+        <Property Name="phase" Type="Edm.String"/>
+        <Property Name="sourceUrl" Type="Edm.String"/>
+        <Property Name="space" Type="Edm.String"/>
+        <Property Name="title" Type="Edm.String"/>
+        <Property Name="url" Type="Edm.String"/>
+      </EntityType>
       <EntityType Name="Entity">
         <Key>
           <PropertyRef Name="name"/>
@@ -617,6 +630,7 @@
         <EntitySet Name="environments" EntityType="JoinedContext.Portal.Environment"/>
         <EntitySet Name="dashboards" EntityType="JoinedContext.Portal.Dashboard"/>
         <EntitySet Name="layers" EntityType="JoinedContext.Portal.Layer"/>
+        <EntitySet Name="portals" EntityType="JoinedContext.Portal.Portal"/>
         <EntitySet Name="entities" EntityType="JoinedContext.Portal.Entity"/>
         <EntitySet Name="changes" EntityType="JoinedContext.Portal.Change"/>
         <EntitySet Name="workspaces" EntityType="JoinedContext.Portal.Workspace"/>
