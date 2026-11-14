@@ -178,7 +178,12 @@ pub(crate) async fn entity(
     if *options != bare {
         return Err(not_implemented(ONE_ROW, version));
     }
-    let plan = plan(set, &bare, version)?;
+    let mut plan = plan(set, &bare, version)?;
+    // the row's time ends the read: the newest instances before it are the ones it holds
+    let Some((_, end)) = just_after(micros) else {
+        return Err(not_found(version));
+    };
+    plan.window = format!("timerel=before&timeAt={}", encode(&end));
     let picked = picked(set, options, version)?;
     let rows = whole(reads, caller, &plan, Some(urn), version).await?;
     let row = rows
@@ -198,6 +203,12 @@ pub(crate) async fn entity(
     // A Vec takes every byte: the write cannot fail.
     let _ = write_entity(ctx, &resource, &value, &mut body);
     Ok(json_response(version, ctx.level, body))
+}
+
+/// The exclusive bound one microsecond after `micros`, with its text.
+fn just_after(micros: i64) -> Option<Bound> {
+    let next = micros.checked_add(1)?;
+    Some((next, DateTime::from_unix_micros(next)?.to_string()))
 }
 
 /// The id and `observedAt` (in microseconds) a key names, through the request's aliases.
@@ -271,10 +282,14 @@ fn plan<'s>(
         .filter(|(op, _)| matches!(op, CompareOp::Ge | CompareOp::Gt | CompareOp::Eq))
         .map(|(_, b)| b.clone())
         .max_by_key(|(micros, _)| *micros);
+    // `endTimeAt` is exclusive: `le` and `eq` end one microsecond past their time
     let upper = bounds
         .iter()
-        .filter(|(op, _)| matches!(op, CompareOp::Lt))
-        .map(|(_, b)| b.clone())
+        .filter_map(|(op, b)| match op {
+            CompareOp::Lt => Some(b.clone()),
+            CompareOp::Le | CompareOp::Eq => just_after(b.0),
+            _ => None,
+        })
         .min_by_key(|(micros, _)| *micros);
     let empty = matches!((&lower, &upper), (Some((l, _)), Some((u, _))) if l >= u);
     let window = match (&lower, &upper) {
