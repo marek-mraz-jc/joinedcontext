@@ -958,6 +958,7 @@ async fn run_tool(
             .surface
             .call(ask.http, &tool.name, arguments.clone())
             .await;
+        let answered = super::routed::without_personal(ask, connector, answered).await;
         ask.trace.tool(
             &tool.name,
             endpoint.as_deref(),
