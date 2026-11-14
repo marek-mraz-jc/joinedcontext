@@ -35,17 +35,14 @@ pub fn effective(mirror: &Mirror, project: &str, bounds: &OrganizationBounds) ->
         .and_then(|env| serde_json::from_value::<Quotas>(env.spec.get("quotas")?.clone()).ok())
         // `spec.quotas` holding only `mqtt` leaves every PF-73 dimension to the organization.
         .filter(Quotas::sets_dimensions);
-    own.unwrap_or_else(|| organization_default(mirror))
+    own.unwrap_or_else(|| organization_default(mirror, project))
         .capped(&bounds.quota_ceiling())
 }
 
 /// The default every project of the organization starts from (PF-73).
-pub fn organization_default(mirror: &Mirror) -> Quotas {
-    mirror
-        .list(ORG_NAMESPACE, "Organization", &ListOptions::default())
-        .items
-        .into_iter()
-        .find_map(|env| {
+pub fn organization_default(mirror: &Mirror, project: &str) -> Quotas {
+    crate::permissions::organization_manifest_of(mirror, project)
+        .and_then(|env| {
             serde_json::from_value::<Quotas>(env.spec.pointer("/projects/quota")?.clone()).ok()
         })
         .unwrap_or_default()
@@ -223,7 +220,7 @@ pub fn min_pipeline_period(mirror: &Mirror, project: &str) -> Option<(u32, Strin
                 format!("spec.quotas.minPipelinePeriodSeconds of project {project}"),
             )
         });
-    let organization = organization_default(mirror)
+    let organization = organization_default(mirror, project)
         .min_pipeline_period_seconds
         .map(|floor| {
             (

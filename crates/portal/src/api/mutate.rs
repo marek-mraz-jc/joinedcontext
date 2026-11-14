@@ -2137,18 +2137,12 @@ pub(crate) fn organization_within_bounds(
     })
 }
 
-/// Whether the Organization refuses public Apps (`spec.policies.apps.public`, PF-103).
-pub(crate) fn public_apps_refused(mirror: &crate::store::Mirror) -> bool {
+/// Whether the Organization that owns `project` refuses public Apps (`spec.policies.apps.public`,
+/// PF-103): another Organization's policy holds nothing here (TEN-04).
+pub(crate) fn public_apps_refused(mirror: &crate::store::Mirror, project: &str) -> bool {
     use jc_core::kinds::{OrganizationPolicies, PublicApps};
-    mirror
-        .list(
-            crate::permissions::ORG_NAMESPACE,
-            "Organization",
-            &crate::store::ListOptions::default(),
-        )
-        .items
-        .into_iter()
-        .find_map(|org| {
+    crate::permissions::organization_manifest_of(mirror, project)
+        .and_then(|org| {
             serde_json::from_value::<OrganizationPolicies>(org.spec.get("policies")?.clone()).ok()
         })
         .is_some_and(|policies| policies.apps.public == PublicApps::Refused)
@@ -2175,7 +2169,7 @@ pub(crate) fn public_app_allowed(
     {
         return Ok(());
     }
-    if public_apps_refused(mirror) {
+    if public_apps_refused(mirror, project) {
         return Err(refusal(format!(
             "App '{name}' may not be public: the organization refuses public Apps \
              (spec.policies.apps.public). Keep it visible to the project or the organization, or \
@@ -3702,6 +3696,45 @@ mod tests {
             ApiError::BadRequest
         )
         .is_ok());
+    }
+
+    /// TEN-04 (PF-103): with two Organizations, the one that owns the project decides on public
+    /// Apps; the Organization that sorts first holds nothing in another's project.
+    #[test]
+    fn the_projects_own_organization_decides_on_public_apps() {
+        let mirror = crate::store::Mirror::new();
+        let org = |kind: &str, name: &str, spec: Value| ResourceEnvelope {
+            api_version: resource::API_VERSION.into(),
+            kind: kind.into(),
+            metadata: ObjectMeta::new(name, crate::permissions::ORG_NAMESPACE),
+            spec,
+            status: None,
+        };
+        mirror.upsert(org(
+            "Organization",
+            "aaa",
+            json!({ "installation": true, "policies": { "apps": { "public": "allowed" } } }),
+        ));
+        mirror.upsert(org(
+            "Organization",
+            "zzz",
+            json!({ "policies": { "apps": { "public": "refused" } } }),
+        ));
+        mirror.upsert(org("Project", "zproj", json!({ "organizationRef": { "name": "zzz" } })));
+        mirror.upsert(org("Project", "aproj", json!({ "organizationRef": { "name": "aaa" } })));
+        assert!(public_apps_refused(&mirror, "zproj"));
+        assert!(!public_apps_refused(&mirror, "aproj"));
+        let quota = |name: &str, apps: u32| {
+            org(
+                "Organization",
+                name,
+                json!({ "installation": name == "aaa", "projects": { "quota": { "apps": apps } } }),
+            )
+        };
+        mirror.upsert(quota("aaa", 9));
+        mirror.upsert(quota("zzz", 2));
+        assert_eq!(crate::quotas::organization_default(&mirror, "zproj").apps, Some(2));
+        assert_eq!(crate::quotas::organization_default(&mirror, "aproj").apps, Some(9));
     }
 
     /// T-2870 (PF-103): with public Apps refused, a Change that makes an App public is refused
