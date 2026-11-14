@@ -687,9 +687,12 @@ pub fn asked_of(arguments: &Value) -> Vec<String> {
         .map(str::to_owned)
         .collect();
     if let Some(q) = arguments.get("q").and_then(Value::as_str) {
-        let tested = regex::Regex::new(r"([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?(?:\.[A-Za-z_][A-Za-z0-9_]*)?\s*(?:==|!=|>=|<=|!~=|~=|>|<)")
-            .ok();
-        for found in tested.iter().flat_map(|re| re.captures_iter(q)) {
+        // Compiled once: every data call of every answer asks it.
+        static TESTED: std::sync::LazyLock<Option<regex::Regex>> = std::sync::LazyLock::new(|| {
+            regex::Regex::new(r"([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?(?:\.[A-Za-z_][A-Za-z0-9_]*)?\s*(?:==|!=|>=|<=|!~=|~=|>|<)")
+                .ok()
+        });
+        for found in TESTED.iter().flat_map(|re| re.captures_iter(q)) {
             let name = found[1].to_owned();
             if !out.contains(&name) {
                 out.push(name);
@@ -1581,6 +1584,10 @@ async fn search_index(
     query: &str,
     limit: i64,
 ) -> Result<(Vec<Hit>, String), crate::Error> {
+    // A deployment without sources has nothing to rank: no embedding is waited for.
+    if ask.sources.is_empty() {
+        return Ok((Vec::new(), "time: no sources to search".to_owned()));
+    }
     let (vector, took) = ask.embedder.query_timed(query).await?;
     let began = Instant::now();
     let hits = crate::search_projects(
