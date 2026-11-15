@@ -1,0 +1,19 @@
+logger: {level: OFF}
+input:
+  generate:
+    count: 2
+    interval: ""
+    mapping: 'root = {"i": counter()}'
+pipeline:
+  threads: 1
+  processors:
+    - sql_select:
+        driver: postgres
+        dsn: ${PG_DSN}
+        table: footable
+        columns: [ foo, bar ]
+        where: bar >= ?
+        args_mapping: 'root = [ this.i + 1 ]'
+        suffix: ORDER BY bar ASC
+output:
+  stdout: {}
