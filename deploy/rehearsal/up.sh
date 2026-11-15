@@ -263,6 +263,8 @@ for pid_file in "$home/jc.pid" "$home"/split/*.pid; do
   "$here/stop-jc.sh" "$(cat "$pid_file")" || exit 1
   [ "$pid_file" = "$home/jc.pid" ] || rm -f "$pid_file"
 done
+# The split layout's front holds the public port; split.sh starts it again.
+docker rm -f "rh-front-$env_name" >/dev/null 2>&1 || true
 for toml in "$home/jc.toml" "$home"/split/*.toml; do
   [ -f "$toml" ] || continue
   for pid in $("$here/jcs-of.sh" "$toml"); do
