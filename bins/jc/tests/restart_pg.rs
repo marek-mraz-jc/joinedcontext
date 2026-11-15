@@ -317,7 +317,7 @@ async fn kaisatsu_token(jc: &Jc) -> String {
     let body = ok(
         "kaisatsu client_credentials",
         Client::new()
-            .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
+            .post(jc.url("/login/realms/jc/protocol/openid-connect/token"))
             .form(&[
                 ("grant_type", "client_credentials"),
                 ("client_id", "portal-reconciler"),
@@ -416,7 +416,7 @@ async fn write_everything(jc: &Jc) {
 
     let token = kaisatsu_token(jc).await;
     let created = http
-        .post(jc.url("/id/admin/realms/jc/users"))
+        .post(jc.url("/login/admin/realms/jc/users"))
         .bearer_auth(&token)
         .json(&json!({"username": USER, "email": USER, "enabled": true, "emailVerified": true}))
         .send()
@@ -517,7 +517,7 @@ async fn read_everything(jc: &Jc) {
     let users = ok(
         "kaisatsu user after the restart",
         http.get(jc.url(&format!(
-            "/id/admin/realms/jc/users?username={USER}&exact=true"
+            "/login/admin/realms/jc/users?username={USER}&exact=true"
         )))
         .bearer_auth(&token),
     )

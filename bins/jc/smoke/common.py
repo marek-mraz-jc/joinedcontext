@@ -121,7 +121,7 @@ class Http:
 def issuer_of(http: Http, realm: str) -> str | None:
     """The issuer the realm's discovery document names on `http`'s base (OIDC Discovery 1.0 §3:
     every token's `iss` is exactly it), or None when the document does not answer one."""
-    st, _, raw = http.call("GET", f"/id/realms/{realm}/.well-known/openid-configuration")
+    st, _, raw = http.call("GET", f"/login/realms/{realm}/.well-known/openid-configuration")
     doc = as_json(raw) if st == 200 else None
     issuer = doc.get("issuer") if isinstance(doc, dict) else None
     return issuer if isinstance(issuer, str) and issuer.startswith(("https://", "http://")) else None

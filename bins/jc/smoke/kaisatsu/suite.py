@@ -346,7 +346,7 @@ class Live:
         self.base = a.base_url.rstrip("/")
         self.http = Http(self.base)
         self.state = Path(a.state)
-        self.kc = f"/id/realms/{realm}/protocol/openid-connect"
+        self.kc = f"/login/realms/{realm}/protocol/openid-connect"
         self.user = f"smoke-kaisatsu-{secrets.token_hex(3)}"
         self.password = secrets.token_urlsafe(18) + "-7aZ"
         self.uid = ""
@@ -372,28 +372,28 @@ class Live:
 
     def make_person(self) -> None:
         admin = self.admin()
-        st, _, raw = self.http.call("POST", f"/id/admin/realms/{self.realm}/users", token=admin, body={
+        st, _, raw = self.http.call("POST", f"/login/admin/realms/{self.realm}/users", token=admin, body={
             "username": self.user, "enabled": True, "email": f"{self.user}@rehearsal.invalid",
             "emailVerified": True, "firstName": "Smoke", "lastName": "Kaisatsu"})
         if st not in (201, 409):
             raise RuntimeError(f"create {self.user}: {st} {redact(raw[:160])}")
-        st, _, raw = self.http.call("GET", f"/id/admin/realms/{self.realm}/users?username={self.user}&exact=true",
+        st, _, raw = self.http.call("GET", f"/login/admin/realms/{self.realm}/users?username={self.user}&exact=true",
                                     token=admin)
         self.uid = json.loads(raw)[0]["id"]
-        st, _, _ = self.http.call("PUT", f"/id/admin/realms/{self.realm}/users/{self.uid}/reset-password",
+        st, _, _ = self.http.call("PUT", f"/login/admin/realms/{self.realm}/users/{self.uid}/reset-password",
                                   token=admin, body={"type": "password", "value": self.password, "temporary": False})
         if st not in (200, 204):
             raise RuntimeError(f"password of {self.user}: {st}")
 
         def admin_api(method, path):
-            st, _, raw = self.http.call(method, f"/id/admin/realms/{self.realm}{path}", token=admin)
+            st, _, raw = self.http.call(method, f"/login/admin/realms/{self.realm}{path}", token=admin)
             return st, as_json(raw)
         SECOND_FACTOR.fresh(admin_api, self.user, self.uid)
 
     def remove_person(self) -> str:
         if not self.uid:
             return ""
-        st, _, _ = self.http.call("DELETE", f"/id/admin/realms/{self.realm}/users/{self.uid}", token=self.admin())
+        st, _, _ = self.http.call("DELETE", f"/login/admin/realms/{self.realm}/users/{self.uid}", token=self.admin())
         return "" if st in (200, 204) else f"delete {self.user}: {st}"
 
     def authorize(self, b, client: str, redirect: str, scope: str, extra: dict | None = None):
@@ -433,7 +433,7 @@ class Live:
     def run(self, endpoints: list[str], other_realm: str | None) -> None:
         # The issuer jc's discovery document names (its public address on jc-dev), never the base
         # the suite happens to reach jc on.
-        self.issuer = issuer_of(self.http, self.realm) or f"{self.base}/id/realms/{self.realm}"
+        self.issuer = issuer_of(self.http, self.realm) or f"{self.base}/login/realms/{self.realm}"
         self.make_person()
         b = self.Browser(self.base)
         try:
@@ -531,7 +531,7 @@ class Live:
                 self.r.skip(id, "realm", "another realm of this jc", "refused",
                             "the rehearsal's kaisatsu serves one realm: no other realm to try")
             return
-        okc = f"/id/realms/{other}/protocol/openid-connect"
+        okc = f"/login/realms/{other}/protocol/openid-connect"
         st, _, _ = self.http.call("GET", f"{okc}/userinfo", token=tok["access_token"])
         self.row("refuse.other-realm.userinfo", other, f"GET {okc}/userinfo with a {self.realm} token", "401", str(st), st == 401)
         b = self.Browser(self.base)
@@ -804,7 +804,7 @@ def run(a, res: Results) -> dict:
     http = Http(a.base_url)
     base = a.base_url.rstrip("/")
 
-    path = f"/id/realms/{realm}/.well-known/openid-configuration"
+    path = f"/login/realms/{realm}/.well-known/openid-configuration"
     st, _, raw = http.call("GET", path)
     jc_doc = as_json(raw) if st == 200 else None
     res.check("discovery.document", "kaisatsu", f"GET {path}", "200, JSON", str(st), isinstance(jc_doc, dict))
@@ -828,7 +828,7 @@ def run(a, res: Results) -> dict:
     # reaches jc through a forward (jc-dev), the base otherwise.
     site = public_origin(http, realm) or base
     for pid, (door, client, redirect, scope) in PROBES.items():
-        url = (f"/id/realms/{realm}/protocol/openid-connect/auth" if door == "kc" else "/oauth/authorize")
+        url = (f"/login/realms/{realm}/protocol/openid-connect/auth" if door == "kc" else "/oauth/authorize")
         q = authorize_query(client, redirect or site + "/", scope)
         # A browser follows the realm's own redirects (kaisatsu answers 303 to its login page,
         # Keycloak the page at once); a redirect to the client's address is the answer itself.
@@ -860,7 +860,7 @@ def run(a, res: Results) -> dict:
         return {"realm": realm, "prod": Path(a.prod).name}
     others = []
     for name in ("jc", "master"):
-        if name != realm and http.call("GET", f"/id/realms/{name}")[0] == 200:
+        if name != realm and http.call("GET", f"/login/realms/{name}")[0] == 200:
             others.append(name)
     live = Live(a, res, realm, served)
     try:

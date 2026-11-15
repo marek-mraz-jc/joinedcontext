@@ -174,7 +174,7 @@ pub struct OidcClient {
     http: reqwest::Client,
     token_url: Url,
     /// The issuer's `host[:port]`, sent as `Host` when the back channel names another one (slug
-    /// mode: `127.0.0.1:{port}/id` for `localhost:{port}/id`): kaisatsu stamps `iss` from the
+    /// mode: `127.0.0.1:{port}/login` for `localhost:{port}/login`): kaisatsu stamps `iss` from the
     /// request's host, and the ID token is checked against the public issuer.
     token_host: Option<String>,
     client_id: String,

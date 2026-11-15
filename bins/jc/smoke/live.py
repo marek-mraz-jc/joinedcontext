@@ -6,7 +6,7 @@ virtual base `https://<name>.smoke.invalid` (a name that never resolves) and ins
 its own process and in every suite process (`run` installs it from $JC_SMOKE_LIVE):
 
 - Routing: a path on the virtual base goes to the host jc's host-mode mounts serve it on, as the
-  rehearsal's slug mounts did (`/id/...` -> idm.<d>/..., `/opendata/...` -> opendata.<d>/...,
+  rehearsal's slug mounts did (`/login/...` -> idm.<d>/..., `/opendata/...` -> opendata.<d>/...,
   the gateway's root paths -> its first host, anything else -> the Portal's host). Each request
   connects to the edge IP and names the real host in Host and SNI; TLS is verified.
 - Hosts: only the domain's hosts the jc.toml mounts; any other host, a raw socket, an unverified
@@ -40,7 +40,7 @@ ENV = "JC_SMOKE_LIVE"
 SMOKE = Path(__file__).resolve().parent
 
 # bins/jc/src/module.rs Module::slug: where the rehearsal's slug mounts put each module.
-SLUGS = {"kaisatsu": "id", "dataroom": "opendata", "daiya": "dashboards", "viz": "embed",
+SLUGS = {"kaisatsu": "login", "dataroom": "opendata", "daiya": "dashboards", "viz": "embed",
          "assistant": "assistant", "model-tools": "model-tools"}
 # Module::root_paths of the gateway: it answers at these whole paths on every host.
 GATEWAY_ROOTS = ("/api/endpoint", "/api/endpoints", "/api/mcp", "/cs", "/catalog", "/catalog.jsonld",
