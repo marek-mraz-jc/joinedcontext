@@ -162,6 +162,13 @@ describe("the grid's filter row as an NGSI-LD query", () => {
     expect(andQ("a>1", undefined)).toBe("a>1");
     expect(andQ(" ", undefined)).toBeUndefined();
   });
+
+  it("keeps an either-or part whole when it joins another, since ';' binds tighter than '|'", () => {
+    expect(andQ('!startDate|startDate>="today"', 'category=="music"')).toBe('(!startDate|startDate>="today");category=="music"');
+    expect(andQ("a==1|b==2")).toBe("a==1|b==2");
+    // A '|' inside a quoted text is no either-or.
+    expect(andQ('name=="a|b"', "c==3")).toBe('name=="a|b";c==3');
+  });
 });
 
 describe("a column whose type the caller does not know", () => {

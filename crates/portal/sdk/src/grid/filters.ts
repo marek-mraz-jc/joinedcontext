@@ -294,7 +294,21 @@ export function queryFromFilters(
 /** Two `q` strings as one: both must hold, which is what `;` means. */
 export function andQ(...parts: (string | undefined)[]): string | undefined {
   const kept = parts.map((part) => part?.trim()).filter((part): part is string => Boolean(part));
-  return kept.length > 0 ? kept.join(";") : undefined;
+  if (kept.length === 0) return undefined;
+  // `;` binds tighter than `|` (CIM 009 4.9), so `a|b;c` is `a|(b;c)`: a part with an either-or of
+  // its own is put in parentheses, or joining it would widen the answer instead of narrowing it.
+  return kept.length === 1 ? kept[0] : kept.map((part) => (hasOr(part) ? `(${part})` : part)).join(";");
+}
+
+/** Whether `q` holds a `|` outside its quoted texts. */
+function hasOr(q: string): boolean {
+  let quoted = false;
+  for (let i = 0; i < q.length; i++) {
+    if (q[i] === "\\" && quoted) i++;
+    else if (q[i] === '"') quoted = !quoted;
+    else if (q[i] === "|" && !quoted) return true;
+  }
+  return false;
 }
 
 /** One condition of the filter panel: the column it asks about and what it asks. */
