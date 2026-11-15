@@ -170,6 +170,10 @@ fn oauth_slot(org: &OrgContext, oa: &OAuth2Config) -> Arc<AsyncMutex<OAuthSlot>>
 pub struct HttpClient {
     /// Refuses private, loopback and link-local peers, also after DNS and on redirects.
     http: reqwest::Client,
+    /// For a host the organization lists in `private_hosts` (as [`crate::outbound::check_ip`]):
+    /// a private range passes, loopback, link-local and metadata never do; a redirect leaving
+    /// the host is refused.
+    http_private: reqwest::Client,
     /// For organizations whose quota sets `allow_private_ips`.
     http_open: reqwest::Client,
     /// For the hosting process's own listener ([`ekiben_core::HostTarget`]): follows no redirect,
@@ -207,6 +211,10 @@ impl HttpClient {
             &self.http_open
         } else if org.host_target().is_some_and(|t| t.admits(url)) {
             &self.http_host
+        } else if url.host_str().is_some_and(|h| {
+            org.is_private_host_port_allowed(h, url.port_or_known_default().unwrap_or(0))
+        }) {
+            &self.http_private
         } else {
             &self.http
         }
@@ -396,12 +404,14 @@ impl HttpClient {
             .map(|n| n as usize)
             .unwrap_or(DEFAULT_MAX_RESPONSE_BYTES);
 
-        let http = build_http(timeout, true)?;
-        let http_open = build_http(timeout, false)?;
+        let http = build_http(timeout, Reach::Public)?;
+        let http_private = build_http(timeout, Reach::PrivateHost)?;
+        let http_open = build_http(timeout, Reach::Open)?;
         let http_host = build_host_http(timeout)?;
 
         Ok(Arc::new(Self {
             http,
+            http_private,
             http_open,
             http_host,
             url,
@@ -891,7 +901,20 @@ pub fn validate_resolved_url(url_str: &str, org: &OrgContext) -> Result<Url, Cor
     Ok(parsed)
 }
 
-fn build_http(timeout: Duration, guard: bool) -> Result<reqwest::Client, CoreError> {
+/// What a client built by [`build_http`] may connect to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reach {
+    /// Public addresses only, after DNS and on every redirect.
+    Public,
+    /// An organization's listed private host: a private range too, never loopback, link-local or
+    /// metadata; no redirect to another host.
+    PrivateHost,
+    /// Any address (`allow_private_ips`).
+    Open,
+}
+
+fn build_http(timeout: Duration, reach: Reach) -> Result<reqwest::Client, CoreError> {
+    let guard = reach != Reach::Open;
     // Cap hops, keep http(s), and on the guarded client refuse a literal private host on every hop
     // (a DNS name is checked by the resolver, which reqwest uses for each hop's connection).
     let redirect_policy = RedirectPolicy::custom(move |attempt| {
@@ -911,6 +934,19 @@ fn build_http(timeout: Duration, guard: bool) -> Result<reqwest::Client, CoreErr
             return attempt
                 .error("SSRF protection: redirect to a private/loopback host is refused");
         }
+        if reach == Reach::PrivateHost
+            && attempt
+                .previous()
+                .first()
+                .map(|u| (u.host_str(), u.port_or_known_default()))
+                != Some((
+                    attempt.url().host_str(),
+                    attempt.url().port_or_known_default(),
+                ))
+        {
+            return attempt
+                .error("SSRF protection: a private host's redirect to another host is refused");
+        }
         attempt.follow()
     });
     let connect_timeout = timeout
@@ -919,8 +955,19 @@ fn build_http(timeout: Duration, guard: bool) -> Result<reqwest::Client, CoreErr
     let mut builder = reqwest::Client::builder()
         .redirect(redirect_policy)
         .connect_timeout(connect_timeout);
-    if guard {
-        builder = builder.dns_resolver(Arc::new(PublicOnlyResolver));
+    match reach {
+        // The guarded clients reach the peer they checked: no proxy from the environment.
+        Reach::Public => {
+            builder = builder
+                .no_proxy()
+                .dns_resolver(Arc::new(PublicOnlyResolver))
+        }
+        Reach::PrivateHost => {
+            builder = builder
+                .no_proxy()
+                .dns_resolver(Arc::new(PrivateHostResolver));
+        }
+        Reach::Open => {}
     }
     if !timeout.is_zero() {
         builder = builder.timeout(timeout);
@@ -970,6 +1017,29 @@ impl reqwest::dns::Resolve for PublicOnlyResolver {
     }
 }
 
+/// Resolves through the system resolver for a listed private host: keeps public and private
+/// addresses, drops the ones no listing opens (loopback, link-local, metadata, multicast).
+struct PrivateHostResolver;
+
+impl reqwest::dns::Resolve for PrivateHostResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        Box::pin(async move {
+            let host = name.as_str().to_owned();
+            let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
+                .await?
+                .filter(|a| crate::outbound::check_ip(a.ip(), false, true).is_ok())
+                .collect();
+            if addrs.is_empty() {
+                return Err(format!(
+                    "SSRF protection: '{host}' resolves only to loopback, link-local or metadata addresses"
+                )
+                .into());
+            }
+            Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
+}
+
 /// reqwest's Display stops at "error sending request": append the causes (DNS refusal, TLS, refused).
 fn error_chain(err: &dyn std::error::Error) -> String {
     let mut out = err.to_string();
@@ -993,28 +1063,11 @@ pub fn is_private_or_loopback_host(host: &str) -> bool {
     false
 }
 
+/// Whether `ip` is anything but a public address, by the shared rule
+/// ([`crate::outbound::classify`]: private ranges, loopback, link-local, metadata, multicast, and
+/// the IPv6 forms that embed one, mapped, IPv4-compatible, NAT64, 6to4 and Teredo).
 pub fn is_private_or_loopback_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            let octs = v4.octets();
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || v4.is_broadcast()
-                || (octs[0] == 100 && (octs[1] & 0b1100_0000) == 64) // CGNAT 100.64.0.0/10
-                || (octs[0] == 169 && octs[1] == 254) // AWS/cloud metadata 169.254.169.254
-        }
-        IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                return is_private_or_loopback_ip(IpAddr::V4(v4));
-            }
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || (v6.segments()[0] & 0xfe00) == 0xfc00 // Unique local fc00::/7
-                || (v6.segments()[0] & 0xffc0) == 0xfe80 // Link-local fe80::/10
-        }
-    }
+    crate::outbound::classify(ip) != crate::outbound::AddrClass::Public
 }
 
 pub fn extract_status_code_from_err(err_msg: &str) -> Option<i64> {

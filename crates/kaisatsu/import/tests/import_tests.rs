@@ -54,6 +54,7 @@ fn default_opts() -> ApplyOptions {
             ("CLIENT_SECRET_GITEA".into(), "gitea-secret-123".into()),
             ("CLIENT_SECRET_CKAN".into(), "ckan-secret-123".into()),
         ]),
+        outbound_private_hosts: Vec::new(),
     }
 }
 
@@ -708,5 +709,53 @@ async fn a_restart_keeps_a_password_changed_after_the_user_was_created() {
         after.iter().filter(|c| c.credential_type == "otp").count(),
         1,
         "{after:?}"
+    );
+}
+
+/// A stored sign-out or identity-provider address the outbound guard refuses is kept by the
+/// import and named in its warnings (an import that failed on it would stop jc's start); a host
+/// listed in `outbound_private_hosts` passes without a warning.
+#[tokio::test]
+async fn a_refused_outbound_address_is_kept_with_a_warning_not_a_failed_import() {
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let internal = "http://portal.portal.svc.cluster.local:8080/api/v1/auth/backchannel-logout";
+    let mut doc = ri_fixture();
+    let clients = doc["clients"].as_array_mut().unwrap();
+    let edge = clients
+        .iter_mut()
+        .find(|c| c["clientId"] == "edge")
+        .expect("edge client");
+    edge["attributes"]["backchannel.logout.url"] = json!(internal);
+    let opts = default_opts();
+    let report = apply_realm_files(&store, &[("ri_dev.json".into(), doc.clone())], &opts)
+        .await
+        .expect("the import still applies");
+    let warned: Vec<_> = report
+        .warnings
+        .iter()
+        .filter(|w| w.contains("backchannel.logout.url"))
+        .collect();
+    assert_eq!(warned.len(), 1, "{:?}", report.warnings);
+    assert!(warned[0].contains("outbound_private_hosts"), "{warned:?}");
+    let kept = store
+        .get_client_by_client_id("dev", "edge")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.attributes["backchannel.logout.url"], internal);
+
+    let listed = ApplyOptions {
+        outbound_private_hosts: vec!["portal.portal.svc.cluster.local:8080".into()],
+        ..default_opts()
+    };
+    let warnings = check_realm_value(&doc, &listed).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+
+    // An identity provider's key address the guard refuses is named too.
+    doc["identityProviders"][0]["config"]["jwksUrl"] = json!("https://10.0.0.1/jwks");
+    let warnings = check_realm_value(&doc, &listed).unwrap();
+    assert!(
+        warnings.iter().any(|w| w.contains("jwksUrl")),
+        "{warnings:?}"
     );
 }

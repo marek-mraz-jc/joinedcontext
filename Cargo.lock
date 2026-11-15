@@ -7003,6 +7003,7 @@ dependencies = [
  "chrono",
  "kaisatsu-core",
  "kaisatsu-crypto",
+ "kaisatsu-oidc",
  "kaisatsu-store-memory",
  "regex",
  "schemars 0.8.22",

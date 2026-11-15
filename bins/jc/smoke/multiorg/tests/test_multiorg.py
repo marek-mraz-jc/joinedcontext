@@ -6,10 +6,12 @@
 import argparse
 import importlib.util
 import json
+import re
 import urllib.parse
 from pathlib import Path
 
 import pytest
+import yaml
 
 HERE = Path(__file__).resolve().parent
 
@@ -585,6 +587,384 @@ def test_a_live_run_deletes_its_personas_and_their_credentials_also_after_a_cras
     assert json.loads((a.out / "cleanup.json").read_text()) == {"personas": [], "deleted": 3}
     assert [r["result"] for r in s.rows if r["id"] in ("setup", "live.cleanup")] == ["fail", "pass"]
     assert all(line.split()[-1] in ("read", "sign-in", "cleanup") for line in (a.out / "requests.log").read_text().splitlines())
+
+
+def test_a_live_run_asks_a_taken_name_of_a_fixture_project_and_nothing_else(tmp_path, monkeypatch):
+    g = live_allowlist(tmp_path)
+    sent = []
+    monkeypatch.setattr(suite.R.Http, "call", lambda self, m, p, *a, **k: sent.append((m, p)) or (409, {}, b"{}"))
+    h = g.guard(suite.R.Http(B))
+    for body in ({"name": "a-new-project"}, {"name": "helsinki"}, b"not json", None):
+        with pytest.raises(suite.Refused):
+            h.call("POST", "/api/v1/projects", body=body)
+    h.call("POST", "/api/v1/projects", body={"name": "ctl-a-fixture", "organization": "ctl-b"})
+    assert sent == [("POST", "/api/v1/projects")]
+
+
+class LiveJc:
+    """A deployment's own Portal as the platform persona reads it: ctl-a with two projects, ctl-b
+    with one, the installation bbsk with none."""
+
+    ORGS = {"items": [{"metadata": {"name": "bbsk"}, "spec": {"installation": True}},
+                      {"metadata": {"name": "ctl-a"}, "spec": {}}, {"metadata": {"name": "ctl-b"}, "spec": {}}]}
+    PROJECTS = {"items": [{"name": "iso-a1", "organization": "ctl-a"}, {"name": "iso-a2", "organization": "ctl-a"},
+                          {"name": "iso-b", "organization": "ctl-b"}]}
+
+    def json(self, method, path):
+        if path == "/api/v1/projects/org/organizations":
+            return 200, self.ORGS
+        if path == "/api/v1/projects":
+            return 200, self.PROJECTS
+        if path.endswith("/endpoints"):
+            project = path.split("/")[4]
+            return 200, {"items": [{"metadata": {"name": f"{project}-air"},
+                                    "spec": {"slug": "abcd", "audience": "organization", "contextSpaceRef": f"{project}-space"}}]}
+        if path.endswith("/policies"):  # iso-b's space grants a read in a rule; iso-a1's only prohibits one
+            project = path.split("/")[4]
+            space = {"kind": "ContextSpace", "name": f"{project}-space"}
+            return 200, {"items": {
+                "iso-b": [{"spec": {"contextSpaceRef": space, "rules": [{"assignee": {"kind": "organization"},
+                                                                         "operations": ["retrieveOps"]}]}}],
+                "iso-a1": [{"spec": {"contextSpaceRef": space, "effect": "prohibition", "operations": ["retrieveOps"]}}],
+            }.get(project, [])}
+        return 200, {"items": []}
+
+
+def test_a_live_run_without_a_composed_bundle_reads_the_deployments_organizations(tmp_path):
+    # T-6968: the jc-dev smoke skipped multiorg (one installation's export); live it judges the
+    # Organizations the deployment holds, and a fixture with two projects gets a project member.
+    a = args(tmp_path)
+    d = tmp_path / "personas"
+    d.mkdir(mode=0o700)
+    creds = d / "p.json"
+    keys = ["platform", *(f"{o}-{k}" for o in ("bbsk", "ctl-a", "ctl-b") for k in ("admin", "member")), "ctl-a-project"]
+    creds.write_text(json.dumps({k: {"username": f"mo-{k}", "id": f"id-{k}", "password": "x"} for k in keys}))
+    creds.chmod(0o600)
+    a.live, a.personas, a.out = True, str(creds), tmp_path / "out"
+    s = suite.Suite(a)
+    s.session = lambda key, on=None: LiveJc()
+    exp = s.expectations_live()
+    assert sorted(exp) == ["bbsk", "ctl-a", "ctl-b"] and s.installation == "bbsk"
+    assert sorted(exp["ctl-a"]["projects"]) == ["iso-a1", "iso-a2"] and exp["bbsk"]["projects"] == {}
+    assert exp["ctl-b"]["projects"]["iso-b"]["Endpoint"] == ["iso-b-air"]
+    assert exp["ctl-b"]["projects"]["iso-b"]["closed"] == {"abcd": ("iso-b-air", "organization")}
+    # readable as the bundle counts it: a space with a Policy granting retrieveOps, no prohibition
+    assert exp["ctl-b"]["projects"]["iso-b"]["readable"] == ["abcd"] and exp["ctl-a"]["projects"]["iso-a1"]["readable"] == []
+    assert s.cross_project() == {"ctl-a": ("iso-a1", "iso-a2")}
+    s.personas_from(creds)  # the file names exactly the keys of these expectations
+    creds.write_text(json.dumps({k: {"username": k, "id": k, "password": "x"} for k in keys[:-1]}))
+    with pytest.raises(RuntimeError, match="ctl-a-project"):
+        s.personas_from(creds)
+
+    calls = []
+    a.export = str(tmp_path / "export")  # its manifest.json names no multiorg block
+    s = suite.Suite(a)
+    s.expectations_live = lambda: calls.append("live") or {}
+    s.checks = lambda: calls.append("checks")
+    s.cleanup = lambda: calls.append("cleanup")
+    s.run()
+    assert calls == ["live", "checks", "cleanup"] and not [r for r in s.rows if r["id"] == "setup"]
+
+
+class CrossProjectJc:
+    """ctl-a with projects iso-a1, iso-a2; mo-ctl-a-project is viewer of iso-a1. `leak` names what
+    the member wrongly gets of iso-a2."""
+
+    def __init__(self, leak=None):
+        self.leak = leak
+
+    def session(self, key, on=None):
+        jc = self
+
+        class S:
+            def json(self, method, path):
+                st, _, raw = self.call(method, path)
+                return st, json.loads(raw)
+
+            def call(self, method, path):
+                if key != "ctl-a-project":
+                    return 200, {}, b'{"items": [{"name": "iso-a1"}, {"name": "iso-a2"}]}'
+                if path == "/api/v1/projects":
+                    names = ["iso-a1", "iso-a2"] if jc.leak == "list" else ["iso-a1"]
+                    return 200, {}, json.dumps({"items": [{"name": n} for n in names]}).encode()
+                if "iso-a1" in path:
+                    return 200, {}, b"{}"
+                if jc.leak == "read" and path.endswith("/endpoints"):
+                    return 200, {}, b'{"items": [{"metadata": {"name": "iso-a2-air"}}]}'
+                if jc.leak == "named" and path.endswith("/drafts"):
+                    return 404, {}, b'{"detail": "not found; see iso-a2-air"}'
+                return 404, {}, b'{"detail": "not found"}'
+        return S()
+
+
+@pytest.mark.parametrize("leak", [None, "list", "read", "named"])
+def test_a_member_of_one_project_reads_nothing_of_another_project_of_its_organization(tmp_path, leak):
+    s = suite.Suite(args(tmp_path))
+    s.exp = {"ctl-a": {"projects": {"iso-a1": EMPTY, "iso-a2": EMPTY | {"Endpoint": ["iso-a2-air"]}}}}
+    s.session = CrossProjectJc(leak).session
+    s.cross_project_more = lambda *a: None  # its rows: test_the_member_of_p1_reads_no_p2_entity_...
+    s.check_cross_project()
+    failed = sorted(r["id"] for r in s.rows if r["result"] != "pass")
+    assert len(s.rows) == 2 + len(s.project_calls("iso-a2", s.exp["ctl-a"]["projects"]["iso-a2"]))
+    assert failed == {None: [], "list": ["crossproject.ctl-a-project.list"],
+                      "read": ["crossproject.ctl-a-project.iso-a2/endpoints"],
+                      "named": ["crossproject.ctl-a-project.iso-a2/drafts"]}[leak]
+
+
+@pytest.mark.parametrize("answer,ok", [
+    ((409, "project name 'iso-b' is not available (PF-67)"), True),
+    ((403, "the organization does not let you open a project"), True),
+    ((409, "project 'iso-b' already exists (PF-67)"), False),  # tells a foreign name from a free one apart from the own
+    ((409, "project name 'iso-b' is not available (PF-67); ctl-b holds iso-b2"), False),
+    ((202, "{}"), False),
+])
+def test_opening_a_project_named_like_another_organizations_is_not_available_and_names_nothing(tmp_path, answer, ok):
+    s = suite.Suite(args(tmp_path))
+    s.exp = {"ctl-a": {"projects": {"iso-a": EMPTY}}, "ctl-b": {"projects": {"iso-b": EMPTY, "iso-b2": EMPTY}}}
+    asked = []
+
+    class S:
+        def __init__(self, key):
+            self.key = key
+
+        def call(self, method, path, body=None):
+            asked.append((self.key, method, path, body["name"]))
+            own = (self.key == "ctl-a-admin") == (body["name"] == "iso-a")
+            st, text = (409, f"project '{body['name']}' already exists (PF-67)") if own else answer
+            return st, {}, text.encode()
+
+    s.session = lambda key, on=None: S(key)
+    s.check_names()
+    got = {r["id"]: (r["result"], r["target"]) for r in s.rows}
+    assert got["names.ctl-a-admin.own"] == ("pass", "ctl-a") and got["names.ctl-b-admin.own"] == ("pass", "ctl-b")
+    want = "pass" if ok else "fail"
+    assert got["names.ctl-a-admin.project-of-ctl-b"] == (want, "ctl-a->ctl-b")
+    assert all(m == "POST" and p == "/api/v1/projects" for _, m, p, _ in asked)
+
+
+SAME_PROJECTS = {"ctl-a": ["ctl-a-iso", "ctl-a-iso2"], "ctl-b": ["ctl-b-iso", "ctl-b-iso2"]}
+
+
+class SameNameJc:
+    """ctl-a and ctl-b, two fixture projects each, Endpoint iso of slug s-<project>. An isolated jc
+    binds an exchanged token to the Endpoint it names and grants it to its Organization only;
+    `leak` breaks one thing: "exchange" grants another Organization's Endpoint, "shared" keeps one
+    entity per URN for every Endpoint, "catalogue" lists another's Endpoint, "connector" answers
+    another project's value, "search" names another's project."""
+
+    PROJECTS = SAME_PROJECTS
+
+    def __init__(self, leak=None):
+        self.leak, self.store, self.sent = leak, {}, []
+
+    def owner(self, slug):
+        return next(o for o, ps in self.PROJECTS.items() for p in ps if slug == f"s-{p}")
+
+    def key_of(self, slug):
+        return "one" if self.leak == "shared" else slug
+
+    def install(self, s):
+        s.iso = {o: {p: f"s-{p}" for p in ps} for o, ps in self.PROJECTS.items()}
+        s.exp = {o: {"projects": {p: EMPTY for p in ps}} for o, ps in self.PROJECTS.items()}
+        s.state = Path("state")
+        jc = self
+
+        def exchange(key, slug):
+            org = key.rsplit("-", 1)[0]
+            ok = org == jc.owner(slug) or jc.leak == "exchange"
+            return (200, f"tok|{slug}") if ok else (403, None)
+
+        class Api:
+            def json(self, method, path, headers=None):
+                slug = path.split("/")[3]
+                if headers["Authorization"] != f"Bearer tok|{slug}":
+                    return 401, {"detail": "token is not bound to this resource"}
+                ent = jc.store.get(jc.key_of(slug))
+                if "?type=" in path:
+                    return 200, [ent] if ent else []
+                return (200, ent) if ent else (404, {})
+
+            def call(self, method, path, body=None, headers=None):
+                slug = path.split("/")[3]
+                jc.sent.append((method, path))
+                if headers["Authorization"] != f"Bearer tok|{slug}":
+                    return 401, {}, b""
+                if body[0]["id"] != suite.iso_urn(f"{jc.owner(slug)}.example") and jc.leak != "owner":
+                    return 422, {}, b'{"type": "https://joinedcontext.com/errors/urn-owner"}'
+                jc.store[jc.key_of(slug)] = body[0]
+                return 204, {}, b""
+
+        class Session:
+            def __init__(self, key):
+                self.org = key.rsplit("-", 1)[0]
+
+            def json(self, method, path, body=None):
+                if path == "/api/v1/catalogue/readable":
+                    mine = [f"s-{p}" for p in jc.PROJECTS[self.org]]
+                    if jc.leak == "catalogue":
+                        mine.append("s-ctl-b-iso" if self.org == "ctl-a" else "s-ctl-a-iso")
+                    return 200, {"datasets": [{"slug": x} for x in mine]}
+                if path == "/api/v1/connectors":
+                    return 201, {"id": f"c-{self.org}"}
+                if path.startswith("/api/v1/projects/org/organizations/"):
+                    return 200, {"spec": {"domain": f"{path.rsplit('/', 1)[1]}.example"}}
+                plural = path.rsplit("/", 1)[1]
+                return 200, {"items": [{"metadata": {"name": suite.ISO[plural]}}, {"metadata": {"name": "other"}}]}
+
+            def call(self, method, path):
+                jc.sent.append((method, path))
+                return 204, {}, b""
+
+        def tool(key, name, args, path="/api/v1/mcp", token=None):
+            org = key.rsplit("-", 1)[0]
+            if name == "jc_catalog_search":
+                found = jc.PROJECTS[org] + (["ctl-b-iso"] if jc.leak == "search" and org == "ctl-a" else [])
+                return 200, {"result": {"content": [{"type": "text", "text": json.dumps(found)}]}}
+            project = jc.PROJECTS[org][0] if jc.leak != "connector" else jc.PROJECTS[org][1]
+            ent = jc.store.get(jc.key_of(f"s-{project}")) or {}
+            return 200, {"result": {"content": [{"type": "text", "text": json.dumps(ent)}]}}
+
+        s.exchange = exchange
+        s.client = lambda org=None, kind="portal": Api()
+        s.session = lambda key, on=None: Session(key)
+        s.tool = tool
+        s.bearer = lambda key, scope="mcp:portal", client=None: "t"
+
+
+@pytest.mark.parametrize("leak,failing", [
+    (None, set()),
+    ("exchange", {"same.ctl-a-admin.ctl-a-iso.exchange-for.ctl-b-iso", "same.ctl-b-member.ctl-b-iso2.exchange-for.ctl-a-iso"}),
+    ("shared", {"same.ctl-a-admin.ctl-a-iso.read", "same.ctl-b-admin.ctl-b-iso.after-ctl-a-write"}),
+    ("catalogue", {"same.ctl-a-admin.catalogue", "same.ctl-b-member.catalogue"}),
+    ("connector", {"same.ctl-a-connector.read"}),
+    ("search", {"same.ctl-a-admin.mcp-search"}),
+    ("owner", {"same.ctl-a-admin.ctl-a-iso.foreign-id"}),
+])
+def test_same_names_in_two_organizations_read_and_write_only_their_own(tmp_path, leak, failing):
+    s = suite.Suite(args(tmp_path))
+    jc = SameNameJc(leak)
+    jc.install(s)
+    s.check_same_names()
+    failed = {r["id"] for r in s.rows if r["result"] == "fail"}
+    assert failing <= failed and (failed or not failing), sorted(failed)[:8]
+    if leak is None:
+        assert not failed and not [r for r in s.rows if r["result"] == "skip"]
+        # each project's value, and the rewrite of ctl-a-iso alone
+        assert {k: v["check"]["value"] for k, v in jc.store.items()} == {
+            "s-ctl-a-iso": "ctl-a-iso-changed", "s-ctl-a-iso2": "ctl-a-iso2", "s-ctl-b-iso": "ctl-b-iso",
+            "s-ctl-b-iso2": "ctl-b-iso2"}
+        # every row kind ran: lists of each kind, reads, foreign tokens, exchanges, connectors
+        ids = {r["id"].split(".")[-1] for r in s.rows}
+        assert {"spaces", "endpoints", "policies", "datamodels", "read", "write", "rewrite", "foreign-id",
+                "catalogue", "mcp-search"} <= ids
+        assert {v["id"] for v in jc.store.values()} == {"urn:ngsi-ld:IsoCheck:example_ctl-a:1",
+                                                       "urn:ngsi-ld:IsoCheck:example_ctl-b:1"}
+        assert [p for m, p in jc.sent if m == "DELETE"] == ["/api/v1/connectors/c-ctl-a", "/api/v1/connectors/c-ctl-b"]
+
+
+def test_a_live_run_reads_the_fixtures_and_their_refusals_and_writes_no_entity(tmp_path):
+    s = suite.Suite(args(tmp_path))
+    jc = SameNameJc()
+    jc.install(s)
+    s.live = True
+    s.check_same_names()
+    assert not [m for m, _ in jc.sent if m == "POST"] and not jc.store
+    assert not [r for r in s.rows if r["result"] != "pass"]
+    ids = {r["id"] for r in s.rows}
+    assert "same.ctl-a-member.ctl-a-iso.read" in ids and "same.ctl-a-member.ctl-a-iso.exchange-for.ctl-b-iso" in ids
+    assert not [i for i in ids if i.endswith((".write", ".rewrite", ".foreign-id")) or ".after-" in i]
+
+
+def test_without_fixtures_or_a_local_state_the_same_name_rows_are_named_skips(tmp_path):
+    s = suite.Suite(args(tmp_path))
+    s.iso = {"ctl-a": {"ctl-a-iso": "s"}}
+    s.check_same_names()
+    assert [(r["id"], r["result"]) for r in s.rows] == [("same.fixtures", "skip")]
+    (tmp_path / "local").mkdir()
+    s = suite.Suite(args(tmp_path / "local"))
+    SameNameJc().install(s)
+    s.state = None
+    s.check_same_names()
+    assert [r["id"] for r in s.rows if r["result"] == "skip"] == ["same.entities"]
+    assert not [r for r in s.rows if r["result"] == "fail"]
+
+
+def test_a_local_run_plans_two_fixture_projects_per_fixture_organization_with_the_same_names(tmp_path):
+    s = suite.Suite(args(tmp_path))
+    s.exp = {"ctl-a": {"projects": {}}, "ctl-b": {"projects": {}}, "hel": {"projects": {"helsinki": EMPTY}}}
+    s.plan_fixtures()
+    assert sorted(s.iso) == ["ctl-a", "ctl-b"] and sorted(s.iso["ctl-a"]) == ["ctl-a-iso", "ctl-a-iso2"]
+    slugs = [x for ps in s.iso.values() for x in ps.values()]
+    assert len(set(slugs)) == 4 and all(re.fullmatch(r"[a-z2-7]{32}", x) for x in slugs)
+    assert s.cross_project() == {"ctl-a": ("ctl-a-iso", "ctl-a-iso2"), "ctl-b": ("ctl-b-iso", "ctl-b-iso2")}
+    assert {"ctl-a-project", "ctl-b-project"} <= s.persona_keys()
+    assert s.exp["ctl-a"]["projects"]["ctl-a-iso"]["readable"] == [s.iso["ctl-a"]["ctl-a-iso"]]
+    a, conf_a = s.fixture_files("ctl-a", "ctl-a-iso", "s1", "uid-a")
+    b, _ = s.fixture_files("ctl-b", "ctl-b-iso", "s2", "uid-b")
+    assert dict(a)[".jc/layout"] == "2\n"  # without it the Portal loads none of the project
+    docs = {path: yaml.safe_load(text) for path, text in a if path.endswith(".yaml")}
+    names = sorted((d["kind"], d["metadata"]["name"]) for d in docs.values() if d.get("kind", "Project") != "Project")
+    assert names == sorted((d["kind"], d["metadata"]["name"]) for path, t in b if path.endswith(".yaml") and (d := yaml.safe_load(t)).get("kind", "Project") != "Project")
+    assert len(names) == 4
+    policy = docs["spaces/iso-space/policies/iso-access.yaml"]["spec"]
+    assert [(r["assignee"], r["operations"]) for r in policy["rules"]] == [
+        ({"kind": "organization"}, ["retrieveOps"]), ({"kind": "user", "id": "uid-a"}, ["upsertBatch", "queryBatch"])]
+    assert docs["spaces/iso-space/endpoints/iso.yaml"]["spec"]["slug"] == "s1"
+    assert yaml.safe_load(conf_a[0][1])["spec"]["organizationRef"] == "ctl-a"
+
+
+def test_a_live_run_finds_the_fixtures_by_their_endpoint_and_makes_none(tmp_path):
+    s = suite.Suite(args(tmp_path))
+    s.exp = {"ctl-a": {"projects": {"p": EMPTY | {"closed": {"x1": ("iso", "organization"), "x2": ("air", "public")}},
+                                    "q": EMPTY}},
+             "hel": {"projects": {"h": EMPTY | {"closed": {"x3": ("iso", "organization")}}}}}
+    assert s.fixtures_live() == {"ctl-a": {"p": "x1"}}
+    s.remove_fixtures()  # nothing made: nothing removed, no row
+    assert s.rows == []
+
+
+@pytest.mark.parametrize("leak", [None, "exchange", "mcp", "connector"])
+def test_the_member_of_p1_reads_no_p2_entity_and_mcp_and_a_p1_connector_answer_nothing_of_p2(tmp_path, leak):
+    s = suite.Suite(args(tmp_path))
+    s.state = Path("state")
+    s.exp = {"ctl-a": {"projects": {"p1": EMPTY | {"Endpoint": ["p1-door"], "closed": {"one": ("p1-door", "organization")}},
+                                    "p2": EMPTY | {"Endpoint": ["p2-door"], "closed": {"two": ("p2-door", "organization")}}}}}
+
+    def exchange(key, slug):
+        ok = key == "ctl-a-admin" or slug == "one" or leak == "exchange"
+        return (200, f"tok|{slug}") if ok else (403, None)
+
+    def entity(key, slug, token=None):
+        if not token:
+            st, token = exchange(key, slug)
+            if not token:
+                return f"exchange {st}", None, None
+        return ("200/200", "v", ["v"]) if token == f"tok|{slug}" else ("401/401", None, None)
+
+    def tool(key, name, args, path="/api/v1/mcp", token=None):
+        if (leak == "mcp" and path == "/api/v1/mcp") or (leak == "connector" and path.startswith("/c/")):
+            return 200, {"result": {"content": [{"type": "text", "text": '[{"name": "p2-door"}]'}]}}
+        return 200, {"result": {"isError": True, "structuredContent": {"status": 403}}}
+
+    class Http:
+        def json(self, method, path, body=None, headers=None):
+            return (201, {"id": "c1"}) if path == "/api/v1/connectors" else (200, {"result": {"tools": []}})
+
+        def call(self, method, path):
+            return 204, {}, b""
+
+    s.exchange, s.entity, s.tool = exchange, entity, tool
+    s.bearer = lambda key, scope="mcp:portal", client=None: "t"
+    s.client = lambda org=None, kind="portal": Http()
+    s.session = lambda key, on=None: Http()
+    s.cross_project_more("ctl-a", "p1", "p2")
+    failed = sorted(r["id"] for r in s.rows if r["result"] != "pass")
+    assert failed == {None: [], "exchange": ["crossproject.ctl-a-project.ngsi-ld.p2/p2-door"],
+                      "mcp": ["crossproject.ctl-a-project.mcp.jc_project_get", "crossproject.ctl-a-project.mcp.jc_resource_list"],
+                      "connector": ["crossproject.ctl-a-connector.jc_project_get",
+                                    "crossproject.ctl-a-connector.jc_resource_list"]}[leak]
+    assert {"crossproject.ctl-a-project.ngsi-ld.p2/p2-door.p1-token", "crossproject.ctl-a-project.mcp.tools-list"} <= \
+        {r["id"] for r in s.rows}
 
 
 def test_a_personas_file_others_can_read_is_refused(tmp_path):
