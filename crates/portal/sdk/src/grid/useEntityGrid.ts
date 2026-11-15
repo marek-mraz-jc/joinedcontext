@@ -1215,13 +1215,23 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
         });
         setLoading(false);
       })
-      .catch((err) => {
+      .catch(async (failure: unknown) => {
         if (cancelledRef.current || nonceRef.current !== nonce) return;
+        let err = failure;
         if (err instanceof SourceError && err.orderRefused && gridQuery.orderBy) {
-          // The same question without the order: the rows come back and the page is sorted here.
-          refusesOrder.add(source);
-          setOrderRefusals((n) => n + 1);
-          return;
+          // A BadRequestData may be about the q as well as the order: the same question without
+          // the order tells which. Answered, the order was refused: the rows come back without it
+          // and the page is sorted here. Refused again, the order stays and the q's refusal shows.
+          const again = await source
+            .query({ ...gridQuery, orderBy: undefined }, { offset: 0, limit: 1, count: false })
+            .then(() => null, (unordered: unknown) => unordered);
+          if (cancelledRef.current || nonceRef.current !== nonce) return;
+          if (again === null) {
+            refusesOrder.add(source);
+            setOrderRefusals((n) => n + 1);
+            return;
+          }
+          err = again;
         }
         const refused = refusalOf(err);
         if (refused) {
