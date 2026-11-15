@@ -97,6 +97,142 @@ async fn file_input_output_and_path_traversal_guard() {
     ));
 }
 
+async fn drain(
+    input: &mut Box<dyn ekiben_core::Input>,
+    sctx: &StreamContext,
+) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    loop {
+        match input.read_batch(sctx).await {
+            Ok((batch, ack)) => {
+                out.extend(
+                    batch
+                        .iter()
+                        .map(|p| String::from_utf8_lossy(&p.as_bytes_ref()).into_owned()),
+                );
+                ack.ack();
+            }
+            Err(ekiben_core::CoreError::EndOfInput) => return Ok(out),
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
+fn file_input(
+    reg: &Registry,
+    sctx: &StreamContext,
+    kind: &str,
+    conf: serde_json::Value,
+) -> Box<dyn ekiben_core::Input> {
+    let conf = ComponentConfig::from_json_value(&serde_json::json!({ kind: conf }), "stdin", None)
+        .unwrap();
+    reg.build_input(&conf, sctx).unwrap()
+}
+
+// Ported from Bento scanner_switch_test.go: the first case whose re_match_name matches the
+// file's path picks the child scanner, a case without a pattern matches any path, and a path no
+// case matches is an error with Bento's words.
+#[tokio::test]
+async fn switch_scanner_picks_the_child_by_file_name() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("a.csv"), "id,name\n1,x\n").unwrap();
+    std::fs::write(tmp.path().join("b.json"), r#"{"id":2}{"id":3}"#).unwrap();
+    std::fs::write(tmp.path().join("c.txt"), "l1\nl2").unwrap();
+    let (reg, sctx) = make_stream_ctx(Some(tmp.path().to_path_buf()));
+    let switch = serde_json::json!([
+        {"re_match_name": "\\.csv$", "scanner": {"csv": {}}},
+        {"re_match_name": "\\.json$", "scanner": {"json_documents": {}}},
+    ]);
+    let mut input = file_input(
+        &reg,
+        &sctx,
+        "file",
+        serde_json::json!({"paths": ["a.csv", "b.json"], "scanner": {"switch": switch}}),
+    );
+    assert_eq!(
+        drain(&mut input, &sctx).await.unwrap(),
+        [r#"{"id":"1","name":"x"}"#, r#"{"id":2}"#, r#"{"id":3}"#]
+    );
+    let mut input = file_input(
+        &reg,
+        &sctx,
+        "file",
+        serde_json::json!({"paths": ["c.txt"], "scanner": {"switch": switch}}),
+    );
+    assert_eq!(
+        drain(&mut input, &sctx).await.unwrap_err(),
+        "source details did not match against any scanners"
+    );
+    let mut with_default = switch.as_array().unwrap().clone();
+    with_default.push(serde_json::json!({"scanner": {"to_the_end": {}}}));
+    let mut input = file_input(
+        &reg,
+        &sctx,
+        "file",
+        serde_json::json!({"paths": ["c.txt"], "scanner": {"switch": with_default}}),
+    );
+    assert_eq!(drain(&mut input, &sctx).await.unwrap(), ["l1\nl2"]);
+
+    let bad = ComponentConfig::from_json_value(
+        &serde_json::json!({"file": {"paths": ["c.txt"], "scanner": {"switch": [{"re_match_name": "(", "scanner": {"lines": {}}}]}}}),
+        "stdin",
+        None,
+    )
+    .unwrap();
+    let err = reg
+        .build_input(&bad, &sctx)
+        .err()
+        .expect("refused")
+        .to_string();
+    assert!(err.contains("invalid re_match_name"), "{err}");
+}
+
+#[tokio::test]
+async fn csv_input_checks_headers_and_deletes_a_file_after_its_last_batch() {
+    let tmp = TempDir::new().unwrap();
+    let rows: String = (0..5).map(|i| format!("{i},v{i}\n")).collect();
+    std::fs::write(tmp.path().join("in.csv"), format!("id,v\n{rows}")).unwrap();
+    let (reg, sctx) = make_stream_ctx(Some(tmp.path().to_path_buf()));
+
+    let mut wrong = file_input(
+        &reg,
+        &sctx,
+        "csv",
+        serde_json::json!({"paths": ["in.csv"], "expected_headers": ["id", "value"]}),
+    );
+    assert_eq!(
+        drain(&mut wrong, &sctx).await.unwrap_err(),
+        "expected_headers don't match file contents"
+    );
+
+    let mut input = file_input(
+        &reg,
+        &sctx,
+        "csv",
+        serde_json::json!({
+            "paths": ["in.csv"], "expected_headers": ["id", "v"], "expected_number_of_fields": 2,
+            "batch_count": 2, "delete_on_finish": true
+        }),
+    );
+    let mut sizes = Vec::new();
+    loop {
+        match input.read_batch(&sctx).await {
+            Ok((batch, ack)) => {
+                sizes.push(batch.len());
+                assert!(
+                    tmp.path().join("in.csv").exists(),
+                    "deleted before its last batch was acked"
+                );
+                ack.ack();
+            }
+            Err(ekiben_core::CoreError::EndOfInput) => break,
+            Err(e) => panic!("{e}"),
+        }
+    }
+    assert_eq!(sizes, [2, 2, 1]);
+    assert!(!tmp.path().join("in.csv").exists());
+}
+
 #[tokio::test]
 async fn generate_broker_switch_fallback_reject_errored_outputs() {
     let (reg, sctx) = make_stream_ctx(None);
