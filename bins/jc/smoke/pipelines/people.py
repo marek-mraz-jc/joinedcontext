@@ -99,7 +99,7 @@ class Admin:
         secret = (state / "portal-admin-client-secret").read_text().strip()
         form = urllib.parse.urlencode({"grant_type": "client_credentials", "client_id": ADMIN_CLIENT,
                                        "client_secret": secret}).encode()
-        st, _, raw = self.http.call("POST", f"/id/realms/{self.realm}/protocol/openid-connect/token",
+        st, _, raw = self.http.call("POST", f"/login/realms/{self.realm}/protocol/openid-connect/token",
                                     headers={"Content-Type": "application/x-www-form-urlencoded"}, body=form)
         doc = as_json(raw) or {}
         if st != 200 or "access_token" not in doc:
@@ -107,7 +107,7 @@ class Admin:
         self.admin = doc["access_token"]
 
     def _api(self, method, path, body=None):
-        st, _, raw = self.http.call(method, f"/id/admin/realms/{self.realm}{path}", self.admin, body=body)
+        st, _, raw = self.http.call(method, f"/login/admin/realms/{self.realm}{path}", self.admin, body=body)
         return st, as_json(raw)
 
     def sign_in(self) -> None:

@@ -24,7 +24,14 @@ enum Placement {
     Host,
 }
 
-const SLUGS: [&str; 6] = ["id", "git", "streams", "opendata", "dashboards", "broker"];
+const SLUGS: [&str; 6] = [
+    "login",
+    "git",
+    "streams",
+    "opendata",
+    "dashboards",
+    "broker",
+];
 
 struct Jc {
     child: Child,
@@ -71,7 +78,7 @@ impl Jc {
         std::fs::read_to_string(path).unwrap().trim().to_owned()
     }
 
-    /// The public URL of `path` as slug mode spells it (`/id/...` is kaisatsu, anything else the
+    /// The public URL of `path` as slug mode spells it (`/login/...` is kaisatsu, anything else the
     /// Portal): in host mode each module's slug becomes its own host.
     fn url(&self, path: &str) -> String {
         if self.placement == Placement::Host {
@@ -297,7 +304,7 @@ async fn kaisatsu_admin_token(jc: &Jc) -> String {
     let client = Client::new();
     let resp = client
         .post(jc.url(&format!(
-            "/id/realms/{}/protocol/openid-connect/token",
+            "/login/realms/{}/protocol/openid-connect/token",
             jc.realm
         )))
         .form(&[
@@ -319,7 +326,7 @@ async fn kaisatsu_admin_token(jc: &Jc) -> String {
 
 async fn kaisatsu_admin_write(jc: &Jc, token: &str, path: &str, body: &Value) -> StatusCode {
     Client::new()
-        .put(jc.url(&format!("/id/admin/realms/{}{path}", jc.realm)))
+        .put(jc.url(&format!("/login/admin/realms/{}{path}", jc.realm)))
         .bearer_auth(token)
         .json(body)
         .send()
@@ -330,7 +337,7 @@ async fn kaisatsu_admin_write(jc: &Jc, token: &str, path: &str, body: &Value) ->
 
 async fn kaisatsu_admin(jc: &Jc, token: &str, path: &str) -> (StatusCode, Value) {
     let resp = Client::new()
-        .get(jc.url(&format!("/id/admin/realms/{}{path}", jc.realm)))
+        .get(jc.url(&format!("/login/admin/realms/{}{path}", jc.realm)))
         .bearer_auth(token)
         .send()
         .await
@@ -1118,7 +1125,7 @@ async fn the_portal_runs_on_its_sibling_modules() {
 }
 
 /// Host mode: every module on its own host name, the Portal on `portal.localhost`. The Portal
-/// signs a person in through kaisatsu on `id.localhost`, keeps its cookies on its own host, writes
+/// signs a person in through kaisatsu on `login.localhost`, keeps its cookies on its own host, writes
 /// people to kaisatsu and proposals to shako, and a module's slug on the Portal's host reaches the
 /// Portal, not the module. The deployment names its realm `dev`: jc makes it on first start (its
 /// first-start files, the first admin), and no realm `jc`.
@@ -1131,7 +1138,7 @@ async fn the_portal_runs_on_its_own_host_in_host_mode() {
         "jc\n"
     );
     let dormant = Client::new()
-        .get(jc.url("/id/realms/jc/.well-known/openid-configuration"))
+        .get(jc.url("/login/realms/jc/.well-known/openid-configuration"))
         .send()
         .await
         .unwrap()
@@ -1144,7 +1151,7 @@ async fn the_portal_runs_on_its_own_host_in_host_mode() {
     let who = me(&jc, &mut browser).await;
     assert_eq!(who["username"], "admin", "{who}");
     let portal_cookies = browser.jar.names_for(&jc.url("/"));
-    let id_cookies = browser.jar.names_for(&jc.url("/id/"));
+    let id_cookies = browser.jar.names_for(&jc.url("/login/"));
     assert!(
         portal_cookies.iter().any(|n| n == "__Host-jc_session"),
         "{portal_cookies:?}"
@@ -1226,7 +1233,7 @@ async fn the_portal_runs_on_its_own_host_in_host_mode() {
     // A module's slug on the Portal's host is the Portal's path, not the module.
     let on_portal = client
         .get(format!(
-            "{}/id/realms/{}/.well-known/openid-configuration",
+            "{}/login/realms/{}/.well-known/openid-configuration",
             jc.base, jc.realm
         ))
         .send()

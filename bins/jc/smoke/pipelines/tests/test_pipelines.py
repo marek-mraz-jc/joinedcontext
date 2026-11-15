@@ -168,7 +168,7 @@ def test_the_admin_signs_in_at_the_realm_the_state_names(tmp_path, monkeypatch):
     (tmp_path / "realm-name.txt").write_text("smartcity")
     with pytest.raises(RuntimeError, match="401"):
         people.Admin("http://127.0.0.1:9", tmp_path)
-    assert seen == ["/id/realms/smartcity/protocol/openid-connect/token"]
+    assert seen == ["/login/realms/smartcity/protocol/openid-connect/token"]
 
 
 def test_a_schedule_prods_portal_refuses_too_is_a_named_same_on_prod_skip(monkeypatch):

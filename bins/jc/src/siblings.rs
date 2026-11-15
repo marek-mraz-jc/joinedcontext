@@ -573,7 +573,11 @@ pub(crate) mod tests {
         let reached: BTreeSet<&str> = v["JC_PORTAL_REACH_HOSTS"].split(',').collect();
         assert_eq!(
             reached,
-            BTreeSet::from(["api.smartcity.test", "id.smartcity.test", "smartcity.test"])
+            BTreeSet::from([
+                "api.smartcity.test",
+                "login.smartcity.test",
+                "smartcity.test"
+            ])
         );
         for (key, module) in [
             ("JC_KEYCLOAK_ADMIN_URL", Module::Kaisatsu),
@@ -588,10 +592,13 @@ pub(crate) mod tests {
         }
         assert_eq!(v["JC_PORTAL_GRAFANA_URL"], "http://smartcity.test/grafana");
         assert_eq!(v["JC_PORTAL_GATEWAY_URL"], "http://api.smartcity.test");
-        assert_eq!(v["JC_KEYCLOAK_ADMIN_URL"], "http://id.smartcity.test");
+        assert_eq!(v["JC_KEYCLOAK_ADMIN_URL"], "http://login.smartcity.test");
         // The issuer stays the public name: a token names it, and kaisatsu names it the same
         // for a request on the listener under its host.
-        assert_eq!(v["JC_OIDC_ISSUER"], "https://id.smartcity.test/realms/jc");
+        assert_eq!(
+            v["JC_OIDC_ISSUER"],
+            "https://login.smartcity.test/realms/jc"
+        );
         // An operator's own sibling URL keeps its address and is not reached.
         let own = |k: &str| (k == "JC_PORTAL_GATEWAY_URL").then(|| "http://g.svc:8080".to_owned());
         let v = portal_vars(&siblings, &setup, own);
@@ -608,8 +615,8 @@ pub(crate) mod tests {
     fn slug_mode_calls_siblings_on_loopback_and_host_mounts_at_their_host() {
         let (siblings, _, _d) = fixture("https");
         let id = siblings.get(Module::Kaisatsu).unwrap();
-        assert_eq!(id.public, "https://city.example/id");
-        assert_eq!(id.internal, "http://127.0.0.1:8443/id");
+        assert_eq!(id.public, "https://city.example/login");
+        assert_eq!(id.internal, "http://127.0.0.1:8443/login");
         assert_eq!(siblings.listener, "127.0.0.1:8443".parse().unwrap());
         assert_eq!(
             siblings.portal_base().as_deref(),
@@ -768,9 +775,9 @@ pub(crate) mod tests {
     fn the_portal_signs_in_at_the_configured_realm() {
         let (siblings, mut setup, _d) = fixture("https");
         let issuer = |setup: &Setup| portal_vars(&siblings, setup, none)["JC_OIDC_ISSUER"].clone();
-        assert_eq!(issuer(&setup), "https://city.example/id/realms/jc");
+        assert_eq!(issuer(&setup), "https://city.example/login/realms/jc");
         setup.realm = setup::Realm::parse("dev").unwrap();
-        assert_eq!(issuer(&setup), "https://city.example/id/realms/dev");
+        assert_eq!(issuer(&setup), "https://city.example/login/realms/dev");
     }
 
     /// Asserts the keys of one row come from the sibling and an explicit URL keeps the whole row
@@ -840,7 +847,7 @@ pub(crate) mod tests {
             ],
             "https",
         );
-        assert_eq!(v["JC_OIDC_ISSUER"], "https://city.example/id/realms/jc");
+        assert_eq!(v["JC_OIDC_ISSUER"], "https://city.example/login/realms/jc");
         assert_eq!(v["JC_KEYCLOAK_ADMIN_URL"], "http://127.0.0.1:8443");
         assert_eq!(v["JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID"], "portal-reconciler");
         assert_eq!(v["JC_OIDC_CLIENT_ID"], "portal-api");
@@ -1037,7 +1044,7 @@ pub(crate) mod tests {
 
     #[test]
     fn origin_drops_the_path() {
-        assert_eq!(origin("http://127.0.0.1:1/id"), "http://127.0.0.1:1");
+        assert_eq!(origin("http://127.0.0.1:1/login"), "http://127.0.0.1:1");
         assert_eq!(origin("https://a.example"), "https://a.example");
         assert_eq!(origin("nope"), "nope");
     }

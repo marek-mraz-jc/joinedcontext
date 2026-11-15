@@ -95,8 +95,8 @@ def jc_like(device=False, cimd=False, public=None):
         base = f"http://127.0.0.1:{h.server.server_port}"
         u = urllib.parse.urlparse(h.path)
         site = public or base
-        if u.path == f"/id/realms/{REALM}/.well-known/openid-configuration":
-            return 200, "application/json", json.dumps(kaisatsu_doc(f"{site}/id/realms/{REALM}", device)).encode()
+        if u.path == f"/login/realms/{REALM}/.well-known/openid-configuration":
+            return 200, "application/json", json.dumps(kaisatsu_doc(f"{site}/login/realms/{REALM}", device)).encode()
         if u.path == "/.well-known/oauth-authorization-server":
             meta = {k: (v.replace(PROD["gatewayIssuer"], base) if isinstance(v, str) else v)
                     for k, v in PROD["gatewayMetadata"].items()}
@@ -149,7 +149,7 @@ def test_a_used_prod_feature_jc_lacks_fails_and_an_unused_one_passes():
     assert "admin-cli" not in used.get("grant:password", [])  # Keycloak's own client counts for nothing
     assert "grant:urn:ietf:params:oauth:grant-type:uma-ticket" not in used  # only admin-permissions has it
     rows = {r[0]: r for r in suite.compare_discovery(PROD["openidConfiguration"],
-                                                      kaisatsu_doc("http://l/id/realms/smartcity"), used)}
+                                                      kaisatsu_doc("http://l/login/realms/smartcity"), used)}
     assert rows["endpoint.device_authorization_endpoint"][3] is False
     assert rows["grant.urn:ietf:params:oauth:grant-type:device_code"][3] is False
     assert rows["grant.password"][3] is True and "T-5611" in rows["grant.password"][2]
@@ -159,7 +159,7 @@ def test_a_used_prod_feature_jc_lacks_fails_and_an_unused_one_passes():
     assert rows["client_auth.private_key_jwt"][3] is True and rows["client_auth.client_secret_basic"][3] is True
     assert rows["id_token_alg.RS256"][3] is True
     fixed = {r[0]: r for r in suite.compare_discovery(PROD["openidConfiguration"],
-                                                       kaisatsu_doc("http://l/id/realms/smartcity", device=True), used)}
+                                                       kaisatsu_doc("http://l/login/realms/smartcity", device=True), used)}
     assert fixed["endpoint.device_authorization_endpoint"][3] is True
 
 
@@ -208,8 +208,8 @@ def test_the_public_origin_is_the_issuers_only_when_it_differs_from_the_base():
         def answer(h):
             return 200, "application/json", json.dumps({"issuer": issuer(h)}).encode()
         return answer
-    for issuer, want in ((lambda h: "https://jc.smoke.invalid/id/realms/dev", "https://jc.smoke.invalid"),
-                         (lambda h: f"http://127.0.0.1:{h.server.server_port}/id/realms/dev", None),
+    for issuer, want in ((lambda h: "https://jc.smoke.invalid/login/realms/dev", "https://jc.smoke.invalid"),
+                         (lambda h: f"http://127.0.0.1:{h.server.server_port}/login/realms/dev", None),
                          (lambda h: "javascript:alert(1)", None)):
         srv = stub(doc(issuer))
         try:

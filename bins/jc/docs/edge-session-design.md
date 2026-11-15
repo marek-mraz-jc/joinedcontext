@@ -115,7 +115,7 @@ which dev and prod use.
 ### 2.4 jc today
 
 - **Edge config.** `components/jc` on `jc-ship` has the slug-mode route `jc` on `jc.{domain}` and
-  `jc-identity` (`/id/*` through the headless Service) (`components/jc/apisix-routes.yaml`). Its
+  `jc-identity` (`/login/*` through the headless Service) (`components/jc/apisix-routes.yaml`). Its
   plugin config has no `openid-connect`, clears `X-Access-Token`, and its `uri-blocker` refuses
   `^/streams`, `^/broker`, `^/git` with 404 (`components/jc/apisix-plugins.yaml:54-59`).
 - **Realm (S2, built).** `[identity] realm` decides the deployment's realm (jc-realm-name
@@ -144,7 +144,7 @@ which dev and prod use.
   environments. The critic noted (point 11) that c2's rotation race also hits (a). Section 6.1
   measures it: APISIX renews once per request, so parallel requests after expiry race on (a) too.
   S3b fixes that race in kaisatsu, so (a) stays the choice.
-- **(c3) Slug mode with discovery under `/id`.** Rejected: it changes the issuer and shares one
+- **(c3) Slug mode with discovery under `/login` (`/id` before T-7006).** Rejected: it changes the issuer and shares one
   origin for every module.
 
 ## 4. Recommendation
@@ -281,7 +281,7 @@ passes on 1858742e (`cargo test -p jc --locked --test gateway_endpoints a_deploy
 - `portal-api` keeps the imported redirect (`:1059`, "jc overwrote the imported portal-api");
 - `dev` has no `admin` user (`:1061-1065`);
 - after a restart on a fresh in-memory store without the twin files, which is a first start,
-  `/id/realms/jc/.well-known/openid-configuration` is 404 and `realm-owner-jc` does not exist
+  `/login/realms/jc/.well-known/openid-configuration` is 404 and `realm-owner-jc` does not exist
   (`:1309-1326`).
 
 The harness of section 6 repeats it with `--role kaisatsu`: `realms/jc` is 404 and the state

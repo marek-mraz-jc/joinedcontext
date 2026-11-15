@@ -228,7 +228,7 @@ pub async fn sign_in_at(
     assert_eq!(page.status, StatusCode::OK, "{login_url}: {}", page.text);
     assert!(
         login_url.starts_with(&url(&format!(
-            "/id/realms/{realm}/login-actions/authenticate"
+            "/login/realms/{realm}/login-actions/authenticate"
         ))),
         "the Portal sends the browser to kaisatsu: {login_url}"
     );

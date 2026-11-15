@@ -518,7 +518,7 @@ def test_live_writes_outside_the_fixtures_are_refused_before_anything_is_sent(tm
     h = g.guard(suite.R.Http(B))
     refused = [("DELETE", "/api/v1/projects/helsinki/endpoints/air"), ("PUT", "/api/v1/projects/helsinki/endpoints/air"),
                ("PATCH", "/api/v1/projects/zilina/spaces/s"), ("POST", "/api/v1/connectors"),
-               ("POST", "/id/admin/realms/dev/users"), ("DELETE", "/id/admin/realms/dev/users/someone-else"),
+               ("POST", "/login/admin/realms/dev/users"), ("DELETE", "/login/admin/realms/dev/users/someone-else"),
                ("POST", "/api/v1/projects/org/organizations?dryRun=All")]
     for method, path in refused:
         with pytest.raises(suite.Refused):
@@ -530,13 +530,13 @@ def test_live_writes_outside_the_fixtures_are_refused_before_anything_is_sent(tm
         h.call("GET", "https://evil.example/api/v1/projects")
     assert sent == []
     allowed = [("GET", "/api/v1/projects/helsinki/endpoints", None),
-               ("POST", "/id/realms/dev/protocol/openid-connect/token", None),
-               ("POST", "/id/realms/dev/login-actions/authenticate?session_code=x", None),
+               ("POST", "/login/realms/dev/protocol/openid-connect/token", None),
+               ("POST", "/login/realms/dev/login-actions/authenticate?session_code=x", None),
                ("POST", "/api/endpoint/abcd/ngsi-ld/v1/entityOperations/query", {}),
                ("POST", "/api/v1/mcp", {"method": "tools/list"}),
                ("POST", "/api/v1/mcp", {"method": "tools/call", "params": {"name": "jc_resource_list"}}),
                ("DELETE", "/api/v1/projects/ctl-a-fixture/endpoints/e", None),
-               ("DELETE", "/id/admin/realms/dev/users/u-1", None)]
+               ("DELETE", "/login/admin/realms/dev/users/u-1", None)]
     for method, path, body in allowed:
         h.call(method, path, body=body)
     assert len(sent) == len(allowed)
