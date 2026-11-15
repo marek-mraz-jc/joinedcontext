@@ -116,6 +116,8 @@ fn package(name: &str, org: &str) -> Value {
     })
 }
 
+/// A write into the catalogue of the open data host `host`: on its Organization's working host
+/// at `/data`, since the open data host answers reads only (T-6991 §1).
 async fn publish(
     addr: SocketAddr,
     host: &str,
@@ -123,12 +125,60 @@ async fn publish(
     body: Value,
     action: &str,
 ) -> (StatusCode, String) {
+    let working = host.replacen("opendata.", "portal.", 1);
     let call = Call {
         token: Some(token),
         body: Some(body),
-        ..Call::on(host)
+        ..Call::on(&working)
     };
-    send(addr, call, &format!("/api/3/action/{action}")).await
+    send(addr, call, &format!("/data/api/3/action/{action}")).await
+}
+
+#[tokio::test]
+async fn the_open_data_host_takes_no_write_and_no_credential() {
+    let jc = start().await;
+    let addr = jc.running.addr;
+    let call = Call {
+        token: Some(TOKEN_ALPHA),
+        body: Some(package("alpha-air", "alpha")),
+        ..Call::on("opendata.alpha.test")
+    };
+    let (status, body) = send(addr, call, "/api/3/action/package_create").await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{body}");
+    // The publisher's token is removed before the dataroom reads it: a read of a private
+    // listing is the anonymous one.
+    let call = Call {
+        token: Some(TOKEN_ALPHA),
+        ..Call::on("opendata.alpha.test")
+    };
+    let (status, body) = send(addr, call, "/api/3/action/organization_show?id=alpha").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let resp = reqwest::Client::new()
+        .get(format!("http://{addr}/dataset"))
+        .header("host", "opendata.alpha.test")
+        .header("accept-language", "en")
+        .header("cookie", "ckan_lang=sk")
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.headers().get("set-cookie").is_none());
+    // A page of the working host's `/data` moves to the open data host.
+    let resp = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap()
+        .get(format!("http://{addr}/data/dataset?q=air"))
+        .header("host", "evil.example")
+        .header("x-forwarded-host", "portal.alpha.test")
+        .header("accept", "text/html")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(
+        resp.headers()["location"],
+        "http://opendata.alpha.test/dataset?q=air"
+    );
 }
 
 #[tokio::test]

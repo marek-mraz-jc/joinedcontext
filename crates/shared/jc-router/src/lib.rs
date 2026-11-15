@@ -23,7 +23,7 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 mod hosts;
-pub use hosts::{HostRow, HostTable, Organization};
+pub use hosts::{HOST_ROLE_HEADER, HostRole, HostRow, HostTable, Organization};
 
 /// The client's address as the router resolved it: the TCP peer, or, when the peer is a trusted
 /// proxy, the right-most `X-Forwarded-For` hop that is not itself a trusted proxy. Modules key
@@ -479,6 +479,37 @@ impl JcRouter {
             return (StatusCode::BAD_REQUEST, "malformed Host header").into_response();
         }
         let host_only = hosts::without_port(&host_with_port);
+        // The role is the table's word alone: a client's own header reaches no module.
+        req.headers_mut().remove(HOST_ROLE_HEADER);
+        let role = self
+            .hosts
+            .as_ref()
+            .and_then(|t| t.role_of(&host_with_port, host_only));
+        if let Some(role) = role {
+            if let Some(allow) = role.allowed_methods()
+                && !matches!(
+                    *req.method(),
+                    axum::http::Method::GET
+                        | axum::http::Method::HEAD
+                        | axum::http::Method::OPTIONS
+                )
+            {
+                return (
+                    StatusCode::METHOD_NOT_ALLOWED,
+                    [(axum::http::header::ALLOW, allow)],
+                    "this host answers reads only",
+                )
+                    .into_response();
+            }
+            for name in role.removed_request_headers() {
+                req.headers_mut().remove(*name);
+            }
+            req.headers_mut().insert(
+                HOST_ROLE_HEADER,
+                axum::http::HeaderValue::from_static(role.as_str()),
+            );
+        }
+        let public_path = req.uri().path().to_owned();
         let (path, organization, via) = match &self.hosts {
             None => (req.uri().path().to_owned(), None, hosts::Via::Plain),
             Some(table) => {
@@ -513,7 +544,25 @@ impl JcRouter {
             }
         };
 
-        let Some(entry) = self.find(&host_with_port, host_only, &path) else {
+        let entry = self.find(&host_with_port, host_only, &path);
+        // A page asked on another group's host moves to the configured host that serves it:
+        // the Location names a host of the table, never the request's (T-6991 §7).
+        if let Some(table) = &self.hosts
+            && is_page(&req)
+            && let Some((to, rest)) =
+                table.page_move(&host_with_port, host_only, &public_path, entry.is_some())
+        {
+            let location = match req.uri().query() {
+                Some(q) => format!("{scheme}://{to}{rest}?{q}"),
+                None => format!("{scheme}://{to}{rest}"),
+            };
+            return (
+                StatusCode::PERMANENT_REDIRECT,
+                [(axum::http::header::LOCATION, location)],
+            )
+                .into_response();
+        }
+        let Some(entry) = entry else {
             return (StatusCode::NOT_FOUND, "unmounted path").into_response();
         };
 
@@ -570,12 +619,16 @@ impl JcRouter {
             }
         }
 
-        entry
+        let mut resp = entry
             .router
             .clone()
             .oneshot(req)
             .await
-            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+        if role.is_some_and(HostRole::drops_set_cookie) {
+            resp.headers_mut().remove(axum::http::header::SET_COOKIE);
+        }
+        resp
     }
 
     pub fn into_axum_router(self) -> Router {
