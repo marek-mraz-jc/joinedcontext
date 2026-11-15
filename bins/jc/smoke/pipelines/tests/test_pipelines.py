@@ -360,8 +360,15 @@ def test_expectations_from_prods_run_log(tmp_path):
     short = H()
     short.count = "1000"
     assert rows("helsinki", "vision-counts", prod, short)["held"]["result"] == "fail"
-    # Without prod's run the held row still wants the stream.
-    assert rows("praha", "golemio-garages", prod)["held"]["result"] == "fail"
+    # Without prod's run the held row reads what jc's own run left (PL-78 deletes the stream
+    # after it, T-7018): one entity passes, none fails.
+    alone = rows("praha", "golemio-garages", prod)["held"]
+    assert alone["result"] == "pass" and "no prod run log" in alone["expected"], alone
+    empty = H()
+    empty.count = "0"
+    assert rows("praha", "golemio-garages", prod, empty)["held"]["result"] == "fail"
+    assert rows("helsinki", "vision-counts", None, empty)["held"]["result"] == "fail"
+    assert rows("helsinki", "vision-counts", None)["held"]["result"] == "pass"
 
 
 def stamp(t):
