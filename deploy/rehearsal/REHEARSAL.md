@@ -91,10 +91,15 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
   validate` refuses for a write it served gets an internal `<name>-write` Endpoint beside it
   (audience organization, the Policies it served), its project's Pipelines aim at the door, and it
   keeps only the Policies that write nothing (report: `writeDoors`); `jcctl validate` then judges
-  the result again. No entity, Policy or Pipeline is removed. `rehearsal.py doors --export <export>
+  the result again. The refs name each Policy under the project's own domain (its `spec.domain`,
+  else its Organization's), the only domains the gateway binds a ref under: `{orgDomain}` is the
+  installation's, another Organization's in a multi-org export. A door that would take a public
+  read off its open-data Endpoint (a public Policy that also writes; `publicReadsLost`) refuses the
+  import. No entity, Policy or Pipeline is removed. `rehearsal.py doors --export <export>
   --out <empty dir> --jcctl-bin <jcctl>` writes the same move for a live environment: under
   `<owner>/<repo>/` only the files it adds or changes (one Portal Change per repository) and
-  `doors.json` with the EP-187 findings before and after.
+  `doors.json` with the EP-187 findings before and after (exit 1 while any is left or a door lost
+  a public read).
 - `realms` leaves out only what a live Keycloak export carries that kaisatsu refuses and nothing
   uses (unknown built-in mappers, unbound built-in flows, client-flow alternatives no client uses),
   each named in `state/realm-<name>-left-out.json`; anything else kaisatsu refuses stops the start.
