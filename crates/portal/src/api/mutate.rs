@@ -5420,9 +5420,7 @@ mod tests {
         state
             .mirror
             .upsert(manifest("Endpoint", "air-open", internal.clone()));
-        assert!(open_data_writes(&state.mirror, "ovzdusie")
-            .get("air-open")
-            .is_none());
+        assert!(!open_data_writes(&state.mirror, "ovzdusie").contains_key("air-open"));
         let errors = refusal(check(
             Operation::Update,
             manifest("Endpoint", "air-open", open.clone()),

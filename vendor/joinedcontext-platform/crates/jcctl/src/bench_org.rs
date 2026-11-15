@@ -107,13 +107,25 @@ pub fn write(root: &Path, endpoints: usize) -> io::Result<Tree> {
                 ),
             )?;
             if i % 10 == 0 {
+                // The Pipeline writes through an internal Endpoint: the public one is open data
+                // and takes no write (EP-187).
+                let internal = opaque(&mut random, &[&project, &space, "internal"]);
+                put(
+                    &dir,
+                    &format!("{at}/endpoints/w{i:05}.yaml"),
+                    &format!(
+                        "{HEAD}kind: Endpoint\nmetadata:\n  name: w{i:05}\n  namespace: {project}\n\
+                         spec:\n  contextSpaceRef: {space}\n  slug: {internal}\n  \
+                         audience: organization\n  enabledRepresentations: [\"ngsi-ld\"]\n"
+                    ),
+                )?;
                 put(
                     &dir,
                     &format!("pipelines/f{i:05}/pipeline.yaml"),
                     &format!(
                         "{HEAD}kind: Pipeline\nmetadata:\n  name: f{i:05}\n  namespace: {project}\n\
                          spec:\n  class: auto\n  \
-                         targetEndpoint: urn:ngsi-ld:Endpoint:bench.example:{space}:e{i:05}\n  \
+                         targetEndpoint: urn:ngsi-ld:Endpoint:bench.example:{space}:w{i:05}\n  \
                          source:\n    endpointRef: {{ kind: Endpoint, name: e{i:05}, namespace: {project} }}\n"
                     ),
                 )?;
