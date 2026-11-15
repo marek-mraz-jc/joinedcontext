@@ -170,6 +170,7 @@ pub fn subject(
         roles: std::collections::BTreeSet::new(),
         groups: std::collections::BTreeSet::new(),
         member_of_organization: false,
+        organization_ids: std::collections::BTreeSet::new(),
         organization_groups: None,
         did: Some(participant.to_owned()),
         agreement: Some(id.to_owned()),

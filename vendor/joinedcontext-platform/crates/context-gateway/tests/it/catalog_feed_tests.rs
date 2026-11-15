@@ -41,6 +41,7 @@ fn endpoint(slug: &str, space: &str, audience: Audience) -> Endpoint {
         title: [("sk".to_owned(), format!("Dáta {space}"))].into(),
         description: Default::default(),
         space: space.to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment(space).ok(),
         project: format!("{space}-project"),
         audience,
         allowed_projects: Vec::new(),

@@ -129,9 +129,9 @@ async fn through_view(
         return ProblemDetails::not_found().into_response();
     };
     let target = format!("/x/views/{view}/linkml/schema{rest}");
-    if let Err(problem) = tenancy::pin_caller(&mut request, &endpoint.space, subject) {
-        tracing::error!(space = %endpoint.space, %problem, "endpoint names an unusable space");
-        return ProblemDetails::internal().into_response();
+    if let Err(unpinned) = tenancy::pin_caller(&mut request, endpoint.tenant.as_ref(), subject) {
+        tracing::error!(space = %endpoint.space, %unpinned, "endpoint names an unusable space");
+        return unpinned.problem().into_response();
     }
     tracing::info!(
         slug = %endpoint.slug,
@@ -181,8 +181,8 @@ pub(crate) async fn view_document(
         return None;
     }
     let mut request = Request::new(Body::empty());
-    if tenancy::pin_caller(&mut request, &endpoint.space, subject).is_err() {
-        return Some(Err(StatusCode::INTERNAL_SERVER_ERROR));
+    if tenancy::pin_caller(&mut request, endpoint.tenant.as_ref(), subject).is_err() {
+        return Some(Err(StatusCode::SERVICE_UNAVAILABLE));
     }
     let target = format!("/x/views/{view}/linkml/{rest}");
     let answer = match gateway

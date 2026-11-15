@@ -34,6 +34,9 @@ pub struct Subject {
     /// The token's `jc_org` names the Organization of the Endpoint's project, the Organization of
     /// every Policy decided for it: what an `organization` assignee matches (ADR-N-067 2.3).
     pub member_of_organization: bool,
+    /// The Organization ids the token's verified `jc_org_id` lists (EP-186): the one naming the
+    /// tenant's Organization goes to the broker beside `x-jc-member` (EP-188). Grants nothing.
+    pub organization_ids: BTreeSet<String>,
     /// The person's groups in that Organization, `g` for each `/{organization}/g` of the token's
     /// `jc_groups`; `None` when the token carries no `jc_groups` (ADR-N-067 2.3).
     pub organization_groups: Option<BTreeSet<String>>,
@@ -286,6 +289,7 @@ fn preview_reader(
         roles: roles_on(preview.audience, claims.roles().iter().cloned()),
         groups: claims.group_names().map(str::to_owned).collect(),
         member_of_organization,
+        organization_ids: claims.jc_org_id.iter().cloned().collect(),
         organization_groups,
         did: None,
         agreement: None,
@@ -352,6 +356,7 @@ pub fn person(claims: &Claims, audience: Audience, organization: Option<&str>) -
         roles: roles_on(audience, claims.roles().iter().cloned()),
         groups: claims.group_names().map(str::to_owned).collect(),
         member_of_organization,
+        organization_ids: claims.jc_org_id.iter().cloned().collect(),
         organization_groups,
         client: claims.azp.clone(),
         read_only: claims.read_only(),
@@ -510,6 +515,7 @@ pub(crate) fn subject_of(
                 // claims is Keycloak membership nobody reviewed, so it reaches no group Policy.
                 groups: BTreeSet::new(),
                 member_of_organization: false,
+                organization_ids: BTreeSet::new(),
                 organization_groups: None,
                 did: None,
                 agreement: None,

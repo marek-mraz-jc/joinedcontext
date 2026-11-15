@@ -38,6 +38,7 @@ fn unrestricted_endpoint() -> Endpoint {
         title: std::collections::BTreeMap::new(),
         description: std::collections::BTreeMap::new(),
         space: "ovzdusie".to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment("ovzdusie").ok(),
         project: "ovzdusie".to_owned(),
         audience: Audience::Public,
         allowed_projects: Vec::new(),

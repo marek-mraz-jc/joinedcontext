@@ -502,6 +502,9 @@ struct Processed {
     ack: AckResponder,
     /// The results as each is done; an `Err` ends them with the reason the run failed.
     results: mpsc::Receiver<Result<Batch, String>>,
+    /// Set by the worker once the pipeline ran to its end: results that close without it come
+    /// from a worker that died (a processor panicked).
+    finished: Arc<std::sync::atomic::AtomicBool>,
     slot: tokio::sync::OwnedSemaphorePermit,
 }
 
@@ -531,12 +534,14 @@ impl WorkerPool {
             tokio::task::yield_now().await;
             let (sorter, tagged_batch) = SortGroup::new(batch);
             let (results, rx) = mpsc::channel(PAGES_AHEAD);
+            let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let processed = Processed {
                 seq,
                 sorter,
                 tagged_batch: tagged_batch.clone(),
                 ack,
                 results: rx,
+                finished: finished.clone(),
                 slot,
             };
             if done.send(processed).await.is_err() {
@@ -552,8 +557,11 @@ impl WorkerPool {
             } else {
                 self.run(tagged_batch, &results).await.err()
             };
-            if let Some(reason) = failed {
-                let _ = results.send(Err(reason)).await;
+            match failed {
+                Some(reason) => {
+                    let _ = results.send(Err(reason)).await;
+                }
+                None => finished.store(true, Ordering::Release),
             }
         }
     }
@@ -638,6 +646,13 @@ impl WorkerPool {
             // Freeing a batch's messages costs more than writing them (glibc frees memory
             // other threads allocated slowly): free on the blocking pool, in parallel.
             tokio::task::spawn_blocking(move || drop(out_batch));
+        }
+        if !p.finished.load(Ordering::Acquire) {
+            let reason = "a pipeline worker stopped before finishing the batch".to_string();
+            p.ack.nack(BatchError::new(p.tagged_batch, reason.clone()));
+            self.fail(reason);
+            self.stop.store(true, Ordering::Release);
+            return;
         }
         match batch_err {
             Some(b_err) => p.ack.nack(b_err),

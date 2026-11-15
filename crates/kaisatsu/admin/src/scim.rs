@@ -654,6 +654,7 @@ async fn scim_put_user(
     if !dec.allowed {
         return Err(KaisatsuError::NotFound("user not found".into()));
     }
+    crate::operations::ensure_person_ceiling(&state, &ctx, &existing).await?;
     if let Err(resp) = check_if_match(&headers, &user_etag(&existing)) {
         return Ok(resp);
     }
@@ -750,6 +751,7 @@ async fn scim_patch_user(
     if !dec.allowed {
         return Err(KaisatsuError::NotFound("user not found".into()));
     }
+    crate::operations::ensure_person_ceiling(&state, &ctx, &user).await?;
     if let Err(resp) = check_if_match(&headers, &user_etag(&user)) {
         return Ok(resp);
     }
@@ -1381,6 +1383,9 @@ async fn scim_put_group(
     )
     .await?;
 
+    if !payload.members.is_empty() {
+        crate::operations::ensure_may_join_group(&ctx, &grp)?;
+    }
     for old in &cur_members {
         state
             .oidc
@@ -1632,6 +1637,12 @@ async fn scim_patch_group(
                 .remove_user_from_group(&realm, &old.id, &grp.id)
                 .await?;
         }
+    }
+    if member_ids
+        .iter()
+        .any(|uid| !cur_members.iter().any(|u| &u.id == uid))
+    {
+        crate::operations::ensure_may_join_group(&ctx, &grp)?;
     }
     for uid in &member_ids {
         if !cur_members.iter().any(|u| &u.id == uid) {

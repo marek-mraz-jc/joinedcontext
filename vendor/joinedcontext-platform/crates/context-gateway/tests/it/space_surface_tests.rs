@@ -70,6 +70,7 @@ fn space(name: &str, policies: Vec<PolicySpec>) -> Space {
             title: std::collections::BTreeMap::new(),
             description: std::collections::BTreeMap::new(),
             space: name.to_owned(),
+            tenant: context_gateway::middleware::tenancy::Tenant::segment(name).ok(),
             project: name.to_owned(),
             audience: Audience::Public,
             allowed_projects: Vec::new(),

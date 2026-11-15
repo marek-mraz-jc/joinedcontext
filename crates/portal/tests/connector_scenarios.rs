@@ -1141,6 +1141,7 @@ fn hub_endpoint(
         title: [("en".to_owned(), title.to_owned())].into(),
         description: Default::default(),
         space: "scn".to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment("scn").ok(),
         project: "scn".to_owned(),
         audience,
         allowed_projects: Vec::new(),

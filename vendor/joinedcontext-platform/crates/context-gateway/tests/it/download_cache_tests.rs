@@ -76,6 +76,7 @@ fn endpoint() -> Endpoint {
         title: std::collections::BTreeMap::new(),
         description: std::collections::BTreeMap::new(),
         space: "helsinki".to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment("helsinki").ok(),
         project: "helsinki".to_owned(),
         audience: Audience::Public,
         allowed_projects: Vec::new(),

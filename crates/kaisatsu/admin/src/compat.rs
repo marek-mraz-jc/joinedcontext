@@ -1549,11 +1549,12 @@ async fn compat_list_groups(
     Ok(Json(groups))
 }
 
-/// Group attributes the token mappers read as organization membership (`jc_org`) and groups
-/// (`jc_groups`), and the sign-in rule the Portal writes from an Organization's manifest
+/// Group attributes the token mappers read as organization membership (`jc_org`, its id
+/// `jc_org_id`) and groups (`jc_groups`), and the sign-in rule the Portal writes from an Organization's manifest
 /// (`jc.secondFactor`): an organization admin dropping it would lower the rule outside its Change.
-const MEMBERSHIP_ATTRIBUTES: [&str; 3] = [
+const MEMBERSHIP_ATTRIBUTES: [&str; 4] = [
     "jc_org",
+    "jc_org_id",
     "jc_groups",
     kaisatsu_oidc::ORG_SECOND_FACTOR_ATTRIBUTE,
 ];
@@ -1568,6 +1569,12 @@ fn guard_group_write(
     group: &mut GroupRepresentation,
     existing: Option<&GroupRepresentation>,
 ) -> Result<()> {
+    // The path is built from the name, and the path's root names the group's Organization.
+    if group.name.contains('/') || group.name.chars().any(char::is_control) {
+        return Err(KaisatsuError::BadRequest(
+            "name: a group name holds no '/' or control character, e.g. 'field-staff'".into(),
+        ));
+    }
     group.realm_roles = existing.map(|e| e.realm_roles.clone()).unwrap_or_default();
     group.client_roles = existing.map(|e| e.client_roles.clone()).unwrap_or_default();
     group.sub_groups = Vec::new();

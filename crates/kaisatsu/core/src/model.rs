@@ -1266,6 +1266,19 @@ pub struct ConsentRecord {
     pub last_updated_date: i64,
 }
 
+impl ConsentRecord {
+    /// Whether this consent covers `client_id` asking for `scope` (space-separated): every scope
+    /// the request names was granted. `openid` is no client scope (Keycloak's consents leave it
+    /// out), so it needs no grant of its own.
+    pub fn covers(&self, client_id: &str, scope: &str) -> bool {
+        self.client_id == client_id
+            && scope
+                .split_whitespace()
+                .filter(|s| *s != "openid")
+                .all(|s| self.granted_client_scopes.iter().any(|g| g == s))
+    }
+}
+
 /// Login/protocol audit event (`EVENT_ENTITY`, W4, W12).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

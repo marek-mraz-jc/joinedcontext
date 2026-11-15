@@ -500,6 +500,7 @@ fn claims_of(state: &AppState, session: &Session) -> Claims {
             }),
             groups: identity.groups.clone(),
             jc_org: Vec::new(),
+            jc_org_id: Vec::new(),
             jc_groups: Some(Vec::new()),
             resource_access: Default::default(),
             exp: 0,

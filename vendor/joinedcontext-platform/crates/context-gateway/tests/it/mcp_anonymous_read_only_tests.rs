@@ -54,6 +54,7 @@ fn endpoint(slug: &str, space: &str, base_path: String) -> Endpoint {
             .collect(),
         description: Default::default(),
         space: space.to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment(space).ok(),
         project: "mesto".to_owned(),
         audience: Audience::Public,
         allowed_projects: Vec::new(),

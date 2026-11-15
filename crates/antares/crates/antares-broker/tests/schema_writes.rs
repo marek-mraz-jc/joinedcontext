@@ -384,6 +384,25 @@ async fn odata_writes_meet_the_same_refusal_and_read_back_what_keeps() {
         "a refused OData write stored nothing"
     );
 
+    // a refusal naming an attribute a view hides keeps the fixed text
+    let ops: Vec<&str> = antares_ops::OperationId::ALL
+        .iter()
+        .map(|op| op.id())
+        .collect();
+    let narrow = json!({"id": "levels", "tenant": TENANT, "selector": ["Sensor"],
+        "rules": [{"types": ["Sensor"], "attributes": ["level"]}], "operations": ops});
+    let (s, b) = send(&app, "PUT", "/q/views/levels", Some(&narrow)).await;
+    assert!(s.is_success(), "view: {s} {b}");
+    let (s, b) = send(
+        &app,
+        "POST",
+        "/x/views/levels/odata/v4/Sensor",
+        Some(&json!({"id": "urn:ngsi-ld:Sensor:lv", "level": "low"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{b}");
+    assert!(!b.to_string().contains("pm10"), "{b}");
+
     // any other 400 of the NGSI-LD route keeps the surface's own fixed text
     let (s, b) = send(
         &app,

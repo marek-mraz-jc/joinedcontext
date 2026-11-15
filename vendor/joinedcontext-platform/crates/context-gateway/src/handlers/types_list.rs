@@ -29,10 +29,7 @@ pub(super) async fn dataset_types(
     tenancy::as_gateway(&mut headers);
     headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
     // The broker took 3-5 s for this list on dev's helsinki space (T-5629): held for a while.
-    let space = headers
-        .get(tenancy::TENANT)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned);
+    let space = tenancy::pinned_tenant(&headers).map(str::to_owned);
     if let Some(held) = space.as_deref().and_then(|s| gateway.held_types.get(s)) {
         return Ok(held.to_vec());
     }

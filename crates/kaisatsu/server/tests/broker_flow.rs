@@ -504,6 +504,37 @@ async fn a_brokered_sign_in_under_the_floor_goes_on_to_the_second_factor() {
     assert!(html.contains("kc-totp-settings-form"), "{html}");
 }
 
+/// A realm-wide IdP signs a new person on without an Organization, whichever Organization owns
+/// the client the person signs into.
+#[tokio::test]
+async fn a_brokered_sign_up_joins_only_the_idps_organization() {
+    let (app, store, up_issuer, up_state) = broker_world(false).await;
+    let mut idp = store.get_idp("dev", "entra").await.unwrap().unwrap();
+    idp.org_id = None;
+    store.upsert_idp(idp).await.unwrap();
+    let mut edge = store
+        .get_client_by_client_id("dev", "edge")
+        .await
+        .unwrap()
+        .unwrap();
+    edge.org_id = Some("helsinki".into());
+    store.upsert_client(edge).await.unwrap();
+    upstream_sign_in(
+        &app,
+        &up_issuer,
+        &up_state,
+        "entra-sub-realm",
+        "realm.wide@example.test",
+    )
+    .await;
+    let person = store
+        .get_user_by_username_or_email("dev", None, "realm.wide@example.test")
+        .await
+        .unwrap()
+        .expect("the brokered person");
+    assert_eq!(person.org_id, None);
+}
+
 /// Only the broker's hand-off signs a person on from the UpstreamIdp state: the same state
 /// with a person on the auth session but without the broker's verified mark (an IdP hint, no
 /// upstream assertion) issues no code and sets no SSO cookie.

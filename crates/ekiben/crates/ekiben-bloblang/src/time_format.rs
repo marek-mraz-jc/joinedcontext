@@ -310,7 +310,7 @@ fn parse_month_name(s: &str) -> Option<(u32, usize)> {
         ("Dec", 12),
     ];
     for (name, num) in names {
-        if s.len() >= name.len() && s[..name.len()].eq_ignore_ascii_case(name) {
+        if starts_with_ignore_ascii_case(s, name) {
             return Some((num, name.len()));
         }
     }
@@ -458,10 +458,10 @@ pub fn parse_go_layout(input: &str, layout: &str) -> Result<DateTime<FixedOffset
             li += 3;
             si += alpha_len;
         } else if lrem.starts_with("PM") || lrem.starts_with("pm") {
-            if srem.len() >= 2 && srem[..2].eq_ignore_ascii_case("pm") {
+            if starts_with_ignore_ascii_case(srem, "pm") {
                 is_pm = Some(true);
                 si += 2;
-            } else if srem.len() >= 2 && srem[..2].eq_ignore_ascii_case("am") {
+            } else if starts_with_ignore_ascii_case(srem, "am") {
                 is_pm = Some(false);
                 si += 2;
             } else {
@@ -629,10 +629,10 @@ pub fn parse_strptime(input: &str, format: &str) -> Result<DateTime<FixedOffset>
                     si += n;
                 }
                 'p' | 'P' => {
-                    if srem.len() >= 2 && srem[..2].eq_ignore_ascii_case("pm") {
+                    if starts_with_ignore_ascii_case(srem, "pm") {
                         is_pm = Some(true);
                         si += 2;
-                    } else if srem.len() >= 2 && srem[..2].eq_ignore_ascii_case("am") {
+                    } else if starts_with_ignore_ascii_case(srem, "am") {
                         is_pm = Some(false);
                         si += 2;
                     } else {
@@ -776,6 +776,13 @@ pub fn format_strftime(dt: DateTime<FixedOffset>, format: &str) -> String {
         }
     }
     out
+}
+
+/// Compares bytes, so a prefix that ends inside a multibyte character is a mismatch, not a panic.
+fn starts_with_ignore_ascii_case(s: &str, prefix: &str) -> bool {
+    s.as_bytes()
+        .get(..prefix.len())
+        .is_some_and(|b| b.eq_ignore_ascii_case(prefix.as_bytes()))
 }
 
 fn take_digits(s: &str, min_len: usize, max_len: usize) -> Result<(u32, usize), String> {

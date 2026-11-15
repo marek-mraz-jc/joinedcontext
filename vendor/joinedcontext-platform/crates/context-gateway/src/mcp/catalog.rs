@@ -708,6 +708,7 @@ pub(crate) mod tests {
             title: BTreeMap::new(),
             description: BTreeMap::new(),
             space: "mesto-ovzdusie".to_owned(),
+            tenant: crate::middleware::tenancy::Tenant::segment("mesto-ovzdusie").ok(),
             project: "mesto".to_owned(),
             audience: Audience::Public,
             allowed_projects: Vec::new(),

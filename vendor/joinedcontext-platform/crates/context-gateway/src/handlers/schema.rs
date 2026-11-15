@@ -369,6 +369,7 @@ mod visible_tests {
             title: std::collections::BTreeMap::new(),
             description: std::collections::BTreeMap::new(),
             space: "ovzdusie".to_owned(),
+            tenant: crate::middleware::tenancy::Tenant::segment("ovzdusie").ok(),
             project: "ovzdusie".to_owned(),
             audience: Audience::Public,
             allowed_projects: Vec::new(),

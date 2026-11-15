@@ -959,6 +959,20 @@ pub(crate) async fn entity(
             version,
         ));
     }
+    // ODA-04: an option that pages, orders or counts a collection is refused, never dropped
+    if options.top.is_some()
+        || options.skip.is_some()
+        || options.orderby.is_some()
+        || options.count.is_some()
+        || options.skiptoken.is_some()
+    {
+        return Err(ODataErrorResponse::new(
+            StatusCode::BAD_REQUEST,
+            "BadRequest",
+            "$top, $skip, $orderby, $count and $skiptoken apply to a collection, not one Entity",
+        )
+        .with_version(version));
+    }
     // `$compute` alone: its values over the one Entity
     let computing = Translated {
         annotate: annotated(headers),
@@ -2279,10 +2293,11 @@ fn max_page(headers: &HeaderMap, max_len: usize) -> u64 {
 
 pub(crate) use antares_ops::percent::encode;
 
-/// A 400 of the operation: the data model's refusal (T-5912) and a query on
-/// a stripped metadata member (ADR-N-066 2.4) passed on as they are, since
-/// they name the attribute and the rule or member and never the value or
-/// anything the view hides; any other 400 as [`refused`].
+/// A 400 of the operation: the data model's refusal (T-5912) of an attribute
+/// the view shows and a query on a stripped metadata member (ADR-N-066 2.4)
+/// passed on as they are, since they name the attribute and the rule or
+/// member and never the value; a refusal naming an attribute the view hides
+/// (a required slot it leaves out) and any other 400 as [`refused`].
 async fn model_refusal(
     reads: &Reads,
     answer: Response,
@@ -2294,9 +2309,8 @@ async fn model_refusal(
         .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
         .and_then(|p| {
             let d = p.get("detail")?.as_str()?;
-            (d.contains(linkml_model::check::MARK)
-                || d.contains(antares_ops::policy::METADATA_STRIPPED))
-            .then(|| d.to_owned())
+            (shown_refusal(&reads.edm, d) || d.contains(antares_ops::policy::METADATA_STRIPPED))
+                .then(|| d.to_owned())
         });
     match detail {
         Some(d) => {
@@ -2304,6 +2318,15 @@ async fn model_refusal(
         }
         None => refused(StatusCode::BAD_REQUEST, version),
     }
+}
+
+/// Whether `detail` is the data model's refusal of an attribute some set of the view shows:
+/// `the attribute <name> breaks the data model of ...`.
+fn shown_refusal(edm: &Edm, detail: &str) -> bool {
+    detail
+        .split_once(linkml_model::check::MARK)
+        .and_then(|(before, _)| before.trim_end().rsplit(' ').next())
+        .is_some_and(|name| edm.sets.values().any(|set| set.members.contains_key(name)))
 }
 
 /// A refused or failed operation as an OData error with the same status.
