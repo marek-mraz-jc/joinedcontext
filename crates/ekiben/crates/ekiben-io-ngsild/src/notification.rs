@@ -313,6 +313,40 @@ impl NotificationReader {
     }
 }
 
+/// Whether an input listens for Notifications at `(org, stream, path)`.
+pub fn has_route(org: &str, stream: &str, path: &str) -> bool {
+    let key = (org.to_string(), stream.to_string(), path.to_string());
+    lock(routes()).contains_key(&key)
+}
+
+/// The shared ingest listener's router (`--ingest-addr`, G-06, PL-51): a POST to a path an
+/// `ngsi_ld` input in `notification` mode registered is that input's Notification; every other
+/// request is the `http_server` ingest's, as before. Bodies over 16 MiB never reach an input.
+pub fn ingest_router() -> Router {
+    Router::new().fallback(ingest)
+}
+
+async fn ingest(req: axum::extract::Request) -> Response {
+    if req.method() == axum::http::Method::POST {
+        if let Some((org, stream, path)) = ekiben_io_http::ingest::route_of(req.uri().path()) {
+            if has_route(&org, &stream, &path) {
+                let (parts, body) = req.into_parts();
+                return match axum::body::to_bytes(body, MAX_BODY).await {
+                    Ok(body) => dispatch(&org, &stream, &path, &parts.headers, body)
+                        .await
+                        .into_response(),
+                    Err(_) => IngestAnswer::new(
+                        413,
+                        format!("the Notification is larger than {MAX_BODY} bytes"),
+                    )
+                    .into_response(),
+                };
+            }
+        }
+    }
+    ekiben_io_http::ingest::handle(req).await
+}
+
 /// The router E4 mounts below its ingress prefix (bodies over 16 MiB never reach a route).
 pub fn router() -> Router {
     Router::new()

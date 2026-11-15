@@ -50,6 +50,17 @@ pub fn split_ingest_path(path: &str) -> Option<(String, String, String)> {
     Some((org.to_string(), stream.to_string(), rest))
 }
 
+/// The `(org, stream, rest)` an ingest request path names, percent-decoded as [`handle`] reads it.
+pub fn route_of(raw_path: &str) -> Option<(String, String, String)> {
+    split_ingest_path(&percent_decode(raw_path))
+}
+
+/// Serves one ingest request as the listener does, for a router that serves other routes on
+/// the same listener first (the `ngsi_ld` Notification routes).
+pub async fn handle(req: Request) -> Response {
+    handle_ingest(req).await
+}
+
 async fn handle_ingest(req: Request) -> Response {
     let remote = remote_addr(&req);
     let decoded = percent_decode(req.uri().path());
