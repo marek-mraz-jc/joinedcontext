@@ -57,7 +57,7 @@ impl HeldWrite<'_> {
         use crate::relationships::{self, Extent, Shape};
         let refuse = |problem: ProblemDetails| Box::new(problem.into_response());
 
-        let addressed = operations::addressed_entity(self.path).map(query::decode);
+        let addressed = operations::addressed_entity(self.path).map(query::decode_path);
         let targeted = operations::targeted_attribute(self.path);
         let targeted = targeted.as_deref();
         // Removing a required end outright empties it as surely as a null does.
@@ -976,7 +976,7 @@ pub(crate) fn filled_units(
         // `judge_write` already refused a body that is not JSON; nothing is left to check.
         return Ok(Vec::new());
     };
-    let addressed = operations::addressed_entity(path).map(query::decode);
+    let addressed = operations::addressed_entity(path).map(query::decode_path);
     let targeted = operations::targeted_attribute(path);
     let shape = crate::units::Shape {
         addressed: addressed.as_deref(),
@@ -1013,7 +1013,7 @@ pub(crate) async fn minimised(
             ProblemDetails::bad_request().with_detail("the body is not JSON"),
         ));
     };
-    let addressed = operations::addressed_entity(path).map(query::decode);
+    let addressed = operations::addressed_entity(path).map(query::decode_path);
     let targeted = operations::targeted_attribute(path);
     let shape = crate::units::Shape {
         addressed: addressed.as_deref(),
@@ -1103,7 +1103,7 @@ pub(crate) fn quality_judged(
         // `judge_write` already refused a body that is not JSON; nothing is left to check.
         return Ok(());
     };
-    let addressed = operations::addressed_entity(path).map(query::decode);
+    let addressed = operations::addressed_entity(path).map(query::decode_path);
     let targeted = operations::targeted_attribute(path);
     let shape = crate::units::Shape {
         addressed: addressed.as_deref(),
@@ -1339,7 +1339,7 @@ pub(crate) fn judge_write(
         None => payload,
     };
     // An addressed write changes the entity in its path and nothing else (GW17, PF-44).
-    let addressed = operations::addressed_entity(path).map(query::decode);
+    let addressed = operations::addressed_entity(path).map(query::decode_path);
 
     let entries = match payload {
         Value::Array(entries) if divides(operation) => entries,
@@ -1576,13 +1576,22 @@ pub(crate) async fn merged_batch(
             Vec::new(),
         ),
         (status, payload) => {
-            let problem = payload.filter(Value::is_object).unwrap_or_else(|| {
-                serde_json::json!(ProblemDetails::new(
-                    status.as_u16(),
-                    "broker-failure",
-                    "The context broker could not answer",
-                ))
-            });
+            // A broker's `4xx` refusal is passed on as the NGSI-LD surface passes it; what a
+            // failing broker says stays in the log (T-2260).
+            if status.is_server_error() {
+                let (kind, detail) = super::ngsi_ld::explanation(&bytes);
+                tracing::warn!(status = status.as_u16(), broker_type = %kind,
+                    broker_detail = %detail, "the broker failed the forwarded part of a batch");
+            }
+            let problem = payload
+                .filter(|payload| payload.is_object() && !status.is_server_error())
+                .unwrap_or_else(|| {
+                    serde_json::json!(ProblemDetails::new(
+                        status.as_u16(),
+                        "broker-failure",
+                        "The context broker could not answer",
+                    ))
+                });
             let errors = forwarded
                 .into_iter()
                 .map(|id| serde_json::json!({ "entityId": id, "error": problem }))
@@ -1673,5 +1682,35 @@ mod object_query_tests {
         for object in ["urn:ngsi-ld:X:a\"|b==\"c", "urn:ngsi-ld:X:a\\", ""] {
             assert!(object_query("refStation", object).is_err(), "{object}");
         }
+    }
+}
+
+#[cfg(test)]
+mod merged_batch_tests {
+    use super::merged_batch;
+    use axum::body::Body;
+    use axum::http::{Response, StatusCode};
+
+    async fn merged(status: StatusCode, detail: &str) -> String {
+        let problem = serde_json::json!({"type": "x", "title": "x", "detail": detail});
+        let answer = Response::builder()
+            .status(status)
+            .body(Body::from(problem.to_string()))
+            .expect("a response");
+        let merged = merged_batch(answer, vec!["urn:ngsi-ld:T:1".to_owned()], Vec::new()).await;
+        let body = axum::body::to_bytes(merged.into_body(), 1 << 16)
+            .await
+            .expect("a body");
+        String::from_utf8_lossy(&body).into_owned()
+    }
+
+    /// T-2260: a failing broker's words stay in the log; its refusal of the query is passed on.
+    #[tokio::test]
+    async fn a_broker_failure_is_not_copied_into_the_members_and_a_refusal_is() {
+        let failed = merged(StatusCode::INTERNAL_SERVER_ERROR, "dsn postgres://held").await;
+        assert!(!failed.contains("postgres://held"), "{failed}");
+        assert!(failed.contains("urn:ngsi-ld:T:1"), "{failed}");
+        let refused = merged(StatusCode::BAD_REQUEST, "attribute x is not valid").await;
+        assert!(refused.contains("attribute x is not valid"), "{refused}");
     }
 }

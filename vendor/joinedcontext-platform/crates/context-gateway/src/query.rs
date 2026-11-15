@@ -469,6 +469,17 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
 /// Public because the enforcement point has to decode the entity identifier out of the
 /// request path before it can check which organization and space it belongs to.
 pub fn decode(raw: &str) -> String {
+    decoded(raw, true)
+}
+
+/// Reverses the percent-encoding of one URL path segment, where `+` is itself (RFC 3986 3.3)
+/// and legal in a URN: the entity id or attribute name a path names, read as the broker's path
+/// router reads it, so the checks judge the entity the broker writes.
+pub fn decode_path(raw: &str) -> String {
+    decoded(raw, false)
+}
+
+fn decoded(raw: &str, plus_is_space: bool) -> String {
     let bytes = raw.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -493,7 +504,7 @@ pub fn decode(raw: &str) -> String {
                     }
                 }
             }
-            b'+' => {
+            b'+' if plus_is_space => {
                 out.push(b' ');
                 i += 1;
             }

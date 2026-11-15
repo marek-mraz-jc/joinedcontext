@@ -60,7 +60,7 @@ impl Module {
     #[must_use]
     pub fn slug(self) -> &'static str {
         match self {
-            Module::Kaisatsu => "id",
+            Module::Kaisatsu => "login",
             Module::Dataroom => "opendata",
             Module::Daiya => "dashboards",
             Module::Ekiben => "streams",
@@ -83,6 +83,11 @@ impl Module {
             _ => None,
         }
     }
+
+    /// kaisatsu's slug before T-7006 (`/id`): in slug mode its paths answer `308` to the same path
+    /// under [`Module::slug`] (`/login`), so an old link or a client configured before the move
+    /// finds the sign-in. The issuer moved with the slug; no token of the old one is accepted.
+    pub const KAISATSU_OLD_SLUG: &'static str = "id";
 
     /// The paths a module answers at whole on any host in slug mode, instead of under its slug:
     /// the gateway's, where dev's edge routes them (`/api/endpoint`, `/api/mcp`, `/cs`, ...).

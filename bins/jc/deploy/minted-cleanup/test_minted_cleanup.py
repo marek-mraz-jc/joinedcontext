@@ -442,7 +442,7 @@ class FetchedToken(Case):
         self.listing(rows)
         s = self.stub(rows)
         a = self.fetching(s)
-        a[a.index("--token-url") + 1] = "http://jc.example.org/id/realms/smartcity/protocol/openid-connect/token"
+        a[a.index("--token-url") + 1] = "http://jc.example.org/login/realms/smartcity/protocol/openid-connect/token"
         code, out = self.main(a)
         self.assertEqual((code, s.calls), (1, []), out)
         self.assertIn("https only", out)

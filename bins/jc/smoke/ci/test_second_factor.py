@@ -14,7 +14,7 @@ import second_factor as sf
 
 SETUP = (HERE / "fixtures" / "kaisatsu-totp-setup.html").read_text()
 OTP = (HERE / "fixtures" / "kaisatsu-otp-login.html").read_text()
-LOGIN_URL = "http://127.0.0.1:8080/id/realms/smoke/login-actions/authenticate?session_code=x"
+LOGIN_URL = "http://127.0.0.1:8080/login/realms/smoke/login-actions/authenticate?session_code=x"
 RFC_SEED = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"  # "12345678901234567890"
 
 

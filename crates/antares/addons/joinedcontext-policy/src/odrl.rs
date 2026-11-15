@@ -229,8 +229,13 @@ pub fn turtle(doc: &Value) -> String {
 
 /// An IRI when the identifier is one (a DID, a URL), a literal otherwise.
 fn party_term(id: &str) -> String {
+    // The characters a Turtle IRIREF excludes, as the gateway's writer has them.
     let iri = id.contains(':')
-        && !id.contains(|c: char| c.is_whitespace() || matches!(c, '"' | '<' | '>' | '\\'));
+        && !id.contains(|c: char| {
+            c <= ' '
+                || c.is_whitespace()
+                || matches!(c, '<' | '>' | '"' | '{' | '}' | '|' | '^' | '`' | '\\')
+        });
     if iri {
         format!("<{id}>")
     } else {
@@ -587,6 +592,15 @@ mod tests {
         assert_eq!(literal("a\tb\nc\r"), "\"a\\tb\\nc\\r\"");
         assert_eq!(party_term("did:web:x y"), "\"did:web:x y\"");
         assert_eq!(party_term("did:web:x>"), "\"did:web:x>\"");
+        for excluded in [
+            "did:x:{a}",
+            "did:x:a|b",
+            "did:x:a^b",
+            "did:x:`a`",
+            "did:x:\u{1}",
+        ] {
+            assert!(party_term(excluded).starts_with('"'), "{excluded:?}");
+        }
         assert_eq!(term_or_literal("ngsi-ld:a b"), "\"ngsi-ld:a b\"");
         assert_eq!(right_node(&json!(true)), "true");
         assert_eq!(right_node(&Value::Null), "\"\"");

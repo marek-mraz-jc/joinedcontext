@@ -681,10 +681,28 @@ pub(super) async fn not_found(headers: HeaderMap, uri: axum::http::Uri) -> Respo
         echo_tenant(&tenant, &mut resp);
         return resp;
     }
+    // The detail is fixed: echoing the caller's path would reflect input into the answer.
     let mut resp =
-        ApiError::from(NgsiError::ResourceNotFound(format!("unknown path {path}"))).into_response();
+        ApiError::from(NgsiError::ResourceNotFound("unknown path".to_owned())).into_response();
     echo_tenant(&tenant, &mut resp);
     resp
+}
+
+#[cfg(test)]
+mod not_found_tests {
+    /// The 404 of an unknown path names no part of the path it was asked.
+    #[tokio::test]
+    async fn an_unknown_path_is_not_echoed() {
+        let uri = axum::http::Uri::from_static("/ngsi-ld/v1/no-such-thing-echoed");
+        let resp = super::not_found(axum::http::HeaderMap::new(), uri).await;
+        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+        let body = axum::body::to_bytes(resp.into_body(), 1 << 16)
+            .await
+            .expect("body");
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains("unknown path"), "{text}");
+        assert!(!text.contains("no-such-thing-echoed"), "{text}");
+    }
 }
 
 #[cfg(test)]

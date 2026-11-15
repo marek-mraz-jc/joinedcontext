@@ -69,6 +69,7 @@ fn endpoint(audience: Audience) -> Endpoint {
         calendars: Vec::new(),
         map_defaults: Default::default(),
         page: None,
+        open_data: false,
         policy_names: Vec::new(),
         manifest_name: String::new(),
         policies: vec![
@@ -119,6 +120,17 @@ impl Repo {
             format!("apiVersion: joinedcontext.com/v1alpha1\nkind: ServiceAccount\nmetadata:\n  name: asistent\n  namespace: {project}\nspec:\n  owner:\n    user: demo.steward\n  purpose: \"agent runs\"\n  roles:\n    - role: sensor-writer\n      scope: {{ project: {project} }}\n  credentials:\n    - kind: oauth-client\n      name: default\n  delegation: token-exchange\n"),
         )
         .expect("the delegating account");
+        // One account whose one credential has ended, one whose credential ends later.
+        for (name, end) in [
+            ("stary", chrono::Utc::now() - chrono::Duration::seconds(5)),
+            ("novy", chrono::Utc::now() + chrono::Duration::seconds(300)),
+        ] {
+            std::fs::write(
+                accounts.join(format!("{name}.yaml")),
+                format!("apiVersion: joinedcontext.com/v1alpha1\nkind: ServiceAccount\nmetadata:\n  name: {name}\n  namespace: {project}\nspec:\n  owner:\n    user: demo.steward\n  purpose: \"edge cases\"\n  roles:\n    - role: sensor-writer\n      scope: {{ project: {project} }}\n  credentials:\n    - kind: oauth-client\n      name: default\n      expiresAt: \"{}\"\n", end.to_rfc3339()),
+            )
+            .expect("an account with an end");
+        }
         Self(dir)
     }
 }
@@ -241,6 +253,20 @@ async fn a_service_account_whose_project_the_endpoint_does_not_admit_is_forbidde
     let (status, document) =
         access(&fixture, json!({ "azp": client_id("zdravie", "senzory") })).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{document}");
+}
+
+/// PF-36: an account's credentials end at their `expiresAt`. Its client stays enabled in the
+/// realm and can still mint a token, so the gateway refuses the account once every credential
+/// has ended, and an account whose credential ends later is decided as before.
+#[tokio::test]
+async fn an_account_whose_credentials_have_ended_is_forbidden() {
+    let fixture = fixture("ended-account", Audience::Organization, PROJECT).await;
+    let (status, document) = access(&fixture, json!({ "azp": client_id(PROJECT, "stary") })).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{document}");
+    assert!(granted(&document).is_empty(), "{document}");
+    let (status, document) = access(&fixture, json!({ "azp": client_id(PROJECT, "novy") })).await;
+    assert_eq!(status, StatusCode::OK, "{document}");
+    assert_eq!(granted(&document), ["SensorWrite"], "{document}");
 }
 
 /// PF-35, AG-95: a workload is its manifest. Its own token (subject: its service-account user)

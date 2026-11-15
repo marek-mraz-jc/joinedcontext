@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 //! `jc-router` (W9): Mount table routing requests across modules by `(host?, path_prefix?)`.
-//! - Supports one domain with different slugs (e.g. `city.example/id`, `/portal`, `/opendata`,
+//! - Supports one domain with different slugs (e.g. `city.example/login`, `/portal`, `/opendata`,
 //!   `/dsp`, `/mcp`), or a host per module (`id.city.example`), or both.
 //! - Refuses overlapping mounts at start.
 //! - Strips the path prefix before handing the request to the module router, and injects [`Mount`]
@@ -44,7 +44,7 @@ pub struct Mount {
     pub module: String,
     pub scheme: String,
     pub host: String,
-    /// Normalized prefix: `""` for root mount, or `"/id"` (leading slash, no trailing slash).
+    /// Normalized prefix: `""` for root mount, or `"/login"` (leading slash, no trailing slash).
     pub path_prefix: String,
 }
 
@@ -75,7 +75,7 @@ impl Mount {
         })
     }
 
-    /// Public base URL including prefix (`https://city.example/id` or `https://id.city.example`).
+    /// Public base URL including prefix (`https://city.example/login` or `https://login.city.example`).
     #[must_use]
     pub fn public_base(&self) -> String {
         format!("{}://{}{}", self.scheme, self.host, self.path_prefix)
@@ -284,7 +284,7 @@ impl JcRouterBuilder {
                 router,
             });
         }
-        // Sort most-specific host and longest path prefix first so `/id/sub` matches before `/id` or `/`:
+        // Sort most-specific host and longest path prefix first so `/login/sub` matches before `/login` or `/`:
         // an exact host, then a wildcard host, then none.
         let rank = |host: &Option<String>| match host.as_deref() {
             Some(h) if wildcard_suffix(h).is_some() => 1,
@@ -988,7 +988,7 @@ mod tests {
                 MountSpec {
                     module: "kaisatsu".into(),
                     host: None,
-                    path_prefix: Some("/id".into()),
+                    path_prefix: Some("/login".into()),
                 },
                 Router::new().route("/realms/dev", get(echo_mount)),
             )
@@ -996,7 +996,7 @@ mod tests {
             .unwrap();
         let issuer = |host: &str, forwarded: Option<&str>, peer: &str| {
             let mut req = Request::builder()
-                .uri("/id/realms/dev")
+                .uri("/login/realms/dev")
                 .header("host", host);
             if let Some(f) = forwarded {
                 req = req.header("x-forwarded-host", f);
@@ -1011,7 +1011,7 @@ mod tests {
                 String::from_utf8(body.to_vec()).unwrap()
             }
         };
-        let base = "issuer=https://city.example/id/realms/dev";
+        let base = "issuer=https://city.example/login/realms/dev";
         assert!(
             issuer("city.example", None, "127.0.0.1")
                 .await
@@ -1035,7 +1035,7 @@ mod tests {
         assert!(
             issuer("city.example", Some("jc.city.example"), "10.0.0.5")
                 .await
-                .contains("issuer=https://jc.city.example/id/realms/dev")
+                .contains("issuer=https://jc.city.example/login/realms/dev")
         );
     }
 
@@ -1049,7 +1049,7 @@ mod tests {
                 MountSpec {
                     module: "kaisatsu".into(),
                     host: Some("city.example".into()),
-                    path_prefix: Some("/id".into()),
+                    path_prefix: Some("/login".into()),
                 },
                 Router::new().route("/realms/dev", get(echo_mount)),
             )
@@ -1057,7 +1057,7 @@ mod tests {
             .unwrap();
         let on = |host: &str, forwarded: Option<&str>| {
             let mut req = Request::builder()
-                .uri("/id/realms/dev")
+                .uri("/login/realms/dev")
                 .header("host", host);
             if let Some(f) = forwarded {
                 req = req.header("x-forwarded-host", f);
@@ -1088,7 +1088,7 @@ mod tests {
         let (status, body) = on("City.Example:8443", None).await;
         assert_eq!(status, StatusCode::OK);
         assert!(
-            body.contains("issuer=https://city.example:8443/id/realms/dev"),
+            body.contains("issuer=https://city.example:8443/login/realms/dev"),
             "{body}"
         );
         assert!(super::hosts::well_formed("[2001:db8::1]:443"));
@@ -1106,7 +1106,7 @@ mod tests {
                 MountSpec {
                     module: "kaisatsu".into(),
                     host: Some("city.example".into()),
-                    path_prefix: Some("/id".into()),
+                    path_prefix: Some("/login".into()),
                 },
                 Router::new(),
             )
@@ -1114,7 +1114,7 @@ mod tests {
                 MountSpec {
                     module: "other".into(),
                     host: Some("city.example".into()),
-                    path_prefix: Some("/id/".into()),
+                    path_prefix: Some("/login/".into()),
                 },
                 Router::new(),
             )
@@ -1135,7 +1135,7 @@ mod tests {
                 MountSpec {
                     module: "kaisatsu".into(),
                     host: Some("city.example".into()),
-                    path_prefix: Some("/id".into()),
+                    path_prefix: Some("/login".into()),
                 },
                 id_router,
             )
@@ -1158,9 +1158,9 @@ mod tests {
             .build()
             .expect("router");
 
-        // Request under `/id` on `city.example`
+        // Request under `/login` on `city.example`
         let req1 = Request::builder()
-            .uri("/id/realms/dev")
+            .uri("/login/realms/dev")
             .header("host", "city.example")
             .body(Body::empty())
             .unwrap();
@@ -1177,7 +1177,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             body1,
-            "module=kaisatsu issuer=https://city.example/id/realms/dev cookie=__Secure-wk_sso path=/realms/dev"
+            "module=kaisatsu issuer=https://city.example/login/realms/dev cookie=__Secure-wk_sso path=/realms/dev"
         );
 
         // Request at root on `id.city.example`
@@ -1218,8 +1218,11 @@ mod tests {
         assert_eq!(m.module, "kaisatsu");
         assert_eq!(m.public_base(), "https://idm.localhost");
         assert_eq!(m.cookie_name("sso"), "__Host-wk_sso");
-        let m = Mount::new("kaisatsu", "https", "city.example", "/id/").unwrap();
-        assert_eq!(m.realm_issuer("dev"), "https://city.example/id/realms/dev");
+        let m = Mount::new("kaisatsu", "https", "city.example", "/login/").unwrap();
+        assert_eq!(
+            m.realm_issuer("dev"),
+            "https://city.example/login/realms/dev"
+        );
         assert!(Mount::new("x", "https", "h", "id").is_err());
         assert!(Mount::new("x", "https", "h", "/a?b").is_err());
         assert!(Mount::new("x", "https", "h", "/a//b").is_err());

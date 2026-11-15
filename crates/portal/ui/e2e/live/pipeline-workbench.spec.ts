@@ -23,7 +23,7 @@ const PROJECT = "helsinki";
 const SUFFIX = process.env.E2E_SUFFIX ?? new Date().toISOString().slice(11, 16).replace(":", "");
 const PIPELINE = `citybikes-wb-${SUFFIX}`;
 const SOURCE = "hsl-citybikes-gbfs-info";
-const TARGET = "urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all";
+const TARGET = "urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all-write";
 /** The station the fixed mapping breaks on purpose: past the 20 records the workbench tries. */
 const BROKEN = 30;
 

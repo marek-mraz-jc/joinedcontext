@@ -70,6 +70,12 @@ IMPORT_WORKERS = 4  # parallel batch writes into the local broker
 # One batch write may wait this long: on a host at load 50+ a 500-entity upsert took over the
 # client's 60 s (gate 2026-11-10T170300Z-gc, call 600 of 3,757), and one timeout ends the import.
 IMPORT_TIMEOUT = 300
+# A batch the broker turned away for load (503 Overloaded with Retry-After when its batch slots stay
+# full, 429, or another 5xx) is sent again after the wait, this many times. jc-dev's import of
+# 2026-11-11 lost one whole 500-entity batch of helsinki (69 PublicTransportRoute, 8 OffStreetParking,
+# 102 ParkingArea, ...) to a single refused call (T-7016).
+IMPORT_RETRIES = 4
+IMPORT_RETRY_WAIT = 30  # the longest wait between two sends of a batch, seconds
 MAX_REPORTED = 200  # refused calls kept in the report; the rest are only counted
 
 
@@ -179,6 +185,10 @@ def loopback_only(base: str) -> None:
     except ValueError:
         pass
     raise SystemExit(f"refusing to write to {host}: the rehearsal imports into a local jc only")
+
+
+def secret_exists(state: Path, name: str) -> bool:
+    return (state / name).exists() or (state.parent / "secrets" / name).exists()
 
 
 def read_secret(state: Path, name: str) -> str:
@@ -1755,9 +1765,29 @@ def antares_problems(out: dict) -> list[str]:
     return problems
 
 
-def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict, admin_token: str):
+def _retry_wait(st: int, headers: dict, attempt: int) -> float | None:
+    """Seconds to wait before sending a batch the broker answered `st` again; None when the answer
+    is no load refusal or the batch was sent IMPORT_RETRIES times already."""
+    if attempt >= IMPORT_RETRIES or not (st == 429 or st >= 500):
+        return None
+    after = next((v for k, v in headers.items() if k.lower() == "retry-after"), "")
+    return float(min(int(after), IMPORT_RETRY_WAIT)) if after.isdigit() else float(min(2 ** attempt, IMPORT_RETRY_WAIT))
+
+
+def _already_exists(err) -> bool:
+    return isinstance(err, dict) and str((err.get("error") or {}).get("type", "")).endswith("/AlreadyExists")
+
+
+def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict, admin_token: str,
+                   create_only: bool = False):
+    """Every exported entity into the broker, then the temporal instances inside the window.
+    `create_only` repairs an import that lost entities: entityOperations/create writes only the ids
+    the broker lacks and leaves every entity it holds as it is (no older copy over live writes); an
+    id the broker already holds counts as imported, in `alreadyPresent`."""
     base = "/broker/ngsi-ld/v1"
+    write = f"{base}/entityOperations/create" if create_only else f"{base}/entityOperations/upsert?options=update"
     out = {"entities": 0, "exportEntities": 0, "entityCalls": 0, "refusedCalls": [], "refusedCallCount": 0,
+           "alreadyPresent": 0, "retriedCalls": 0,
            "temporal": 0, "temporalExport": 0, "temporalKept": 0, "temporalRefused": [], "temporalRefusedCount": 0,
            "temporalRefusedByKind": {}}
     lock = threading.Lock()
@@ -1773,18 +1803,35 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict, adm
 
     def upsert(job):
         tenant, batch = job
-        st, body = h.json("POST", f"{base}/entityOperations/upsert?options=update", body=batch,
-                          headers={"NGSILD-Tenant": tenant, **auth}, timeout=IMPORT_TIMEOUT)
-        ok = len(batch) if st in (200, 201, 204) else \
-            len(body.get("success", [])) if st == 207 and isinstance(body, dict) else 0
+        attempt = 0
+        while True:
+            st, hdrs, raw = h.call("POST", write, body=batch, headers={"NGSILD-Tenant": tenant, **auth},
+                                   timeout=IMPORT_TIMEOUT)
+            if (wait_s := _retry_wait(st, hdrs, attempt)) is None:
+                break
+            attempt += 1
+            with lock:
+                out["retriedCalls"] += 1
+            print(f"antares: {tenant} batch of {len(batch)} answered {st}, sent again in {wait_s:.0f} s "
+                  f"({attempt}/{IMPORT_RETRIES})", file=sys.stderr, flush=True)
+            time.sleep(wait_s)
+        try:
+            body = json.loads(raw) if raw else None
+        except ValueError:
+            body = raw.decode(errors="replace")[:300]
+        multi = st == 207 and isinstance(body, dict)
+        errors = body.get("errors", []) if multi else []
+        present = sum(1 for e in errors if _already_exists(e)) if create_only else 0
+        ok = len(batch) if st in (200, 201, 204) else len(body.get("success", [])) + present if multi else 0
         with lock:
             out["entities"] += ok
+            out["alreadyPresent"] += present
             out["entityCalls"] += 1
             if out["entityCalls"] % 200 == 0:
                 print(f"antares: {out['entities']} entities after {out['entityCalls']} calls", file=sys.stderr, flush=True)
         if ok < len(batch):
-            refused({"call": f"POST {base}/entityOperations/upsert", "tenant": tenant, "status": st,
-                     "detail": (body.get("errors", [])[:5] if st == 207 and isinstance(body, dict) else body)})
+            refused({"call": f"POST {write.split('?')[0]}", "tenant": tenant, "status": st, "entities": len(batch) - ok,
+                     "detail": ([e for e in errors if not (create_only and _already_exists(e))][:5] if multi else body)})
 
     def temporal(job):
         (tenant, eid), ent = job
@@ -2102,19 +2149,30 @@ def cmd_import(a):
                       "config, files, current entity state and dashboards are copied whole"}
     h = Http(a.base)
     steps = a.only.split(",") if a.only else ["shako", "antares", "daiya"]
-    if "shako" in steps:
-        if not (a.jcctl_bin and os.access(a.jcctl_bin, os.X_OK)):
-            raise SystemExit(f"not importing: --jcctl-bin {a.jcctl_bin or '(unset)'} is no executable; every "
-                             "manifest is validated before it is written (build it: cargo build --manifest-path "
-                             "vendor/joinedcontext-platform/Cargo.toml -p jcctl)")
-        import_shako(h, read_secret(state, "shako-token"), export, report,
-                     catalogue_url(a.catalogue_url) if a.catalogue_url else REHEARSAL_CATALOGUE,
-                     validate=lambda prepared: jcctl_refusals(a.jcctl_bin, prepared))
-    if "antares" in steps:
-        import_antares(h, export, cutoff, report, read_secret(state, "antares-admin-token"))
-    if "daiya" in steps:
-        import_daiya(h, state, export, a.daiya_bin, report, Path(a.dashboards) if a.dashboards else None)
-    Path(a.report).write_text(json.dumps(report, indent=1))
+    if a.create_only and steps != ["antares"]:
+        raise SystemExit("--create-only repairs the Antares step alone: pass --only antares")
+    if "shako" in steps and not (a.jcctl_bin and os.access(a.jcctl_bin, os.X_OK)):
+        raise SystemExit(f"not importing: --jcctl-bin {a.jcctl_bin or '(unset)'} is no executable; every "
+                         "manifest is validated before it is written (build it: cargo build --manifest-path "
+                         "vendor/joinedcontext-platform/Cargo.toml -p jcctl)")
+    # Every step's secret before the first write: a step that cannot start used to crash after the
+    # steps before it wrote, and the crash took their report along (jc-dev 2026-11-11: daiya's
+    # missing dashboards-password hid the Antares report of a lost 500-entity batch, T-7016).
+    needed = {"shako": "shako-token", "antares": "antares-admin-token", "daiya": "dashboards-password"}
+    missing = [n for step, n in needed.items() if step in steps and not secret_exists(state, n)]
+    if missing:
+        raise SystemExit(f"not importing: no {', '.join(missing)} in {state} or {state.parent / 'secrets'}")
+    try:
+        if "shako" in steps:
+            import_shako(h, read_secret(state, "shako-token"), export, report,
+                         catalogue_url(a.catalogue_url) if a.catalogue_url else REHEARSAL_CATALOGUE,
+                         validate=lambda prepared: jcctl_refusals(a.jcctl_bin, prepared))
+        if "antares" in steps:
+            import_antares(h, export, cutoff, report, read_secret(state, "antares-admin-token"), a.create_only)
+        if "daiya" in steps:
+            import_daiya(h, state, export, a.daiya_bin, report, Path(a.dashboards) if a.dashboards else None)
+    finally:
+        Path(a.report).write_text(json.dumps(report, indent=1))
     summary = {
         "cutoff": report["cutoff"],
         "shako": _count(report.get("shako", []), "result"),
@@ -2335,7 +2393,7 @@ def sign_in(h: Http, username: str, password: str):
 
 
 def admin_token(h: Http, state: Path) -> str:
-    st, body = h.json("POST", f"/id/realms/{realm_of(state)}/protocol/openid-connect/token", form={
+    st, body = h.json("POST", f"/login/realms/{realm_of(state)}/protocol/openid-connect/token", form={
         "grant_type": "client_credentials", "client_id": PORTAL_ADMIN_CLIENT,
         "client_secret": read_secret(state, "portal-admin-client-secret")})
     if st != 200:
@@ -2348,20 +2406,20 @@ def make_person(h: Http, token: str, realm: str, username: str, groups=()):
     auth = {"Authorization": f"Bearer {token}"}
     # The random part carries the entropy; the suffix meets a realm password policy (digit, cases, symbol).
     password = secrets.token_urlsafe(18) + "-7aZ"
-    st, body = h.json("POST", f"/id/admin/realms/{realm}/users", headers=auth, body={
+    st, body = h.json("POST", f"/login/admin/realms/{realm}/users", headers=auth, body={
         "username": username, "enabled": True, "email": f"{username}@rehearsal.invalid",
         "emailVerified": True, "firstName": "Rehearsal", "lastName": username, "groups": list(groups)})
     if st not in (201, 409):
         raise RuntimeError(f"create {username} in {realm}: {st} {body}")
-    st, users = h.json("GET", f"/id/admin/realms/{realm}/users?username={username}&exact=true", headers=auth)
+    st, users = h.json("GET", f"/login/admin/realms/{realm}/users?username={username}&exact=true", headers=auth)
     uid = users[0]["id"]
-    st, body = h.json("PUT", f"/id/admin/realms/{realm}/users/{uid}/reset-password", headers=auth,
+    st, body = h.json("PUT", f"/login/admin/realms/{realm}/users/{uid}/reset-password", headers=auth,
                       body={"type": "password", "value": password, "temporary": False})
     if st not in (200, 204):
         raise RuntimeError(f"password of {username}: {st} {body}")
-    SECOND_FACTOR.fresh(lambda m, p: h.json(m, f"/id/admin/realms/{realm}{p}", headers=auth), username, uid)
+    SECOND_FACTOR.fresh(lambda m, p: h.json(m, f"/login/admin/realms/{realm}{p}", headers=auth), username, uid)
     # Group membership is set explicitly: a create body's `groups` is not honoured everywhere.
-    st, tree = h.json("GET", f"/id/admin/realms/{realm}/groups?briefRepresentation=false", headers=auth)
+    st, tree = h.json("GET", f"/login/admin/realms/{realm}/groups?briefRepresentation=false", headers=auth)
     by_path, todo = {}, list(tree or [])
     while todo:
         g = todo.pop()
@@ -2370,7 +2428,7 @@ def make_person(h: Http, token: str, realm: str, username: str, groups=()):
     for path in groups:
         if path not in by_path:
             raise RuntimeError(f"group {path} of {username}: not in realm {realm}")
-        st, body = h.json("PUT", f"/id/admin/realms/{realm}/users/{uid}/groups/{by_path[path]}", headers=auth)
+        st, body = h.json("PUT", f"/login/admin/realms/{realm}/users/{uid}/groups/{by_path[path]}", headers=auth)
         if st not in (200, 204):
             raise RuntimeError(f"group {path} of {username}: {st} {body}")
     return uid, password
@@ -2383,7 +2441,7 @@ def code_flow(h: Http, realm: str, client: dict, password: str):
     q = urllib.parse.urlencode({"client_id": client["clientId"], "redirect_uri": redirect, "response_type": "code",
                                 "scope": "openid", "state": "rh", "code_challenge": challenge,
                                 "code_challenge_method": "S256"})
-    login_url, st, page = follow(h, f"/id/realms/{realm}/protocol/openid-connect/auth?{q}")
+    login_url, st, page = follow(h, f"/login/realms/{realm}/protocol/openid-connect/auth?{q}")
     if st != 200:
         return False, f"auth -> {st} {page[:200]!r}"
     text = page.decode(errors="replace")
@@ -2401,7 +2459,7 @@ def code_flow(h: Http, realm: str, client: dict, password: str):
     if "code=" not in loc:
         return False, f"login -> {st} {loc or body[:300]!r}"
     code = urllib.parse.parse_qs(urllib.parse.urlparse(loc).query)["code"][0]
-    st, tok = h.json("POST", f"/id/realms/{realm}/protocol/openid-connect/token", form={
+    st, tok = h.json("POST", f"/login/realms/{realm}/protocol/openid-connect/token", form={
         "grant_type": "authorization_code", "client_id": client["clientId"], "code": code,
         "redirect_uri": redirect, "code_verifier": verifier})
     return st == 200 and "id_token" in (tok or {}), f"token -> {st}"
@@ -2424,7 +2482,7 @@ def cmd_smoke(a):
         ok, detail = sign_in(h, "rehearsal-steward", pw)
         check("sign-in as a test person", ok, detail, "GET /api/v1/auth/login")
     except Exception as e:  # noqa: BLE001 - every failure is a report row
-        check("sign-in as a test person", False, str(e)[:300], f"/id/admin/realms/{realm_of(state)}/users")
+        check("sign-in as a test person", False, str(e)[:300], f"/login/admin/realms/{realm_of(state)}/users")
     st, me = h.json("GET", "/api/v1/auth/me")
     check("Portal knows the person", st == 200, f"{st}", "GET /api/v1/auth/me")
     # 2. Portal pages load (the SPA shell and its API reads)
@@ -2437,16 +2495,16 @@ def cmd_smoke(a):
     for f in sorted(Path(a.realms).glob("*.json")) if a.realms else []:
         realm = json.loads(f.read_text())
         name = realm["realm"]
-        st, disc = h.json("GET", f"/id/realms/{name}/.well-known/openid-configuration")
-        check(f"realm {name}: discovery", st == 200, f"{st}", f"GET /id/realms/{name}/.well-known/openid-configuration")
+        st, disc = h.json("GET", f"/login/realms/{name}/.well-known/openid-configuration")
+        check(f"realm {name}: discovery", st == 200, f"{st}", f"GET /login/realms/{name}/.well-known/openid-configuration")
         conf = next((c for c in realm.get("clients", []) if str(c.get("secret", "")).startswith("$(")
                      and c.get("serviceAccountsEnabled")), None)
         if conf:
             secret = secret_file(conf["secret"], state.parent / "secrets").read_text().strip()
-            st, tok = h.json("POST", f"/id/realms/{name}/protocol/openid-connect/token", form={
+            st, tok = h.json("POST", f"/login/realms/{name}/protocol/openid-connect/token", form={
                 "grant_type": "client_credentials", "client_id": conf["clientId"], "client_secret": secret})
             check(f"realm {name}: client {conf['clientId']} gets a token", st == 200 and "access_token" in (tok or {}),
-                  f"{st} {'' if st == 200 else str(tok)[:200]}", f"POST /id/realms/{name}/protocol/openid-connect/token")
+                  f"{st} {'' if st == 200 else str(tok)[:200]}", f"POST /login/realms/{name}/protocol/openid-connect/token")
         publics = [c for c in realm.get("clients", []) if c.get("publicClient")
                    and c.get("standardFlowEnabled", True) and c.get("redirectUris")]
         # The Portal's own sign-in client first; a client asking for consent last.
@@ -2456,7 +2514,7 @@ def cmd_smoke(a):
             ok, detail = code_flow(Http(a.base), name, public,
                                    (state.parent / "secrets" / "realm-REHEARSAL_TESTER_PASSWORD").read_text().strip())
             check(f"realm {name}: test person signs in through {public['clientId']}", ok, detail,
-                  f"/id/realms/{name}/protocol/openid-connect/auth")
+                  f"/login/realms/{name}/protocol/openid-connect/auth")
     # 4. every exported repository is in shako with the exported files
     listing = json.loads((export / "gitea" / "repos.json").read_text())
     auth = {"Authorization": f"token {read_secret(state, 'shako-token')}"}
@@ -2825,6 +2883,9 @@ def main(argv=None):
     s.add_argument("--now"); s.add_argument("--only"); s.add_argument("--daiya-bin"); s.add_argument("--jcctl-bin")
     s.add_argument("--dashboards", help="Grafana provisioning files (rehearsal.py dashboards) instead of the bundle's")
     s.add_argument("--catalogue-url", help="the instance's own catalogue (cluster import): every CkanInstance names it")
+    s.add_argument("--create-only", action="store_true",
+                   help="with --only antares: create the exported entities the broker lacks and leave every one it "
+                        "holds untouched (repairs a short import without writing an older copy over live data)")
     s = sub.add_parser("digest"); s.add_argument("--export", required=True)
     s = sub.add_parser("dashboards"); s.add_argument("--render", required=True); s.add_argument("--out", required=True)
     s = sub.add_parser("retain"); s.add_argument("--host", default="127.0.0.1"); s.add_argument("--port", required=True)

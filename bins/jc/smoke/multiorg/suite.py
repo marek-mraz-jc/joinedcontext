@@ -158,7 +158,7 @@ class Allowlist:
     outside before it leaves. `fixtures` are the projects of ctl-a/ctl-b, `personas` the run's own
     user ids, `hosts` the addresses of the deployment."""
 
-    SIGN_IN = re.compile(r"/id/realms/[\w.-]+/(?:protocol/openid-connect/token|login-actions/authenticate)")
+    SIGN_IN = re.compile(r"/login/realms/[\w.-]+/(?:protocol/openid-connect/token|login-actions/authenticate)")
     MCP = re.compile(r"/api/v1/mcp|/c/[\w-]+|/api/endpoint/[a-z2-7]+/mcp")
     MCP_READS = ("initialize", "notifications/initialized", "tools/list", "ping")
 
@@ -177,7 +177,7 @@ class Allowlist:
         project = re.match(r"/api/v1/projects/([\w.-]+)(?:/|$)", path)
         if project and project.group(1) in self.fixtures:
             return "fixture"
-        person = re.fullmatch(r"/id/admin/realms/[\w.-]+/users/([\w-]+)", path)
+        person = re.fullmatch(r"/login/admin/realms/[\w.-]+/users/([\w-]+)", path)
         if method == "DELETE" and person and person.group(1) in self.personas:
             return "cleanup"
         if method != "POST":
@@ -467,7 +467,7 @@ class Suite:
             h = self.client()
             auth = {"Authorization": f"Bearer {R.admin_token(h, self.state)}"}
             for key, uid in ids.items():
-                st, _, _ = h.call("DELETE", f"/id/admin/realms/{self.realm}/users/{uid}", headers=auth)
+                st, _, _ = h.call("DELETE", f"/login/admin/realms/{self.realm}/users/{uid}", headers=auth)
                 if st in (204, 404):
                     left.pop(key)
         (Path(self.a.out) / "cleanup.json").write_text(json.dumps(
@@ -707,11 +707,11 @@ class Suite:
         """Usernames in the reconciler's group `{org}_bound` (jc_org of org-scoped bindings)."""
         h = self.client()
         auth = {"Authorization": f"Bearer {R.admin_token(h, self.state)}"}
-        st, groups = h.json("GET", f"/id/admin/realms/{self.realm}/groups?search={org}_bound", headers=auth)
+        st, groups = h.json("GET", f"/login/admin/realms/{self.realm}/groups?search={org}_bound", headers=auth)
         g = next((g for g in groups or [] if isinstance(g, dict) and g.get("name") == f"{org}_bound"), None)
         if st != 200 or not g:
             return set()
-        st, members = h.json("GET", f"/id/admin/realms/{self.realm}/groups/{g['id']}/members", headers=auth)
+        st, members = h.json("GET", f"/login/admin/realms/{self.realm}/groups/{g['id']}/members", headers=auth)
         return {m["username"] for m in members} if st == 200 and isinstance(members, list) else set()
 
     def read_file(self, path, repo=CONFIG) -> str | None:
@@ -769,7 +769,7 @@ class Suite:
         q = urllib.parse.urlencode({"client_id": client_id, "redirect_uri": redirect, "response_type": "code",
                                     "scope": f"openid {scope}", "state": "mo", "code_challenge": challenge,
                                     "code_challenge_method": "S256"})
-        login_url, st, page = R.follow(h, f"/id/realms/{self.realm}/protocol/openid-connect/auth?{q}")
+        login_url, st, page = R.follow(h, f"/login/realms/{self.realm}/protocol/openid-connect/auth?{q}")
         held[scope] = None
         if st != 200:
             return None
@@ -785,7 +785,7 @@ class Suite:
         if "code=" not in loc:
             return None
         code = urllib.parse.parse_qs(urllib.parse.urlparse(loc).query)["code"][0]
-        st, tok = h.json("POST", f"/id/realms/{self.realm}/protocol/openid-connect/token", form={
+        st, tok = h.json("POST", f"/login/realms/{self.realm}/protocol/openid-connect/token", form={
             "grant_type": "authorization_code", "client_id": client_id, "code": code,
             "redirect_uri": redirect, "code_verifier": verifier,
             **({"client_secret": R.read_secret(self.state, secret_file)} if secret_file else {})})
@@ -1565,7 +1565,7 @@ class Suite:
         subject = self.bearer(key)
         if not subject:
             return None, None
-        st, tok = self.client().json("POST", f"/id/realms/{self.realm}/protocol/openid-connect/token", form={
+        st, tok = self.client().json("POST", f"/login/realms/{self.realm}/protocol/openid-connect/token", form={
             "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
             "client_id": "portal-api", "client_secret": R.read_secret(self.state, "portal-client-secret"),
             "subject_token": subject, "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
@@ -1773,10 +1773,10 @@ class Suite:
         # kaisatsu builds issuer and audience from the request's host (I-7): a forged one must not
         # reach a discovery document or a token.
         h = self.client()
-        well_known = f"/id/realms/{self.realm}/.well-known/openid-configuration"
+        well_known = f"/login/realms/{self.realm}/.well-known/openid-configuration"
         st0, plain = h.json("GET", well_known)
         issuer = (plain or {}).get("issuer") if st0 == 200 else None
-        token_call = f"/id/realms/{self.realm}/protocol/openid-connect/token"
+        token_call = f"/login/realms/{self.realm}/protocol/openid-connect/token"
         grant = {"grant_type": "client_credentials", "client_id": "portal-api",
                  "client_secret": R.read_secret(self.state, "portal-client-secret")} if self.state else None
         st_t, tok = h.json("POST", token_call, form=grant) if grant else (None, None)
@@ -1907,7 +1907,7 @@ class Suite:
         names another Organization's project or private Endpoint address is refused (422). In
         host mode each further Portal's address (`{opendata}/-/multiorg/`) lists its own
         published datasets and none of another's, in search, list, DCAT, Turtle, Atom and the MCP
-        catalogue tool; path mode serves no Organization catalogue (no [[organizations]]), so
+        catalogue tool (a POST, so on the working host's `/data`); path mode serves no Organization catalogue (no [[organizations]]), so
         those rows skip there."""
         tag = f"mo-pt-{secrets.token_hex(3)}"
         own_ok = {}
@@ -2036,13 +2036,15 @@ class Suite:
                          st == 200 and not leaked and not hosts)
             rpc = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                    "params": {"name": "jc_dataset_search", "arguments": {}}}
-            st, body = h.json("POST", f"{base}/mcp", body=rpc)
+            # MCP is a POST, which the read-only open data host refuses (405): the same catalogue
+            # answers it on the working host's `/data` (T-6991 §2).
+            st, body = self.client(org).json("POST", f"/data{base}/mcp", body=rpc)
             text = json.dumps(body, ensure_ascii=False)
             # a dataset by its `name` member (the tool's text is JSON inside JSON), never a bare word
             names = {n for n in [*others, *listed[org]] if n and re.search(rf'\\?"name\\?":\s*\\?"{re.escape(n)}\\?"', text)}
             leaked = sorted(others & names)
             own = not listed[org] or bool(listed[org] & names)
-            self.row(f"portals.{org}.mcp.no-foreign", org, f"POST {{opendata}}{base}/mcp tools/call jc_dataset_search",
+            self.row(f"portals.{org}.mcp.no-foreign", org, f"POST {{portal}}/data{base}/mcp tools/call jc_dataset_search",
                      "200, an own dataset, none of another Organization", f"{st}, own {own}, leaked {leaked[:3]}",
                      st == 200 and own and not leaked)
 
