@@ -2566,12 +2566,14 @@ path_prefix = "/api/endpoint"
     #[test]
     fn the_kaisatsu_section_lists_exact_private_hosts_only() {
         let parse = |list: &str| {
-            Config::parse_file(
+            let file = Config::parse_file(
                 Path::new("jc.toml"),
                 &format!(
                     "profile = \"development\"\n[kaisatsu]\noutbound_private_hosts = [{list}]\n"
                 ),
             )
+            .expect("parses");
+            Config::merge(cli(&["--role", "kaisatsu"]), file)
         };
         let cfg =
             parse(r#""Portal.JC.svc.cluster.local.:8080", "idp.corp.example""#).expect("parses");
@@ -2582,6 +2584,13 @@ path_prefix = "/api/endpoint"
         let unset = Config::parse_file(Path::new("jc.toml"), "profile = \"development\"\n")
             .expect("parses");
         assert!(unset.kaisatsu.outbound_private_hosts.is_empty());
+        assert!(
+            Config::merge(cli(&["--role", "kaisatsu"]), unset)
+                .expect("merges")
+                .kaisatsu
+                .outbound_private_hosts
+                .is_empty()
+        );
         for bad in [
             r#"".svc.cluster.local""#,
             r#""*.svc.cluster.local""#,

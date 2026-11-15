@@ -333,10 +333,13 @@ impl DaiyaState {
     /// before any lookup (scheme, allow-list, address literal): 422 naming `url`. A Postgres
     /// datasource names `host:port`, which its pool checks when it resolves and connects.
     pub fn check_datasource_url(&self, record: &DatasourceRecord) -> CrResult<()> {
-        if !matches!(
-            record.kind.as_str(),
-            "prometheus" | "ngsild" | "ngsild-grafana-datasource" | "odata"
-        ) {
+        // An empty URL sends nothing; the driver refuses it when it is built.
+        if record.url.trim().is_empty()
+            || !matches!(
+                record.kind.as_str(),
+                "prometheus" | "ngsild" | "ngsild-grafana-datasource" | "odata"
+            )
+        {
             return Ok(());
         }
         let mut policy = self.outbound_policy.clone();

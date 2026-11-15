@@ -247,7 +247,7 @@ async fn updating_an_unknown_datasource_is_404_and_creates_nothing() {
 async fn a_datasource_url_the_guard_refuses_is_refused_on_save() {
     let w = world();
     for url in [
-        "http://prom.example:9090",
+        "ftp://prom.example:9090",
         "https://169.254.169.254/latest",
         "https://10.0.0.1:9090",
         "https://user:pw@prom.example",
@@ -278,7 +278,7 @@ async fn a_datasource_url_the_guard_refuses_is_refused_on_save() {
             "PUT",
             "/api/datasources/uid/ok",
             Some("admin"),
-            Some(json!({ "name": "Ok", "type": "prometheus", "url": "https://127.0.0.1:9090" })),
+            Some(json!({ "name": "Ok", "type": "prometheus", "url": "https://192.168.1.9:9090" })),
         )
         .await;
     assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");

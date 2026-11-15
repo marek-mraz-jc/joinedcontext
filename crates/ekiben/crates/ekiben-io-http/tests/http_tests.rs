@@ -213,7 +213,7 @@ http:
 #[tokio::test]
 async fn a_listed_private_host_is_resolved_by_the_private_host_rule_and_never_reaches_loopback() {
     let (reg, pctx, _) = setup_with_quotas(OrgQuotas {
-        private_hosts: vec!["localhost.".to_string()],
+        private_hosts: vec!["localhost".to_string()],
         ..Default::default()
     });
     let conf = ComponentConfig::from_json_value(
