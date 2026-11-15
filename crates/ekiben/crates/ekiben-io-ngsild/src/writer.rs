@@ -295,8 +295,7 @@ impl Writer {
             }
         }
         if local_refusals > 0 {
-            env.metrics
-                .incr_counter(&metrics::refused_key(env.label), local_refusals);
+            metrics::incr(env.metrics, env.label, metrics::REFUSED, None, local_refusals);
         }
         verdicts
     }
@@ -386,8 +385,7 @@ impl Writer {
                         v.written += 1;
                     }
                 }
-                env.metrics
-                    .incr_counter(&metrics::written_key(env.label), members.len() as u64);
+                metrics::incr(env.metrics, env.label, metrics::WRITTEN, None, members.len() as u64);
             }
             Err(Failure::Refused(answer)) => {
                 let text = problem_text(&answer);
@@ -401,8 +399,7 @@ impl Writer {
                         });
                     }
                 }
-                env.metrics
-                    .incr_counter(&metrics::refused_key(env.label), members.len() as u64);
+                metrics::incr(env.metrics, env.label, metrics::REFUSED, None, members.len() as u64);
             }
             Err(failure) => {
                 let text = failure.text();
@@ -506,10 +503,8 @@ fn apply_multi_status(
             written += 1;
         }
     }
-    env.metrics
-        .incr_counter(&metrics::written_key(env.label), written);
-    env.metrics
-        .incr_counter(&metrics::refused_key(env.label), errors.len() as u64);
+    metrics::incr(env.metrics, env.label, metrics::WRITTEN, None, written);
+    metrics::incr(env.metrics, env.label, metrics::REFUSED, None, errors.len() as u64);
 }
 
 /// `{"id": e.entityId.or(""), "message": e.error.detail.or(e.error.title).or("")}`.
