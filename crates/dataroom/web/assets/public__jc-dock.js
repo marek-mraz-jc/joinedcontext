@@ -31,3 +31,70 @@
     });
   } catch (e) { /* storage off: the panel opens closed */ }
 })();
+// T-6748, T-6758, T-7030: the closed assistant corner never covers what a visitor came for. While
+// it would sit over a connect card, a code block, a form control or an open Subscribe menu, and on
+// a phone over any text, picture or frame of the page, it steps aside (jc-theme.css): the
+// launcher fades, a keyboard still reaches it, and it is back over empty room and in its own row
+// above the footer. Its area is measured while it shows, so the
+// bar going does not shrink the area and flicker it back.
+window.jcCornerAside = (function () {
+  var phone = window.matchMedia("(max-width: 40rem)");
+  var under = ".jc-connect, .jc-code, .jc-copy, .jc-address, input:not([type=hidden]), select, textarea, .jc-subscribe[open] > .jc-subscribe-menu";
+  var text = "#content :is(p, li, dt, dd, h1, h2, h3, h4, pre, table, blockquote, figure, img, iframe, .btn)";
+  var size = null;
+  var queued = false;
+  function check() {
+    queued = false;
+    var corner = document.querySelector(".jc-corner");
+    var body = document.body;
+    if (!corner || !body || corner.querySelector(".jc-assistant[open]")) {
+      if (body) body.classList.remove("jc-corner-aside");
+      return;
+    }
+    var c = corner.getBoundingClientRect();
+    if (!body.classList.contains("jc-corner-aside") || size === null) {
+      size = { width: c.width, height: c.height };
+    }
+    var zone = { left: c.right - size.width, right: c.right, top: c.bottom - size.height, bottom: c.bottom };
+    var over = Array.prototype.some.call(document.querySelectorAll(under + (phone.matches ? ", " + text : "")), function (el) {
+      if (corner.contains(el)) return false;
+      // A closed <details> still reports its content's boxes; that content is not shown.
+      var folded = el.closest("details:not([open])");
+      if (folded && !el.closest("summary")) return false;
+      var r = el.getBoundingClientRect();
+      return r.width > 0 && r.left < zone.right && zone.left < r.right && r.top < zone.bottom && zone.top < r.bottom;
+    });
+    body.classList.toggle("jc-corner-aside", over);
+  }
+  function soon() {
+    if (queued) return;
+    queued = true;
+    window.requestAnimationFrame(check);
+  }
+  window.addEventListener("scroll", soon, { passive: true, capture: true });
+  window.addEventListener("resize", soon);
+  // The assistant or a Subscribe menu opening or closing; `toggle` does not bubble.
+  document.addEventListener("toggle", soon, true);
+  document.addEventListener("DOMContentLoaded", soon);
+  return soon;
+})();
+
+// T-7030: a connector guide is a closed <details> until its anchor is the location; the menu
+// button of the open one is marked current.
+(function () {
+  function show(id) {
+    var el = id && document.getElementById(id);
+    if (el && el.tagName === "DETAILS") { el.open = true; }
+    document.querySelectorAll(".jc-guide-menu a").forEach(function (a) {
+      if (a.getAttribute("href") === "#" + id) { a.setAttribute("aria-current", "location"); }
+      else { a.removeAttribute("aria-current"); }
+    });
+  }
+  function fromHash() { show(decodeURIComponent(location.hash.slice(1))); }
+  window.addEventListener("hashchange", fromHash);
+  document.addEventListener("DOMContentLoaded", fromHash);
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest && e.target.closest(".jc-guide-menu a");
+    if (a) { show(a.getAttribute("href").slice(1)); }
+  });
+})();

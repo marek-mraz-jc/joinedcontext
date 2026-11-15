@@ -10,8 +10,6 @@ const PAGES = [
   { name: `dataset-${DATASET}`, path: `/dataset/${DATASET}` },
   { name: "organization-list", path: "/organization/" },
   { name: `organization-${ORG}`, path: `/organization/${ORG}` },
-  { name: "assistants", path: "/assistants" },
-  { name: "assistants-claude", path: "/assistants/claude" },
   { name: "about", path: "/about" },
   { name: "connector", path: "/connector" },
   { name: "privacy", path: "/privacy" },
@@ -47,7 +45,7 @@ for (const lang of LANGUAGES) {
 // The footer (jc-footer, 2026-11-11): the language switch sends itself with script on, so its Go
 // button shows only without script; the assistant corner stops above the footer, so at 400 px no
 // footer control lies under it at any scroll position.
-const FOOTER_PAGES = ["/", "/dataset/", `/dataset/${DATASET}`, "/assistants/chatgpt"];
+const FOOTER_PAGES = ["/", "/dataset/", `/dataset/${DATASET}`, "/connector"];
 const LANG_GO = "form.lang-select button[type=submit]";
 
 test.describe("footer", () => {
@@ -111,6 +109,43 @@ test.describe("footer", () => {
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     await expect(page.locator("body")).not.toHaveClass(/(^|\s)jc-corner-aside(\s|$)/);
     await expect(summary).not.toHaveCSS("opacity", "0");
+  });
+
+  // T-7030: the owner's phone shot had the corner over the connect card's heading and address.
+  // While it would sit over the card, a code block or a form control it steps aside; the old
+  // assistant addresses open the one connector page at their section.
+  test("the assistant corner steps aside over the connect card at 400px", async ({ page }) => {
+    // A short phone window (browser bars shown), so the card reaches the window's bottom edge.
+    await page.setViewportSize({ width: 400, height: 560 });
+    await page.goto("/en/connector");
+    const card = page.locator(".jc-connect");
+    await card.evaluate((el) => window.scrollTo(0, window.scrollY + el.getBoundingClientRect().bottom - window.innerHeight + 8));
+    await expect(page.locator("body")).toHaveClass(/(^|\s)jc-corner-aside(\s|$)/);
+    const summary = page.locator(".jc-assistant > summary");
+    if (await summary.count()) await expect(summary).toHaveCSS("opacity", "0");
+    // At the page's end it has its own row above the footer and shows again.
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await expect(page.locator("body")).not.toHaveClass(/(^|\s)jc-corner-aside(\s|$)/);
+  });
+
+  for (const id of ["claude", "chatgpt", "grok", "other"]) {
+    test(`the old ${id} guide address opens its section of /connector`, async ({ page }) => {
+      await page.goto(`/en/assistants/${id}?utm_source=x`);
+      await expect(page).toHaveURL(new RegExp(`/en/connector#${id}$`));
+      await expect(page.locator(`details#${id}`)).toHaveAttribute("open", "");
+      await expect(page.locator(`details#${id} .jc-guide-steps`)).toBeVisible();
+    });
+  }
+
+  test("a menu button opens its closed guide and is marked current", async ({ page }) => {
+    await page.goto("/en/connector");
+    await expect(page.locator("details.jc-guide[open]")).toHaveCount(0);
+    await page.locator('.jc-guide-menu a[href="#grok"]').click();
+    await expect(page.locator("details#grok")).toHaveAttribute("open", "");
+    await expect(page.locator('.jc-guide-menu a[href="#grok"]')).toHaveAttribute("aria-current", "location");
+    await expect(page.locator('.jc-guide-menu a[href="#claude"]')).not.toHaveAttribute("aria-current", /.*/);
+    await page.locator("details#claude > summary").press("Enter");
+    await expect(page.locator("details#claude")).toHaveAttribute("open", "");
   });
 
   test("the language Go button shows and works without script", async ({ browser }) => {

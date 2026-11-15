@@ -631,6 +631,19 @@ fn with_appearance(
         over["logo"] = "logo.svg".into();
     }
     block.apply_override_json(&over);
+    // T-7031: the Organization's own page texts, each page and language over the built-in one.
+    // A text the manifest's rules refuse never reaches here (jc-core validates every load), and
+    // the page renders it with jc-core's one safe renderer.
+    block.pages = look
+        .pages
+        .iter()
+        .map(|text| {
+            (
+                (text.page.clone(), text.lang.clone()),
+                text.markdown.clone(),
+            )
+        })
+        .collect();
     block
 }
 
@@ -2260,6 +2273,22 @@ mod tests {
             configured.logo_svg,
             "a logo the upload refuses keeps jc's"
         );
+        // T-7031: its page texts by page and language; none keeps every built-in text.
+        assert!(shown.pages.is_empty());
+        let worded: jc_core::kinds::OrganizationAppearance =
+            serde_json::from_value(serde_json::json!({
+                "pages": [{ "page": "connector", "lang": "sk", "markdown": "# Konektor mesta" }],
+            }))
+            .expect("an appearance with a page");
+        let shown = with_appearance(configured.clone(), Some(&worded));
+        assert_eq!(
+            shown
+                .pages
+                .get(&("connector".to_owned(), "sk".to_owned()))
+                .map(String::as_str),
+            Some("# Konektor mesta")
+        );
+        assert_eq!(shown.pages.len(), 1);
     }
 
     fn prod_hidden() -> BTreeMap<String, String> {

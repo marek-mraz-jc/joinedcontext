@@ -142,6 +142,11 @@ pub struct BrandingBlock {
     /// sets it (`jc.toml [dataroom.publishers]`): serde skips it, so no catalogue override writes it.
     #[serde(skip)]
     pub publishers: BTreeMap<String, PublisherBranding>,
+    /// The Organization's own text of a page in a language, Markdown keyed by `(page, lang)`
+    /// (`spec.appearance.pages`, T-7031); a page without one shows the built-in text. Only the
+    /// host sets it: serde skips it, so no catalogue override writes it.
+    #[serde(skip)]
+    pub pages: BTreeMap<(String, String), String>,
 }
 
 /// Where the live parts of a catalogue answer (G1), each a base URL without a trailing slash
@@ -298,6 +303,7 @@ impl Default for BrandingBlock {
             assistant_widget: None,
             addresses: BrandingAddresses::default(),
             publishers: BTreeMap::new(),
+            pages: BTreeMap::new(),
         }
     }
 }

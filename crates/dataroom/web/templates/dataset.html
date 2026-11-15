@@ -310,32 +310,17 @@
                 </summary>
                 <div class="jc-mcp-body">
                   <div>
-                    <h3 class="jc-mcp-client">{{ labels.mcp_claude_ai }}</h3>
-                    <ol class="jc-mcp-steps">
-                      <li>{{ labels.mcp_claude_ai_1 }}</li>
-                      <li>{{ labels.mcp_claude_ai_2 }}
-                        <div class="jc-code">
-                          <div class="jc-code-head"><span id="jc-mcp-url-label">{{ labels.mcp_url }}</span><button type="button" class="jc-code-copy" data-jc-copy="jc-mcp-url" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}" aria-label="{{ labels.copy }}: {{ labels.mcp_url }}"><span class="jc-code-copy-label" aria-hidden="true">{{ labels.copy }}</span></button></div>
-                          <p id="jc-mcp-url" class="jc-code-url" aria-labelledby="jc-mcp-url-label">{{ m.url_wbr|safe }}</p>
-                        </div>
-                      </li>
-                      <li>{{ labels.mcp_claude_ai_3 }}</li>
-                    </ol>
-                  </div>
-                  <div>
-                    <h3 class="jc-mcp-client">{{ labels.mcp_editors }}</h3>
+                    <div class="jc-code">
+                      <div class="jc-code-head"><span id="jc-mcp-url-label">{{ labels.mcp_url }}</span><button type="button" class="jc-code-copy" data-jc-copy="jc-mcp-url" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}" aria-label="{{ labels.copy }}: {{ labels.mcp_url }}"><span class="jc-code-copy-label" aria-hidden="true">{{ labels.copy }}</span></button></div>
+                      <p id="jc-mcp-url" class="jc-code-url" aria-labelledby="jc-mcp-url-label">{{ m.url_wbr|safe }}</p>
+                    </div>
+                    {# T-7030: the setup steps live once, on /connector; here only the address and the way there #}
                     <p class="jc-mcp-links">
-                      <a class="btn btn-default" href="{{ m.vscode }}">{{ labels.mcp_vscode }}</a>
-                      <a class="btn btn-default" href="{{ m.cursor }}">{{ labels.mcp_cursor }}</a>
+                      <a class="btn btn-default" href="{{ chrome.lang_prefix }}/connector#claude">Claude</a>
+                      <a class="btn btn-default" href="{{ chrome.lang_prefix }}/connector#chatgpt">ChatGPT</a>
+                      <a class="btn btn-default" href="{{ chrome.lang_prefix }}/connector#grok">Grok</a>
+                      <a class="btn btn-default" href="{{ chrome.lang_prefix }}/connector#other">{{ labels.any_client }}</a>
                     </p>
-                    <div class="jc-code">
-                      <div class="jc-code-head"><span id="jc-mcp-claude-label">{{ labels.mcp_claude }}</span><button type="button" class="jc-code-copy" data-jc-copy="jc-mcp-claude" data-jc-text="{{ m.claude_copy }}" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}" aria-label="{{ labels.copy }}: {{ labels.mcp_claude }}"><span class="jc-code-copy-label" aria-hidden="true">{{ labels.copy }}</span></button></div>
-                      <pre id="jc-mcp-claude" aria-labelledby="jc-mcp-claude-label" tabindex="0"><code>{{ m.claude_breakable|safe }}</code></pre>
-                    </div>
-                    <div class="jc-code">
-                      <div class="jc-code-head"><span id="jc-mcp-json-label">{{ labels.mcp_json }}</span><button type="button" class="jc-code-copy" data-jc-copy="jc-mcp-json" data-jc-text="{{ m.json_copy }}" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}" aria-label="{{ labels.copy }}: {{ labels.mcp_json }}"><span class="jc-code-copy-label" aria-hidden="true">{{ labels.copy }}</span></button></div>
-                      <pre id="jc-mcp-json" aria-labelledby="jc-mcp-json-label" tabindex="0"><code>{{ m.json_breakable|safe }}</code></pre>
-                    </div>
                   </div>
                 </div>
               </details>
