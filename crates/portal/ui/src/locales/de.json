@@ -5851,7 +5851,7 @@
     "retry": "Erneut versuchen",
     "busy": "die Datenquelle ist gerade ausgelastet",
     "timedOut": "die Datenquelle hat zu lange nicht geantwortet",
-    "unreachable": "die Datenquelle ist nicht erreichbar; prüfen Sie Ihre Verbindung und versuchen Sie es erneut",
+    "unreachable": "die Datenquelle ist nicht erreichbar",
     "filter": "Filter",
     "noFilter": "Beliebig",
     "ops": {

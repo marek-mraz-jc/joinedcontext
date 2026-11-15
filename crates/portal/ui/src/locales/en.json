@@ -5851,7 +5851,7 @@
     "retry": "Try again",
     "busy": "the data source is busy right now",
     "timedOut": "the data source took too long to answer",
-    "unreachable": "the data source could not be reached; check your connection and try again",
+    "unreachable": "the data source could not be reached",
     "filter": "Filter",
     "noFilter": "Any",
     "ops": {

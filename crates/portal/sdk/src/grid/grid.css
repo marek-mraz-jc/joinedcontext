@@ -202,7 +202,8 @@
 }
 
 .jc-grid-empty,
-.jc-grid-error {
+.jc-grid-error,
+.jc-grid-loading {
   text-align: center;
   padding: var(--jc-space-4, 16px);
   color: var(--jc-color-muted, #666);
@@ -259,6 +260,11 @@
   justify-content: center;
   gap: var(--jc-space-2, 8px);
   margin: var(--jc-space-2, 8px) 0 0;
+}
+
+/* The way out reads as live, not in the muted grey of the sentence beside it. */
+.jc-grid-empty-hint button {
+  color: var(--jc-color-ink, var(--jc-color-text, #1a1a1a));
 }
 
 /* The retry after a failed read sits under its sentence, a target a thumb can hit (T-5597). */
@@ -496,6 +502,36 @@
    the grid's edge. */
 .jc-grid-review-rows {
   overflow-x: auto;
+}
+
+/* A radio and its words: a gap between them, the pair kept on one line. */
+.jc-grid-review fieldset label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+/* Apply is the panel's one action: a target a thumb can hit, in the accent, not a bare line of text. */
+.jc-grid-review > button {
+  align-self: flex-start;
+  min-height: 44px;
+  padding: var(--jc-space-1, 4px) var(--jc-space-4, 16px);
+  border: 1px solid var(--jc-color-accent, #0066cc);
+  border-radius: var(--jc-radius-sm, 4px);
+  background: var(--jc-color-accent, #0066cc);
+  color: var(--jc-color-on-primary, #fff);
+  font: inherit;
+  cursor: pointer;
+}
+
+.jc-grid-review > button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.jc-grid-review > button:focus-visible {
+  outline: 2px solid var(--jc-color-accent, #0066cc);
+  outline-offset: 2px;
 }
 
 .jc-grid-review :is(th, td) {

@@ -393,7 +393,7 @@ export const DEFAULT_LABELS: GridLabels = {
   retry: "Try again",
   busy: "the data source is busy right now",
   timedOut: "the data source took too long to answer",
-  unreachable: "the data source could not be reached; check your connection and try again",
+  unreachable: "the data source could not be reached",
   matching: "matching",
   noTotal: "the endpoint gives no total for this answer",
   rowsShown: "Rows {first}–{last}",

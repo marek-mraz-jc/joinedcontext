@@ -5851,7 +5851,7 @@
     "retry": "Zkusit znovu",
     "busy": "zdroj dat je právě zaneprázdněný",
     "timedOut": "zdroj dat neodpověděl včas",
-    "unreachable": "zdroj dat je nedostupný; zkontrolujte připojení a zkuste to znovu",
+    "unreachable": "zdroj dat je nedostupný",
     "filter": "Filtr",
     "noFilter": "Libovolné",
     "ops": {
