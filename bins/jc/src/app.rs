@@ -2162,15 +2162,24 @@ mod tests {
             let err = org_refusal(&format!("{host_mode}{extra}{TWO_ORGS}"));
             assert!(err.contains(says), "{extra}: {err}");
         }
-        // A mode default host: host mode places dataroom on opendata.{base_host}.
+        // A mode default host: host mode places daiya on dashboards.{base_host}. Kaisatsu's
+        // default host is login_host's too, which refuses it first (T-7006).
         let err = org_refusal(&format!(
             "{host_mode}{}",
-            TWO_ORGS.replace("opendata.alpha.test", "login.city.test")
+            TWO_ORGS.replace("opendata.alpha.test", "dashboards.city.test")
         ));
-        assert!(
-            err.contains("also used by another mount (kaisatsu)"),
-            "{err}"
+        assert!(err.contains("also used by another mount (daiya)"), "{err}");
+        let file = format!(
+            "{host_mode}{}",
+            TWO_ORGS.replace("opendata.alpha.test", "login.city.test")
         );
+        let file = Config::parse_file(std::path::Path::new("jc.toml"), &file).unwrap();
+        let cli = crate::config::Cli {
+            role: Some("kaisatsu,portal".into()),
+            ..crate::config::Cli::default()
+        };
+        let err = Config::merge(cli, file).unwrap_err().to_string();
+        assert!(err.contains("also a host of login_host"), "{err}");
     }
 
     #[cfg(feature = "portal")]
