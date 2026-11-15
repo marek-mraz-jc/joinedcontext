@@ -573,6 +573,11 @@ jobs:
         ports: ["33069:3306"]
         options: >-
           --health-cmd "mysqladmin ping -h 127.0.0.1 -ptestpass" --health-interval 5s --health-timeout 5s --health-retries 30
+      redis:
+        image: redis@sha256:a9cc41d6d01da2aa26c219e4f99ecbeead955a7b656c1c499cce8922311b2514 # 7.4.6
+        ports: ["63790:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 20
     env:
       PG_DSN: postgres://testuser:testpass@127.0.0.1:54329/testdb?sslmode=disable
       MY_DSN: root:testpass@tcp(127.0.0.1:33069)/testdb
@@ -583,6 +588,7 @@ jobs:
       S3_TEST_ID: ekibentest
       S3_TEST_SECRET: ekibentestsecret
       S3_TEST_BUCKET: raw
+      REDIS_TEST_URL: redis://127.0.0.1:63790/0
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/rust

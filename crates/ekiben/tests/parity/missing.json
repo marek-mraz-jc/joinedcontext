@@ -83,7 +83,6 @@
   "caches/gcp_cloud_storage",
   "caches/memcached",
   "caches/mongodb",
-  "caches/redis",
   "caches/ristretto",
   "inputs/amqp_0_9",
   "inputs/amqp_1",

@@ -13,6 +13,8 @@ pub mod outbound;
 pub mod output;
 pub mod processor;
 #[cfg(feature = "websocket")]
+pub mod redis_cache;
+#[cfg(feature = "websocket")]
 pub mod websocket;
 
 use ekiben_core::Registry;
@@ -26,4 +28,6 @@ pub fn register_all(registry: &Registry) {
     websocket::register(registry);
     #[cfg(feature = "websocket")]
     mqtt::register(registry);
+    #[cfg(feature = "websocket")]
+    redis_cache::register(registry);
 }
