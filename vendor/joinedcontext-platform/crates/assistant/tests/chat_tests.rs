@@ -4414,7 +4414,10 @@ async fn a_slow_dataset_page_lookup_does_not_hold_the_data_call() {
     )
     .await;
     let (before_answer, released) = release.await.expect("the lock was released");
-    assert!(before_answer, "the answer waited {hold:?} for the held scan");
+    assert!(
+        before_answer,
+        "the answer waited {hold:?} for the held scan"
+    );
     let data_call = answered.lock().expect("the stamps").get(1).copied();
     assert!(
         data_call.is_some_and(|at| at < released),

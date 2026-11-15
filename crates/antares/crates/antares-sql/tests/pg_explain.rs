@@ -86,9 +86,53 @@ async fn migrated_once(url: &str) {
         .execute(&mut gate)
         .await
         .expect("lock");
-    pg::connect(url, 1).await.expect("migrate").close().await;
+    let pool = pg::connect(url, 1).await.expect("migrate");
+    // A new week holds attr_instances ACCESS EXCLUSIVE until its transaction
+    // ends, against every plan and write of a running test (55P03 under the
+    // pool's 5 s, T-6952): each week a test here adds is made before any
+    // test of this database runs, and the tests' own CREATE ... IF NOT
+    // EXISTS take no lock.
+    if pg::maintenance::detect_temporal_backend(&pool).await
+        == Ok(pg::maintenance::TemporalBackend::Partitioned)
+    {
+        let bikes = BIKE_WEEKS.map(String::from);
+        for stmt in history_weeks().into_iter().chain(bikes) {
+            sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+                .execute(&pool)
+                .await
+                .expect(&stmt);
+        }
+    }
+    pool.close().await;
     // Closing the session releases the lock.
     gate.close().await.expect("unlock");
+}
+
+/// The two 2004 weeks the temporal page qualification seeds.
+const BIKE_WEEKS: [&str; 2] = [
+    "CREATE TABLE IF NOT EXISTS attr_instances_2004w10 PARTITION OF attr_instances FOR VALUES FROM ('2004-03-01') TO ('2004-03-08')",
+    "CREATE TABLE IF NOT EXISTS attr_instances_2004w11 PARTITION OF attr_instances FOR VALUES FROM ('2004-03-08') TO ('2004-03-15')",
+];
+
+/// The three 2003 weeks the history write probes plan over, each with a row.
+/// A row of a Tenant no retention names keeps each week from being dropped
+/// as emptied by a parallel test.
+fn history_weeks() -> Vec<String> {
+    let mut stmts = Vec::new();
+    for (name, lo, hi) in [
+        ("attr_instances_2003w10", "2003-03-03", "2003-03-10"),
+        ("attr_instances_2003w11", "2003-03-10", "2003-03-17"),
+        ("attr_instances_2003w12", "2003-03-17", "2003-03-24"),
+    ] {
+        stmts.push(format!("CREATE TABLE IF NOT EXISTS {name} PARTITION OF attr_instances FOR VALUES FROM ('{lo}') TO ('{hi}')"));
+        stmts.push(format!(
+            "INSERT INTO attr_instances (tenant_id, entity_id, attr_id, instance_id, observed_at,
+                                         created_at, modified_at, data)
+             VALUES ('pgexplain-weeks', 'urn:v:w', 'a', 'urn:i:{lo}', '{lo}', '{lo}', '{lo}', '{{}}')
+             ON CONFLICT DO NOTHING"
+        ));
+    }
+    stmts
 }
 
 /// The plan the broker's role gets: `antares_app` (created and granted as
@@ -1340,36 +1384,14 @@ async fn the_history_write_probes_read_only_the_weeks_that_can_hold_the_instance
         eprintln!("SKIP: attr_instances is not natively partitioned here");
         return;
     }
-    // A row of a Tenant no retention names keeps each week from being dropped
-    // as emptied by a parallel test. A new partition locks attr_instances,
-    // which a parallel seed holds for seconds: no lock timeout here (55P03
-    // under the pool's 5 s, T-6952).
-    let mut tx = pool.begin().await.expect("tx");
-    sqlx::query("SET LOCAL lock_timeout = 0")
-        .execute(&mut *tx)
-        .await
-        .expect("no lock timeout: a parallel seed holds attr_instances for seconds");
-    for (name, lo, hi) in [
-        ("attr_instances_2003w10", "2003-03-03", "2003-03-10"),
-        ("attr_instances_2003w11", "2003-03-10", "2003-03-17"),
-        ("attr_instances_2003w12", "2003-03-17", "2003-03-24"),
-    ] {
-        for stmt in [
-            format!("CREATE TABLE IF NOT EXISTS {name} PARTITION OF attr_instances FOR VALUES FROM ('{lo}') TO ('{hi}')"),
-            format!(
-                "INSERT INTO attr_instances (tenant_id, entity_id, attr_id, instance_id, observed_at,
-                                             created_at, modified_at, data)
-                 VALUES ('pgexplain-weeks', 'urn:v:w', 'a', 'urn:i:{lo}', '{lo}', '{lo}', '{lo}', '{{}}')
-                 ON CONFLICT DO NOTHING"
-            ),
-        ] {
-            sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
-                .execute(&mut *tx)
-                .await
-                .expect(&stmt);
-        }
+    // Made by `migrated_once` before any test of this database ran; again
+    // here only when a parallel test dropped one anyway.
+    for stmt in history_weeks() {
+        sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+            .execute(&pool)
+            .await
+            .expect(&stmt);
     }
-    tx.commit().await.expect("the weeks");
     // The role's grants, under the lock the type-page test takes for its own:
     // two GRANTs at once fail with "tuple concurrently updated".
     let mut tx = pool.begin().await.expect("tx");
@@ -1536,17 +1558,17 @@ async fn the_temporal_page_qualification_reads_each_station_newest_first() {
     }
     const T: &str = "pgexplain-bikes";
     const STATIONS: i64 = 577;
-    // A new week locks the parent against every open write, and seed_rls
-    // writes history for seconds under lock 48520: the weeks and the seed
-    // wait for that lock, never queue an exclusive lock behind its writes.
+    // `migrated_once` made the weeks before any test ran, so their CREATE
+    // here takes no lock; seed_rls writes history for seconds under lock
+    // 48520, and the seed waits for that lock.
     let mut tx = pool.begin().await.expect("tx");
     for stmt in [
         "SET LOCAL lock_timeout = 0",
         // the seed writes ~100 000 rows: past the pool's statement timeout
         "SET LOCAL statement_timeout = 0",
         "SELECT pg_advisory_xact_lock(48520)",
-        "CREATE TABLE IF NOT EXISTS attr_instances_2004w10 PARTITION OF attr_instances FOR VALUES FROM ('2004-03-01') TO ('2004-03-08')",
-        "CREATE TABLE IF NOT EXISTS attr_instances_2004w11 PARTITION OF attr_instances FOR VALUES FROM ('2004-03-08') TO ('2004-03-15')",
+        BIKE_WEEKS[0],
+        BIKE_WEEKS[1],
         "DELETE FROM temporal_entities WHERE tenant_id = 'pgexplain-bikes'",
         "DELETE FROM attr_instances WHERE tenant_id = 'pgexplain-bikes'",
         "INSERT INTO tenants (tenant_id) VALUES ('pgexplain-bikes') ON CONFLICT DO NOTHING",
