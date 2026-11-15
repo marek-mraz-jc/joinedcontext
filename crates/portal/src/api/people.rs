@@ -635,6 +635,27 @@ fn holds_uncovered(user: &KcUser, grant: &str) -> ApiError {
     ))
 }
 
+/// Why the new person `id` would hold more than the caller may change ([`takeover_guard`]): a
+/// RoleBinding right the caller lacks, or a grant they do not cover; `None` when nothing does.
+async fn held_beyond(
+    state: &AppState,
+    identity: &Identity,
+    admin: &Admin<'_>,
+    id: &str,
+) -> Result<Option<String>, ApiError> {
+    let user = admin.get(id).await?;
+    match takeover_guard(state, identity, admin, &user).await {
+        Ok(grant) => Ok(grant.map(|grant| {
+            format!(
+                "{} is named in {grant}, which you cannot change",
+                email_of(&user)
+            )
+        })),
+        Err(ApiError::Denied(why)) => Ok(Some(why.trim_end_matches(" (PF-93)").to_owned())),
+        Err(other) => Err(other),
+    }
+}
+
 /// The refusal when one of those two needs mail and the realm cannot send it.
 fn needs_mail(user: &KcUser, grant: &str) -> ApiError {
     ApiError::Denied(format!(
@@ -800,7 +821,7 @@ pub async fn list_people(
     responses(
         (status = 201, description = "Created; the only answer that may carry a temporary password", body = CreatedPerson),
         (status = 400, description = "Invalid input", body = ProblemDetails),
-        (status = 403, description = "The caller lacks create on Person", body = ProblemDetails),
+        (status = 403, description = "The caller lacks create on Person, or a grant naming the address is one the caller cannot change and the realm cannot send mail (nothing is created)", body = ProblemDetails),
         (status = 404, description = "No project of that name the caller may read", body = ProblemDetails),
         (status = 409, description = "The e-mail is taken", body = ProblemDetails),
         (status = 503, description = "No Keycloak admin client", body = ProblemDetails),
@@ -846,14 +867,24 @@ pub(crate) async fn create(
         })?;
     let member_of = join_members(state, &admin, &id, project.as_deref()).await?;
     let back = welcome_page(state, project.as_deref());
-    let (email_sent, temporary_password) = invite(
-        state,
-        &admin,
-        &id,
-        &["VERIFY_EMAIL", "UPDATE_PASSWORD"],
-        back.as_ref().map(|(c, p)| (c.as_str(), p.as_str())),
-    )
-    .await?;
+    let back = back.as_ref().map(|(c, p)| (c.as_str(), p.as_str()));
+    let actions = ["VERIFY_EMAIL", "UPDATE_PASSWORD"];
+    // PF-93: a grant naming the address reaches the new account at once. When the caller could
+    // not change it, the account opens by the e-mail alone, never by a temporary password.
+    let (email_sent, temporary_password) = match held_beyond(state, identity, &admin, &id).await? {
+        None => invite(state, &admin, &id, &actions, back).await?,
+        Some(reason) => {
+            let lifespan = crate::api::organization_limits::invitation_lifespan(state);
+            if !admin.send_actions(&id, &actions, lifespan, back).await? {
+                admin.delete(&id).await?;
+                return Err(ApiError::Denied(format!(
+                    "{reason}; the realm cannot send mail and a temporary password would open \
+                     that account to you, so it was not created (PF-93)"
+                )));
+            }
+            (true, None)
+        }
+    };
     if email_sent {
         remember_invitation(state, &id, project.as_deref()).await;
     }

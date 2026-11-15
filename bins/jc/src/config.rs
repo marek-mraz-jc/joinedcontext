@@ -741,7 +741,8 @@ fn site_of(host: &str) -> String {
 }
 
 /// `[kaisatsu] outbound_private_hosts`, each entry an exact host name (normalised to lowercase,
-/// without a trailing dot).
+/// without a trailing dot), by the rule of `kaisatsu_oidc::PrivateHost::parse` (kept here so the
+/// file loads without the `kaisatsu` feature).
 fn check_private_hosts(hosts: Vec<String>) -> Result<Vec<String>, ConfigError> {
     let normalise = |raw: &str| -> Result<String, String> {
         let raw = raw.trim();
