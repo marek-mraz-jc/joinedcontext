@@ -692,6 +692,68 @@ async fn the_check_answers_on_the_internal_router_and_nowhere_else() {
     );
 }
 
+/// A-3-gateway-001: while the reaper cannot vouch for the tables, the CONNECT and the publish
+/// check deny, the public surface answers 503 and `/healthz` takes the gateway out of service
+/// with `/livez` still 200; fresh tables admit the same camera again.
+#[tokio::test]
+async fn stale_tables_deny_every_check_until_they_are_fresh() {
+    let f = Fixture::new("stale");
+    let gateway = Gateway::new(
+        Broker::new("http://broker.invalid:1026"),
+        Box::new(PolicyPdp),
+        "banskabystrica.sk",
+    )
+    .authenticate(Arc::new(f.realm.verifier()), f.accounts.clone(), None);
+    gateway.replace_brokers(f.brokers.clone());
+    let gateway = Arc::new(gateway);
+    let token = f.token("ovzdusie-cam-north", "mqtt-ovzdusie-cameras", 300);
+    let ask = |path: &'static str, body: Value| {
+        let app = internal_router(Arc::clone(&gateway), None, None, None, None);
+        async move {
+            let request = Request::post(path)
+                .header("content-type", "application/json")
+                .header("l5d-client-id", CAMERAS)
+                .body(Body::from(body.to_string()))
+                .expect("a request");
+            let response = app.oneshot(request).await.expect("answers");
+            let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+                .await
+                .expect("a body");
+            let answer: Value = serde_json::from_slice(&bytes).expect("json");
+            answer["result"].as_str().expect("a result").to_owned()
+        }
+    };
+    let connect = json!({
+        "clientid": "ovzdusie-cam-north", "username": "ovzdusie-cam-north",
+        "password": token, "ipaddr": "203.0.113.7"
+    });
+    let publish = json!({
+        "access": "2", "clientid": "ovzdusie-cam-north",
+        "username": "ovzdusie-cam-north", "topic": "cameras/ovzdusie-cam-north/frame"
+    });
+    let status = |path: &'static str| {
+        let app = router(Arc::clone(&gateway));
+        async move {
+            let request = Request::get(path).body(Body::empty()).expect("a request");
+            app.oneshot(request).await.expect("answers").status()
+        }
+    };
+    let data = "/api/endpoint/zt4qm7ge2xdv6ksb3ncf5arw2y/ngsi-ld/v1/entities";
+
+    gateway.set_stale(true);
+    assert_eq!(ask("/internal/mqtt/auth", connect.clone()).await, "deny");
+    assert_eq!(ask("/internal/mqtt/acl", publish.clone()).await, "deny");
+    assert_eq!(status("/healthz").await, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(status("/livez").await, StatusCode::OK);
+    assert_eq!(status(data).await, StatusCode::SERVICE_UNAVAILABLE);
+
+    gateway.set_stale(false);
+    assert_eq!(ask("/internal/mqtt/auth", connect).await, "allow");
+    assert_eq!(ask("/internal/mqtt/acl", publish).await, "allow");
+    assert_eq!(status("/healthz").await, StatusCode::OK);
+    assert_ne!(status(data).await, StatusCode::SERVICE_UNAVAILABLE);
+}
+
 /// T-5560, T-5562: the publish check answers on the internal router with no cache time, so the
 /// broker asks for every publish; a client above its broker's `messagesPerSecond` (10 by
 /// default) is refused at once, which disconnects it.

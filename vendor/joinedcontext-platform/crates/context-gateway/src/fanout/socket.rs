@@ -165,6 +165,17 @@ impl Hubs {
         }
     }
 
+    /// Closes every open connection: the tables they were admitted under went stale.
+    pub fn close_all(&self) {
+        let hubs = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        for (_, hub) in hubs.values() {
+            let closed = hub.close_ended(|_, _| true);
+            if !closed.is_empty() {
+                tracing::warn!(slug = %hub.slug, closed = closed.len(), "WebSocket connections closed: the access rules went stale");
+            }
+        }
+    }
+
     /// Drops `hub` when it has been without a connection for `linger`; `true` when it did, or
     /// when [`make_room`] dropped it already.
     fn leave_if_idle(&self, hub: &Arc<Hub>, linger: Duration) -> bool {

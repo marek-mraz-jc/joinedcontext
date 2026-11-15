@@ -25,7 +25,7 @@ use axum::routing::get;
 use axum::Router;
 use jc_core::kinds::RateLimits;
 use jc_core::ProblemDetails;
-use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tower::layer::util::Stack;
 use tower_http::compression::predicate::{And, NotForContentType, Predicate, SizeAbove};
@@ -147,6 +147,9 @@ pub struct Gateway {
     /// The DCAT profiles the Organization serves its records in (T-4499), as
     /// [`jc_dcat::profile::Offered::bits`].
     dcat_profiles: AtomicU8,
+    /// Set while the repository reaper cannot vouch for the tables (a tick panicked): every
+    /// data route answers 503 until a reload succeeds.
+    stale: AtomicBool,
     /// The KiB of write bodies the gateway holds at once (T-4077); see [`WRITE_BUDGET_MIB`].
     writes: Arc<tokio::sync::Semaphore>,
     /// The budget `writes` was made with, in KiB: what one write may take at most.
@@ -241,6 +244,7 @@ impl Gateway {
             anonymous_mcp_rate_limit: ANONYMOUS_MCP_RATE_LIMIT,
             max_request_body: AtomicUsize::new(crate::store::Limits::default().max_request_body),
             dcat_profiles: AtomicU8::new(0),
+            stale: AtomicBool::new(false),
             writes: Arc::new(tokio::sync::Semaphore::new(WRITE_BUDGET_MIB * 1024)),
             write_budget_kib: (WRITE_BUDGET_MIB * 1024) as u32,
             write_wait: WRITE_WAIT,
@@ -747,6 +751,20 @@ impl Gateway {
         self.max_request_body.load(Ordering::Relaxed)
     }
 
+    /// Whether the tables may hold a grant the repository withdrew: the reaper's last tick
+    /// panicked and no reload has succeeded since.
+    pub fn stale(&self) -> bool {
+        self.stale.load(Ordering::Acquire)
+    }
+
+    /// Marks the tables stale or fresh again. Going stale closes every open WebSocket, which
+    /// was admitted under tables nobody vouches for now.
+    pub fn set_stale(&self, stale: bool) {
+        if self.stale.swap(stale, Ordering::AcqRel) != stale && stale {
+            self.hubs.close_all();
+        }
+    }
+
     /// Replaces the endpoint table (EP-19).
     pub fn serve(self, endpoints: impl IntoIterator<Item = Endpoint>) -> Self {
         self.resolver.replace(endpoints);
@@ -943,7 +961,13 @@ pub fn router(gateway: Arc<Gateway>) -> Router {
             Arc::clone(&gateway),
             oauth::admit,
         ))
-        .route("/healthz", get(ok))
+        // Outermost of the guards: stale tables decide nothing (T-4591), and the refusal costs
+        // no quota.
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&gateway),
+            fresh,
+        ))
+        .route("/healthz", get(ready))
         .route("/livez", get(ok))
         // OPS-16: what `components/monitoring` scrapes, on the port it already names. Outside
         // every guard above, because it is reachable only from inside the cluster and carries
@@ -1014,6 +1038,43 @@ fn compress_when() -> CompressWhen {
 
 async fn ok() -> &'static str {
     "ok"
+}
+
+/// `/healthz`: 503 while the tables are stale, so a probe takes the gateway out of service;
+/// `/livez` stays 200, since the next good reload brings it back without a restart.
+async fn ready(
+    axum::extract::State(gateway): axum::extract::State<Arc<Gateway>>,
+) -> Response<Body> {
+    if gateway.stale() {
+        return stale_answer();
+    }
+    "ok".into_response()
+}
+
+/// Refuses every request while the reaper cannot vouch for the tables, instead of deciding with
+/// grants the repository may have withdrawn.
+async fn fresh(
+    axum::extract::State(gateway): axum::extract::State<Arc<Gateway>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response<Body> {
+    if gateway.stale() {
+        return stale_answer();
+    }
+    next.run(request).await
+}
+
+fn stale_answer() -> Response<Body> {
+    let mut answer = ProblemDetails::new(503, "service-unavailable", "Service Unavailable")
+        .with_detail(
+            "the gateway could not reload its access rules and refuses requests until it does; \
+             send the request again after the seconds Retry-After names",
+        )
+        .into_response();
+    answer
+        .headers_mut()
+        .insert("retry-after", HeaderValue::from_static("5"));
+    answer
 }
 
 /// Anything off the surface answers the same problem document as an unknown slug.
