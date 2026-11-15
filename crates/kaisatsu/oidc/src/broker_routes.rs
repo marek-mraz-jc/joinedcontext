@@ -78,7 +78,7 @@ pub fn broker_router() -> Router<OidcState> {
 }
 
 fn read_auth_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
-    crate::handlers::read_cookie(headers, &mount.cookie_name("auth"))
+    crate::handlers::read_cookie(headers, &crate::handlers::sign_in_cookie_name("auth"))
 }
 
 fn verify_auth_cookie(
@@ -718,16 +718,8 @@ async fn issue_broker_session_and_code(
         })
         .await?;
 
-    let cookie_name = mount.cookie_name("sso");
-    let cookie_path = mount.realm_cookie_path(&realm.realm);
     let ttl = realm.sso_session_max_lifespan.max(3600);
-    let set_cookie = if mount.path_prefix.is_empty() {
-        format!("{cookie_name}={sso_handle}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={ttl}")
-    } else {
-        format!(
-            "{cookie_name}={sso_handle}; Path={cookie_path}; HttpOnly; Secure; SameSite=Lax; Max-Age={ttl}"
-        )
-    };
+    let set_cookie = crate::handlers::sign_in_cookie("sso", &sso_handle, ttl);
 
     let mut pairs = vec![("code", raw_code.as_str())];
     if let Some(st) = &auth_session.state {

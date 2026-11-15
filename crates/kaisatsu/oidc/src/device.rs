@@ -323,15 +323,7 @@ async fn start_login(
             expires_at: now + Duration::minutes(30),
         })
         .await?;
-    let cookie_name = mount.cookie_name("auth");
-    let path = if mount.path_prefix.is_empty() {
-        "/".to_owned()
-    } else {
-        mount.realm_cookie_path(&realm.realm)
-    };
-    let set_cookie = format!(
-        "{cookie_name}={handle}; Path={path}; HttpOnly; Secure; SameSite=Lax; Max-Age=1800"
-    );
+    let set_cookie = crate::handlers::sign_in_cookie("auth", &handle, 1800);
     let login = format!(
         "{}/realms/{}/login-actions/authenticate?session_code={id}&client_id={LOGIN_CLIENT}",
         mount.path_prefix, realm.realm

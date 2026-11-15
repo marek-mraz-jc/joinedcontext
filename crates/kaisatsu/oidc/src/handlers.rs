@@ -639,6 +639,25 @@ pub(crate) fn html_escape(s: &str) -> String {
         .replace('\'', "&#x27;")
 }
 
+/// The name of sign-in cookie `suffix` (`auth`, `sso`): `__Host-wk_{suffix}` on every mount
+/// (T-6974). A `__Host-` cookie carries no `Domain` and `Path=/`, so a sibling host (an App on
+/// `*.apps.<base>`) can neither plant nor shadow it; under a path prefix (slug mode) the old
+/// `__Secure-wk_*` name could be set from any host below the domain. The old name is never
+/// read, so a cookie planted under it reaches nothing: a browser holding one signs in once more.
+#[must_use]
+pub fn sign_in_cookie_name(suffix: &str) -> String {
+    format!("__Host-wk_{suffix}")
+}
+
+/// The `Set-Cookie` value of sign-in cookie `suffix` (`Max-Age=0` clears it).
+#[must_use]
+pub fn sign_in_cookie(suffix: &str, value: &str, max_age: i64) -> String {
+    format!(
+        "{}={value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={max_age}",
+        sign_in_cookie_name(suffix)
+    )
+}
+
 /// The first non-empty value of cookie `target` across every `Cookie` header.
 pub fn read_cookie(headers: &HeaderMap, target: &str) -> Option<String> {
     headers
@@ -652,7 +671,7 @@ pub fn read_cookie(headers: &HeaderMap, target: &str) -> Option<String> {
 }
 
 pub(crate) fn read_sso_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
-    read_cookie(headers, &mount.cookie_name("sso"))
+    read_cookie(headers, &sign_in_cookie_name("sso"))
 }
 
 /// Keycloak's maximum authentication age for `UPDATE_PASSWORD` and `CONFIGURE_TOTP` (5 min):
@@ -1152,15 +1171,7 @@ async fn authorize_get(
     };
     state.store.put_auth_session(auth_session).await?;
 
-    let cookie_name = mount.cookie_name("auth");
-    let cookie_path = mount.realm_cookie_path(&realm.realm);
-    let set_cookie = if mount.path_prefix.is_empty() {
-        format!("{cookie_name}={handle}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=1800")
-    } else {
-        format!(
-            "{cookie_name}={handle}; Path={cookie_path}; HttpOnly; Secure; SameSite=Lax; Max-Age=1800"
-        )
-    };
+    let set_cookie = sign_in_cookie("auth", &handle, 1800);
     let login_url = format!(
         "{}/realms/{}/login-actions/authenticate?session_code={auth_session_id}&client_id={}",
         mount.path_prefix, realm.realm, client.client_id
@@ -3977,13 +3988,7 @@ async fn handle_logout_request(
         let _ = dispatch_backchannel_logout(&state, &mount, &realm, &sso).await;
     }
 
-    let cookie_name = mount.cookie_name("sso");
-    let cookie_path = mount.realm_cookie_path(&realm.realm);
-    let clear_cookie = if mount.path_prefix.is_empty() {
-        format!("{cookie_name}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0")
-    } else {
-        format!("{cookie_name}=; Path={cookie_path}; HttpOnly; Secure; SameSite=Lax; Max-Age=0")
-    };
+    let clear_cookie = sign_in_cookie("sso", "", 0);
 
     if let Some(target_uri) = post_logout {
         let mut url = url::Url::parse(target_uri)

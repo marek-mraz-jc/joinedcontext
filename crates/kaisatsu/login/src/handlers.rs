@@ -16,7 +16,9 @@ use jc_router::Mount;
 use kaisatsu_core::page::{self, Page};
 use kaisatsu_core::*;
 use kaisatsu_crypto::*;
-use kaisatsu_oidc::{ClientIp, OidcState, read_cookie, second_factor_required};
+use kaisatsu_oidc::{
+    ClientIp, OidcState, read_cookie, second_factor_required, sign_in_cookie, sign_in_cookie_name,
+};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 
@@ -901,7 +903,7 @@ async fn sign_out_other_sessions(
     user_id: &str,
     headers: &HeaderMap,
 ) -> Result<()> {
-    let current = read_cookie(headers, &mount.cookie_name("sso")).map(|raw| sha256_hex(&raw));
+    let current = read_cookie(headers, &sign_in_cookie_name("sso")).map(|raw| sha256_hex(&raw));
     for sso in state
         .store
         .list_user_sso_sessions(&realm.id, user_id)
@@ -918,7 +920,7 @@ async fn sign_out_other_sessions(
 }
 
 pub(crate) fn read_auth_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
-    read_cookie(headers, &mount.cookie_name("auth"))
+    read_cookie(headers, &sign_in_cookie_name("auth"))
 }
 
 /// K1: Verifies that the browser's auth session cookie matches `auth_session.handle_hash` in
@@ -2216,18 +2218,8 @@ async fn advance_or_render(
             })
             .await?;
 
-        let cookie_name = mount.cookie_name("sso");
-        let cookie_path = mount.realm_cookie_path(&realm.realm);
         let ttl = realm.sso_session_max_lifespan.max(3600);
-        let set_cookie = if mount.path_prefix.is_empty() {
-            format!(
-                "{cookie_name}={sso_handle}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={ttl}"
-            )
-        } else {
-            format!(
-                "{cookie_name}={sso_handle}; Path={cookie_path}; HttpOnly; Secure; SameSite=Lax; Max-Age={ttl}"
-            )
-        };
+        let set_cookie = sign_in_cookie("sso", &sso_handle, ttl);
 
         // The code goes back in the response mode the client asked for (query, fragment,
         // form_post), as on the SSO path.
@@ -2607,15 +2599,7 @@ async fn action_token_get(
         };
         state.store.put_auth_session(auth_session.clone()).await?;
 
-        let cookie_name = mount.cookie_name("auth");
-        let cookie_path = mount.realm_cookie_path(&realm.realm);
-        let set_cookie = if mount.path_prefix.is_empty() {
-            format!("{cookie_name}={handle}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=900")
-        } else {
-            format!(
-                "{cookie_name}={handle}; Path={cookie_path}; HttpOnly; Secure; SameSite=Lax; Max-Age=900"
-            )
-        };
+        let set_cookie = sign_in_cookie("auth", &handle, 900);
 
         return render_action_form(
             &state,
