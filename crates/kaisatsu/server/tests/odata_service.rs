@@ -480,6 +480,61 @@ async fn bound_functions_collection_actions_and_people_writes() {
 }
 
 #[tokio::test]
+async fn realm_apply_writes_only_the_realm_it_is_bound_to() {
+    let api = Api::new().await;
+    let admin = api.admin().await;
+    let dev_id = api.store.get_realm("dev").await.unwrap().unwrap().id;
+    let (st, _, _, raw) = api
+        .call(
+            Method::POST,
+            &format!("{BASE}/Realms('dev')/Apply"),
+            &admin,
+            Some(json!({ "configuration": { "id": "master", "realm": "master", "displayName": "Bound" } })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{raw}");
+    assert!(api.store.get_realm("master").await.unwrap().is_none());
+    let dev = api.store.get_realm("dev").await.unwrap().unwrap();
+    assert_eq!(dev.id, dev_id);
+    assert_eq!(dev.display_name, "Bound");
+}
+
+#[tokio::test]
+async fn credentials_are_enrolled_only_through_the_account_console() {
+    let api = Api::new().await;
+    let app = api.token(ANALYST, json!({ "azp": "some-org-app" })).await;
+    for op in ["EnrolTotp", "GenerateRecoveryCodes", "RegisterPasskey"] {
+        let (st, _, _, raw) = api
+            .call(
+                Method::POST,
+                &format!("{BASE}/People('{ANALYST}')/{op}"),
+                &app,
+                Some(json!({})),
+            )
+            .await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{op}: {raw}");
+    }
+    let creds = api.store.list_credentials("dev", ANALYST).await.unwrap();
+    assert!(
+        !creds
+            .iter()
+            .any(|c| c.credential_type == "recovery-authn-codes")
+    );
+    let console = api
+        .token(ANALYST, json!({ "azp": "account-console" }))
+        .await;
+    let (st, _, _, raw) = api
+        .call(
+            Method::POST,
+            &format!("{BASE}/People('{ANALYST}')/GenerateRecoveryCodes"),
+            &console,
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{raw}");
+}
+
+#[tokio::test]
 async fn self_service_actions_and_honest_not_implemented() {
     let api = Api::new().await;
     let me = api.token(ANALYST, json!({})).await;

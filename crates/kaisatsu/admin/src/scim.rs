@@ -654,6 +654,7 @@ async fn scim_put_user(
     if !dec.allowed {
         return Err(KaisatsuError::NotFound("user not found".into()));
     }
+    crate::operations::ensure_person_ceiling(&state, &ctx, &existing).await?;
     if let Err(resp) = check_if_match(&headers, &user_etag(&existing)) {
         return Ok(resp);
     }
@@ -750,6 +751,7 @@ async fn scim_patch_user(
     if !dec.allowed {
         return Err(KaisatsuError::NotFound("user not found".into()));
     }
+    crate::operations::ensure_person_ceiling(&state, &ctx, &user).await?;
     if let Err(resp) = check_if_match(&headers, &user_etag(&user)) {
         return Ok(resp);
     }

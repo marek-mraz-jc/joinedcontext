@@ -1568,6 +1568,12 @@ fn guard_group_write(
     group: &mut GroupRepresentation,
     existing: Option<&GroupRepresentation>,
 ) -> Result<()> {
+    // The path is built from the name, and the path's root names the group's Organization.
+    if group.name.contains('/') || group.name.chars().any(char::is_control) {
+        return Err(KaisatsuError::BadRequest(
+            "name: a group name holds no '/' or control character, e.g. 'field-staff'".into(),
+        ));
+    }
     group.realm_roles = existing.map(|e| e.realm_roles.clone()).unwrap_or_default();
     group.client_roles = existing.map(|e| e.client_roles.clone()).unwrap_or_default();
     group.sub_groups = Vec::new();

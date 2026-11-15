@@ -279,6 +279,7 @@ async fn org_admin_cannot_reset_or_change_a_realm_admin_of_the_organization() {
             realm_id: "dev".into(),
             org_id: Some("helsinki".into()),
             username: "hel-root".into(),
+            enabled: true,
             realm_roles: vec!["realm-admin".into()],
             ..Default::default()
         })
@@ -305,10 +306,24 @@ async fn org_admin_cannot_reset_or_change_a_realm_admin_of_the_organization() {
             None,
         ),
         (Method::DELETE, "/admin/realms/dev/users/hel-root", None),
+        (
+            Method::PUT,
+            "/api/v1/realms/dev/scim/v2/Users/hel-root",
+            Some(json!({ "userName": "hel-root", "active": false,
+                         "emails": [{ "value": "other@example.test", "primary": true }] })),
+        ),
+        (
+            Method::PATCH,
+            "/api/v1/realms/dev/scim/v2/Users/hel-root",
+            Some(json!({ "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                         "Operations": [{ "op": "replace", "path": "active", "value": false }] })),
+        ),
     ] {
         let st = f.send(method.clone(), path, &t, body).await;
         assert_eq!(st, StatusCode::FORBIDDEN, "{method} {path}");
     }
+    let root = f.user("hel-root").await;
+    assert!(root.enabled && root.email.is_none());
     assert!(
         f.store
             .get_user_by_id("dev", None, "hel-root")
@@ -717,6 +732,102 @@ async fn a_disabled_or_unknown_realm_verifies_no_admin_token() {
         StatusCode::UNAUTHORIZED
     );
     assert!(f.store.get_realm("no-such-realm").await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn a_people_manager_cannot_change_an_organization_admin() {
+    let f = Fixture::new().await;
+    f.store
+        .upsert_membership(Membership {
+            id: "m-pm-hel".into(),
+            realm_id: "dev".into(),
+            org_id: "helsinki".into(),
+            person_id: "pm-hel".into(),
+            org_roles: vec!["people-manager".into()],
+            created_at: chrono::Utc::now(),
+        })
+        .await
+        .unwrap();
+    let t = f
+        .token("dev", "pm-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    let reset = json!({ "type": "password", "value": "Another-pass-123", "temporary": false });
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev/users/org-admin-hel/reset-password",
+            &t,
+            Some(reset.clone()),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev/users/hel-person/reset-password",
+            &t,
+            Some(reset.clone()),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    // The Organization's admin still resets its people manager.
+    let admin = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    f.store
+        .create_user(UserRepresentation {
+            id: "pm-hel".into(),
+            realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
+            username: "pm-hel".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev/users/pm-hel/reset-password",
+            &admin,
+            Some(reset),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn a_group_name_holds_no_path_separator() {
+    let f = Fixture::new().await;
+    let t = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    for name in ["espoo/staff", "line\nbreak"] {
+        let st = f
+            .send(
+                Method::POST,
+                "/admin/realms/dev/groups",
+                &t,
+                Some(json!({ "name": name })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{name}");
+    }
+    assert!(
+        f.store
+            .get_group_by_path("dev", None, "/espoo/staff")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let st = f
+        .send(
+            Method::POST,
+            "/admin/realms/dev/groups",
+            &t,
+            Some(json!({ "name": "field-staff" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
 }
 
 /// Scope links, mappers, role holders and group members of an application or group were served
