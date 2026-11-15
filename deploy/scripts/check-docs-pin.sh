@@ -56,7 +56,7 @@ for pair in "joinedcontext-portal $portal $portal_digest components/portal/image
   # A scheduled rebuild of the same commit moves its tag to a new digest (the platform's ship
   # run, 2026-11-12): the pinned digest still runs that commit when our image workflow signed it
   # from that commit, which is what the tag stood for.
-  if [ "$found" != "$digest" ] && built_from "$repo" "$digest" | grep -qx "$commit"; then
+  if [ "$found" != "$digest" ] && grep -qx -- "$commit" <<<"$(built_from "$repo" "$digest")"; then
     found=$digest
   fi
   if [ "$found" != "$digest" ]; then

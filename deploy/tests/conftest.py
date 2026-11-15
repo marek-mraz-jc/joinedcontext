@@ -53,6 +53,16 @@ def need_environment(env: str = "") -> None:
     pytest.fail(f"deployment/environments/{env} is missing: run `just _dev-assemble` first")
 
 
+@functools.cache
+def env_global(env: str, key: str) -> str:
+    """`global.<key>` as an environment's global.yaml.gotmpl sets it (a private one through the overlay)."""
+    need_environment(env)
+    text = (PROJECT_ROOT / "deployment/environments" / env / "global.yaml.gotmpl").read_text()
+    found = re.search(rf"^\s*{re.escape(key)}: (\S.*?)\s*$", text, re.M)
+    assert found, f"{env}/global.yaml.gotmpl sets no {key}"
+    return found[1]
+
+
 def load_yaml(text: str):
     return yaml.load(text, Loader=_LOADER)
 

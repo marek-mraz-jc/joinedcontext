@@ -18,6 +18,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from conftest import env_global
 import yaml
 from test_keycloak_admin_permissions import call, image, token
 
@@ -29,16 +30,13 @@ COMPONENT = yaml.safe_load((ROOT / "components/keycloak/component.yaml").read_te
 REALM = "pf126"
 # The owner's real Keycloak id on smartcity (global.initialUserId): the people Job refuses an id
 # another person already holds, so production never takes the defaults' placeholder.
-SMARTCITY_STEWARD = re.search(
-    r"participationStewardId: (\S+)", (ROOT / "ci/example-deployments/environments/smartcity/global.yaml.gotmpl").read_text()
-)[1]
-SMARTCITY_OWNER = re.search(
-    r"initialUserId: (\S+)", (ROOT / "ci/example-deployments/environments/smartcity/global.yaml.gotmpl").read_text()
-)[1]
+def smartcity_steward() -> str:
+    return env_global("smartcity", "participationStewardId")
+def smartcity_owner() -> str:
+    return env_global("smartcity", "initialUserId")
 # The owner's e-mail (global.initialUserEmail): a private value, read where it is set (T-6982).
-SMARTCITY_OWNER_EMAIL = re.search(
-    r"initialUserEmail: (\S+)", (ROOT / "ci/example-deployments/environments/smartcity/global.yaml.gotmpl").read_text()
-)[1]
+def smartcity_owner_email() -> str:
+    return env_global("smartcity", "initialUserEmail")
 
 # One worker runs the module, so one Keycloak serves its tests (T-3897, T-5370).
 pytestmark = [pytest.mark.xdist_group("docker-keycloak-people")]
@@ -99,7 +97,7 @@ def people_job(docs):
 def test_dev_gives_every_demo_person_their_id(rendered):
     lines, job = people_job(rendered("dev"))
     # The presenter (T-6542) beside them, never deleted.
-    expected = [[u["id"], f"{name}@hel.fi", "true"] for name, u in DEMO.items()] + [[PRESENTER, "presenter@hel.fi", "false"]]
+    expected = [[u["id"], f"{name}@hel.fi", "true"] for name, u in DEMO.items()] + [[presenter(), "presenter@hel.fi", "false"]]
     assert sorted(lines) == sorted(expected)
     assert job["metadata"]["annotations"]["helm.sh/hook"] == "post-install,post-upgrade"
     pod = job["spec"]["template"]["spec"]
@@ -110,20 +108,20 @@ def test_dev_gives_every_demo_person_their_id(rendered):
 def test_a_production_instance_names_its_owner_by_id_and_never_deletes_them(rendered):
     docs = rendered("smartcity")
     lines, _ = people_job(docs)
-    assert UUID.match(SMARTCITY_OWNER) and not SMARTCITY_OWNER.startswith(("0a000000-", "de300000-"))
+    assert UUID.match(smartcity_owner()) and not smartcity_owner().startswith(("0a000000-", "de300000-"))
     # The owner, never deleted, and the Decidim administrator (T-6448), both under their own ids.
     assert lines == [
-        [SMARTCITY_STEWARD, "participacia.steward@hel.fi", "true"],
-        [PRESENTER, "presenter@hel.fi", "false"],
-        [SMARTCITY_OWNER, SMARTCITY_OWNER_EMAIL, "false"],
+        [smartcity_steward(), "participacia.steward@hel.fi", "true"],
+        [presenter(), "presenter@hel.fi", "false"],
+        [smartcity_owner(), smartcity_owner_email(), "false"],
     ]
-    assert not SMARTCITY_STEWARD.startswith(("0a000000-", "de300000-"))
+    assert not smartcity_steward().startswith(("0a000000-", "de300000-"))
     seeds = "\n".join(
         str(v) for d in docs if d.get("kind") == "ConfigMap" and d["metadata"]["name"].startswith("gitea-seed")
         for v in (d.get("data") or {}).values()
     )
     assert "de300000-" not in seeds, "a demo person's id reached a production seed"
-    assert SMARTCITY_OWNER in seeds, "the steward's grants lost their holder"
+    assert smartcity_owner() in seeds, "the steward's grants lost their holder"
 
 
 # --- the script in the pinned Keycloak ------------------------------------------------------
@@ -182,9 +180,8 @@ def held(base, username):
 
 
 # The person the owner presents as on dev, stage and smartcity (T-6542, tests/test_presenter.py).
-PRESENTER = re.search(
-    r"presenterUserId: (\S+)", (ROOT / "ci/example-deployments/environments/smartcity/global.yaml.gotmpl").read_text()
-).group(1)
+def presenter() -> str:
+    return env_global("smartcity", "presenterUserId")
 STEWARD = ("de300000-0000-4000-8000-000000000001", "demo.steward@hel.fi", "true")
 OWNER = ("0a000000-0000-4000-8000-000000000001", "owner@example.org", "false")
 

@@ -7,6 +7,7 @@ age.py itself runs in the image the cluster runs it in, against that CLI, since 
 no python3-cryptography.
 """
 
+import functools
 import os
 import shutil
 import subprocess
@@ -14,11 +15,26 @@ from pathlib import Path
 
 import pytest
 import yaml
+from conftest import need_environment
 
 ROOT = Path(__file__).resolve().parent.parent
 CHART = ROOT / "components/postgres/charts/databases"
-# The operator recipient the default environments name: the dev age key of .sops.yaml (public).
-OPERATOR_RECIPIENT = yaml.safe_load((ROOT / ".sops.yaml").read_text())["creation_rules"][0]["age"].split(",")[0]
+
+
+def operator_recipient() -> str:
+    """The operator key smartcity seals its dumps to: the first age recipient of the private .sops.yaml."""
+    need_environment("smartcity")
+    sops = Path(os.environ.get("JC_ENVIRONMENTS") or "/nonexistent") / ".sops.yaml"
+    if not sops.is_file():
+        pytest.fail("the smartcity render needs the private .sops.yaml: set JC_ENVIRONMENTS to the environments/ checkout")
+    return yaml.safe_load(sops.read_text())["creation_rules"][0]["age"].split(",")[0]
+
+
+@functools.cache
+def throwaway_recipient() -> str:
+    """A fresh age key's recipient: the chart's schema checks the form, any real key would do."""
+    done = subprocess.run(["age-keygen"], capture_output=True, text=True, check=True)
+    return next(l.split(": ", 1)[1] for l in done.stdout.splitlines() if l.startswith("# public key: "))
 
 
 def one(docs: list[dict], kind: str, name: str) -> dict:
@@ -43,7 +59,7 @@ def test_the_dump_is_encrypted_before_it_touches_the_volume(smartcity, cluster):
     assert "file=/backup/$(date -u +%Y-%m-%dT%H%MZ).sql.gz.age" in script
     assert "-name '*.sql.gz.age' -mmin -1200" in script, "the apply's bind check looks for sealed dumps"
     env = {e["name"]: e.get("value") for e in container["env"]}
-    assert env["AGE_RECIPIENTS"] == OPERATOR_RECIPIENT
+    assert env["AGE_RECIPIENTS"] == operator_recipient()
     volumes = {v["name"]: v for v in pod["volumes"]}
     assert volumes["key"]["secret"] == {"secretName": f"{cluster}-local-backup-key", "defaultMode": 0o440}
     assert volumes["age"]["configMap"]["name"] == f"{cluster}-local-backup-age"
@@ -98,7 +114,7 @@ def test_the_render_refuses_a_dump_sealed_to_no_operator_key(tmp_path):
     assert refused.returncode != 0 and "localBackup.ageRecipients is empty" in refused.stderr
     refused = helm_template(tmp_path, "localBackup.ageRecipients={age1short}")
     assert refused.returncode != 0 and "ageRecipients" in refused.stderr, "the schema holds each to an age1 key"
-    rendered = helm_template(tmp_path, f"localBackup.ageRecipients={{{OPERATOR_RECIPIENT}}}")
+    rendered = helm_template(tmp_path, f"localBackup.ageRecipients={{{throwaway_recipient()}}}")
     assert rendered.returncode == 0, rendered.stderr
     kinds = [d["kind"] for d in yaml.safe_load_all(rendered.stdout) if d]
     assert "CronJob" in kinds and "ConfigMap" in kinds

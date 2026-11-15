@@ -14,6 +14,7 @@ import zlib
 from pathlib import Path
 
 import pytest
+from conftest import env_global
 
 import yaml
 
@@ -288,14 +289,13 @@ def test_the_blob_id_is_the_one_git_computes(script, tmp_path):
 
 
 # dev's one rewrite of the vendored Apps (T-6542): the presenter beside the steward on each member line.
-PRESENTER_ID = re.search(
-    r"presenterUserId: (\S+)", (ROOT / "ci/example-deployments/environments/dev/global.yaml.gotmpl").read_text()
-).group(1)
+def presenter_id() -> str:
+    return env_global("dev", "presenterUserId")
 
 
 def presented(text: str) -> str:
     member = r"(?m)^([ \t]*)- user: (de300000-0000-4000-8000-00000000000[1567]( # demo\.[a-z]+)?|demo\.(steward|zilina|barcelona|bratislava)@[A-Za-z0-9.-]+[^\n]*)\n"
-    return re.sub(member, lambda m: f"{m.group(1)}- user: {PRESENTER_ID} # presenter\n{m.group(0)}", text)
+    return re.sub(member, lambda m: f"{m.group(1)}- user: {presenter_id()} # presenter\n{m.group(0)}", text)
 
 
 @requires_helmfile
