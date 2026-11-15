@@ -1568,6 +1568,7 @@ dependencies = [
  "csv",
  "ekiben-bloblang",
  "ekiben-core",
+ "encoding_rs",
  "flate2",
  "futures",
  "quick-xml",

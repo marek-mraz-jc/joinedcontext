@@ -774,6 +774,30 @@ async fn unarchive_splits_as_many_members_as_the_org_may_hold() {
     assert_eq!(res[0].len(), 15_000);
 }
 
+#[tokio::test]
+async fn unarchive_shapefile_gives_one_wgs84_feature_per_record() {
+    let (reg, ctx) = make_ctx("org-shp");
+    let zip = include_bytes!("fixtures/shapefile/helsinki-3879-pisteet.zip");
+    let procs = parse_procs("- unarchive:\n    format: shapefile\n", &reg, &ctx);
+    let res = execute_all(&ctx, &procs, vec![vec![Part::new(zip.to_vec())]])
+        .await
+        .unwrap();
+    let got: Vec<_> = res[0]
+        .iter()
+        .map(|p| p.as_structured_ref().unwrap().to_json_value())
+        .collect();
+    assert_eq!(got.len(), 2, "the deleted record is skipped");
+    assert_eq!(got[0]["properties"]["NIMI"], "Kauppatori");
+    let lon = got[0]["geometry"]["coordinates"][0].as_f64().unwrap();
+    assert!((24.93..24.94).contains(&lon), "reprojected to WGS 84: {lon}");
+    assert_eq!(got[1]["geometry"], serde_json::Value::Null);
+    // Anything but a shapefile zip errors the message, naming the problem.
+    let res = execute_all(&ctx, &procs, vec![vec![Part::from_str("plain text")]])
+        .await
+        .unwrap();
+    assert!(res[0][0].is_errored());
+}
+
 #[test]
 fn a_step_naming_a_missing_cache_refuses_the_stream_as_bento_does() {
     let (reg, ctx) = make_ctx("org-nocache");
