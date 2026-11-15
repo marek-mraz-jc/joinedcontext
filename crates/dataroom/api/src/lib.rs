@@ -196,6 +196,8 @@ pub struct DataroomState {
     pub catalogue_bases: Arc<std::sync::RwLock<BTreeMap<CatalogueId, String>>>,
     /// The further portals' slug addresses and own hosts (ODP-08), swapped at runtime.
     pub portals: PortalTables,
+    /// Profile verdicts of the public feeds, kept between pages ([`feeds::FeedConformance`]).
+    pub feed_conformance: Arc<feeds::FeedConformance>,
 }
 
 /// Where a request came in, as the host's router resolved it (`jc_router::Mount`: the scheme
@@ -286,6 +288,7 @@ impl DataroomState {
             organization_catalogues: Arc::default(),
             catalogue_bases: Arc::default(),
             portals: PortalTables::default(),
+            feed_conformance: Arc::default(),
         }
     }
 
