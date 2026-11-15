@@ -1,0 +1,11 @@
+{
+  "paginate": {
+    "limit": 200,
+    "limit_param": "count",
+    "mode": "offset",
+    "offset_param": "startIndex",
+    "records": "features",
+    "total": "numberMatched"
+  },
+  "url": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?propertyName=id%2Cc&service=WFS&version=2.0.0&request=GetFeature&typeNames=avoindata%3AFMI_Paikkakohtainen_vyorymakerroin_piste&srsName=EPSG%3A4326&outputFormat=application%2Fjson"
+}

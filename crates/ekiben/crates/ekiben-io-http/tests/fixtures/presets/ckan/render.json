@@ -1,0 +1,11 @@
+{
+  "paginate": {
+    "limit": 1,
+    "limit_param": "rows",
+    "mode": "offset",
+    "offset_param": "start",
+    "records": "result.results",
+    "total": "result.count"
+  },
+  "url": "https://opendata-ajuntament.barcelona.cat/data/api/3/action/package_search?fq=organization%3Aocupacio"
+}

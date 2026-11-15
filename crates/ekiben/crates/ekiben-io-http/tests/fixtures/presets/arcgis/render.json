@@ -1,0 +1,15 @@
+{
+  "paginate": {
+    "limit": 60,
+    "limit_param": "resultRecordCount",
+    "mode": "offset",
+    "more": "properties.exceededTransferLimit",
+    "offset_param": "resultOffset",
+    "order_by": {
+      "param": "orderByFields",
+      "value": "objectid"
+    },
+    "records": "features"
+  },
+  "url": "https://geodata.csu.gov.cz/server/rest/services/Hosted/Open_data_RSO/FeatureServer/17/query?returnGeometry=false&where=1%3D1&outFields=objectid%2Cnaz_mco&outSR=4326&f=geojson"
+}

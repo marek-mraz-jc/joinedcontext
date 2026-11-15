@@ -45,6 +45,8 @@ An HTTP resource the runner polls (Architecture/08 §6).
 | `format` | [HttpBodyFormat](#httpbodyformat) | no | How the body becomes messages: `csv` hands each row to the steps as one message keyed by the header's column names; absent, the whole body is one message (PL-114). |
 | `headers` | map of string | no | Static request headers. A header carrying a credential belongs in `authorization`. |
 | `maxBytes` | integer (uint64) | no | The largest response body accepted, in bytes; 32 MiB when absent, at most 256 MiB. The runner refuses a larger body before any step of the pipeline sees it (PL-113). |
+| `paging` | [HttpPaging](#httppaging) | no | How the runner walks a paged source page by page (PL-31, T-7056): each page is one message, split by `records` as a single body is. Absent, the URL is read once. |
+| `preset` | [HttpPreset](#httppreset) | no | A known kind of open data API (T-7067): the runner sends its query parameters and walks its pages, so `paging` and `records` stay unset. CKAN, ArcGIS, OData, WFS, OGC API Features or SensorThings, with the URL of its search, query or items resource. |
 | `records` | string | no | Where the records sit in a JSON body: a dotted path to an array, `data.stations` for a GBFS feed. The runner hands each element to the steps as one message; absent, the whole body is one message. Names only, never an expression (PL-114). |
 | `timeout` | string | no | Request timeout as a Bento duration, `10s`. |
 | `url` | string | yes | The URL to fetch, `http://` or `https://`. |
@@ -134,6 +136,47 @@ How an `http` connection splits the body it fetched into messages (PL-114).
 
 Type: `"csv"`
 
+## HttpPaging
+
+How a paged `http` source is walked (PL-31, T-7056): rendered to the runner's `paginate` option, so no mapping writes its own loop. `records` (`spec.http.records`) names each page's array; `page`, `offset`, `total` and `maxRecords` count it. A run is complete only when a stop rule held: an empty or short page, the total reached, `more` false, or no next cursor or URL.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `cursor` | string | no | `cursor`: the body path to the next cursor, `meta.next`. |
+| `cursorHeader` | string | no | `cursor`: the header the cursor is sent in, instead of a parameter. |
+| `cursorParam` | string | no | `cursor`: the query parameter the cursor is sent in. |
+| `delay` | string | no | The pause between pages as a duration, `200ms`, at most a minute. |
+| `limit` | integer (uint64) | no | `offset`: the page size asked for. The offset moves by the records received. |
+| `limitParam` | string | no | `offset`: the page size parameter, `limit` when absent (ArcGIS `resultRecordCount`). |
+| `maxPages` | integer (uint64) | no | The most pages one run reads, 1 to 10000, 1000 when absent; reaching it fails the run. |
+| `maxRecords` | integer (uint64) | no | The most records one run reads; reaching it before a stop rule fails the run. |
+| `mode` | [HttpPagingMode](#httppagingmode) | yes | `page`, `offset`, `cursor`, `link` (RFC 8288 `rel=next`) or `nextUrl`. |
+| `more` | string | no | The body path to a boolean saying another page exists, `exceededTransferLimit`. |
+| `next` | string | no | `nextUrl`: the body path to the next URL, `@odata.nextLink` or `links[rel=next].href`. |
+| `offsetParam` | string | no | `offset`: the offset parameter, `offset` when absent (ArcGIS `resultOffset`, OData `$skip`). |
+| `orderBy` | [HttpPagingOrder](#httppagingorder) | no | A parameter that keeps the order stable across pages, `orderByFields=OBJECTID`. |
+| `param` | string | no | `page`: the page number parameter, `page` when absent. |
+| `size` | integer (uint64) | no | `page`: the page size asked for; a shorter page ends the walk. |
+| `sizeParam` | string | no | `page`: the page size parameter, sent with `size`. |
+| `start` | integer (uint64) | no | `page` and `offset`: the first page number (1) or offset (0). |
+| `total` | string | no | The body path to the count the first page announces, `numberMatched`; a run that read another number of records fails. |
+
+## HttpPreset
+
+A known kind of open data API an `http` connection reads (T-7067): the preset sends the API's own query parameters and walks its pages, so a person picks the kind and the URL and types no parameter. Each field belongs to the kinds its comment names; another kind refuses it.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `expand` | string | no | `sensorThings`: the related entities read with each one, `Datastreams/Observations`. |
+| `kind` | [HttpPresetKind](#httppresetkind) | yes | `ckan`, `arcgisFeature`, `odata`, `wfs`, `ogcFeatures` or `sensorThings`. |
+| `objectIdField` | string | no | `arcgisFeature`: the field that keeps the order stable across pages, `OBJECTID` when absent. |
+| `organization` | string | no | `ckan` (`package_search`): the one organization whose datasets are read, `bcn`. |
+| `outFields` | list of string | no | `arcgisFeature`: the fields read, named one by one (never `*`), so a new column of the layer reaches no pipeline unasked. |
+| `pageSize` | integer (uint64) | no | Every kind: the records asked for per page, 1 to 10000, 1000 when absent. `odata` with a page size pages by `$top`/`$skip`; without one it follows `@odata.nextLink`. |
+| `resourceId` | string | no | `ckan` (`datastore_search`): the resource whose rows are read. |
+| `srsName` | string | no | `wfs`: the coordinate system asked for, `EPSG:4326` when absent. |
+| `typeNames` | string | no | `wfs`: the feature type read, `avoindata:Helsinki_osoiteluettelo`. |
+
 ## TypedRef
 
 Structured typed resource reference (MF-07).
@@ -149,3 +192,24 @@ Structured typed resource reference (MF-07).
 The archive formats an `http` connection reads (PL-72).
 
 Type: `"zip"`
+
+## HttpPagingMode
+
+How a paged source names its next page.
+
+Type: one of `"page"`, `"offset"`, `"cursor"`, `"link"`, `"nextUrl"`
+
+## HttpPagingOrder
+
+The order parameter of a paged source.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `param` | string | yes | The parameter name, `orderByFields` or `$orderby`. |
+| `value` | string | yes | Its value, `OBJECTID`. |
+
+## HttpPresetKind
+
+The open data APIs a preset reads.
+
+Type: one of `"ckan"`, `"arcgisFeature"`, `"odata"`, `"wfs"`, `"ogcFeatures"`, `"sensorThings"`
