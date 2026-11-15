@@ -92,7 +92,7 @@ describe("the API tab", () => {
         }
         if (url.pathname.endsWith("/subscriptions") && request.method === "GET") {
           return new Response(
-            JSON.stringify({ items: [subscription("bikes-low", "bikes", "BikeHireDockingStation", "https://hooks.example/low")] }),
+            JSON.stringify({ items: [subscription("bikes-low", "bikes", "BikeHireDockingStation", "https://hook-user:hunter2@hooks.example/low?token=s3cr3t")] }),
             { status: 200, headers: { "Content-Type": "application/json" } },
           );
         }
@@ -154,6 +154,10 @@ describe("the API tab", () => {
     ]);
     expect(within(api).getByText(/entities\?type=BikeHireDockingStation&limit=10$/)).toBeInTheDocument();
     expect(await within(api).findByText("bikes-low")).toBeInTheDocument();
+    // A receiver's address shows host and path, never its password or query (T-4991).
+    expect(within(api).getByText("hooks.example/low")).toBeInTheDocument();
+    expect(api.innerHTML).not.toContain("hunter2");
+    expect(api.innerHTML).not.toContain("s3cr3t");
     expect(within(api).getByRole("link", { name: en.spaces.api.tokensLink })).toHaveAttribute(
       "href",
       "/projects/helsinki/settings/service-accounts",
