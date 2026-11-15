@@ -28,7 +28,7 @@ async function shot(page: Page, state: string): Promise<void> {
   mkdirSync(SHOTS, { recursive: true });
   for (const width of [1440, 400]) {
     await page.setViewportSize({ width, height: 900 });
-    await page.screenshot({ path: `${SHOTS}/kafka-${state}-${width}.png`, fullPage: true });
+    await page.screenshot({ path: `${SHOTS}/kafka-${state}-${width}.png`, fullPage: true, animations: "disabled" });
   }
   await page.setViewportSize({ width: 1440, height: 900 });
 }
@@ -56,6 +56,10 @@ test("a steward picks Kafka and fills the brokers, the topics and the group, eac
   await page.locator("#root_topics_0").fill("vehicle-positions");
   await page.getByLabel("Consumer group").fill("traffic-ingest");
   await expect(page.getByText(/Fields to fix/)).toBeHidden();
+  // a corrected field drops its error style
+  for (const id of ["#root_seed_brokers_0", "#root_topics_0"]) {
+    await expect(page.locator(id)).not.toHaveAttribute("aria-invalid", "true");
+  }
   await shot(page, "filled");
   expect(await axeViolations(page)).toEqual([]);
 });
