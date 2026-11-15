@@ -1076,7 +1076,11 @@ mod tests {
     /// the endpoint's host name.
     #[test]
     fn mqtts_verifies_the_name_while_dialling_the_address() {
-        let mut opts = rumqttc::MqttOptions::new("t", dial_host("203.0.113.7:8883".parse().expect("addr")), 8883);
+        let mut opts = rumqttc::MqttOptions::new(
+            "t",
+            dial_host("203.0.113.7:8883".parse().expect("addr")),
+            8883,
+        );
         opts.set_tls_server_name("broker.example");
         assert_eq!(opts.broker_address(), ("203.0.113.7".to_owned(), 8883));
         assert_eq!(opts.tls_server_name(), "broker.example");

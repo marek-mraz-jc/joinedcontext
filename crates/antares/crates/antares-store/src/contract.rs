@@ -557,7 +557,9 @@ pub async fn run_current_state_contract(
         .await
         .expect("list_slice entities");
     assert!(
-        sliced.iter().all(|d| d["id"].as_str() != Some(expired.as_str())),
+        sliced
+            .iter()
+            .all(|d| d["id"].as_str() != Some(expired.as_str())),
         "an expired entity may not be served by a slice"
     );
     assert_eq!(
