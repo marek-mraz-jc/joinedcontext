@@ -71,8 +71,8 @@ fn manifest(kind: &str) -> (String, String) {
         _ => json!({
             "owner": { "user": "3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14" },
             "purpose": "the air-quality adapter",
-            "roles": [],
-            "credentials": []
+            "roles": [{ "role": "admin-role", "scope": { "organization": "bb" } }],
+            "credentials": [{ "kind": "oauth-client", "name": "main" }]
         }),
     };
     let name = format!("{}-x", kind.to_ascii_lowercase());
