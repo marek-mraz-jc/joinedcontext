@@ -468,6 +468,36 @@ test.describe("the public catalogue", () => {
     });
   }
 
+  // T-6955 (owner's phone shot): on a touch screen the Button grows to 44 px while the header was a
+  // fixed `h-14` (36 px at the Portal's density), so Sign in stuck out above the screen's top edge.
+  test.describe("on a touch screen", () => {
+    test.use({ hasTouch: true });
+    for (const width of [360, 400, 980]) {
+      for (const path of ["/catalogue?lang=en", "/catalogue/bbsk-kpi?lang=en"]) {
+        test(`${path} fits ${width} px and Sign in sits inside the header`, async ({ page }) => {
+          await page.setViewportSize({ width, height: 800 });
+          await stubApi(page, []);
+          await page.goto(path);
+          await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+          const signIn = page.getByRole("banner").getByRole("button", { name: "Sign in" });
+          const button = await signIn.boundingBox();
+          const header = await page.getByRole("banner").boundingBox();
+          expect(button && header).toBeTruthy();
+          if (!button || !header) return;
+          expect(button.height, "a finger's 44 px").toBeGreaterThanOrEqual(44);
+          expect(button.y, "Sign in starts inside the header").toBeGreaterThanOrEqual(header.y);
+          expect(button.y + button.height, "Sign in ends inside the header").toBeLessThanOrEqual(header.y + header.height);
+          expect(button.x + button.width, "Sign in ends inside the screen").toBeLessThanOrEqual(width);
+          const sideways = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+          expect(sideways, "the page scrolls sideways").toBeLessThanOrEqual(0);
+          if (process.env.SHOTS_DIR) {
+            await page.screenshot({ path: `${process.env.SHOTS_DIR}/touch-${path.includes("bbsk") ? "dataset" : "catalogue"}-${width}.png` });
+          }
+        });
+      }
+    }
+  });
+
   // T-4995 (audit T-4887 finding 7): a card ended in 13 format chips and, at 400 px, about 40 facet
   // checkboxes came before the first dataset. Now four key formats and "+N", and the facets behind a
   // "Filters" button under 768 px.
