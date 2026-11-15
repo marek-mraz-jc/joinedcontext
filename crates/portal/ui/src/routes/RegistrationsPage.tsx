@@ -26,6 +26,7 @@ import {
 } from "../components/ui";
 import { PermissionGuard } from "../components/ui/PermissionGuard";
 import { SPACE_LABEL } from "../schemas/modelprojection";
+import { endpointView } from "../components/ui/safeHref";
 
 const KIND = "ContextSourceRegistration";
 const PLURAL = "csrs";
@@ -256,7 +257,8 @@ export function RegistrationsPage({ project, edit }: { project: string; edit?: s
   ];
   const sourceOf = (registration: Manifest) => {
     const shape = fromRegistrationEnvelope(registration);
-    return (targetOf(shape) === "endpoint" ? shape.endpoint : shape.endpointRef) || "";
+    // A broker's address as the Data sources table shows it (T-4991): no password, no token.
+    return (targetOf(shape) === "endpoint" ? endpointView(shape.endpoint ?? "").shown : shape.endpointRef) || "";
   };
   const columns: DataColumn<Manifest>[] = [
     {

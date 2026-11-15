@@ -8,8 +8,9 @@ import type { RichRow, RichCell } from "./model";
 import { attributesOf, cellText } from "./model";
 import { formulasOf, withFormulas } from "./formula";
 import { unitSymbol } from "../sdk/units";
-import { andQ, opsForKind, queryFromFilters, typeOfFilter } from "./filters";
+import { andQ, andScopeQ, opsForKind, queryFromFilters, typeOfFilter } from "./filters";
 import type { ColumnFilter, FilterColumn, FilterKind, FilterOp } from "./filters";
+import { keptMembers } from "./apply";
 import type { AttributeChange, EntityChange } from "./apply";
 import type { EnumOption } from "../enums";
 import type { RelationEnd } from "../relations";
@@ -1098,6 +1099,7 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
         .filter(
           (column) =>
             opsForKind(column.kind).length > 0 &&
+            !(column.kind === "id" && config.filters.preset?.idPattern) &&
             !(column.attr !== null && relations?.[column.attr]?.inverseOf) &&
             !formulas.some((each) => each.attr === column.attr),
         ),
@@ -1144,6 +1146,7 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
           datasetId: one?.datasetId,
           languageMap: one?.languageMap,
           language: one?.language,
+          kept: keptMembers(row?.raw[attribute], one?.datasetId),
         };
       });
       return { id, changes };
@@ -1160,10 +1163,12 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
     type: typeOfFilter(config.type, filters["entity:type"]),
     // The caller's query and the filter row are both true: `;` is how NGSI-LD says "and", so a
     // preset that narrows the grid to one district cannot be widened by a filter (EP-07).
-    q: andQ(queryPartial?.q ?? config.filters.preset?.q, askedQuery.q),
+    // The host's query holds beside the preset, for the same reason. Two id patterns cannot be
+    // written as one, so the preset's stands and the grid offers no id filter beside it.
+    q: andQ(config.filters.preset?.q, queryPartial?.q, askedQuery.q),
     attrs: withReads(queryPartial?.attrs ?? config.filters.preset?.attrs, formulas),
-    idPattern: askedQuery.idPattern ?? queryPartial?.idPattern ?? config.filters.preset?.idPattern,
-    scopeQ: queryPartial?.scopeQ ?? config.filters.preset?.scopeQ,
+    idPattern: config.filters.preset?.idPattern ?? askedQuery.idPattern ?? queryPartial?.idPattern,
+    scopeQ: andScopeQ(config.filters.preset?.scopeQ, queryPartial?.scopeQ),
     // Exactly these entities: an opened relationship target (G-R2GRID2-017).
     ids: queryPartial?.ids,
     // `areaQuery` refuses a shape that is not an area, so a half-drawn one asks for nothing
@@ -1180,8 +1185,8 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
       const built = queryFromFilters(filterColumns, others);
       return {
         ...asked,
-        q: andQ(queryPartial?.q ?? config.filters.preset?.q, built.q),
-        idPattern: built.idPattern ?? queryPartial?.idPattern ?? config.filters.preset?.idPattern,
+        q: andQ(config.filters.preset?.q, queryPartial?.q, built.q),
+        idPattern: config.filters.preset?.idPattern ?? built.idPattern ?? queryPartial?.idPattern,
         orderBy: undefined,
       };
     },
@@ -1238,13 +1243,23 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
         });
         setLoading(false);
       })
-      .catch((err) => {
+      .catch(async (failure: unknown) => {
         if (cancelledRef.current || nonceRef.current !== nonce) return;
+        let err = failure;
         if (err instanceof SourceError && err.orderRefused && gridQuery.orderBy) {
-          // The same question without the order: the rows come back and the page is sorted here.
-          refusesOrder.add(source);
-          setOrderRefusals((n) => n + 1);
-          return;
+          // A BadRequestData may be about the q as well as the order: the same question without
+          // the order tells which. Answered, the order was refused: the rows come back without it
+          // and the page is sorted here. Refused again, the order stays and the q's refusal shows.
+          const again = await source
+            .query({ ...gridQuery, orderBy: undefined }, { offset: 0, limit: 1, count: false })
+            .then(() => null, (unordered: unknown) => unordered);
+          if (cancelledRef.current || nonceRef.current !== nonce) return;
+          if (again === null) {
+            refusesOrder.add(source);
+            setOrderRefusals((n) => n + 1);
+            return;
+          }
+          err = again;
         }
         const refused = refusalOf(err);
         if (refused) {

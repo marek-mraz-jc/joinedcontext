@@ -6,6 +6,7 @@ import { shippedForms } from "../../schemas/forms";
 import { portalThemeWidgets } from "./theme";
 import { arrange, index, mergeUi, paths, prefilled } from "./uischema";
 import { PORTAL_WIDGET_NAMES } from "./widgetNames";
+import { savePreferences } from "../../navigation/places";
 import type { JsonSchema, UiSchema } from "./types";
 
 export interface FormArrangementOptions {
@@ -57,8 +58,7 @@ export function useFormArrangement(options: FormArrangementOptions): FormArrange
   const [advancedChoice, setAdvancedChoice] = useState<boolean | null>(null);
   const advanced = advancedChoice ?? preferences.data?.advancedMode === true;
   const saveAdvanced = useMutation({
-    mutationFn: async (next: boolean) =>
-      unwrap(await api.PUT("/api/v1/preferences", { body: { ...(preferences.data ?? {}), advancedMode: next } })),
+    mutationFn: (next: boolean) => savePreferences({ advancedMode: next }),
   });
 
   // The fields the manifest may arrange, as one string: a page that rebuilds its schema object on

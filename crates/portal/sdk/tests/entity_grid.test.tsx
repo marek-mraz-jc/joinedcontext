@@ -1119,6 +1119,26 @@ describe("EntityGrid", () => {
       expect(screen.queryByText(new RegExp(DEFAULT_LABELS.error))).toBeNull();
     });
 
+    it("keeps ordering on the source when the refused question was its q, not its order", async () => {
+      const paths: string[] = [];
+      const transport = async (req: { path: string }) => {
+        paths.push(req.path);
+        if (req.path.includes("q=bad")) {
+          return { status: 400, headers: {}, body: { type: "https://uri.etsi.org/ngsi-ld/errors/BadRequestData", title: "BadRequestData", detail: "q: unexpected token" } };
+        }
+        return { status: 200, headers: {}, body: bikeEntities };
+      };
+      const source = endpointSource("t-bad-q-sorted", transport as never);
+      const sorted = { sort: { attr: "availableBikeNumber", dir: "asc" as const } };
+      const { rerender } = render(<EntityGrid config={config} source={source} state={sorted} query={{ q: "bad" }} />);
+      await waitFor(() => expect(paths.some((path) => path.includes("q=bad") && !path.includes("orderBy="))).toBe(true));
+      rerender(<EntityGrid config={config} source={source} state={sorted} query={{ q: "availableBikeNumber>0" }} />);
+      // The stub answers in its own order, so the rows read as sent: the broker ordered them.
+      await waitFor(() => expect(paths.some((path) => path.includes("availableBikeNumber%3E0") && path.includes("orderBy="))).toBe(true));
+      await waitFor(() => expect(names()).toEqual(["Kamppi", "Kallio"]));
+      expect(screen.queryByText(DEFAULT_LABELS.sortedLoaded.replace("{count}", "2"))).toBeNull();
+    });
+
     it("words any other refused query plainly and keeps the broker's sentence under a disclosure", async () => {
       const transport = async () => ({
         status: 400,

@@ -195,11 +195,19 @@ function termOf(
   meta: MetaKey | null | undefined,
   filter: ColumnFilter,
   kind?: FilterKind,
+  datetime?: boolean,
 ): string | undefined {
   if (!complete(filter)) {
     return undefined;
   }
   const path = term(attr, meta);
+  // A date-time picker names a minute, and `==` compares texts (CIM 009 4.9): "is" asks for the
+  // minute's span, so a stored `10:00:00Z` or `10:00:30.5Z` matches the picked 10:00.
+  const minute = datetime && (filter.op === "equals" || filter.op === "notEquals") ? minuteOf(filter.value) : undefined;
+  if (minute) {
+    const [from, to] = minute;
+    return filter.op === "equals" ? `${path}>=${from};${path}<${to}` : `(${path}<${from}|${path}>=${to})`;
+  }
   switch (filter.op) {
     case "empty":
       return `!${path}`;
@@ -230,6 +238,15 @@ function termOf(
     case "startsWith":
       return undefined;
   }
+}
+
+/** The minute a timestamp falls in, as `[start, end)` in UTC without a seconds fraction. */
+function minuteOf(value: string): [string, string] | undefined {
+  const at = Date.parse(value.trim());
+  if (Number.isNaN(at)) return undefined;
+  const start = Math.floor(at / 60_000) * 60_000;
+  const text = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z");
+  return [text(start), text(start + 60_000)];
 }
 
 /** A column a filter can name: the attribute, the metadata member, and what it holds. */
@@ -283,7 +300,7 @@ export function queryFromFilters(
     if (!column.attr) {
       continue;
     }
-    const built = termOf(qAttr(column.attr, column), column.meta, filter, column.kind);
+    const built = termOf(qAttr(column.attr, column), column.meta, filter, column.kind, column.datetime);
     if (built) {
       terms.push(built);
     }
@@ -294,7 +311,35 @@ export function queryFromFilters(
 /** Two `q` strings as one: both must hold, which is what `;` means. */
 export function andQ(...parts: (string | undefined)[]): string | undefined {
   const kept = parts.map((part) => part?.trim()).filter((part): part is string => Boolean(part));
-  return kept.length > 0 ? kept.join(";") : undefined;
+  if (kept.length === 0) return undefined;
+  // `;` binds tighter than `|` (CIM 009 4.9), so `a|b;c` is `a|(b;c)`: a part with an either-or of
+  // its own is put in parentheses, or joining it would widen the answer instead of narrowing it.
+  return kept.length === 1 ? kept[0] : kept.map((part) => (hasOr(part) ? `(${part})` : part)).join(";");
+}
+
+/**
+ * Two `scopeQ` values as one: an Entity matches when both match. The grammar (CIM 009 4.19) is a
+ * disjunction of parenthesised `;`-conjunctions, so the result pairs each group of one with each
+ * group of the other.
+ */
+export function andScopeQ(...parts: (string | undefined)[]): string | undefined {
+  const kept = parts.map((part) => part?.trim()).filter((part): part is string => Boolean(part));
+  if (kept.length <= 1) return kept[0];
+  const groups = (scope: string) =>
+    scope.split(/[,|]/).map((group) => group.trim().replace(/^\((.*)\)$/, "$1").trim());
+  const joined = kept.map(groups).reduce((left, right) => left.flatMap((a) => right.map((b) => `${a};${b}`)));
+  return joined.map((group) => `(${group})`).join(",");
+}
+
+/** Whether `q` holds a `|` outside its quoted texts. */
+function hasOr(q: string): boolean {
+  let quoted = false;
+  for (let i = 0; i < q.length; i++) {
+    if (q[i] === "\\" && quoted) i++;
+    else if (q[i] === '"') quoted = !quoted;
+    else if (q[i] === "|" && !quoted) return true;
+  }
+  return false;
 }
 
 /** One condition of the filter panel: the column it asks about and what it asks. */
