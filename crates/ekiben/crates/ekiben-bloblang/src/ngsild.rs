@@ -642,7 +642,9 @@ fn urn_part(
     match ctx.eval_expr(expr)? {
         Value::String(s) if s.is_empty() => Err(format!("parameter {name} must not be empty")),
         Value::String(s) => Ok(s),
-        v @ (Value::Int(_) | Value::Uint(_) | Value::Number(_)) if name == "id" || name == "local" => {
+        v @ (Value::Int(_) | Value::Uint(_) | Value::Number(_))
+            if name == "id" || name == "local" =>
+        {
             Ok(v.to_string_coerced())
         }
         other => Err(format!(

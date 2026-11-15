@@ -65,7 +65,9 @@ fn multi_wraps_instances_with_their_dataset_ids() {
             {"type": "Property", "value": 1, "datasetId": "urn:ngsi-ld:Dataset:a"}
         ])
     );
-    assert!(run(r#"root = ngsild_multi({"not a uri": {"type": "Property", "value": 1}})"#).is_err());
+    assert!(
+        run(r#"root = ngsild_multi({"not a uri": {"type": "Property", "value": 1}})"#).is_err()
+    );
     assert!(run(r#"root = ngsild_multi({"urn:x:a": 5})"#).is_err());
     assert!(run(r#"root = ngsild_multi({})"#).is_err());
 }
@@ -80,7 +82,7 @@ fn language_map_drops_empty_texts() {
     assert_eq!(
         run(r#"root.a = 1
 root.name = ngsild_language_map({"fi": ""})"#)
-            .expect("nothing left"),
+        .expect("nothing left"),
         json!({"a": 1})
     );
     assert!(run(r#"root = ngsild_language_map({"en_US": "x"})"#).is_err());
@@ -89,7 +91,12 @@ root.name = ngsild_language_map({"fi": ""})"#)
 
 #[test]
 fn no_argument_is_an_error_never_a_panic() {
-    for f in ["ngsild_ref", "ngsild_point", "ngsild_multi", "ngsild_language_map"] {
+    for f in [
+        "ngsild_ref",
+        "ngsild_point",
+        "ngsild_multi",
+        "ngsild_language_map",
+    ] {
         assert!(run(&format!("root = {f}()")).is_err(), "{f}");
         assert!(run(&format!("root = {f}(null)")).is_err(), "{f}");
     }

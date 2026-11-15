@@ -295,7 +295,13 @@ impl Writer {
             }
         }
         if local_refusals > 0 {
-            metrics::incr(env.metrics, env.label, metrics::REFUSED, None, local_refusals);
+            metrics::incr(
+                env.metrics,
+                env.label,
+                metrics::REFUSED,
+                None,
+                local_refusals,
+            );
         }
         verdicts
     }
@@ -385,7 +391,13 @@ impl Writer {
                         v.written += 1;
                     }
                 }
-                metrics::incr(env.metrics, env.label, metrics::WRITTEN, None, members.len() as u64);
+                metrics::incr(
+                    env.metrics,
+                    env.label,
+                    metrics::WRITTEN,
+                    None,
+                    members.len() as u64,
+                );
             }
             Err(Failure::Refused(answer)) => {
                 let text = problem_text(&answer);
@@ -399,7 +411,13 @@ impl Writer {
                         });
                     }
                 }
-                metrics::incr(env.metrics, env.label, metrics::REFUSED, None, members.len() as u64);
+                metrics::incr(
+                    env.metrics,
+                    env.label,
+                    metrics::REFUSED,
+                    None,
+                    members.len() as u64,
+                );
             }
             Err(failure) => {
                 let text = failure.text();
@@ -504,7 +522,13 @@ fn apply_multi_status(
         }
     }
     metrics::incr(env.metrics, env.label, metrics::WRITTEN, None, written);
-    metrics::incr(env.metrics, env.label, metrics::REFUSED, None, errors.len() as u64);
+    metrics::incr(
+        env.metrics,
+        env.label,
+        metrics::REFUSED,
+        None,
+        errors.len() as u64,
+    );
 }
 
 /// `{"id": e.entityId.or(""), "message": e.error.detail.or(e.error.title).or("")}`.
@@ -599,7 +623,9 @@ fn decode(part: &Part, op: Operation) -> Result<Decoded, String> {
                 }
                 (Operation::TemporalAppend, Value::Object(m)) => {
                     let id = id.ok_or_else(|| {
-                        format!("item {n} has no id: a temporal append is addressed by the entity's id")
+                        format!(
+                            "item {n} has no id: a temporal append is addressed by the entity's id"
+                        )
                     })?;
                     let mut fragment: BTreeMap<String, Value> = (**m).clone();
                     for member in ["id", "type", "@context"] {
@@ -846,7 +872,9 @@ mod tests {
         let parts = [
             Part::from_json(json!({"id": "urn:a", "type": "T",
                 "p": [{"type": "Property", "value": 1, "observedAt": "2025-01-01T00:00:00Z"}]})),
-            Part::from_json(json!({"id": "urn:x y", "type": "T", "p": {"type": "Property", "value": 2}})),
+            Part::from_json(
+                json!({"id": "urn:x y", "type": "T", "p": {"type": "Property", "value": 2}}),
+            ),
             Part::from_json(json!({"type": "T", "p": {"type": "Property", "value": 3}})),
         ];
         let (verdicts, mut seen) = write_through(
@@ -921,9 +949,8 @@ mod tests {
             ("delete", "noOverwrite"),
             ("create", "nope"),
         ] {
-            let err = refused(
-                json!({"url": "http://gw/ngsi-ld/v1", "operation": op, "options": opt}),
-            );
+            let err =
+                refused(json!({"url": "http://gw/ngsi-ld/v1", "operation": op, "options": opt}));
             assert!(err.contains("options"), "{op} {opt}: {err}");
         }
         let err = refused(json!({"url": "http://gw/ngsi-ld/v1", "operation": "burn"}));

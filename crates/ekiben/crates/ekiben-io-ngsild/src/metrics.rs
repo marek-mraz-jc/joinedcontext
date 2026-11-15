@@ -85,10 +85,7 @@ mod tests {
         incr(&m, "w", REQUESTS, Some("207"), 1);
         timing(&m, "w", 1_000);
         assert_eq!(m.get_counter("w.ngsi_ld_entities_written_total"), 3);
-        assert_eq!(
-            m.get_counter("w.ngsi_ld_requests_total{status=\"207\"}"),
-            1
-        );
+        assert_eq!(m.get_counter("w.ngsi_ld_requests_total{status=\"207\"}"), 1);
         let text = reg.render_prometheus();
         assert!(
             text.contains("ngsi_ld_entities_written_total{label=\"w\",stream=\"s1\"} 3"),
