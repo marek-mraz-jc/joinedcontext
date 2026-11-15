@@ -789,7 +789,10 @@ async fn unarchive_shapefile_gives_one_wgs84_feature_per_record() {
     assert_eq!(got.len(), 2, "the deleted record is skipped");
     assert_eq!(got[0]["properties"]["NIMI"], "Kauppatori");
     let lon = got[0]["geometry"]["coordinates"][0].as_f64().unwrap();
-    assert!((24.93..24.94).contains(&lon), "reprojected to WGS 84: {lon}");
+    assert!(
+        (24.93..24.94).contains(&lon),
+        "reprojected to WGS 84: {lon}"
+    );
     assert_eq!(got[1]["geometry"], serde_json::Value::Null);
     // Anything but a shapefile zip errors the message, naming the problem.
     let res = execute_all(&ctx, &procs, vec![vec![Part::from_str("plain text")]])
