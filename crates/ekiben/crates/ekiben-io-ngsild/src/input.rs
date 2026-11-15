@@ -29,6 +29,8 @@ use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
 use url::Url;
 
+use ekiben_io_http::paginate::link_target;
+
 use crate::client::{sleep_or_stop, CallEnv, NgsiClient};
 use crate::config::{self, BrokerUrl, Fields, CLIENT_FIELDS, MAX_BATCH_COUNT};
 use crate::metrics;
@@ -758,25 +760,6 @@ fn newest_observed(entities: &[Value]) -> Option<DateTime<Utc>> {
         walk(e, 0, &mut best);
     }
     best
-}
-
-/// The target of a `Link` header entry whose `rel` is one of `rels`.
-pub(crate) fn link_target(header: &str, rels: &[&str]) -> Option<String> {
-    for entry in header.split(',') {
-        let mut pieces = entry.split(';');
-        let target = pieces.next()?.trim();
-        let target = target.strip_prefix('<')?.strip_suffix('>')?;
-        let matched = pieces.any(|p| {
-            let p = p.trim();
-            p.strip_prefix("rel=")
-                .map(|r| r.trim_matches('"'))
-                .is_some_and(|r| r.split_whitespace().any(|one| rels.contains(&one)))
-        });
-        if matched {
-            return Some(target.to_string());
-        }
-    }
-    None
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

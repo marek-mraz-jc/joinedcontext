@@ -191,6 +191,10 @@ pub struct HttpConnection {
     /// runner refuses a larger body before any step of the pipeline sees it (PL-113).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_bytes: Option<u64>,
+    /// How the runner walks a paged source page by page (PL-31, T-7056): each page is one
+    /// message, split by `records` as a single body is. Absent, the URL is read once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paging: Option<HttpPaging>,
 }
 
 impl HttpConnection {
@@ -329,6 +333,344 @@ impl HttpArchive {
         }
         Ok(())
     }
+}
+
+/// How a paged `http` source is walked (PL-31, T-7056): rendered to the runner's `paginate`
+/// option, so no mapping writes its own loop. `records` (`spec.http.records`) names each page's
+/// array; `page`, `offset`, `total` and `maxRecords` count it. A run is complete only when a stop
+/// rule held: an empty or short page, the total reached, `more` false, or no next cursor or URL.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HttpPaging {
+    /// `page`, `offset`, `cursor`, `link` (RFC 8288 `rel=next`) or `nextUrl`.
+    pub mode: HttpPagingMode,
+    /// `page`: the page number parameter, `page` when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub param: Option<String>,
+    /// `page` and `offset`: the first page number (1) or offset (0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<u64>,
+    /// `page`: the page size parameter, sent with `size`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_param: Option<String>,
+    /// `page`: the page size asked for; a shorter page ends the walk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    /// `offset`: the offset parameter, `offset` when absent (ArcGIS `resultOffset`, OData `$skip`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset_param: Option<String>,
+    /// `offset`: the page size parameter, `limit` when absent (ArcGIS `resultRecordCount`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit_param: Option<String>,
+    /// `offset`: the page size asked for. The offset moves by the records received.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+    /// `cursor`: the body path to the next cursor, `meta.next`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// `cursor`: the query parameter the cursor is sent in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_param: Option<String>,
+    /// `cursor`: the header the cursor is sent in, instead of a parameter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_header: Option<String>,
+    /// `nextUrl`: the body path to the next URL, `@odata.nextLink` or `links[rel=next].href`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+    /// The body path to the count the first page announces, `numberMatched`; a run that read
+    /// another number of records fails.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total: Option<String>,
+    /// The body path to a boolean saying another page exists, `exceededTransferLimit`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub more: Option<String>,
+    /// The most pages one run reads, 1 to 10000, 1000 when absent; reaching it fails the run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_pages: Option<u64>,
+    /// The most records one run reads; reaching it before a stop rule fails the run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_records: Option<u64>,
+    /// The pause between pages as a duration, `200ms`, at most a minute.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delay: Option<String>,
+    /// A parameter that keeps the order stable across pages, `orderByFields=OBJECTID`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order_by: Option<HttpPagingOrder>,
+}
+
+/// How a paged source names its next page.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum HttpPagingMode {
+    /// A page number parameter.
+    #[default]
+    Page,
+    /// An offset and a page size parameter.
+    Offset,
+    /// A cursor read from the body and sent back.
+    Cursor,
+    /// The `Link` header's `rel=next` target.
+    Link,
+    /// A next URL read from the body.
+    NextUrl,
+}
+
+impl HttpPagingMode {
+    /// The runner's name of the mode.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Page => "page",
+            Self::Offset => "offset",
+            Self::Cursor => "cursor",
+            Self::Link => "link",
+            Self::NextUrl => "next_url",
+        }
+    }
+}
+
+/// The order parameter of a paged source.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HttpPagingOrder {
+    /// The parameter name, `orderByFields` or `$orderby`.
+    pub param: String,
+    /// Its value, `OBJECTID`.
+    pub value: String,
+}
+
+impl HttpPaging {
+    /// The most pages a manifest may set, the runner's own bound.
+    pub const MAX_PAGES: u64 = 10_000;
+
+    fn validate(&self, http: &HttpConnection) -> Result<()> {
+        let refuse = |field, value: String, reason| {
+            Err(Error::Name {
+                field,
+                value,
+                reason,
+            })
+        };
+        use HttpPagingMode as M;
+        let fields: [(&'static str, bool, &[M]); 11] = [
+            ("spec.http.paging.param", self.param.is_some(), &[M::Page]),
+            (
+                "spec.http.paging.start",
+                self.start.is_some(),
+                &[M::Page, M::Offset],
+            ),
+            (
+                "spec.http.paging.sizeParam",
+                self.size_param.is_some(),
+                &[M::Page],
+            ),
+            ("spec.http.paging.size", self.size.is_some(), &[M::Page]),
+            (
+                "spec.http.paging.offsetParam",
+                self.offset_param.is_some(),
+                &[M::Offset],
+            ),
+            (
+                "spec.http.paging.limitParam",
+                self.limit_param.is_some(),
+                &[M::Offset],
+            ),
+            ("spec.http.paging.limit", self.limit.is_some(), &[M::Offset]),
+            (
+                "spec.http.paging.cursor",
+                self.cursor.is_some(),
+                &[M::Cursor],
+            ),
+            (
+                "spec.http.paging.cursorParam",
+                self.cursor_param.is_some(),
+                &[M::Cursor],
+            ),
+            (
+                "spec.http.paging.cursorHeader",
+                self.cursor_header.is_some(),
+                &[M::Cursor],
+            ),
+            ("spec.http.paging.next", self.next.is_some(), &[M::NextUrl]),
+        ];
+        if let Some((field, _, _)) = fields
+            .iter()
+            .find(|(_, set, modes)| *set && !modes.contains(&self.mode))
+        {
+            return refuse(
+                field,
+                self.mode.as_str().to_string(),
+                "this field belongs to another paging mode",
+            );
+        }
+        let names = [
+            ("spec.http.paging.param", &self.param),
+            ("spec.http.paging.sizeParam", &self.size_param),
+            ("spec.http.paging.offsetParam", &self.offset_param),
+            ("spec.http.paging.limitParam", &self.limit_param),
+            ("spec.http.paging.cursorParam", &self.cursor_param),
+        ];
+        for (field, name) in names {
+            if let Some(name) = name {
+                if !plain(name, 64, "_-.$:") {
+                    return refuse(field, name.clone(), "a parameter name is 1 to 64 letters, digits, '_', '-', '.', '$' and ':', such as resultOffset or $skip");
+                }
+            }
+        }
+        if let Some(name) = &self.cursor_header {
+            if header_name(name).is_err() {
+                return refuse(
+                    "spec.http.paging.cursorHeader",
+                    name.clone(),
+                    "a header name is a token: letters, digits and !#$%&'*+-.^_`|~",
+                );
+            }
+        }
+        let paths = [
+            ("spec.http.paging.cursor", &self.cursor),
+            ("spec.http.paging.next", &self.next),
+            ("spec.http.paging.total", &self.total),
+            ("spec.http.paging.more", &self.more),
+        ];
+        for (field, path) in paths {
+            if let Some(path) = path {
+                if !plain(path, 256, "_-.@$:[]=") {
+                    return refuse(field, path.clone(), "a body path is 1 to 256 letters, digits and _-.@$:[]=, such as @odata.nextLink or links[rel=next].href");
+                }
+            }
+        }
+        let mode = self.mode.as_str().to_string();
+        let needs = |field, set: bool, reason| {
+            if set {
+                Ok(())
+            } else {
+                refuse(field, mode.clone(), reason)
+            }
+        };
+        match self.mode {
+            M::Page => needs(
+                "spec.http.paging.size",
+                self.size_param.is_none() || self.size.is_some(),
+                "sizeParam is sent with size, the page size asked for",
+            )?,
+            M::Offset => needs(
+                "spec.http.paging.limit",
+                self.limit.is_some_and(|n| n > 0),
+                "offset paging needs limit, the page size asked for, at least 1",
+            )?,
+            M::Cursor => {
+                needs(
+                    "spec.http.paging.cursor",
+                    self.cursor.is_some(),
+                    "cursor paging needs cursor, the body path to the next cursor",
+                )?;
+                needs(
+                    "spec.http.paging.cursorParam",
+                    self.cursor_param.is_some() != self.cursor_header.is_some(),
+                    "cursor paging sends the cursor in one of cursorParam or cursorHeader",
+                )?;
+            }
+            M::NextUrl => needs(
+                "spec.http.paging.next",
+                self.next.is_some(),
+                "nextUrl paging needs next, the body path to the next URL",
+            )?,
+            M::Link => {}
+        }
+        let counted = matches!(self.mode, M::Page | M::Offset)
+            || self.total.is_some()
+            || self.max_records.is_some();
+        if counted && http.records.is_none() {
+            return refuse(
+                "spec.http.records",
+                self.mode.as_str().to_string(),
+                "page and offset paging, total and maxRecords count the records: name their array in records",
+            );
+        }
+        if http.archive.is_some() || http.format == Some(HttpBodyFormat::Csv) {
+            return refuse(
+                "spec.http.paging",
+                if http.archive.is_some() {
+                    "archive"
+                } else {
+                    "csv"
+                }
+                .to_string(),
+                "paging reads JSON pages; an archive or a csv body is read whole",
+            );
+        }
+        if let Some(max) = self.max_pages {
+            if !(1..=Self::MAX_PAGES).contains(&max) {
+                return refuse(
+                    "spec.http.paging.maxPages",
+                    max.to_string(),
+                    "maxPages is 1 to 10000",
+                );
+            }
+        }
+        if self.max_records == Some(0) {
+            return refuse(
+                "spec.http.paging.maxRecords",
+                "0".to_string(),
+                "maxRecords is at least 1",
+            );
+        }
+        if let Some(delay) = &self.delay {
+            if !short_duration(delay) {
+                return refuse(
+                    "spec.http.paging.delay",
+                    delay.clone(),
+                    "delay is a duration of at most a minute, such as 200ms or 2s",
+                );
+            }
+        }
+        if let Some(order) = &self.order_by {
+            if !plain(&order.param, 64, "_-.$:") {
+                return refuse(
+                    "spec.http.paging.orderBy.param",
+                    order.param.clone(),
+                    "a parameter name is 1 to 64 letters, digits, '_', '-', '.', '$' and ':'",
+                );
+            }
+            let printable = !order.value.is_empty()
+                && order.value.len() <= 128
+                && !order.value.chars().any(char::is_control);
+            if !printable {
+                return refuse(
+                    "spec.http.paging.orderBy.value",
+                    order.value.clone(),
+                    "an order value is 1 to 128 printable characters, such as OBJECTID",
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `value` is 1 to `max` bytes of ASCII letters, digits and `extra`.
+fn plain(value: &str, max: usize, extra: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= max
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || extra.contains(c))
+}
+
+/// A whole number of `ms`, `s` or `m` up to one minute.
+fn short_duration(value: &str) -> bool {
+    let split = value
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(value.len());
+    let (digits, unit) = value.split_at(split);
+    let Ok(n) = digits.parse::<u64>() else {
+        return false;
+    };
+    let ms = match unit {
+        "ms" => n,
+        "s" => n.saturating_mul(1_000),
+        "m" => n.saturating_mul(60_000),
+        _ => return false,
+    };
+    ms <= 60_000
 }
 
 /// The archive formats an `http` connection reads (PL-72).
@@ -669,6 +1011,9 @@ impl DataSourceSpec {
                             reason: "records splits a JSON body; a body of format csv is split by its rows already",
                         });
                     }
+                }
+                if let Some(paging) = &http.paging {
+                    paging.validate(http)?;
                 }
                 if !(1..=HttpConnection::MAX_BYTES).contains(&http.max_bytes()) {
                     return Err(Error::Name {
