@@ -995,6 +995,8 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
   const [, setOrderRefusals] = useState(0);
   const cancelledRef = useRef(false);
   const nonceRef = useRef(0);
+  /** The question (its nonce) a further page is on its way for, so a second call waits for it. */
+  const pageAskedRef = useRef<number | null>(null);
 
   // The rows the columns and the filters' kinds are read off: the last answer that held any, for
   // this type. An empty answer named no attribute, so a filter that matched nothing lost its column,
@@ -1248,6 +1250,10 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
   const loadMore = useCallback(() => {
     if (!virtual || paged || !more || loadingMore || loading) return;
     const nonce = nonceRef.current;
+    // The loadingMore state reaches the next render only: a call from an effect of a render that
+    // came before it would ask for the same page a second time.
+    if (pageAskedRef.current === nonce) return;
+    pageAskedRef.current = nonce;
     const from = rows.length;
     const limit = Math.max(config.pageSize, VIRTUAL_PAGE_SIZE);
     setLoadingMore(true);
@@ -1280,6 +1286,7 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
         setErrorDetail(failed.detail);
       })
       .finally(() => {
+        if (pageAskedRef.current === nonce) pageAskedRef.current = null;
         if (nonceRef.current === nonce) setLoadingMore(false);
       });
   }, [virtual, paged, more, loadingMore, loading, rows.length, source, gridQueryKey, config.pageSize, busy, timedOut]);
