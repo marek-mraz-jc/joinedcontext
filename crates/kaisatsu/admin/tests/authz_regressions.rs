@@ -796,6 +796,62 @@ async fn a_people_manager_cannot_change_an_organization_admin() {
 }
 
 #[tokio::test]
+async fn joining_a_group_with_realm_wide_roles_needs_a_user_manager() {
+    let f = Fixture::new().await;
+    for (id, roles) in [("g-admins", vec!["realm-admin".to_owned()]), ("g-staff", Vec::new())] {
+        f.store
+            .upsert_group(GroupRepresentation {
+                id: id.into(),
+                realm_id: "dev".into(),
+                org_id: Some("helsinki".into()),
+                name: id.into(),
+                path: format!("/helsinki/{id}"),
+                realm_roles: roles,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    }
+    let t = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev/users/org-admin-hel/groups/g-admins",
+            &t,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let st = f
+        .send(
+            Method::PUT,
+            "/api/v1/realms/dev/scim/v2/Groups/g-admins",
+            &t,
+            Some(json!({ "displayName": "g-admins", "members": [{ "value": "org-admin-hel" }] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    assert!(
+        f.store
+            .list_user_groups("dev", "org-admin-hel")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev/users/hel-person/groups/g-staff",
+            &t,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
 async fn a_group_name_holds_no_path_separator() {
     let f = Fixture::new().await;
     let t = f

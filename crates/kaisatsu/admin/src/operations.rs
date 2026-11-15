@@ -127,6 +127,31 @@ pub(crate) async fn ensure_person_ceiling(
     Ok(())
 }
 
+/// Refuses putting people into a group that carries realm-wide authority (realm roles the caller
+/// does not hold, or roles of an admin client) unless the caller manages people realm-wide: a
+/// membership hands out the group's roles, which an Organization admin may not grant (ADM-04).
+pub(crate) fn ensure_may_join_group(ctx: &RequestCtx, group: &GroupRepresentation) -> Result<()> {
+    let caller = &ctx.principal;
+    if caller.has_realm_mgmt_role("manage-users") || caller.has_realm_mgmt_role("scim") {
+        return Ok(());
+    }
+    let admin_client = |c: &str| matches!(c, "realm-management" | "broker") || c.ends_with("-realm");
+    let realm_wide = group
+        .realm_roles
+        .iter()
+        .any(|r| !caller.realm_roles.contains(r))
+        || group
+            .client_roles
+            .iter()
+            .any(|(client, roles)| admin_client(client) && !roles.is_empty());
+    if realm_wide {
+        return Err(KaisatsuError::Forbidden(
+            "this group carries realm-wide roles: only a realm administrator or user manager adds its members".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Refuses enrolling a credential on the own account through a token another application holds:
 /// a client the person signed into must not mint recovery codes or add an authenticator. Only
 /// the account console and the person's own `admin-cli` sign-in enrol (as the account REST).
@@ -274,6 +299,7 @@ pub async fn execute(
                     managed_by: group.managed_by.clone(),
                 },
             ))?;
+            ensure_may_join_group(ctx, &group)?;
             store.add_user_to_group(realm, &user.id, &group.id).await?;
             record_admin_write(
                 state,
