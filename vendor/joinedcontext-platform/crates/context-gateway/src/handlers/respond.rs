@@ -10,11 +10,7 @@ use serde_json::Value;
 
 /// The lowercase hex sha256 of a body, which is what every `ETag` here is.
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
-    ring::digest::digest(&ring::digest::SHA256, bytes)
-        .as_ref()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    crate::query::hex(ring::digest::digest(&ring::digest::SHA256, bytes).as_ref())
 }
 
 /// A file route names its format in the path, so the hop to the broker asks for JSON whatever

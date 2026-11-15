@@ -594,8 +594,14 @@ impl Hub {
                 Some(endpoint) if !endpoint.serves(jc_core::kinds::Representation::WebSocket) => {
                     "view-removed"
                 }
-                Some(endpoint) if admitted && **endpoint == *conn.endpoint => {
-                    // The same record in a new table: nothing to judge again.
+                Some(endpoint)
+                    if admitted
+                        && (Arc::ptr_eq(endpoint, &conn.endpoint)
+                            || **endpoint == *conn.endpoint) =>
+                {
+                    // The same record, or an equal one in a new table: nothing to judge again.
+                    // The resolver keeps the `Arc` of an unchanged Endpoint (T-4460), so a tick
+                    // with no reload compares no field.
                     conn.endpoint = Arc::clone(endpoint);
                     continue;
                 }

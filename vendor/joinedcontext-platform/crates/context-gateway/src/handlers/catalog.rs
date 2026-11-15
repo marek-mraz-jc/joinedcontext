@@ -154,63 +154,71 @@ async fn public_records(
     let table = gateway.resolver.table();
     // Debug quotes the names, so no project can pass for an Organization.
     let key = format!("{profile:?}/{:?}/{:?}", project, host.map(|h| &h.0));
-    if let Some(records) = gateway.catalog_records.get(&key, &table) {
-        return records.as_ref().clone();
-    }
-    let mut records = Vec::new();
-    // Sorted by slug, so the feed a harvester reads twice reads the same way twice.
-    let mut endpoints: Vec<_> = table.values().cloned().collect();
-    endpoints.sort_by(|left, right| left.slug.cmp(&right.slug));
-    for endpoint in endpoints {
-        // An App's own door re-serves a space for that App and carries no catalogue block: it
-        // is no dataset of the publisher, and a national catalogue would harvest it as one.
-        // A door over data other datasets already publish (EP-139): its record stays, the
-        // feeds leave it out, so a harvester never takes the same data twice.
-        if endpoint.audience != Audience::Public
-            || endpoint.roles.app_client.is_some()
-            || endpoint.catalog.as_deref().is_some_and(|c| !c.harvested())
-            || project.is_some_and(|project| endpoint.project != project)
-            || !gateway.on_host(host, &endpoint.project)
-        {
-            continue;
+    let render = async {
+        let mut records = Vec::new();
+        // Sorted by slug, so the feed a harvester reads twice reads the same way twice.
+        let mut endpoints: Vec<_> = table.values().cloned().collect();
+        endpoints.sort_by(|left, right| left.slug.cmp(&right.slug));
+        for endpoint in endpoints {
+            // An App's own door re-serves a space for that App and carries no catalogue block: it
+            // is no dataset of the publisher, and a national catalogue would harvest it as one.
+            // A door over data other datasets already publish (EP-139): its record stays, the
+            // feeds leave it out, so a harvester never takes the same data twice.
+            if endpoint.audience != Audience::Public
+                || endpoint.roles.app_client.is_some()
+                || endpoint.catalog.as_deref().is_some_and(|c| !c.harvested())
+                || project.is_some_and(|project| endpoint.project != project)
+                || !gateway.on_host(host, &endpoint.project)
+            {
+                continue;
+            }
+            // What an anonymous caller of this Endpoint reads, its `callerRole` included (EP-69).
+            let anonymous = crate::auth::subject::anonymous_on(&endpoint);
+            let index =
+                schema_routes::index_for(gateway, &endpoint, &endpoint.slug, &anonymous).await;
+            let index =
+                crate::handlers::mappings::with_mappings(gateway, &endpoint, &anonymous, index)
+                    .await;
+            let space = gateway.resolver.resolve_space(&endpoint.space);
+            let slices = endpoint
+                .catalog
+                .as_deref()
+                .map(|c| c.datasets.as_slice())
+                .unwrap_or_default();
+            // An Endpoint listing its datasets is in the feed as those datasets (EP-176).
+            if slices.is_empty() {
+                records.push(profile::render(
+                    endpoint_surface::dataset(
+                        &endpoint,
+                        space.as_deref(),
+                        &index,
+                        &gateway.base_url(),
+                    ),
+                    profile,
+                    endpoint.catalog.as_deref(),
+                ));
+            }
+            for slice in slices {
+                let catalog = jc_dcat::slice_catalog(endpoint.catalog.as_deref(), slice);
+                records.push(profile::render(
+                    endpoint_surface::dataset_slice(
+                        &endpoint,
+                        space.as_deref(),
+                        slice,
+                        &index,
+                        &gateway.base_url(),
+                    ),
+                    profile,
+                    Some(&catalog),
+                ));
+            }
         }
-        // What an anonymous caller of this Endpoint reads, its `callerRole` included (EP-69).
-        let anonymous = crate::auth::subject::anonymous_on(&endpoint);
-        let index = schema_routes::index_for(gateway, &endpoint, &endpoint.slug, &anonymous).await;
-        let index =
-            crate::handlers::mappings::with_mappings(gateway, &endpoint, &anonymous, index).await;
-        let space = gateway.resolver.resolve_space(&endpoint.space);
-        let slices = endpoint
-            .catalog
-            .as_deref()
-            .map(|c| c.datasets.as_slice())
-            .unwrap_or_default();
-        // An Endpoint listing its datasets is in the feed as those datasets (EP-176).
-        if slices.is_empty() {
-            records.push(profile::render(
-                endpoint_surface::dataset(&endpoint, space.as_deref(), &index, &gateway.base_url()),
-                profile,
-                endpoint.catalog.as_deref(),
-            ));
-        }
-        for slice in slices {
-            let catalog = jc_dcat::slice_catalog(endpoint.catalog.as_deref(), slice);
-            records.push(profile::render(
-                endpoint_surface::dataset_slice(
-                    &endpoint,
-                    space.as_deref(),
-                    slice,
-                    &index,
-                    &gateway.base_url(),
-                ),
-                profile,
-                Some(&catalog),
-            ));
-        }
-    }
+        records
+    };
     gateway
         .catalog_records
-        .put(&key, table, records)
+        .get_or_render(&key, Arc::clone(&table), render)
+        .await
         .as_ref()
         .clone()
 }
