@@ -56,7 +56,7 @@ Public CI never checks out `environments/`. The private environments are rendere
 ## 3. What may never be public
 
 | Class | Examples of the class | Where it lives instead | Public stand-in in tests |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Server and node addresses | a node's IPv4, a firewall allow-list entry | `environments/nodes.yaml`, `environments/clusters/*.tfvars` | TEST-NET `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` |
 | age recipients | `age1` followed by 58 characters | `environments/.sops.yaml`, each environment's `global.yaml.gotmpl` | a recipient the test generates in its temporary directory |
 | sops content | an `ENC[...]` value, a `sops:` mapping, a `*.enc.yaml` file | `environments/secrets/` | none; a test asserts a public seed holds no sops file |
