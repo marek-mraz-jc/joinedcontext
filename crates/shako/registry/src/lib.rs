@@ -29,7 +29,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use shako_api::{
     ShakoState, authenticate_request, emit_and_dispatch_event, gitea_error_response,
-    read_body_bounded, stream_bytes_in_64k_chunks,
+    read_body_bounded, stream_file_in_64k_chunks,
 };
 use shako_core::{
     Action, BlobRecord, PackageId, PackageRecord, PackageVersionRecord, RequestCtx, ShakoError,
@@ -377,7 +377,7 @@ async fn oci_head_or_get_blob(
             .into_response();
     }
 
-    let Ok(bytes) = tokio::fs::read(&disk_path).await else {
+    let Ok(file) = tokio::fs::File::open(&disk_path).await else {
         return oci_error_response(StatusCode::NOT_FOUND, "BLOB_UNKNOWN", "blob unknown", None);
     };
     (
@@ -389,7 +389,7 @@ async fn oci_head_or_get_blob(
                 clean_digest.as_str(),
             ),
         ],
-        stream_bytes_in_64k_chunks(bytes),
+        stream_file_in_64k_chunks(file),
     )
         .into_response()
 }
@@ -1278,10 +1278,10 @@ async fn generic_get_file(
         Err(e) => return gitea_error_response(&state, &e),
     };
     match service::read_generic_file(&state, &ctx, &owner, &pkg, &ver, &file).await {
-        Ok(bytes) => (
+        Ok(file) => (
             StatusCode::OK,
             [(header::CONTENT_TYPE, "application/octet-stream")],
-            stream_bytes_in_64k_chunks(bytes),
+            stream_file_in_64k_chunks(file),
         )
             .into_response(),
         Err(e) => gitea_error_response(&state, &e),

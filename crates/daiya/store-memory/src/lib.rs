@@ -180,6 +180,10 @@ impl DaiyaStore for MemoryStore {
             if removed {
                 org.dashboards
                     .retain(|_, d| d.folder_uid.as_deref() != Some(uid.as_str()));
+                let kept = &org.dashboards;
+                org.versions.retain(|d, _| kept.contains_key(d));
+                org.public_dashboards
+                    .retain(|_, p| kept.contains_key(&p.dashboard_uid));
             }
             Ok(removed)
         })

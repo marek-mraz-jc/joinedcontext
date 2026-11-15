@@ -550,6 +550,71 @@ async fn s3_s4_git_client_matrix_v0_v2_and_portal_push_bundle() {
 /// Contract S5, S7, S10, S11, S14, S15: Complete Portal workflow (create repo, branch, multi-file
 /// contents with stale SHA refusal, open PR, review, behind-base 405, update-branch, moved-head 409,
 /// squash merge, webhook HMAC delivery, push mirror sync, and backup bundle restore).
+/// Every ref move a push makes is its own `push` event, also one that returns a branch to a
+/// commit it pointed at before (S14).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_branch_moved_back_to_an_earlier_commit_is_a_new_push_event() {
+    let world = setup_world();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let mount = Mount::new("shako", "http", addr.to_string(), "").unwrap();
+    let served_app = router(world.state.clone(), mount);
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, served_app).await;
+    });
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        "/api/v1/orgs/joinedcontext/repos",
+        Some("portal-token"),
+        Some(json!({ "name": "moves", "auto_init": true, "default_branch": "main" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+
+    let repo_url = format!("http://git-sync:portal-token@{addr}/joinedcontext/moves.git");
+    let work_dir = tempfile::tempdir().unwrap();
+    let clone_dir = work_dir.path().join("clone");
+    let git = |dir: Option<&Path>, args: &[&str]| {
+        let mut cmd = git_cmd();
+        if let Some(d) = dir {
+            cmd.current_dir(d);
+        }
+        let out = cmd
+            .args(args)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    git(None, &["clone", &repo_url, clone_dir.to_str().unwrap()]);
+    let c = Some(clone_dir.as_path());
+    git(c, &["config", "user.name", "Alice"]);
+    git(c, &["config", "user.email", "alice@hel.fi"]);
+    for name in ["a.yaml", "b.yaml"] {
+        std::fs::write(clone_dir.join(name), "kind: Organization\n").unwrap();
+        git(c, &["add", name]);
+        git(c, &["commit", "-m", name]);
+        git(c, &["push", "origin", "main"]);
+    }
+    git(c, &["push", "--force", "origin", "HEAD~1:main"]);
+
+    let pushes = world
+        .state
+        .store()
+        .list_outbox_events(InstanceId::from_u128(1), world.org_a)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.event_kind == "push" && e.payload["ref"] == "refs/heads/main")
+        .count();
+    assert_eq!(pushes, 3);
+}
+
 #[tokio::test]
 async fn s5_s7_s10_s11_s14_s15_portal_change_lane_webhooks_mirrors_and_backup() {
     let world = setup_world();
@@ -852,6 +917,129 @@ async fn s5_s7_s10_s11_s14_s15_portal_change_lane_webhooks_mirrors_and_backup() 
 
 /// The standalone binary's store starts empty: `fsck` and `compact` say they found nothing to
 /// check and fail, so a cron job never reads a check that did not run as green.
+/// Updating a pull request moves its head branch, so the head branch's protection rules apply
+/// as they do to a push, and only an open pull request is updated (S5).
+#[tokio::test]
+async fn update_branch_obeys_the_head_branch_rules_and_needs_an_open_pull_request() {
+    let world = setup_world();
+    let repo = "/api/v1/repos/joinedcontext/rules";
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        "/api/v1/orgs/joinedcontext/repos",
+        Some("portal-token"),
+        Some(json!({ "name": "rules", "auto_init": true, "default_branch": "main" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &format!("{repo}/branches"),
+        Some("alice-token"),
+        Some(json!({ "new_branch_name": "feature", "old_branch_name": "main" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &format!("{repo}/contents"),
+        Some("alice-token"),
+        Some(json!({
+            "branch": "feature",
+            "message": "Add a file on feature",
+            "files": [{ "operation": "create", "path": "f.yaml", "content": STANDARD.encode("a: 1\n") }]
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &format!("{repo}/branch_protections"),
+        Some("portal-token"),
+        Some(json!({
+            "rule_name": "main",
+            "enable_push": true,
+            "enable_push_whitelist": true,
+            "push_whitelist_usernames": ["jc-portal"]
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let main_before = send_json(
+        &world.app,
+        "GET",
+        &format!("{repo}/branches/main"),
+        Some("portal-token"),
+        None,
+    )
+    .await
+    .1["commit"]["id"]
+        .clone();
+
+    // A pull request whose head is the protected branch: only the rule's pushers may move it.
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &format!("{repo}/pulls"),
+        Some("alice-token"),
+        Some(json!({ "head": "main", "base": "feature", "title": "Reverse" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &format!("{repo}/pulls/1/update"),
+        Some("alice-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let main_after = send_json(
+        &world.app,
+        "GET",
+        &format!("{repo}/branches/main"),
+        Some("portal-token"),
+        None,
+    )
+    .await
+    .1["commit"]["id"]
+        .clone();
+    assert_eq!(main_before, main_after);
+
+    // A closed pull request is not updated, even on an unprotected head.
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &format!("{repo}/pulls"),
+        Some("alice-token"),
+        Some(json!({ "head": "feature", "base": "main", "title": "Forward" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, _) = send_json(
+        &world.app,
+        "PATCH",
+        &format!("{repo}/pulls/2"),
+        Some("alice-token"),
+        Some(json!({ "state": "closed" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &format!("{repo}/pulls/2/update"),
+        Some("alice-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+}
+
 #[test]
 fn standalone_fsck_and_compact_fail_when_they_find_no_repository() {
     let root = tempfile::tempdir().unwrap();

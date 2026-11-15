@@ -236,6 +236,103 @@ async fn the_anonymous_view_is_sanitized_and_answers_404_for_any_bad_token() {
     assert_eq!(st, StatusCode::NOT_FOUND);
 }
 
+/// Variables and annotations reach the anonymous viewer with their names, values and options
+/// only: no datasource and no query text.
+#[tokio::test]
+async fn the_anonymous_view_carries_no_variable_or_annotation_query() {
+    let w = world();
+    let mut d = templated("vars", "prom");
+    d["templating"]["list"].as_array_mut().unwrap().push(json!({
+        "name": "inst", "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prom" },
+        "query": "label_values(up, instance)", "definition": "label_values(up, instance)",
+        "current": { "value": "a", "text": "a" }, "options": [{ "value": "a", "text": "a" }]
+    }));
+    d["annotations"] = json!({ "list": [{
+        "name": "Deploys", "enable": true,
+        "datasource": { "type": "prometheus", "uid": "prom" },
+        "expr": "changes(deploys_total[5m])"
+    }]});
+    w.add_dashboard(d, None).await;
+    let created = w
+        .ok(
+            "POST",
+            "/api/dashboards/uid/vars/public-dashboards",
+            Some(json!({ "isEnabled": true })),
+        )
+        .await;
+    let token = created["accessToken"].as_str().unwrap();
+    let (st, view) = w
+        .call(
+            "GET",
+            &format!("/api/public/dashboards/{token}"),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{view}");
+    let text = view.to_string();
+    for leaked in ["\"prom\"", "label_values", "changes("] {
+        assert!(!text.contains(leaked), "{leaked}: {text}");
+    }
+    assert_eq!(
+        view["dashboard"]["templating"]["list"][1]["current"]["value"],
+        "a"
+    );
+    assert_eq!(
+        view["dashboard"]["annotations"]["list"][0]["name"],
+        "Deploys"
+    );
+}
+
+/// A public dashboard uid names one public dashboard, and deleting a folder deletes the public
+/// links of its dashboards: a later dashboard of the same uid answers no old link.
+#[tokio::test]
+async fn a_public_link_belongs_to_one_dashboard_for_its_whole_life() {
+    let w = world();
+    w.add_folder("f", "Folder").await;
+    w.add_dashboard(dashboard("a", "prom"), Some("f")).await;
+    w.add_dashboard(dashboard("b", "prom"), None).await;
+    let created = w
+        .ok(
+            "POST",
+            "/api/dashboards/uid/a/public-dashboards",
+            Some(json!({ "uid": "p1", "isEnabled": true })),
+        )
+        .await;
+    let token = created["accessToken"].as_str().unwrap().to_owned();
+    let view = format!("/api/public/dashboards/{token}");
+
+    let (st, body) = w
+        .call(
+            "POST",
+            "/api/dashboards/uid/b/public-dashboards",
+            Some("admin"),
+            Some(json!({ "uid": "p1", "isEnabled": true })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    let (st, answer) = w.call("GET", &view, None, None).await;
+    assert_eq!(st, StatusCode::OK, "{answer}");
+    assert_eq!(answer["dashboard"]["uid"], "a");
+
+    let (st, body) = w
+        .call("DELETE", "/api/folders/f", Some("admin"), None)
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    w.add_dashboard(dashboard("a", "prom"), None).await;
+    let (st, _) = w.call("GET", &view, None, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (_, versions) = w
+        .call("GET", "/api/dashboards/uid/a/versions", Some("admin"), None)
+        .await;
+    assert_eq!(
+        versions["versions"].as_array().map(Vec::len),
+        Some(1),
+        "{versions}"
+    );
+}
+
 #[tokio::test]
 async fn query_text_is_shown_only_when_the_owner_allows_it() {
     let (w, token) = published(true).await;
