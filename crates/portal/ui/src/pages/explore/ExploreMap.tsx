@@ -121,19 +121,20 @@ export function ExploreMap({
   const key = [slug, query.type, query.q, query.scopeQ, query.idPattern, attrs.join(",")];
   // keyValues and only what the popup shows, beside the geometry: a map of thousands of points
   // does not need their whole entities.
-  const read = (within?: Bbox) =>
+  // The query's signal stops a scan the map moved away from before its next page.
+  const read = (signal: AbortSignal, within?: Bbox) =>
     collect(
       async (offset, limit) => {
         const page = await fetchEntities(slug, { ...query, attrs }, { limit, offset, count: offset === 0, within, geoproperty: geo[0] });
         return { rows: page.rows as Entity[], count: page.count };
       },
-      { max: MAP_MAX },
+      { max: MAP_MAX, signal },
     );
   const located = useQuery({
     queryKey: ["explore-map", ...key],
     enabled: Boolean(query.type),
     retry: false,
-    queryFn: () => read(),
+    queryFn: ({ signal }) => read(signal),
   });
   // Past MAP_MAX the map reads the part in view after every pan or zoom (T-5061), as the
   // catalogue's map and the dashboards do, so a view of 10 000 entities stays whole where one looks.
@@ -145,7 +146,7 @@ export function ExploreMap({
     enabled: paged && view !== null,
     retry: false,
     placeholderData: keepPreviousData,
-    queryFn: () => read(view ?? undefined),
+    queryFn: ({ signal }) => read(signal, view ?? undefined),
   });
 
   if (located.isPending) return <PageLoading label={t("explore.map.loading")} lines={4} />;

@@ -1,7 +1,7 @@
 // The explorer's map (T-3256): a located type's view drawn as clustered points read through the
 // person's endpoint with the view's filters, a popup of text only with a button to the entity,
 // and a failed read said with Retry.
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
@@ -151,7 +151,7 @@ describe("the explorer's map", () => {
   const point = (i: number) => ({ id: `urn:ngsi-ld:BikeStation:${i}`, type: "BikeStation", name: `S${i}`, location: { type: "Point", coordinates: [24 + (i % 100) / 100, 60 + i / 20000] } });
   const json = (rows: unknown[], count?: number) =>
     new Response(JSON.stringify(rows), { headers: { "Content-Type": "application/json", ...(count === undefined ? {} : { "NGSILD-Results-Count": String(count) }) } });
-  const many = (inView: (url: URL) => Response) =>
+  const many = (inView: (url: URL) => Response | Promise<Response>) =>
     stub(() => json([])) &&
     vi.stubGlobal(
       "fetch",
@@ -197,6 +197,23 @@ describe("the explorer's map", () => {
     answer = () => json([], 0);
     await act(async () => drawn.onMoveEnd?.([10, 10, 11, 11]));
     expect(await screen.findByText(new RegExp(`^${en.explore.map.noneInView.replace(/\./g, "\\.")}`))).toBeInTheDocument();
+  });
+
+  it("stops reading the part in view it moved away from, after the page in flight", async () => {
+    const held: (() => void)[] = [];
+    // Each in-view page is a full one, so a scan left running asks for the next.
+    many((url) => new Promise((resolve) => held.push(() => resolve(json(Array.from({ length: Number(url.searchParams.get("limit")) }, (_, i) => point(i)), 9_000)))));
+    show();
+    await screen.findByText(/^5,000 of 12,000 on the map/);
+    await act(async () => drawn.onMoveEnd?.([24, 60, 25, 61]));
+    await waitFor(() => expect(held).toHaveLength(1));
+    await act(async () => drawn.onMoveEnd?.([10, 10, 11, 11]));
+    await waitFor(() => expect(held).toHaveLength(2));
+    await act(async () => {
+      held[0]();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(held).toHaveLength(2);
   });
 
   it("keeps the map and says so when the part in view cannot be read", async () => {
