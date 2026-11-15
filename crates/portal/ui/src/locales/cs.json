@@ -2452,7 +2452,13 @@
       "broker": "Broker",
       "externalBroker": "Externí broker (URL a secret níže)",
       "records": "Záznamy jsou v",
-      "recordsHelp": "U odpovědi JSON, která má záznamy v poli, cesta k němu, například data.stations; každá položka je jeden záznam. Prázdné pole čte celou odpověď jako jeden záznam."
+      "recordsHelp": "U odpovědi JSON, která má záznamy v poli, cesta k němu, například data.stations; každá položka je jeden záznam. Prázdné pole čte celou odpověď jako jeden záznam.",
+      "format": "Formát odpovědi"
+    },
+    "sheet": {
+      "label": "List",
+      "help": "List ke čtení podle názvu na jeho záložce, například Stanice 2026; první řádek listu pojmenovává sloupce. Prázdné pole čte první list.",
+      "problem": "Název listu má 1 až 31 znaků bez : \\ / ? * [ ]."
     },
     "probe": {
       "title": "Jedno stažení feedu",
@@ -2490,6 +2496,12 @@
         "what": "Tabulka zveřejněná jako soubor .csv, čtená při každém běhu.",
         "url": "Adresa souboru CSV",
         "urlHelp": "Adresa, která stáhne samotný soubor, začíná na https://."
+      },
+      "xlsx": {
+        "title": "Tabulka (Excel, ODS) na adrese",
+        "what": "Sešit zveřejněný jako .xlsx nebo .ods, jeden záznam na řádek listu, načtený při každém běhu.",
+        "url": "Adresa tabulky",
+        "urlHelp": "Adresa, která stáhne samotný soubor, začíná https://, například https://data.example.org/stations.xlsx."
       },
       "json": {
         "title": "REST API (JSON)",
@@ -9071,6 +9083,10 @@
       "0": "0: nejvýše jednou (zpráva se může ztratit)",
       "1": "1: alespoň jednou (zpráva se může opakovat)",
       "2": "2: právě jednou (nejpomalejší)"
+    },
+    "httpBodyFormat": {
+      "csv": "CSV: jeden záznam na řádek",
+      "xlsx": "Tabulka (xlsx, ods): jeden záznam na řádek listu"
     }
   },
   "picker": {
