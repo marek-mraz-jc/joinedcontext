@@ -3,7 +3,7 @@
     bins/jc/smoke/run ui --base-url http://localhost:42101 --state <dir> --out <dir>
         [--export <export dir>] [--project <p>] [--widths 1440,400] [--only <regex>]
         [--shako-token-file <f>] [--judge-file <scores.json>] [--personas admin,viewer,outsider]
-        [--realm-token-file <f>]
+        [--realm-token-file <f>] [--no-shared]
 
 The test persons are made with a portal-reconciler token: --realm-token-file, else one minted from
 --state's portal-admin-client-secret. The runner's --admin-token-file is jc's admin listener token
@@ -517,6 +517,8 @@ def main(argv=None) -> int:
     p.add_argument("--state", help="the rehearsal's state dir: realm-name.txt names the realm the personas are made in")
     p.add_argument("--project")
     p.add_argument("--personas", default="admin,viewer,outsider")
+    p.add_argument("--no-shared", dest="shared", action="store_false",
+                   help="leave out the anonymous dataroom and the shako walks: the gate's other ui shard runs them")
     p.add_argument("--widths", default="1440,400")
     p.add_argument("--only", help="regex over the Portal addresses walked")
     p.add_argument("--judge-file")
@@ -567,8 +569,9 @@ def main(argv=None) -> int:
         w.datasets = lambda: bool(list(a.export.glob("gitea/files/*/*/ckan/*.yaml"))) if a.export else False
         for x in plan:
             walk_persona(w, x, passwords.get(x["name"]))
-        dataroom(w)
-        shako(w)
+        if a.shared:
+            dataroom(w)
+            shako(w)
         browser.close()
     (a.out / "shots.json").write_text(json.dumps(w.shots, indent=1, ensure_ascii=False))
     fold_judge(res, w.shots, a.judge_file)

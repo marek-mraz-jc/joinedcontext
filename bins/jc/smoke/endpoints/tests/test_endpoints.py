@@ -319,6 +319,32 @@ def now_iso():
     return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def test_the_shard_key_is_stable_and_puts_every_slug_in_exactly_one_shard():
+    assert suite.shard_of("2otvm3oapms4vsucerjhnywlumdqf3px", 4) == suite.shard_of("2otvm3oapms4vsucerjhnywlumdqf3px", 4)
+    assert [suite.shard_of("gx2knuus75alkjgc24kjz7llte6q5jkk", n) for n in (1, 2, 3, 8)] == [1, 1, 2, 7]
+    slugs = [f"slug{i}" for i in range(400)]
+    for n in (1, 2, 3, 5):
+        shards = [{x for x in slugs if suite.shard_of(x, n) == k} for k in range(1, n + 1)]
+        assert sum(map(len, shards)) == len(slugs) and set().union(*shards) == set(slugs)
+        assert all(shards), f"an empty shard of {n}"
+    with pytest.raises(SystemExit):
+        suite.main(["--base-url", "http://127.0.0.1:1", "--export", "x", "--out", "y", "--shard", "3/2"])
+
+
+def test_the_shards_of_a_run_hold_the_same_rows_as_the_run(tmp_path, serve):
+    from collections import Counter
+    base, now = serve(Fake()), now_iso()
+    b = bundle(tmp_path / "x", now)
+
+    def ids(*extra):
+        out = tmp_path / ("out" + "".join(extra).replace("/", "-"))
+        suite.main(["--base-url", base, "--export", str(b), "--out", str(out), "--workers", "1", *extra])
+        return Counter(r["id"] for r in json.loads((out / "results.json").read_text())["checks"])
+
+    whole, one, two = ids(), ids("--shard", "1/2"), ids("--shard", "2/2")
+    assert one + two == whole and one["listing"] == 1 and two["listing"] == 0
+
+
 def test_a_healthy_gateway_is_green(tmp_path, serve):
     code, res = run(tmp_path, serve(Fake()), now_iso())
     fails = [r for r in res["checks"] if r["result"] == "fail"]
