@@ -1088,6 +1088,49 @@ mod tests {
         assert_eq!(plain.tls_server_name(), "203.0.113.7");
     }
 
+    /// The TLS handshake of an mqtts connect reaches the address it was
+    /// given and names the endpoint's host (SNI), so the certificate is
+    /// judged against the name the subscriber wrote.
+    #[tokio::test]
+    async fn an_mqtts_handshake_names_the_host_on_the_checked_address() {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let ep = MqttEndpoint::parse(&format!("mqtts://broker.example:{port}/t")).expect("ep");
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        let connect = async {
+            let opts = (|| -> Result<rumqttc::MqttOptions, NgsiError> {
+                Ok(options!(
+                    rumqttc::MqttOptions,
+                    "t",
+                    dial_host(addr),
+                    port,
+                    ep
+                ))
+            })()
+            .expect("options");
+            let (_client, mut eventloop) = rumqttc::AsyncClient::new(opts, 1);
+            let _ = eventloop.poll().await;
+        };
+        let hello = async {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = vec![0u8; 2048];
+            let n = socket.read(&mut buf).await.expect("read");
+            buf.truncate(n);
+            buf
+        };
+        let hello = tokio::select! {
+            hello = hello => hello,
+            () = connect => Vec::new(),
+        };
+        assert!(
+            hello.windows(14).any(|w| w == b"broker.example"),
+            "the ClientHello names the host"
+        );
+    }
+
     #[test]
     fn message_wrapper_shape() {
         let body = json!({"id": "urn:n:1", "type": "Notification"});
