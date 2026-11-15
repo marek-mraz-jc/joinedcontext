@@ -1586,7 +1586,7 @@
       "open": "Open",
       "custom": "Custom"
     },
-    "publicNotice": "An endpoint with a public audience answers anonymous callers, and an anonymous caller may only read. Writes and subscriptions still need a login, whichever representations are enabled.",
+    "publicNotice": "An endpoint with a public audience answers anonymous callers, who only read. Once it serves a Policy for the role public, or publishes to a catalogue, it is open data and read-only for everyone (EP-187): the Portal refuses a Policy it serves that writes. Write through an internal endpoint of the same space instead, e.g. one with the audience Organization serving a Policy that grants updateAttrs.",
     "data": {
       "title": "What this endpoint answers",
       "type": "Entity type",
@@ -1866,7 +1866,11 @@
       "firstCallCopy": "Copy the command",
       "firstCallPublic": "Anyone can call it; no token needed.",
       "filterUntouched": "Change the filter first: it is the same as the one saved.",
-      "filterFaulty": "Fix the marked fields first."
+      "filterFaulty": "Fix the marked fields first.",
+      "openData": "Open data: read-only",
+      "openDataHint": "Every write through this Endpoint is refused, for everyone. The data owner writes through an internal Endpoint of the space, e.g. one with audience organization.",
+      "openDataWrite": "This open-data Endpoint binds a Policy that writes",
+      "openDataWriteHint": "Reads go on and every write is refused. Name only read Policies in its policyRefs, e.g. urn:ngsi-ld:Policy:city.example:air:public-read, or move the write Policy to an internal Endpoint."
     },
     "condition": {
       "title": "Add a condition",

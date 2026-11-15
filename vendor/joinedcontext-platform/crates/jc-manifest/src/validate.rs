@@ -1414,12 +1414,41 @@ impl<'a> WriteBindings<'a> {
                 continue;
             }
             let id = ResourceId::new("joinedcontext.com", "Endpoint", Some(key.0.clone()), &key.1);
+            // A Pipeline writes through the Endpoint its output names, whatever policyRefs lists
+            // (P-18), so one aimed here is a write it binds too.
+            let writer = || {
+                self.pipeline_targeting(key).map(|pipeline| {
+                    format!(
+                        "an open-data Endpoint is read-only (EP-187): Pipeline {pipeline} writes \
+                         through it; aim its targetEndpoint at an internal Endpoint of the space"
+                    )
+                })
+            };
             let why = spec
                 .open_data_write(&served)
+                .or_else(writer)
                 .map(|message| format!("Endpoint {}: {message}", key.1));
             found.push((id, why));
         }
         found
+    }
+
+    /// The first Pipeline of the Endpoint's project that writes through it, by name.
+    fn pipeline_targeting(&self, (project, endpoint): &(String, String)) -> Option<String> {
+        use jc_core::kinds::PipelineSpec;
+        self.repo
+            .iter()
+            .filter(|(id, _)| id.kind == "Pipeline" && id.namespace.as_deref() == Some(project))
+            .find(|(_, resource)| {
+                serde_json::from_value::<PipelineSpec>(resource.manifest.spec.clone()).is_ok_and(
+                    |spec| {
+                        spec.outputs()
+                            .iter()
+                            .any(|output| output.target_endpoint.local_id() == endpoint)
+                    },
+                )
+            })
+            .map(|(id, _)| id.name.clone())
     }
 
     /// An open-data Endpoint that binds a Policy granting a write (EP-187), the finding on the

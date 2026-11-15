@@ -4333,7 +4333,12 @@ fn mark_open_data_writes(mirror: &Mirror) {
                 wanted.push(make_condition("Degraded", "True", OPEN_DATA_WRITES, why));
             }
         }
-        let held: Vec<_> = status.conditions.iter().filter(|c| ours(c)).map(said).collect();
+        let held: Vec<_> = status
+            .conditions
+            .iter()
+            .filter(|c| ours(c))
+            .map(said)
+            .collect();
         if held == wanted.iter().map(said).collect::<Vec<_>>() {
             continue;
         }
@@ -6766,7 +6771,10 @@ output_error{stream="kpi"} 6
         assert_eq!(marks.len(), 1, "{marks:?}");
         assert_eq!(marks[0].reason.as_deref(), Some(OPEN_DATA_WRITES));
         let said = marks[0].message.clone().unwrap_or_default();
-        assert!(said.contains("Policy editors-write grants updateAttrs"), "{said}");
+        assert!(
+            said.contains("Policy editors-write grants updateAttrs"),
+            "{said}"
+        );
         let endpoint = mirror.get("p", "Endpoint", "air-open").expect("kept");
         assert_eq!(endpoint.spec, open.spec);
         assert!(status_of(&mirror, "Endpoint", "air-open")
@@ -6775,7 +6783,11 @@ output_error{stream="kpi"} 6
             .any(|held| held.r#type == "Kept"));
 
         mark_open_data_writes(&mirror);
-        assert_eq!(degraded(&mirror), marks, "an unchanged mark is not rewritten");
+        assert_eq!(
+            degraded(&mirror),
+            marks,
+            "an unchanged mark is not rewritten"
+        );
 
         mirror.upsert(policy("editors-write", "editors", "queryEntity"));
         mark_open_data_writes(&mirror);

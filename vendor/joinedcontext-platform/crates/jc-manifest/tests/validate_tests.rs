@@ -2242,6 +2242,28 @@ fn an_open_data_endpoint_binding_a_write_policy_is_refused() {
         .expect("finding");
     assert_eq!(finding.path, PathBuf::from(ENDPOINT_PATH));
 
+    // A Pipeline aimed at the open-data Endpoint writes through it as well (P-18).
+    std::fs::remove_file(dir.join("projects/ovzdusie/spaces/ovzdusie/policies/sensors-write.yaml"))
+        .expect("remove the write Policy");
+    data_source(&dir, "ovzdusie", "feed");
+    write(
+        &dir,
+        "projects/ovzdusie/pipelines/stations.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: stations\n  \
+         namespace: ovzdusie\nspec:\n  class: scheduled\n  schedule: \"0 * * * *\"\n  source:\n    \
+         dataSourceRef: feed\n  targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:ovzdusie:public-air\n  \
+         output:\n    type: AirQualityObserved\n    mode: upsert\n",
+    );
+    let report = validate::run(&dir);
+    let found = citing(&report, "EP-187");
+    assert!(
+        found
+            .iter()
+            .any(|f| f.contains("Pipeline") && f.contains("writes through it")),
+        "{:?}",
+        report.findings
+    );
+
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -2353,7 +2375,18 @@ fn a_pipeline_whose_target_does_not_bind_its_write_is_refused() {
     let manifests = loaded.iter().map(|(_, r)| r.manifest.clone()).collect();
     let mirrored = jc_manifest::loader::Repository::from_manifests(manifests, None)
         .expect("the manifests build a repository");
-    let unmade = validate::unmade_writes(&mirrored);
+    // public-air serves a public read, so it is open data and `stations` writing through it is
+    // EP-187's finding on the Endpoint, not this one's.
+    let (open_data, unmade): (Vec<_>, Vec<_>) = validate::unmade_writes(&mirrored)
+        .into_iter()
+        .partition(|u| u.message.contains("(EP-187)"));
+    assert!(
+        open_data.len() == 1
+            && open_data[0]
+                .message
+                .contains("Pipeline stations writes through it"),
+        "{open_data:?}"
+    );
     let mut messages: Vec<&str> = unmade.iter().map(|u| u.message.as_str()).collect();
     messages.sort_unstable();
     let mut expected = found.clone();

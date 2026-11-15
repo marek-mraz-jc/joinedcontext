@@ -5417,12 +5417,19 @@ mod tests {
         assert!(open_data_writes(&state.mirror, "ovzdusie")
             .get("air-open")
             .is_none());
-        let errors = refusal(check(Operation::Update, manifest("Endpoint", "air-open", open.clone())));
+        let errors = refusal(check(
+            Operation::Update,
+            manifest("Endpoint", "air-open", open.clone()),
+        ));
         assert!(
             errors[0].starts_with("spec.contextSpaceRef: Endpoint air-open: an open-data Endpoint"),
             "{errors:?}"
         );
-        assert!(check(Operation::Update, manifest("Endpoint", "air-open", internal)).is_ok());
+        assert!(check(
+            Operation::Update,
+            manifest("Endpoint", "air-open", internal)
+        )
+        .is_ok());
         state.mirror.upsert(manifest("Endpoint", "air-open", open));
         let marked = open_data_writes(&state.mirror, "ovzdusie");
         assert!(

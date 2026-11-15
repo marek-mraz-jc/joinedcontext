@@ -1586,7 +1586,7 @@
       "open": "Otvorená",
       "custom": "Vlastná"
     },
-    "publicNotice": "Endpoint s verejným publikom odpovedá anonymnému volajúcemu a ten smie iba čítať. Zápisy a odbery aj naďalej vyžadujú prihlásenie, nech sú zapnuté ktorékoľvek reprezentácie.",
+    "publicNotice": "Endpoint s verejným publikom odpovedá anonymným volajúcim, ktorí len čítajú. Keď slúži politike pre rolu public alebo publikuje do katalógu, sú to otvorené dáta, len na čítanie pre každého (EP-187): Portál odmietne politiku, ktorú slúži a ktorá zapisuje. Zapisujte cez interný endpoint toho istého priestoru, napr. s publikom Organizácia a politikou, ktorá povoľuje updateAttrs.",
     "data": {
       "title": "Čo tento endpoint odpovedá",
       "type": "Typ entity",
@@ -1866,7 +1866,11 @@
       "firstCallCopy": "Kopírovať príkaz",
       "firstCallPublic": "Volať ho môže ktokoľvek, token netreba.",
       "filterUntouched": "Najprv zmeňte filter: je rovnaký ako uložený.",
-      "filterFaulty": "Najprv opravte označené polia."
+      "filterFaulty": "Najprv opravte označené polia.",
+      "openData": "Otvorené dáta: len na čítanie",
+      "openDataHint": "Každý zápis cez tento Endpoint je odmietnutý, pre každého. Vlastník dát zapisuje cez interný Endpoint priestoru, napr. s publikom organizácia.",
+      "openDataWrite": "Tento Endpoint otvorených dát viaže politiku, ktorá zapisuje",
+      "openDataWriteHint": "Čítanie pokračuje a každý zápis je odmietnutý. V policyRefs uveďte len politiky na čítanie, napr. urn:ngsi-ld:Policy:city.example:air:public-read, alebo presuňte zapisujúcu politiku na interný Endpoint."
     },
     "condition": {
       "title": "Pridať podmienku",
