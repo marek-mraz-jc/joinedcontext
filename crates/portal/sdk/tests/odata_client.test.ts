@@ -82,6 +82,13 @@ describe("the OData client", () => {
     );
   });
 
+  it("calls a people function on the Organization singleton (T-7097)", async () => {
+    const { transport, sent } = scripted({ status: 200, body: { value: { items: [] } } });
+    const value = await odata("/bbsk/api/v1/", { transport }).organizationCall("jc_person_list", { search: "ana" });
+    expect(value).toEqual({ items: [] });
+    expect(sent[0].path).toBe("/bbsk/api/v1/Organization/JoinedContext.Portal.jc_person_list(search=@search)?@search='ana'");
+  });
+
   it("sends If-Match on a bound action and reads 428 and 412", async () => {
     const { transport, sent } = scripted(
       { status: 202, body: { name: "c-1" } },

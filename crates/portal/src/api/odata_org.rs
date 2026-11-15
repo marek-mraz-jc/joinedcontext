@@ -345,15 +345,15 @@ static ORG: LazyLock<OrgServed> = LazyLock::new(|| {
         title: "JoinedContext Organization".into(),
         sets: evaluated_sets,
     };
-    let evaluated = Arc::new(service.model());
-    let public = Arc::new(public_model(
+    let evaluated = Arc::new(with_detail(service.model()));
+    let public = Arc::new(public_model(with_detail(
         Service {
             namespace: NAMESPACE.into(),
             title: "JoinedContext Organization".into(),
             sets: public_sets,
         }
         .model(),
-    ));
+    )));
     OrgServed {
         minimised: Arc::new(minimise((*public).clone())),
         public,
@@ -696,6 +696,78 @@ async fn kind_rows(
 /// The member every entity carries its `ETag` in (API/13 §2a).
 const ETAG: &str = "@odata.etag";
 
+/// The members a manifest kind's entity holds whole: the envelope's, as the REST door's
+/// `GET …/{plural}/{name}` answers it (API/13 §2a, T-7097).
+const MANIFEST_DETAIL: [&str; 3] = ["spec", "status", "metadata"];
+
+/// A Change's detail, as `jc_change_get` answers it: what the inbox and an approval read.
+const CHANGE_DETAIL: [&str; 9] = [
+    "metadata",
+    "status",
+    "summary",
+    "author",
+    "createdAt",
+    "planFields",
+    "files",
+    "waitsOn",
+    "decision",
+];
+
+/// The most Changes one page answers with their detail: each is a read of the forge.
+// ponytail: one jc_change_get per row; a batch read in the change store when a page wants more.
+const CHANGE_DETAIL_MAX: usize = 50;
+
+/// The `Edm.Untyped` members of `set`'s rows, answered only when `$select` names them, so a list
+/// stays thin.
+fn detail(set: &str) -> &'static [&'static str] {
+    match kind(set).or_else(|| org_set(set)) {
+        Some(list) if list.set == CHANGES => &CHANGE_DETAIL,
+        Some(list) if manifest_kind(list) => &MANIFEST_DETAIL,
+        _ => &[],
+    }
+}
+
+/// `model` with each set's [`detail`] members declared on its entity type.
+fn with_detail(mut model: Model) -> Model {
+    for schema in &mut model.schemas {
+        let typed: Vec<(String, &'static [&'static str])> = schema
+            .entity_container
+            .iter()
+            .flat_map(|container| &container.entity_sets)
+            .map(|set| {
+                let ty = set.entity_type.rsplit('.').next().unwrap_or_default();
+                (ty.to_owned(), detail(&set.name))
+            })
+            .filter(|(_, members)| !members.is_empty())
+            .collect();
+        for ty in &mut schema.entity_types {
+            let Some((_, members)) = typed.iter().find(|(name, _)| *name == ty.name) else {
+                continue;
+            };
+            for member in *members {
+                if !ty.properties.iter().any(|p| p.name == *member) {
+                    ty.properties
+                        .push(Property::new(*member, TypeRef::single("Edm.Untyped")));
+                }
+            }
+        }
+    }
+    model
+}
+
+/// The names `options` selects, `$select` items of one segment.
+fn selected(options: &QueryOptions) -> Vec<&str> {
+    options
+        .select
+        .iter()
+        .flatten()
+        .filter_map(|item| match item {
+            odata_url::SelectItem::Path(path) if path.len() == 1 => Some(path[0].as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
 /// An entity's `ETag`: a manifest's own (API/13 §3, what the REST door compares), else a SHA-256
 /// of the row the caller reads (a Change, a Workspace, an Endpoints page row).
 fn etag_of(
@@ -832,12 +904,84 @@ struct Read<'a> {
 }
 
 impl Read<'_> {
-    fn table(&self, set: &str, rows: Vec<Value>) -> Result<MemoryTable, Refused> {
-        let info = ORG
+    /// `set` over `rows`, its [`detail`] members a property only where `options` selects them.
+    fn table(
+        &self,
+        set: &str,
+        rows: Vec<Value>,
+        options: &QueryOptions,
+    ) -> Result<MemoryTable, Refused> {
+        let mut info = ORG
             .service
             .info(ORG.evaluated.clone(), set)
             .ok_or_else(|| no(not_found(format!("no entity set {set}"))))?;
+        let asked = selected(options);
+        info.properties
+            .retain(|p| !detail(set).contains(&p.as_str()) || asked.contains(&p.as_str()));
         MemoryTable::new(info, rows).map_err(|e| no(Refusal::from(e)))
+    }
+
+    /// Puts the [`detail`] members `answer` selects into each of its rows: a manifest's from the
+    /// envelope the REST door reads (the rows are the ones its list let the caller read), a
+    /// Change's from `jc_change_get`, run through the registry door as `GET …/changes/{id}`.
+    async fn fill(&self, set: &str, answer: &mut Answer) -> Result<(), Refused> {
+        let members = detail(set);
+        let asked: Vec<&str> = answer
+            .select
+            .iter()
+            .flatten()
+            .map(String::as_str)
+            .filter(|name| members.contains(name))
+            .collect();
+        let Some(list) = kind(set).or_else(|| org_set(set)) else {
+            return Ok(());
+        };
+        if asked.is_empty() {
+            return Ok(());
+        }
+        let change = list.set == CHANGES;
+        if change && answer.rows.len() > CHANGE_DETAIL_MAX {
+            return Err(no(bad(format!(
+                "a page with a Change's {} holds at most {CHANGE_DETAIL_MAX} Changes; ask with \
+                 $top={CHANGE_DETAIL_MAX} or fewer",
+                asked.join(", ")
+            ))));
+        }
+        let in_org = org_set(set).is_some();
+        for (row, key) in answer.rows.iter_mut().zip(&answer.keys) {
+            let (Value::Object(row), Some(key)) = (row, key.as_str()) else {
+                continue;
+            };
+            let (project, name) = match key.split_once('/') {
+                Some((project, name)) if !in_org => (project, name),
+                _ => (ORG_NAMESPACE, key),
+            };
+            let whole = if change {
+                let Some(op) = crate::ops::find("jc_change_get") else {
+                    return Err(no(not_found("jc_change_get is not registered")));
+                };
+                match crate::ops::call(op, &self.caller, self.state, project, json!({ "id": name }))
+                    .await
+                {
+                    Ok(whole) => whole,
+                    Err(e) => return Err(Box::new(as_odata_error(e.into_response()).await)),
+                }
+            } else {
+                let mirror = &self.state.mirror;
+                mirror
+                    .get(project, &list.type_name, name)
+                    .or_else(|| mirror.refused(project, &list.type_name, name))
+                    .and_then(|envelope| serde_json::to_value(envelope).ok())
+                    .unwrap_or(Value::Null)
+            };
+            for member in &asked {
+                row.insert(
+                    (*member).to_owned(),
+                    whole.get(*member).cloned().unwrap_or(Value::Null),
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Every project of the Organization the caller may read, as rows of `projects`.
@@ -877,7 +1021,7 @@ impl Read<'_> {
         rows: Vec<Value>,
     ) -> Result<(Answer, Value), Refused> {
         let tags = etags(&rows);
-        let table = self.table(set, rows)?;
+        let table = self.table(set, rows, options)?;
         let query_text = canonical(path, options);
         let mut options = options.clone();
         if let Some(token) = options.skiptoken.take() {
@@ -899,6 +1043,7 @@ impl Read<'_> {
             .await
             .map_err(|e| no(Refusal::from(e)))?;
         tag(&mut answer, &tags);
+        self.fill(set, &mut answer).await?;
         strip_key(&mut answer.rows);
         let mut body = Map::new();
         let root = service_root(self.state);
@@ -1030,6 +1175,10 @@ fn counting(options: &QueryOptions) -> QueryOptions {
 
 /// One entity: the first row of `answer`, else 404.
 fn entity(root: &str, context: &str, answer: Answer, what: &str) -> Response {
+    let context = match &answer.select {
+        Some(names) => format!("{context}({})", names.join(",")),
+        None => context.to_owned(),
+    };
     let Some(Value::Object(row)) = answer.rows.into_iter().next() else {
         return refused(not_found(format!("no {what} you may read")));
     };
@@ -1057,7 +1206,7 @@ async fn by_key(
     what: &str,
 ) -> Response {
     let tags = etags(&rows);
-    let table = match read.table(set, rows) {
+    let table = match read.table(set, rows, options) {
         Ok(table) => table,
         Err(r) => return *r,
     };
@@ -1068,6 +1217,9 @@ async fn by_key(
     match answered {
         Ok(mut answer) => {
             tag(&mut answer, &tags);
+            if let Err(r) = read.fill(set, &mut answer).await {
+                return *r;
+            }
             strip_key(&mut answer.rows);
             entity(&service_root(read.state), context, answer, what)
         }
@@ -2081,7 +2233,9 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
     }
     if metadata_asked {
         let projects = readable_projects(&state, &user, &org);
-        let offered = odata_ops::offered(&state, &user, front, &projects);
+        let people = crate::permissions::installation_organization(&state.mirror).as_deref()
+            == Some(org.as_str());
+        let offered = odata_ops::offered(&state, &user, front, &projects, people);
         return metadata(
             &parts.headers,
             &query,
@@ -2498,6 +2652,36 @@ fn operation_project(
     }
 }
 
+/// Where the operation `name` bound to `entity` runs: the `org` namespace for one of
+/// [`odata_ops::ORGANIZATION_BOUND`] on the `Organization` singleton of the installation's
+/// Organization, else the project it is bound to. Another Organization's singleton offers none,
+/// and answers as an unknown operation does.
+fn operation_target(
+    state: &AppState,
+    user: &CurrentUser,
+    org: &str,
+    entity: &str,
+    name: &str,
+) -> Result<String, Refused> {
+    let people = odata_ops::ORGANIZATION_BOUND.contains(&name);
+    if entity == ORGANIZATION {
+        let installation = crate::permissions::installation_organization(&state.mirror);
+        return if people && installation.as_deref() == Some(org) {
+            Ok(ORG_NAMESPACE.to_owned())
+        } else {
+            Err(no(not_found(
+                "the Organization has no such operation; $metadata lists the ones you may call",
+            )))
+        };
+    }
+    if people {
+        return Err(no(not_found(format!(
+            "{name} is bound to the Organization, e.g. Organization/{NAMESPACE}.{name}"
+        ))));
+    }
+    operation_project(state, user, org, entity)
+}
+
 /// `GET {project}/JoinedContext.Portal.{name}(...)`: a read-only operation of the registry.
 async fn function(
     state: &AppState,
@@ -2509,9 +2693,9 @@ async fn function(
     query: &str,
 ) -> Response {
     let answer = async {
-        let project = operation_project(state, &user, org, entity)?;
         let (name, params) = odata_ops::function_call(call, query)
             .map_err(|(status, slug, message)| Box::new(error(status, slug, &message)))?;
+        let project = operation_target(state, &user, org, entity, &name)?;
         let op = crate::ops::find(&name)
             .filter(|_| odata_ops::form(&name) == Some(odata_ops::Form::Function))
             .ok_or_else(|| {
@@ -2552,7 +2736,7 @@ async fn operation_action(call: Call<'_>, entity: &str, name: &str) -> Response 
         body,
     } = call;
     let answer = async {
-        let project = operation_project(state, &user, org, entity)?;
+        let project = operation_target(state, &user, org, entity, name)?;
         let op =
             crate::ops::find(name).ok_or_else(|| no(not_found(format!("no action {name}"))))?;
         let mut input = if body.is_empty() {
