@@ -1264,7 +1264,10 @@ async fn an_import_naming_a_persons_address_as_the_catalogue_contact_is_refused(
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
     let detail = problem["detail"].as_str().unwrap_or_default();
-    assert!(detail.contains("spec.catalog.contactPoint.email"), "{detail}");
+    assert!(
+        detail.contains("spec.catalog.contactPoint.email"),
+        "{detail}"
+    );
     assert!(written(&server).await.is_empty());
 }
 

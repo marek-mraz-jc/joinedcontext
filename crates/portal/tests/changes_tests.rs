@@ -1943,7 +1943,7 @@ async fn an_operation_never_approves_its_callers_own_change_even_for_an_administ
 
 const BUNDLE_BRANCH: &str = "portal/create-pipeline-aq-77777777";
 const PIPELINE_PATH: &str = "projects/ovzdusie/pipelines/aq/pipeline.yaml";
-const PIPELINE_YAML: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: aq\n  namespace: ovzdusie\nspec:\n  class: resident\n  targetEndpoint: urn:ngsi-ld:Endpoint:bb.sk:ovzdusie:air\n";
+const PIPELINE_YAML: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: aq\n  namespace: ovzdusie\nspec:\n  class: resident\n";
 
 /// A merge request by somebody else, headed by the Pipeline `aq` and carrying `extra` files
 /// beside it, and an approver whose only rights are `rules` over the organization.

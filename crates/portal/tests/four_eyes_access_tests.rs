@@ -59,7 +59,8 @@ fn manifest(kind: &str) -> (String, String) {
     let spec = match kind {
         "Role" => json!({ "rules": [{ "kinds": ["ContextSpace"], "verbs": ["propose"] }] }),
         "RoleBinding" => json!({
-            "subjects": [{ "user": PROPOSER }],
+            // A person is named by their Keycloak user id (IDN-03), here the proposer's.
+            "subjects": [{ "user": "3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14" }],
             "role": "admin-role",
             "scope": { "organization": "bb" }
         }),

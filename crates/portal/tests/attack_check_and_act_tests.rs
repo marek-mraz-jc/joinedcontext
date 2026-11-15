@@ -35,7 +35,7 @@ const MANIFEST_PATH: &str = "projects/ovzdusie/pipelines/aq/pipeline.yaml";
 fn pipeline_yaml(body: &str) -> String {
     format!(
         "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: aq\n  \
-         namespace: {PROJECT}\nspec:\n  class: resident\n{body}  targetEndpoint: urn:ngsi-ld:Endpoint:bb.sk:ovzdusie:air\n"
+         namespace: {PROJECT}\nspec:\n  class: resident\n{body}"
     )
 }
 
