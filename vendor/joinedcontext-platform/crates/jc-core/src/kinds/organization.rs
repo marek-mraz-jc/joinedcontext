@@ -198,7 +198,8 @@ impl Kind for OrganizationSpec {
     const SCOPE: Scope = Scope::Organization;
     const PATH_TEMPLATE: &'static str = "organizations/{name}.yaml";
 
-    fn validate_spec(&self, _meta: &ObjectMeta) -> Result<()> {
+    fn validate_spec(&self, meta: &ObjectMeta) -> Result<()> {
+        names::validate_not_reserved(&meta.name)?;
         self.validate()
     }
 }

@@ -54,9 +54,10 @@ type Check = fn(&Ground<'_>, &str, &ResourceEnvelope) -> Result<(), ApiError>;
 
 /// Every check, by name, in the order a proposal meets them. A deletion is never judged here:
 /// the propose door checks what a deletion leaves behind itself.
-pub const CHECKS: [(&str, Check); 19] = [
+pub const CHECKS: [(&str, Check); 20] = [
     ("literal-secret", literal_secret),
     ("kind", kind),
+    ("organization-name", organization_name),
     ("endpoint-representations", endpoint_representations),
     ("organization-appearance", organization_appearance),
     ("spec", spec),
@@ -241,6 +242,21 @@ fn endpoint_representations(
         "Endpoint" => mutate::check_representation_shape(&envelope.spec),
         _ => Ok(()),
     }
+}
+
+/// An Organization named like a platform address (T-6974): a 422 naming `metadata.name`,
+/// before the kind's own parse refuses the same name in one sentence.
+fn organization_name(_: &Ground<'_>, _: &str, envelope: &ResourceEnvelope) -> Result<(), ApiError> {
+    if envelope.kind != "Organization" {
+        return Ok(());
+    }
+    jc_core::names::validate_not_reserved(&envelope.metadata.name).map_err(|e| {
+        let line = e.to_string();
+        ApiError::Unprocessable {
+            detail: line.clone(),
+            errors: vec![line],
+        }
+    })
 }
 
 /// An Organization's appearance, member by member (UIX-16, T-6772): a 422 naming the member a
@@ -670,6 +686,15 @@ mod tests {
                     json!({ "representations": { "notAnOutput": {} } }),
                 )),
             ),
+            "organization-name" => (
+                vec![],
+                envelope(
+                    "Organization",
+                    "opendata",
+                    ORG_NAMESPACE,
+                    json!({ "domain": "hel.fi", "locales": ["en"], "defaultLocale": "en" }),
+                ),
+            ),
             "organization-appearance" => (
                 vec![],
                 org(
@@ -889,6 +914,72 @@ mod tests {
         let refused = replay(&Mirror::new(), (&bounds, None, None), vec![feed]);
         assert_eq!(refused.len(), 1, "load refuses it: {refused:?}");
         said(&refused[0].1);
+    }
+
+    /// T-6974: an Organization named like a platform address is refused with a 422 naming
+    /// `metadata.name` at propose and at approval, and by the reconciler's load of `main`; the
+    /// Organization names jc-dev and jc-prod hold pass.
+    #[test]
+    fn a_reserved_organization_name_is_refused_at_every_door() {
+        let bounds = OrganizationBounds::default();
+        let mirror = Mirror::new();
+        let ground = Ground {
+            mirror: &mirror,
+            bounds: &bounds,
+            apex: None,
+            domain: None,
+            portals: None,
+        };
+        let named = |name: &str| {
+            envelope(
+                "Organization",
+                name,
+                ORG_NAMESPACE,
+                json!({ "domain": "hel.fi", "locales": ["en"], "defaultLocale": "en" }),
+            )
+        };
+        for name in ["api", "opendata", "oauth", "login"] {
+            for (door, refused) in [
+                ("propose", manifest(&ground, ORG_NAMESPACE, &named(name))),
+                (
+                    "approval",
+                    manifest_at_approval(&ground, ORG_NAMESPACE, &named(name)),
+                ),
+            ] {
+                match refused {
+                    Err(ApiError::Unprocessable { detail, .. }) => assert!(
+                        detail.contains("metadata.name")
+                            && detail.contains("reserved for the platform"),
+                        "{door} {name}: {detail}"
+                    ),
+                    other => panic!("{door} {name}: {other:?}"),
+                }
+            }
+            let refused = replay(&Mirror::new(), (&bounds, None, None), vec![named(name)]);
+            assert_eq!(refused.len(), 1, "load {name}: {refused:?}");
+            assert!(
+                refused[0].1.contains("reserved for the platform"),
+                "{}",
+                refused[0].1
+            );
+        }
+        for name in [
+            "bbsk",
+            "banskabystrica",
+            "hel",
+            "bratislava",
+            "praha",
+            "barcelona",
+            "zilina",
+            "slovensko",
+            "ctl-a",
+            "ctl-b",
+            "demo-mcp",
+            "ops",
+            "helsinki",
+        ] {
+            manifest(&ground, ORG_NAMESPACE, &named(name)).expect(name);
+        }
     }
 
     /// P-2: what reaches `main` past the propose door is judged as its proposals would be: of
