@@ -47,7 +47,7 @@ fn an_unknown_metaslot_fails_the_load() {
         "/imports",
         "/classes/Room/mixins",
         "/classes/Room/attributes",
-        "/slots/size/pattern",
+        "/slots/size/equals_string",
         "/enums/E/enum_uri",
         "/enums/E/permissible_values/a/is_a",
         "/classes/Room/slot_usage/size",
@@ -55,7 +55,7 @@ fn an_unknown_metaslot_fails_the_load() {
         let doc = if pointer.ends_with("slot_usage/size") {
             with(
                 "/classes/Room/slot_usage",
-                json!({"size": {"minimum_value": 0}}),
+                json!({"size": {"equals_number": 0}}),
             )
         } else {
             with(pointer, json!("x"))

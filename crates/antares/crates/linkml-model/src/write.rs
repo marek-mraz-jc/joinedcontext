@@ -20,6 +20,8 @@ enum Node {
     Str(String),
     Bool(bool),
     Int(i64),
+    /// A JSON number as it was read (a slot's bounds).
+    Num(serde_json::Number),
     /// Never empty: an empty list is left out, as LinkML reads a missing
     /// list (the round-trip property test fails on a `null` here).
     List(Vec<String>),
@@ -90,6 +92,9 @@ fn render(out: &mut String, indent: usize, map: &[(String, Node)]) {
             }
             Node::Int(i) => {
                 let _ = writeln!(out, " {i}");
+            }
+            Node::Num(n) => {
+                let _ = writeln!(out, " {n}");
             }
             Node::List(items) => {
                 out.push('\n');
@@ -178,6 +183,15 @@ fn slot_node(slot: &Slot) -> Node {
     flag(&mut m, "identifier", slot.identifier);
     flag(&mut m, "inlined", slot.inlined);
     opt(&mut m, "inverse", slot.inverse.as_ref());
+    for (key, bound) in [
+        ("minimum_value", &slot.minimum_value),
+        ("maximum_value", &slot.maximum_value),
+    ] {
+        if let Some(n) = bound {
+            m.push((key.to_owned(), Node::Num(n.clone())));
+        }
+    }
+    opt(&mut m, "pattern", slot.pattern.as_ref());
     if let Some(u) = &slot.unit {
         let mut unit = Vec::new();
         opt(&mut unit, "ucum_code", u.ucum_code.as_ref());
@@ -348,7 +362,7 @@ fn inlined(model: &Model, slot: &Slot) -> bool {
 
 fn slot_schema(model: &Model, slot: &Slot) -> Value {
     let kind = model.kind(slot);
-    let base = match model.range(slot) {
+    let mut base = match model.range(slot) {
         // A kind no surface maps yet: any value (T-5207, mapping-contract rule 4).
         _ if !crate::known_kind(model.kind(slot)) => Map::new(),
         _ if geo(model, slot) => typed("object", None),
@@ -382,6 +396,17 @@ fn slot_schema(model: &Model, slot: &Slot) -> Value {
             m
         }
     };
+    for (key, bound) in [
+        ("minimum", &slot.minimum_value),
+        ("maximum", &slot.maximum_value),
+    ] {
+        if let Some(n) = bound {
+            base.insert(key.to_owned(), Value::Number(n.clone()));
+        }
+    }
+    if let Some(p) = &slot.pattern {
+        base.insert("pattern".to_owned(), Value::String(p.clone()));
+    }
     let listed = matches!(kind, "ListProperty" | "ListRelationship");
     let mut out = if slot.multivalued == Some(true) || listed {
         let mut m = typed("array", None);
@@ -623,6 +648,15 @@ pub fn shacl(model: &Model) -> String {
                 _ if geo(model, &slot) => {}
                 Range::Type(b) => {
                     let _ = write!(out, " ;\n{IN}{IN}sh:datatype {}", b.xsd());
+                    if let Some(n) = &slot.minimum_value {
+                        let _ = write!(out, " ;\n{IN}{IN}sh:minInclusive {n}");
+                    }
+                    if let Some(n) = &slot.maximum_value {
+                        let _ = write!(out, " ;\n{IN}{IN}sh:maxInclusive {n}");
+                    }
+                    if let Some(p) = &slot.pattern {
+                        let _ = write!(out, " ;\n{IN}{IN}sh:pattern {}", lit(p));
+                    }
                 }
                 Range::Class(c) => {
                     let _ = write!(
@@ -1060,4 +1094,42 @@ pub fn markdown(model: &Model) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Limits, Model};
+    use serde_json::json;
+
+    #[test]
+    fn bounds_and_patterns_reach_every_writer() {
+        let m = Model::read(
+            br#"{"id": "https://e.org/s", "name": "s",
+              "classes": {"Car": {"slots": ["occupancy", "plate"]}},
+              "slots": {"occupancy": {"range": "integer", "minimum_value": 0, "maximum_value": 5},
+                "plate": {"pattern": "^[A-Z]{2}\\d{3}\"$"}}}"#,
+            &Limits {
+                max_bytes: 999,
+                max_depth: 8,
+                max_elements: 99,
+            },
+        )
+        .unwrap();
+        let ttl = crate::shacl(&m);
+        assert!(
+            ttl.contains("sh:minInclusive 0") && ttl.contains("sh:maxInclusive 5"),
+            "{ttl}"
+        );
+        let schema: serde_json::Value = serde_json::from_str(&crate::json_schema(&m)).unwrap();
+        let p = &schema["definitions"]["Car"]["properties"]["occupancy"];
+        assert_eq!((&p["minimum"], &p["maximum"]), (&json!(0), &json!(5)));
+        assert!(ttl.contains(r#"sh:pattern "^[A-Z]{2}\\d{3}\"$""#), "{ttl}");
+        let plate = &schema["definitions"]["Car"]["properties"]["plate"];
+        assert_eq!(plate["pattern"], json!("^[A-Z]{2}\\d{3}\"$"));
+        let yaml = crate::yaml(&m);
+        assert!(
+            yaml.contains("\n    minimum_value: 0\n    maximum_value: 5\n"),
+            "{yaml}"
+        );
+    }
 }

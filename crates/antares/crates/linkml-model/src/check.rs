@@ -2,13 +2,18 @@
 //! Whether an NGSI-LD Entity or fragment, in the expanded form the broker
 //! stores (Attribute names as IRIs, `type` a list of IRIs, each Attribute a
 //! list of instances), keeps to a Tenant's model (T-5912): per Attribute its
-//! kind, its range (a built-in type, an enum, a class), `multivalued` and its
-//! UN/CEFACT unit; per class its `required` slots when the write sets the
-//! whole Entity. Every write surface reaches the store through the NGSI-LD
-//! routes, which call [`entity_in`], so one refusal reads the same on all.
+//! kind, its range (a built-in type, an enum, a class), `multivalued`, its
+//! UN/CEFACT unit and a number's `minimum_value` and `maximum_value`; per
+//! class its `required` slots when the write sets the whole Entity. Every
+//! write surface reaches the store through the NGSI-LD routes, which call
+//! [`entity_in`], so one refusal reads the same on all. Each refusal names
+//! its SHACL constraint component (PL-59), so the runner, the Portal and the
+//! gateway say the same words.
 //!
-//! What the subset does not hold is not checked: `pattern`, minimum and
-//! maximum, closed classes (a schema naming them is refused at load), the
+//! A text's `pattern` matches as JSON Schema and SHACL read it, anywhere in
+//! the value. What the subset does not hold is not checked: closed classes
+//! (the runner's JSON-Schema stage closes them by the `DataModel`'s
+//! `open_world`, which the broker's model bytes do not carry), the
 //! type of a Relationship's target (that needs a read of the target; an id
 //! tells nothing about it, ADR-N-041). An Attribute no class of the Entity
 //! lists, and an Entity of no class of the model, pass: a LinkML class is
@@ -52,6 +57,46 @@ pub struct Violation {
     pub class: String,
     /// The rule, as a sentence a client can act on.
     pub rule: &'static str,
+    /// The SHACL constraint component the rule is, a CURIE of [`component`].
+    pub component: &'static str,
+}
+
+/// The SHACL constraint components a [`Violation`] names (PL-59), as CURIEs on `sh:`.
+pub mod component {
+    /// A required slot missing.
+    pub const MIN_COUNT: &str = "sh:MinCountConstraintComponent";
+    /// A list where the model holds one value.
+    pub const MAX_COUNT: &str = "sh:MaxCountConstraintComponent";
+    /// A value of another type than the slot's range.
+    pub const DATATYPE: &str = "sh:DatatypeConstraintComponent";
+    /// A value the enum does not list.
+    pub const IN: &str = "sh:InConstraintComponent";
+    /// A Relationship where a Property belongs, or no Entity id as its object.
+    pub const NODE_KIND: &str = "sh:NodeKindConstraintComponent";
+    /// A number below the slot's minimum.
+    pub const MIN_INCLUSIVE: &str = "sh:MinInclusiveConstraintComponent";
+    /// A number above the slot's maximum.
+    pub const MAX_INCLUSIVE: &str = "sh:MaxInclusiveConstraintComponent";
+    /// A text the slot's `pattern` does not match.
+    pub const PATTERN: &str = "sh:PatternConstraintComponent";
+    /// A unit code other than the one the model states.
+    pub const HAS_VALUE: &str = "sh:HasValueConstraintComponent";
+}
+
+/// The SHACL component of a rule of [`rule`]; every built-in type rule and
+/// the language map's are `sh:datatype` failures.
+fn component_of(text: &str) -> &'static str {
+    match text {
+        rule::KIND | rule::OBJECT => component::NODE_KIND,
+        rule::ENUM => component::IN,
+        rule::SINGLE => component::MAX_COUNT,
+        rule::REQUIRED => component::MIN_COUNT,
+        rule::UNIT => component::HAS_VALUE,
+        rule::MINIMUM => component::MIN_INCLUSIVE,
+        rule::MAXIMUM => component::MAX_INCLUSIVE,
+        rule::PATTERN => component::PATTERN,
+        _ => component::DATATYPE,
+    }
 }
 
 /// The words every [`Violation`]'s text carries: a surface that hides an
@@ -100,6 +145,12 @@ pub mod rule {
     pub const REQUIRED: &str = "the model requires it";
     /// A `LanguageProperty` whose texts are not strings.
     pub const LANGUAGE: &str = "its languageMap must map language tags to strings";
+    /// A number below the slot's `minimum_value`.
+    pub const MINIMUM: &str = "its value is below the minimum the model states";
+    /// A number above the slot's `maximum_value`.
+    pub const MAXIMUM: &str = "its value is above the maximum the model states";
+    /// A text the slot's `pattern` does not match.
+    pub const PATTERN: &str = "its value does not match the pattern the model states";
 }
 
 /// How a slot's values are held to their range.
@@ -120,6 +171,12 @@ struct SlotRule {
     multivalued: bool,
     /// The UN/CEFACT code of the slot's unit (`unece:` among its mappings).
     unit: Option<String>,
+    /// `minimum_value`, inclusive.
+    minimum: Option<f64>,
+    /// `maximum_value`, inclusive.
+    maximum: Option<f64>,
+    /// `pattern`, compiled once per model revision.
+    pattern: Option<regex::Regex>,
 }
 
 /// One class's rules, keyed by slot IRI, with its required slots.
@@ -170,6 +227,15 @@ impl Rules {
                     range,
                     multivalued: slot.multivalued == Some(true),
                     unit,
+                    minimum: slot
+                        .minimum_value
+                        .as_ref()
+                        .and_then(serde_json::Number::as_f64),
+                    maximum: slot
+                        .maximum_value
+                        .as_ref()
+                        .and_then(serde_json::Number::as_f64),
+                    pattern: slot.pattern.as_deref().and_then(crate::model::pattern),
                 });
                 let iri = model.slot_iri(name);
                 // The Entity's own members are no Attributes: `id` and
@@ -287,6 +353,7 @@ fn violation(slot: &SlotRule, rule: &'static str) -> Violation {
         attribute: slot.name.clone(),
         class: slot.class.clone(),
         rule,
+        component: component_of(rule),
     }
 }
 
@@ -380,7 +447,22 @@ fn value(slot: &SlotRule, v: &Value) -> Result<(), &'static str> {
         // holding an id is a reference by value. Neither is typed further.
         Kind::Class => Ok(()),
         Kind::Enum(allowed) => hold(v.as_str().is_some_and(|s| allowed.contains(s)), rule::ENUM),
-        Kind::Type(b) => builtin(*b, v),
+        Kind::Type(b) => {
+            builtin(*b, v)?;
+            let n = v.as_f64();
+            hold(
+                !matches!((n, slot.minimum), (Some(n), Some(min)) if n < min),
+                rule::MINIMUM,
+            )?;
+            hold(
+                !matches!((n, slot.maximum), (Some(n), Some(max)) if n > max),
+                rule::MAXIMUM,
+            )?;
+            hold(
+                !matches!((v.as_str(), &slot.pattern), (Some(s), Some(re)) if !re.is_match(s)),
+                rule::PATTERN,
+            )
+        }
     }
 }
 
@@ -500,7 +582,7 @@ mod tests {
             "Thing": {"slots": ["name", "id"]},
             "Sensor": {"is_a": "Thing", "slots": ["pm10", "count", "on", "day", "at", "clock",
               "homepage", "level", "tags", "owner", "label", "temperature", "readings", "terms", "area",
-              "odd", "inline", "crew", "doc", "type", "nominal"],
+              "odd", "inline", "crew", "doc", "type", "nominal", "occupancy", "plate"],
               "slot_usage": {"pm10": {"required": true}}}},
           "enums": {"Level": {"permissible_values": {"low": {}, "high": {}}}},
           "slots": {
@@ -526,7 +608,9 @@ mod tests {
             "crew": {"range": "Thing", "multivalued": true, "annotations": {"ngsi_ld_kind": {"tag": "ngsi_ld_kind", "value": "ListRelationship"}}},
             "doc": {"annotations": {"ngsi_ld_kind": {"tag": "ngsi_ld_kind", "value": "JsonProperty"}}},
             "type": {"required": true},
-            "nominal": {"range": "float", "unit": {"ucum_code": "1"}}
+            "nominal": {"range": "float", "unit": {"ucum_code": "1"}},
+            "occupancy": {"range": "integer", "minimum_value": 0, "maximum_value": 10},
+            "plate": {"pattern": "^[A-Z]{2}-[0-9]{3}$"}
           }}"#;
         Rules::of(&Model::read(json, &crate::SURFACE_LIMITS).unwrap())
     }
@@ -583,6 +667,155 @@ mod tests {
         for (name, good, bad, why) in table {
             assert_eq!(refused(&[(name, prop(good))]), None, "{name} good");
             assert_eq!(refused(&[(name, prop(bad))]), Some(why), "{name} bad");
+        }
+    }
+
+    #[test]
+    fn a_number_outside_the_models_bounds_is_refused() {
+        for (v, want) in [
+            (json!(0), None),
+            (json!(10), None),
+            (json!(-1), Some(rule::MINIMUM)),
+            (json!(11), Some(rule::MAXIMUM)),
+            (json!(2.5), Some(rule::INTEGER)),
+            (json!("urn:ngsi-ld:null"), None),
+        ] {
+            assert_eq!(refused(&[("occupancy", prop(v.clone()))]), want, "{v}");
+        }
+        let text = entity(
+            &rules(),
+            &sensor(&[("occupancy", prop(json!(4242)))]),
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(!text.contains("4242"), "{text}");
+    }
+
+    #[test]
+    fn a_text_the_pattern_does_not_match_is_refused() {
+        for (v, want) in [
+            (json!("BB-123"), None),
+            (json!("bb-123"), Some(rule::PATTERN)),
+            (json!("xBB-123"), Some(rule::PATTERN)),
+            (json!(12), Some(rule::STRING)),
+            (json!("urn:ngsi-ld:null"), None),
+        ] {
+            assert_eq!(refused(&[("plate", prop(v.clone()))]), want, "{v}");
+        }
+        let v = entity(
+            &rules(),
+            &sensor(&[("plate", prop(json!("secret-77")))]),
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(v.component, component::PATTERN);
+        assert!(!v.to_string().contains("secret-77"), "{v}");
+    }
+
+    #[test]
+    fn a_pattern_is_read_on_texts_only_and_within_its_bounds() {
+        let read = |slot: &str| {
+            Model::read(
+                format!(r#"{{"id": "https://e.org/", "name": "s", "slots": {{"n": {slot}}}}}"#)
+                    .as_bytes(),
+                &crate::SURFACE_LIMITS,
+            )
+        };
+        assert!(read(r#"{"pattern": "^a+$"}"#).is_ok());
+        assert!(read(r#"{"range": "date", "pattern": "^2026-"}"#).is_ok());
+        assert!(matches!(
+            read(r#"{"range": "integer", "pattern": "^1"}"#),
+            Err(crate::Error::NotImplemented(_))
+        ));
+        // look-around and back-references need backtracking: refused, never run
+        for bad in [r#""(?=a)a""#, r#""(a)\\1""#, r#""(""#] {
+            assert!(
+                matches!(
+                    read(&format!(r#"{{"pattern": {bad}}}"#)),
+                    Err(crate::Error::Malformed(_))
+                ),
+                "{bad}"
+            );
+        }
+        let long = "a".repeat(1025);
+        assert!(matches!(
+            read(&format!(r#"{{"pattern": "{long}"}}"#)),
+            Err(crate::Error::Malformed(_))
+        ));
+        // a pattern that compiles past the size bound
+        assert!(matches!(
+            read(r#"{"pattern": "\\w{200}\\w{200}"}"#),
+            Err(crate::Error::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn bounds_are_read_on_numbers_only_and_folded_from_slot_usage() {
+        let read = |slot: &str| {
+            Model::read(
+                format!(r#"{{"id": "https://e.org/", "name": "s", "slots": {{"n": {slot}}}}}"#)
+                    .as_bytes(),
+                &crate::SURFACE_LIMITS,
+            )
+        };
+        assert!(read(r#"{"range": "integer", "minimum_value": 0}"#).is_ok());
+        assert!(matches!(
+            read(r#"{"range": "string", "minimum_value": 0}"#),
+            Err(crate::Error::NotImplemented(_))
+        ));
+        assert!(matches!(
+            read(r#"{"range": "float", "minimum_value": 2, "maximum_value": 1}"#),
+            Err(crate::Error::Malformed(_))
+        ));
+        let model = Model::read(
+            br#"{"id": "https://e.org/", "name": "s",
+              "classes": {"C": {"slots": ["n"], "slot_usage": {"n": {"minimum_value": 0}}}},
+              "slots": {"n": {"range": "integer"}}}"#,
+            &crate::SURFACE_LIMITS,
+        )
+        .unwrap();
+        let doc = json!({"type": ["https://e.org/C"],
+            "https://e.org/n": [{"type": "Property", "value": -1}]});
+        let v = entity(&Rules::of(&model), &doc, false).unwrap_err();
+        assert_eq!(
+            (v.rule, v.component),
+            (rule::MINIMUM, component::MIN_INCLUSIVE)
+        );
+    }
+
+    #[test]
+    fn every_violation_names_its_shacl_component() {
+        let r = rules();
+        let v = entity(&r, &sensor(&[("pm10", prop(json!("abc")))]), false).unwrap_err();
+        assert_eq!(v.component, component::DATATYPE);
+        let mut doc = sensor(&[]);
+        doc.as_object_mut().unwrap().remove("https://e.org/pm10");
+        assert_eq!(
+            entity(&r, &doc, true).unwrap_err().component,
+            component::MIN_COUNT
+        );
+        for (text, want) in [
+            (rule::KIND, component::NODE_KIND),
+            (rule::OBJECT, component::NODE_KIND),
+            (rule::ENUM, component::IN),
+            (rule::SINGLE, component::MAX_COUNT),
+            (rule::REQUIRED, component::MIN_COUNT),
+            (rule::UNIT, component::HAS_VALUE),
+            (rule::MINIMUM, component::MIN_INCLUSIVE),
+            (rule::MAXIMUM, component::MAX_INCLUSIVE),
+            (rule::PATTERN, component::PATTERN),
+            (rule::STRING, component::DATATYPE),
+            (rule::INTEGER, component::DATATYPE),
+            (rule::NUMBER, component::DATATYPE),
+            (rule::BOOLEAN, component::DATATYPE),
+            (rule::DATE, component::DATATYPE),
+            (rule::DATETIME, component::DATATYPE),
+            (rule::TIME, component::DATATYPE),
+            (rule::URI, component::DATATYPE),
+            (rule::LANGUAGE, component::DATATYPE),
+        ] {
+            assert_eq!(component_of(text), want, "{text}");
         }
     }
 
