@@ -146,6 +146,68 @@ test.describe("ready-made set-ups on Data sources", () => {
     await shot(page, "runner-input-nats");
   });
 
+  // T-7092: ekiben's ftp input from the type picker. Every field says what it takes with an
+  // example, tls is a dropdown whose none says it needs the operator's quota, the password is a
+  // secret reference (name and key, never a value), and the proposed DataSource carries it as a
+  // ${VAR} of spec.secrets.
+  test("an ftp source is set up from its form, its password a secret reference", async ({ page }) => {
+    await stubApi(page);
+    const posted: string[] = [];
+    await page.route(`**/api/v1/projects/${PROJECT}/datasources**`, async (route) => {
+      const request = route.request();
+      if (request.method() !== "POST") return route.fallback();
+      posted.push(request.postData() ?? "");
+      const dry = new URL(request.url()).searchParams.has("dryRun");
+      return route.fulfill({
+        status: dry ? 200 : 202,
+        contentType: "application/json",
+        body: JSON.stringify(
+          dry
+            ? {
+                apiVersion: API,
+                kind: "DataSource",
+                metadata: { name: "exports", namespace: PROJECT },
+                plan: { fields: [{ path: "spec.type", to: "ftp" }, { path: "spec.input.address", to: "files.example.org:21" }, { path: "spec.input.path", to: "/exports/*.csv" }] },
+              }
+            : { apiVersion: API, kind: "Change", metadata: { name: "chg-70920001", namespace: PROJECT }, status: { lane: "yellow", phase: "PendingApproval", plan: { create: 1 } } },
+        ),
+      });
+    });
+    await page.goto(`/projects/${PROJECT}/datasources?lang=en`);
+    await page.getByRole("button", { name: "New data source" }).first().click();
+    const form = page.getByTestId("form-page");
+    await form.getByLabel("Type", { exact: true }).selectOption("ftp");
+    await expect(form.getByText("The FTP server as host or host:port, for example files.example.org:21", { exact: false })).toBeVisible();
+    // tls sits in the form's folded TLS section, as every input's TLS settings do.
+    await form.getByText("TLS certificates", { exact: true }).first().click();
+    await expect(form.getByText("allow_plain_ftp quota", { exact: false })).toBeVisible();
+    const tls = form.getByLabel("Tls", { exact: true });
+    await expect(tls.locator("option:checked")).toHaveText(/explicit/);
+    await expect(tls.locator("option")).toHaveText([/explicit/, /none/]);
+    await shot(page, "ftp-empty");
+    await page.getByRole("button", { name: "Check" }).click();
+    await expect(form.getByText(/required/i).first()).toBeVisible();
+    expect(posted).toEqual([]);
+    await shot(page, "ftp-refused");
+    await form.getByRole("textbox", { name: "Name", exact: true }).fill("exports");
+    await form.getByRole("textbox", { name: "Address", exact: true }).fill("files.example.org:21");
+    await form.getByRole("textbox", { name: "Path", exact: true }).fill("/exports/*.csv");
+    await form.getByRole("textbox", { name: "Username", exact: true }).fill("exports");
+    await form.getByPlaceholder("Secret name").fill("ftp-login");
+    await form.getByPlaceholder("Key").fill("password");
+    await shot(page, "ftp-filled");
+    await page.getByRole("button", { name: "Check" }).click();
+    await expect.poll(() => posted.length).toBe(1);
+    const body = JSON.parse(posted[0]) as { spec: { type: string; input: Record<string, unknown>; secrets: { name: string; key: string; envVar: string }[] } };
+    expect(body.spec.type).toBe("ftp");
+    expect(body.spec.input).toMatchObject({ address: "files.example.org:21", path: "/exports/*.csv", username: "exports", tls: "explicit" });
+    expect(body.spec.input.password).toMatch(/^\$\{[A-Z][A-Z0-9_]*\}$/);
+    const envVar = String(body.spec.input.password).slice(2, -1);
+    expect(body.spec.secrets).toEqual([{ name: "ftp-login", key: "password", envVar }]);
+    await shot(page, "ftp-checked");
+    expect(await axeViolations(page)).toEqual([]);
+  });
+
   test("a person who may run no set-up sees Data sources without the section", async ({ page }) => {
     await stubApi(page, { blueprints: [] });
     await page.goto(`/projects/${PROJECT}/datasources?lang=en`);
@@ -209,6 +271,46 @@ test.describe("ready-made set-ups on Data sources", () => {
     await expect(form.getByRole("combobox", { name: "Body format" })).toHaveValue(/xlsx|1/);
     await expect(form.getByRole("textbox", { name: /URL/ })).toHaveValue("https://data.example.org/stats/stations-2026.xlsx");
     await shot(page, "sheet-applied");
+    expect(await axeViolations(page)).toEqual([]);
+  });
+
+  // T-7089: a city's map layer published as a zipped shapefile is read one GeoJSON feature per
+  // record; the template asks only the address, says the .prj picks the coordinate system, and
+  // the form it fills carries format shapefile.
+  test("a shapefile template asks for the zip's address and fills the form with format shapefile", async ({ page }) => {
+    await stubApi(page);
+    await page.route(`**/api/v1/projects/${PROJECT}/datasources**`, async (route) =>
+      route.request().method() !== "POST"
+        ? route.fallback()
+        : route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+              apiVersion: API,
+              kind: "DataSource",
+              metadata: { name: "kaupunginosat", namespace: PROJECT },
+              plan: { fields: [{ path: "spec.http.url", to: "https://data.example.org/kartta/kaupunginosat.zip" }, { path: "spec.http.format", to: "shapefile" }] },
+            }),
+          }),
+    );
+    await page.goto(`/projects/${PROJECT}/datasources/new?lang=en`);
+    await page.getByText("Start from a template").click();
+    await page.getByRole("button", { name: /Shapefile \(zipped\)/ }).click();
+    const gallery = page.getByTestId("datasource-templates");
+    await expect(gallery.getByText("The .prj names the coordinate system", { exact: false })).toBeVisible();
+    await expect(gallery.getByRole("textbox", { name: "Sheet", exact: true })).toHaveCount(0);
+    await shot(page, "shapefile-empty");
+    await page.getByLabel("Address of the zip").fill("not an address");
+    await page.getByRole("button", { name: "Fill the form and check" }).click();
+    await expect(gallery.getByRole("alert").or(gallery.locator("[id$='-error']")).first()).toBeVisible();
+    await shot(page, "shapefile-refused");
+    await page.getByLabel("Address of the zip").fill("https://data.example.org/kartta/kaupunginosat.zip");
+    await shot(page, "shapefile-filled");
+    await page.getByRole("button", { name: "Fill the form and check" }).click();
+    const form = page.getByRole("group", { name: "HTTP endpoint" });
+    await expect(form.getByRole("combobox", { name: "Body format" })).toHaveValue(/shapefile|2/);
+    await expect(form.getByRole("textbox", { name: /URL/ })).toHaveValue("https://data.example.org/kartta/kaupunginosat.zip");
+    await shot(page, "shapefile-applied");
     expect(await axeViolations(page)).toEqual([]);
   });
 });

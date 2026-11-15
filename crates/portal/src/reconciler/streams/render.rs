@@ -1358,5 +1358,5 @@ pub(super) fn input_ends_by_itself(input: &Value) -> bool {
             .and_then(Value::as_u64)
             .is_some_and(|count| count > 0);
     }
-    jc_core::kinds::bento_inputs::TERMINATING.contains(&kind)
+    jc_core::kinds::data_source::input_terminates(kind)
 }
