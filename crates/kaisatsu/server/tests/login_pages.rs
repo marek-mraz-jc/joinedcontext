@@ -718,6 +718,54 @@ async fn strictest_of_two_organizations_wins() {
     assert_eq!(page_id(&html), "config-totp", "{html}");
 }
 
+/// A consent covers what the sign-in resolved: a scope kept out of the token's `scope` claim
+/// is not stored in the consent, so a later single sign-on with the same request issues a
+/// code instead of asking again.
+#[tokio::test]
+async fn single_sign_on_compares_consent_with_the_resolved_scope() {
+    let (app, store) = app().await;
+    let mut phone = store
+        .list_client_scopes("dev")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name == "phone")
+        .unwrap();
+    phone
+        .attributes
+        .insert("include.in.token.scope".into(), "false".into());
+    store.upsert_client_scope(phone).await.unwrap();
+    let mut edge = store
+        .get_client_by_client_id("dev", "edge")
+        .await
+        .unwrap()
+        .unwrap();
+    edge.consent_required = true;
+    store.upsert_client(edge).await.unwrap();
+
+    let a = start(&app, "&scope=openid%20phone").await;
+    let (st, _, html) = a.password(&app, MEMBER, MEMBER_PW).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(page_id(&html), "consent", "{html}");
+    let (st, h, _) = a.post(&app, &[]).await;
+    assert!(is_code(st, &h));
+    let sso = h
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find(|v| v.starts_with("__Host-wk_sso="))
+        .map(|v| v.split(';').next().unwrap().to_owned())
+        .expect("sso cookie");
+
+    let again = format!(
+        "{AUTH}?client_id=edge&redirect_uri={}&response_type=code&scope=openid%20phone&state=st&code_challenge={}&code_challenge_method=S256",
+        url::form_urlencoded::byte_serialize(CALLBACK.as_bytes()).collect::<String>(),
+        sha256_base64url(VERIFIER),
+    );
+    let (st, h, _) = get_with_cookie(&app, &again, None, Some(&sso)).await;
+    assert!(is_code(st, &h), "{st} {:?}", h.get(header::LOCATION));
+}
+
 #[tokio::test]
 async fn temporary_password_terms_and_consent() {
     let (app, store) = app().await;
