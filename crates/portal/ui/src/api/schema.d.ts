@@ -6702,6 +6702,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/pipelines/{name}/source-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Whole Source
+         * @description Runs the saved pipeline over every page of its http DataSource as a dry run on the project's runner and counts what a live run would accept and reject, by rule and attribute, with the first 1000 rejected records (secrets masked). Nothing is written. Ends at 60 s or 50 000 records and holds the project's one pipeline test slot (G-21, G-07). Needs read on the pipeline.
+         */
+        post: operations["check_source"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/pipelines/{name}/source-deletes": {
         parameters: {
             query?: never;
@@ -13332,6 +13352,38 @@ export interface components {
         SortKey: {
             attr: string;
             desc?: boolean;
+        };
+        /** @description What the whole-source check found (G-21). */
+        SourceCheck: {
+            /**
+             * Format: int64
+             * @description Records the space's model takes.
+             */
+            accepted: number;
+            /**
+             * @description Whether the whole source was read: `false` when 60 s or 50 000 records ended the check
+             *     first, or the source's read failed, so the counts cover part of it.
+             */
+            complete: boolean;
+            /** @description What stopped the source or the runner, in words a person can act on. */
+            errors: string[];
+            /**
+             * @description The rejected records counted by rule and attribute, the largest first, each with its
+             *     first three records, where the fix belongs and, for an enum, the values the model allows.
+             */
+            groups: components["schemas"]["RejectedGroupView"][];
+            /**
+             * Format: int64
+             * @description Records the steps made, each checked: `accepted` plus `rejected`.
+             */
+            records: number;
+            /**
+             * Format: int64
+             * @description Records a live run would put on the rejected list.
+             */
+            rejected: number;
+            /** @description The first 1000 rejected records, secrets masked; `id` is the record's place in the run. */
+            rows: components["schemas"]["Rejected"][];
         };
         /** @enum {string} */
         SourceChoice: "delete" | "keep";
@@ -39957,6 +40009,76 @@ export interface operations {
             };
             /** @description Pipeline not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    check_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Pipeline name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The counts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceCheck"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Forbidden: the CSRF token is missing or does not match, or the caller lacks the verb this write needs */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Pipeline not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The pipeline reads no saved http DataSource, or a test of this project is already running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No pipeline runner is configured, or it did not answer */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

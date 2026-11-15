@@ -3096,6 +3096,22 @@
         "title": "Životnost",
         "hint": "Kdy entity nebo některá jejich pole opustí prostor. Uloží se jako životnost pipeline, nikdy jako kód mapování.",
         "pickType": "Nejprve vyberte cíl a typ, který mapování zapisuje: životnost se nastavuje pro každý typ."
+      },
+      "sourceCheck": {
+        "title": "Zkontrolovat celý zdroj",
+        "hint": "Spustí uloženou pipeline nad každou stránkou zdroje a spočítá, co by ostrý běh přijal a odmítl, podle pravidla. Nic se nezapíše. Zastaví se po 60 s nebo 50 000 záznamech. Příklad: zdroj CKAN s 12 stránkami, 2 400 záznamů.",
+        "run": "Zkontrolovat celý zdroj",
+        "again": "Zkontrolovat znovu",
+        "running": "Čte se každá stránka zdroje; trvá to nejvýše 60 s.",
+        "unsaved": "Kontrola čte uloženou pipeline: navrhněte tuto a zkontrolujte ji, až se její změna sloučí.",
+        "failed": "Kontrola se nespustila",
+        "counts": "{count, plural, one {# záznam} few {# záznamy} other {# záznamů}}: přijato {accepted, number}, odmítnuto {rejected, number}",
+        "complete": "Přečetla se každá stránka zdroje; ostrý běh by dal na seznam odmítnutých tytéž záznamy.",
+        "partial": "Kontrola nepřečetla celý zdroj, takže počty pokrývají jen přečtenou část. Důvod je níže.",
+        "noneRejected": "Žádný záznam neporušuje pravidlo: ostrý běh by zapsal všechny.",
+        "rows": "{count, plural, one {# odmítnutý záznam} few {První # odmítnuté záznamy} other {Prvních # odmítnutých záznamů}}",
+        "place": "Záznam {place}",
+        "more": "{count, plural, one {Další # záznam je započítán} few {Další # záznamy jsou započítány} other {Dalších # záznamů je započítáno}} ve skupinách výše."
       }
     },
     "mapper": {
@@ -3527,7 +3543,7 @@
       "grants": "Oprávnění",
       "byPolicy": "Povoleno politikou {policy}",
       "fix": "Oprava: {fix}",
-      "counts": "odesláno {sent}, odmítnuto {rejected}, selhalo {failed}",
+      "counts": "odesláno {sent}, odmítnuto {rejected, number}, selhalo {failed}",
       "perMinute": "{rate} záznamů za minutu",
       "openPipeline": "Otevřít pipeline",
       "openRuns": "Běhy",

@@ -3096,6 +3096,22 @@
         "title": "Lifetime",
         "hint": "When the entities, or some of their fields, leave the space. Saved as the pipeline's lifetime, never as mapping code.",
         "pickType": "Pick the target and the type the mapping writes first: the lifetime is set per type."
+      },
+      "sourceCheck": {
+        "title": "Check whole source",
+        "hint": "Runs the saved pipeline over every page of its source and counts what a live run would accept and reject, by rule. Nothing is written. It stops at 60 s or 50 000 records. Example: a CKAN source of 12 pages, 2 400 records.",
+        "run": "Check whole source",
+        "again": "Check again",
+        "running": "Reading every page of the source; this takes up to 60 s.",
+        "unsaved": "The check reads the saved pipeline: propose this one and check it once its change is merged.",
+        "failed": "The check did not run",
+        "counts": "{count, plural, one {# record} other {# records}}: {accepted, number} accepted, {rejected, number} rejected",
+        "complete": "Every page of the source was read; a live run would put the same records on the rejected list.",
+        "partial": "The check did not read the whole source, so the counts cover only the part it read. The reason is below.",
+        "noneRejected": "No record breaks a rule: a live run would write them all.",
+        "rows": "{count, plural, one {# rejected record} other {First # rejected records}}",
+        "place": "Record {place}",
+        "more": "{count, plural, one {# more record is} other {# more records are}} counted in the groups above."
       }
     },
     "mapper": {
@@ -3527,7 +3543,7 @@
       "grants": "Grants",
       "byPolicy": "Granted by Policy {policy}",
       "fix": "Fix: {fix}",
-      "counts": "{sent} sent, {rejected} rejected, {failed} failed",
+      "counts": "{sent} sent, {rejected, number} rejected, {failed} failed",
       "perMinute": "{rate} records a minute",
       "openPipeline": "Open pipeline",
       "openRuns": "Runs",

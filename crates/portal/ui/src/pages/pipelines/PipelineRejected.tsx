@@ -321,30 +321,33 @@ export function PipelineRejectedDialog({
  * what to fix first, whether the fix belongs in the data model or in the mapping, and for an enum
  * the values the model allows. The export takes every kept record to whoever owns the source.
  */
-function RejectedGroups({
+export function RejectedGroups({
   groups,
-  exporting,
-  exportError,
+  exporting = false,
+  exportError = null,
   onExport,
-  fileName,
+  fileName = "",
+  headingId = "rejected-groups",
 }: {
   groups: RejectedGroup[];
-  exporting: boolean;
-  exportError: string | null;
-  onExport: () => void;
-  fileName: string;
+  exporting?: boolean;
+  exportError?: string | null;
+  /** Without it the groups show no export: the whole-source check has no kept records (T-7085). */
+  onExport?: () => void;
+  fileName?: string;
+  headingId?: string;
 }): JSX.Element {
   const { t } = useTranslation();
   return (
-    <section aria-labelledby="rejected-groups" className="flex flex-col gap-3">
+    <section aria-labelledby={headingId} className="flex flex-col gap-3">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <h3 id="rejected-groups" className="text-body font-semibold text-fg">
+          <h3 id={headingId} className="text-body font-semibold text-fg">
             {t("pipelines.rejected.groups.title")}
           </h3>
           <p className="text-caption text-fg-subtle">{t("pipelines.rejected.groups.lead")}</p>
         </div>
-        <div className="shrink-0">
+        {onExport ? <div className="shrink-0">
           <Button
             size="sm"
             disabled={exporting}
@@ -353,11 +356,13 @@ function RejectedGroups({
           >
             {exporting ? t("pipelines.rejected.groups.exporting") : t("pipelines.rejected.groups.export")}
           </Button>
-        </div>
+        </div> : null}
       </div>
-      <p className="text-caption text-fg-subtle">
-        {t("pipelines.rejected.groups.exportHint", { file: fileName })}
-      </p>
+      {onExport ? (
+        <p className="text-caption text-fg-subtle">
+          {t("pipelines.rejected.groups.exportHint", { file: fileName })}
+        </p>
+      ) : null}
       {exportError ? (
         <Alert role="alert" tone="danger">
           {exportError}

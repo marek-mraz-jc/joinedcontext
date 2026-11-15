@@ -101,59 +101,15 @@ pub(crate) async fn keep(
     let Some(pipeline) = state.mirror.get(project, "Pipeline", name) else {
         return StatusCode::NOT_FOUND;
     };
-    // The stage the runner ran names the rule: the space's LinkML model when it renders the
-    // LinkML stage (G-19), else, and for what that one leaves to its mappings, the compiled one.
-    let problems = target_space(state, project, &pipeline.spec)
-        .and_then(|space| {
-            let schema = state.model_schemas.get(project, &space)?;
-            let linkml = state
-                .model_schemas
-                .stage_linkml(project, &space)
-                .map(|linkml| {
-                    linkml.check(&refused.record, crate::pipeline_validation::closed(&schema))
-                })
-                .unwrap_or_default();
-            Some(if linkml.is_empty() {
-                schema.check(&refused.record)
-            } else {
-                linkml
-            })
-        })
-        .unwrap_or_default();
     let step = refused.step.as_ref().and_then(|step| match step {
         Value::Number(n) => n.as_i64(),
         Value::String(text) => text.parse().ok(),
         _ => None,
     });
-    let (rule, path, message) = match problems.as_slice() {
-        [first, ..] => (
-            first.rule.clone(),
-            first.path.clone(),
-            problems
-                .iter()
-                .map(|Problem { message, .. }| message.as_str())
-                .collect::<Vec<_>>()
-                .join("; "),
-        ),
-        [] => (
-            if step.is_some() { "step" } else { "runner" }.to_owned(),
-            String::new(),
-            runner_error(refused.error.as_deref()),
-        ),
-    };
-    let outcome = if problems.is_empty() {
-        Outcome::Failed
-    } else {
-        Outcome::Rejected
-    };
+    let problems = problems_of(state, project, &pipeline.spec, &refused.record);
+    let (mut reason, outcome) = reason_of(&problems, refused.error.as_deref(), step);
     let run = run_name(refused.run.as_deref());
-    let reason = crate::pipeline_outcomes::Reason {
-        rule,
-        path,
-        message,
-        step: step.and_then(|s| i32::try_from(s).ok()),
-        run: Some(run.clone()),
-    };
+    reason.run = Some(run.clone());
     if outcome == Outcome::Rejected {
         let id = vec![record_id(&refused.record)];
         crate::pipeline_source_deletes::note_seen(state, project, name, &run, &id, false).await;
@@ -184,6 +140,70 @@ pub(crate) async fn keep(
             StatusCode::SERVICE_UNAVAILABLE
         }
     }
+}
+
+/// What the space's model says is wrong with `record`, as the stage the runner ran checks it:
+/// the space's LinkML model when it renders the LinkML stage (G-19), else, and for what that one
+/// leaves to its mappings, the compiled one. Empty without a model, or for a record it takes.
+pub(crate) fn problems_of(
+    state: &AppState,
+    project: &str,
+    spec: &Value,
+    record: &Value,
+) -> Vec<Problem> {
+    target_space(state, project, spec)
+        .and_then(|space| {
+            let schema = state.model_schemas.get(project, &space)?;
+            let linkml = state
+                .model_schemas
+                .stage_linkml(project, &space)
+                .map(|linkml| linkml.check(record, crate::pipeline_validation::closed(&schema)))
+                .unwrap_or_default();
+            Some(if linkml.is_empty() {
+                schema.check(record)
+            } else {
+                linkml
+            })
+        })
+        .unwrap_or_default()
+}
+
+/// The rule a refused record is listed under: the first of the model's `problems`, else the
+/// step it failed at (`step`) or the runner's own error (`runner`). The run is the caller's.
+pub(crate) fn reason_of(
+    problems: &[Problem],
+    error: Option<&str>,
+    step: Option<i64>,
+) -> (crate::pipeline_outcomes::Reason, Outcome) {
+    let (rule, path, message) = match problems {
+        [first, ..] => (
+            first.rule.clone(),
+            first.path.clone(),
+            problems
+                .iter()
+                .map(|Problem { message, .. }| message.as_str())
+                .collect::<Vec<_>>()
+                .join("; "),
+        ),
+        [] => (
+            if step.is_some() { "step" } else { "runner" }.to_owned(),
+            String::new(),
+            runner_error(error),
+        ),
+    };
+    let outcome = if problems.is_empty() {
+        Outcome::Failed
+    } else {
+        Outcome::Rejected
+    };
+    let reason = crate::pipeline_outcomes::Reason {
+        rule,
+        path,
+        message,
+        step: step.and_then(|s| i32::try_from(s).ok()),
+        run: None,
+    };
+    (reason, outcome)
 }
 
 /// `POST /internal/pipelines/{project}/{name}/outcomes`: one `sent` line per record of a batch

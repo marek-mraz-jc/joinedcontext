@@ -721,10 +721,21 @@ pub async fn get_rejected_groups(
         .count(&project, &name)
         .await
         .map_err(unreadable)?;
-    let model =
-        crate::api::internal::pipeline_rejected::target_space(&state, &project, &pipeline.spec)
-            .and_then(|space| state.model_schemas.get(&project, &space));
-    let groups = groups
+    let groups = group_views(&state, &project, &pipeline.spec, groups);
+    Ok(Json(RejectedGroups { groups, total }))
+}
+
+/// Each group with where its fix belongs and, for `sh:in`, the values the model of the space the
+/// pipeline writes into allows at its path.
+pub(crate) fn group_views(
+    state: &AppState,
+    project: &str,
+    spec: &Value,
+    groups: Vec<crate::pipeline_outcomes::RejectedGroup>,
+) -> Vec<RejectedGroupView> {
+    let model = crate::api::internal::pipeline_rejected::target_space(state, project, spec)
+        .and_then(|space| state.model_schemas.get(project, &space));
+    groups
         .into_iter()
         .map(|group| {
             let allowed = (group.rule == "sh:in")
@@ -744,8 +755,7 @@ pub async fn get_rejected_groups(
                 group,
             }
         })
-        .collect();
-    Ok(Json(RejectedGroups { groups, total }))
+        .collect()
 }
 
 const REJECTED_COLUMNS: &str = "id,at,rule,path,step,run,message,record";

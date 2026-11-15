@@ -427,7 +427,7 @@ fn from_row((id, at, record, rule, path, message, step, run): Row) -> Rejected {
     }
 }
 
-fn now() -> String {
+pub(crate) fn now() -> String {
     time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_default()
