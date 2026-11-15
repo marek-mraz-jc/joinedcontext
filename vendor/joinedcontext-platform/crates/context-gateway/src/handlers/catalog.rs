@@ -220,10 +220,15 @@ async fn catalog_feed(
     profile: Profile,
     host: Option<&HostOrganization>,
 ) -> serde_json::Value {
+    // On an Organization's own host the catalogue is that Organization's (S-3-14).
+    let provenance = gateway.provenance();
+    let publisher = host
+        .and_then(|host| provenance.domains.get(&host.0))
+        .unwrap_or(&gateway.org_domain);
     endpoint_surface::feed(
         public_records(gateway, profile, None, host).await,
         &gateway.base_url(),
-        &gateway.org_domain,
+        publisher,
     )
 }
 

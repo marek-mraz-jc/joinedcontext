@@ -734,6 +734,7 @@ async fn a_write_touching_an_ungranted_attribute_or_type_is_refused_whole() -> R
     let secret = json!({"id": "urn:ngsi-ld:Secret:2", "type": "Secret"});
     let (code, _) = send(&st, "POST", "/ngsi-ld/v1/entities", &ANA, Some(&secret)).await?;
     assert_eq!(code, StatusCode::FORBIDDEN);
+    // S-3-10: the delete names no type, so the stored Secret answers as an absent Entity does.
     let (code, _) = send(
         &st,
         "DELETE",
@@ -742,7 +743,7 @@ async fn a_write_touching_an_ungranted_attribute_or_type_is_refused_whole() -> R
         None,
     )
     .await?;
-    assert_eq!(code, StatusCode::FORBIDDEN);
+    assert_eq!(code, StatusCode::NOT_FOUND);
     let speed = json!({"speed": prop(json!(1))});
     let (code, _) = send(
         &st,
@@ -753,6 +754,66 @@ async fn a_write_touching_an_ungranted_attribute_or_type_is_refused_whole() -> R
     )
     .await?;
     assert_eq!(code, StatusCode::NO_CONTENT);
+    Ok(())
+}
+
+/// S-3-10: a write by id the stored Entity alone decides answers alike for an absent id, an
+/// Entity outside the grant's scope and one of a type the caller may not write: the 404 of an
+/// absent Entity, with the same body, so no answer tells what the Tenant holds. A caller who
+/// writes nothing by the operation is refused 403 whatever the id.
+#[tokio::test]
+async fn a_write_by_id_answers_alike_for_absent_hidden_and_ungranted_entities() -> Res {
+    let bb = with(
+        writer(json!([{"entities": [{"type": "Car"}]}])),
+        "scopeQ",
+        json!("/geo/SK/BB"),
+    );
+    let (st, _) = broker(doc(&[bb])).await?;
+    fleet(&st).await?;
+    let speed = json!({"speed": prop(json!(5))});
+    let mut answers = Vec::new();
+    for id in [
+        "urn:ngsi-ld:Car:404",
+        "urn:ngsi-ld:Car:3",
+        "urn:ngsi-ld:Secret:1",
+    ] {
+        for (method, path, body) in [
+            (
+                "PATCH",
+                format!("/ngsi-ld/v1/entities/{id}/attrs"),
+                Some(&speed),
+            ),
+            ("DELETE", format!("/ngsi-ld/v1/entities/{id}"), None),
+        ] {
+            let (code, answer) = send(&st, method, &path, &ANA, body).await?;
+            assert_eq!(code, StatusCode::NOT_FOUND, "{method} {id}: {answer}");
+            answers.push(answer.get("type").cloned());
+        }
+    }
+    assert!(
+        answers
+            .iter()
+            .all(|a| a.is_some() && *a == answers.first().cloned().flatten()),
+        "one problem type: {answers:?}"
+    );
+    let (code, body) = send(
+        &st,
+        "PATCH",
+        "/ngsi-ld/v1/entities/urn:ngsi-ld:Car:1/attrs",
+        &ANA,
+        Some(&speed),
+    )
+    .await?;
+    assert_eq!(code, StatusCode::NO_CONTENT, "inside the grant: {body}");
+    let stranger = [
+        ("x-jc-subject", "eve@example.org"),
+        ("x-jc-groups", "other"),
+    ];
+    for id in ["urn:ngsi-ld:Car:404", "urn:ngsi-ld:Car:1"] {
+        let path = format!("/ngsi-ld/v1/entities/{id}/attrs");
+        let (code, _) = send(&st, "PATCH", &path, &stranger, Some(&speed)).await?;
+        assert_eq!(code, StatusCode::FORBIDDEN, "{id}: no grant at all");
+    }
     Ok(())
 }
 
@@ -865,6 +926,8 @@ async fn a_replace_or_delete_keeps_unlisted_stored_attributes_refused() -> Res {
     )
     .await?;
     assert_eq!(code, StatusCode::FORBIDDEN);
+    // S-3-10: the delete names no type, so the refusal its stored Attributes decide answers
+    // as an absent Entity does.
     let (code, _) = send(
         &st,
         "DELETE",
@@ -873,7 +936,7 @@ async fn a_replace_or_delete_keeps_unlisted_stored_attributes_refused() -> Res {
         None,
     )
     .await?;
-    assert_eq!(code, StatusCode::FORBIDDEN);
+    assert_eq!(code, StatusCode::NOT_FOUND);
     // an Entity holding only the granted Attribute is replaced and deleted
     let (code, body) = send(
         &st,
