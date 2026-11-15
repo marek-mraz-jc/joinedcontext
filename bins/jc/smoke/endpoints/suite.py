@@ -282,6 +282,38 @@ class Suite:
                 want[t] = live
                 self.moving[(e.slug, t)] = live
 
+    def born(self, e, token, who, want: dict, tenant: dict, grants):
+        """The copy keeps ingesting after the export (jc-dev: Event 13103 exported, 14429 live six
+        days later; every one of the 1328 more created after exportedAt): a type that counts more
+        than the export passes only with proof read from the copy (ex.born): every exported id
+        still there and every other id created after exportedAt. Then every surface shows at
+        least the rows read here (moving); without the proof the exact checks stay as they are."""
+        at = self.index.get("exportedAt")
+        sels = e.selectors(grants)
+        for t, count in want.items():
+            scope = ex.count_scope(sels, t)
+            if count is None or not at or scope is ex.OVERLAP:
+                continue
+            live = self.live_count(e, token, t)
+            if live is None or live <= count:
+                continue
+            exported = ex.exported_ids(self.index, e.tenant, t, scope)
+            path = f"GET /api/endpoint/{e.slug}/ngsi-ld/v1/entities?type={q(t)}&options=sysAttrs (every page)"
+            expect = f"the {count} exported entities and only ones created after {at} (count={live})"
+            if exported is None:
+                self.r.check(f"{who}.count.born", f"{e.slug} {t}", path, expect,
+                             "the export index holds no ids (built before index-v6)", False)
+                continue
+            got = ex.live_created(self.get, e.slug, t, token)
+            if got is None:
+                self.r.check(f"{who}.count.born", f"{e.slug} {t}", path, expect, "a page was refused", False)
+                continue
+            got.update(ex.present(self.get, e.slug, t, exported - set(got), token))
+            ok, why = ex.born(got, exported, at, bool(tenant[t].get("expires")), live)
+            self.r.check(f"{who}.count.born", f"{e.slug} {t}", path, expect, why, ok)
+            if ok:
+                self.moving[(e.slug, t)] = len(exported & set(got)) if tenant[t].get("expires") else live
+
     def written(self, e, token, who, grants, extra: list) -> set:
         """Of the listed types the bundle holds no row of, those a granting Policy names and the
         Endpoint shows rows of: the rehearsal's Pipelines wrote them (synthetic bundle only)."""
@@ -304,6 +336,8 @@ class Suite:
         bundle = dict(want)  # grown() moves want to the live counts; the file type is picked on these
         if self.index.get("synthetic"):
             self.grown(e, token, who, want, tenant)
+        else:
+            self.born(e, token, who, want, tenant, grants)
         h: dict = {}
         body = self.ok_json(f"{who}.types", e.slug, f"{base}/ngsi-ld/v1/types", token, headers=h)
         if body is not None:
