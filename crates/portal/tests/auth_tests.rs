@@ -548,20 +548,32 @@ async fn only_the_mcp_route_answers_cross_origin_and_never_with_credentials() {
             .uri(path)
             .header(header::ORIGIN, "https://evil.example")
             .header("access-control-request-method", "POST")
-            .header("access-control-request-headers", "authorization, content-type")
+            .header(
+                "access-control-request-headers",
+                "authorization, content-type",
+            )
             .body(Body::empty())
             .unwrap()
     };
     for path in ["/api/v1/projects", "/api/v1/auth/me", "/api/v1/auth/logout"] {
         let response = app.clone().oneshot(preflight(path)).await.unwrap();
         let headers = response.headers();
-        assert!(headers.get("access-control-allow-origin").is_none(), "{path}: {headers:?}");
-        assert!(headers.get("access-control-allow-credentials").is_none(), "{path}");
+        assert!(
+            headers.get("access-control-allow-origin").is_none(),
+            "{path}: {headers:?}"
+        );
+        assert!(
+            headers.get("access-control-allow-credentials").is_none(),
+            "{path}"
+        );
     }
     let response = app.clone().oneshot(preflight("/api/v1/mcp")).await.unwrap();
     let headers = response.headers();
     assert_eq!(headers["access-control-allow-origin"], "*");
-    assert!(headers.get("access-control-allow-credentials").is_none(), "{headers:?}");
+    assert!(
+        headers.get("access-control-allow-credentials").is_none(),
+        "{headers:?}"
+    );
 }
 
 #[tokio::test]
