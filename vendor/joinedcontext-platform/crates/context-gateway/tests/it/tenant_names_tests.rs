@@ -3,7 +3,7 @@
 //! repository alone, and a project whose Organization does not resolve gets no tenant.
 
 use context_gateway::store::{self, TenantNames};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const HEADER: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind:";
 
@@ -38,7 +38,7 @@ fn repo(name: &str, files: &[(&str, String)]) -> PathBuf {
 }
 
 /// The tenant of the Endpoint and of the space's own surface, as `names` pins them.
-fn tenants(dir: &PathBuf, names: TenantNames) -> (Option<String>, Option<String>) {
+fn tenants(dir: &Path, names: TenantNames) -> (Option<String>, Option<String>) {
     let (endpoints, spaces, ..) = store::load_named(dir, names).expect("the repository loads");
     let of = |tenant: Option<&context_gateway::middleware::tenancy::Tenant>| {
         tenant.map(|tenant| tenant.as_str().to_owned())

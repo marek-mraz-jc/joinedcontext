@@ -172,7 +172,7 @@ fn a_space_name_that_is_not_a_legal_header_value_pins_nothing() {
     // control character is refused for the same reason. The reconciler should never produce one,
     // and if it does this pins nothing rather than something wrong.
     for illegal in ["ovzdusie\r\nX-Access-Token: forged", "a\0b", "a\nb", "a\rb"] {
-        let mut request = Request::builder()
+        let request = Request::builder()
             .uri("/")
             .body(Body::empty())
             .expect("a request");
