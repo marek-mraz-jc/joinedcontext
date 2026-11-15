@@ -1,4 +1,4 @@
-import { api } from "./client";
+import { api, unwrap } from "./client";
 import { asProblem, type ProblemDetails } from "./client";
 import type { Change } from "./manifest";
 import type { components } from "./schema";
@@ -16,17 +16,18 @@ const SOURCE = "/api/v1/projects/{project}/datamodels/{name}/source" as const;
 /** The YAML is sent as it was typed: the route reads `text/yaml`, never a JSON string. */
 const asYaml = { bodySerializer: (body: string) => body, headers: { "Content-Type": "text/yaml; charset=utf-8" } };
 
-/** The committed source of one model; throws with the status when it cannot be read. */
+/**
+ * The committed source of one model; throws the ApiError of a refusal, so a page tells a 403
+ * from a lost connection (T-6950).
+ */
 export async function readModelSource(project: string, name: string): Promise<string> {
-  const { data, response } = await api.GET(SOURCE, {
-    params: { path: { project, name } },
-    headers: { Accept: "text/yaml, text/plain, */*" },
-    parseAs: "text",
-  });
-  if (data === undefined) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-  return data;
+  return unwrap(
+    await api.GET(SOURCE, {
+      params: { path: { project, name } },
+      headers: { Accept: "text/yaml, text/plain, */*" },
+      parseAs: "text",
+    }),
+  );
 }
 
 /** What one source write came back with: the check's verdict, the Change, or why it was refused. */

@@ -8,7 +8,7 @@ import { cleanup, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import en from "../src/locales/en.json";
 import { queryKeys } from "../src/api/client";
-import { renderRoute } from "./pageHarness";
+import { jsonResponse, list, renderRoute } from "./pageHarness";
 
 const failure = () => new Response(null, { status: 500, statusText: "Internal Server Error" });
 
@@ -71,6 +71,39 @@ describe("a failed read", () => {
     expect(await screen.findByText("answered 403")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: en.app.error.retry })).not.toBeInTheDocument();
   });
+
+  // T-6950: both hosts of a model's source (its page and the space's Data model tab) say a refused
+  // source read as a refusal: the server's words, no Retry, never "the Portal did not answer".
+  it.each([["/projects/helsinki/models/air"], ["/projects/helsinki/spaces/ilma?tab=model"]])(
+    "says a refused model source on %s as a refusal",
+    async (page) => {
+      const model = {
+        apiVersion: "joinedcontext.com/v1alpha1",
+        kind: "DataModel",
+        metadata: { name: "air", namespace: "helsinki" },
+        spec: { contextSpaceRef: "ilma", version: "1.0.0" },
+      };
+      await renderRoute({
+        path: page,
+        answer: (path) =>
+          path.endsWith("/datamodels/air/source")
+            ? new Response(JSON.stringify({ type: "about:blank", title: "Forbidden", status: 403, detail: "answered 403" }), {
+                status: 403,
+                headers: { "Content-Type": "application/problem+json", "X-Request-Id": "req-403" },
+              })
+            : path.endsWith("/datamodels/air")
+              ? jsonResponse(model)
+              : path.endsWith("/datamodels")
+                ? jsonResponse(list([model]))
+                : path.endsWith("/spaces/ilma")
+                  ? jsonResponse({ ...model, kind: "ContextSpace", metadata: { name: "ilma", namespace: "helsinki" }, spec: {} })
+                  : undefined,
+      });
+      expect(await screen.findByText("answered 403")).toBeInTheDocument();
+      expect(screen.queryByText(en.app.error.generic)).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: en.app.error.retry })).not.toBeInTheDocument();
+    },
+  );
 
   it("is not told as a missing create form", async () => {
     await renderRoute({

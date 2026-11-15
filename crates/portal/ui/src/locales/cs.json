@@ -4764,7 +4764,6 @@
       "edit": "Upravit model",
       "notFound": "Datový model {name} neexistuje",
       "notFoundLead": "Možná byl přejmenován nebo odstraněn, nebo patří jinému projektu. Seznam ukazuje každý model, který smíte číst.",
-      "sourceFailed": "Zdroj modelu se nepodařilo načíst: {reason}. Obnovte stránku a zkuste to znovu.",
       "views": "Pohledy na model",
       "view": {
         "overview": "Přehled",

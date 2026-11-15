@@ -4764,7 +4764,6 @@
       "edit": "Edit model",
       "notFound": "No data model named {name}",
       "notFoundLead": "It may have been renamed or removed, or it belongs to another project. The list shows every model you may read.",
-      "sourceFailed": "The model's source could not be read: {reason}. Reload the page to try again.",
       "views": "Views of the model",
       "view": {
         "overview": "Overview",

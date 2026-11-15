@@ -4764,7 +4764,6 @@
       "edit": "Upraviť model",
       "notFound": "Dátový model {name} neexistuje",
       "notFoundLead": "Možno bol premenovaný alebo odstránený, alebo patrí inému projektu. Zoznam ukazuje každý model, ktorý smiete čítať.",
-      "sourceFailed": "Zdroj modelu sa nepodarilo načítať: {reason}. Obnovte stránku a skúste to znova.",
       "views": "Pohľady na model",
       "view": {
         "overview": "Prehľad",

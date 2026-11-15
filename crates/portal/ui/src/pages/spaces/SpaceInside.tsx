@@ -1896,12 +1896,7 @@ function SpaceModel({
         </Link>
       </div>
       {source.isError ? (
-        <Alert tone="danger" role="alert">
-          <p>{t("models.page.sourceFailed", { reason: source.error instanceof Error ? source.error.message : "" })}</p>
-          <Button size="sm" className="mt-2" onClick={() => void source.refetch()}>
-            {t("app.error.retry")}
-          </Button>
-        </Alert>
+        <PageFailed error={source.error} onRetry={() => void source.refetch()} />
       ) : source.data === undefined ? (
         <p role="status" className="text-body text-fg-muted">
           {t("models.source.loading")}
