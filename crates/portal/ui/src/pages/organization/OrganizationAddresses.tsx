@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, unwrap } from "../../api/client";
 import { PageFailed } from "../../components/ui/PageState";
-import { EmptyState, Skeleton } from "../../components/ui";
+import { EmptyState, safeHref, Skeleton } from "../../components/ui";
 
 /** What answers at an address, in the order the list shows them (API/15 section 2). */
 const KINDS = [
@@ -96,7 +96,7 @@ export function OrganizationAddresses(): JSX.Element {
                     </span>
                     <span className="min-w-0">
                       <a
-                        href={address.url}
+                        href={safeHref(address.url)}
                         className="focus-ring inline-block py-1 font-mono text-body text-primary-soft-fg underline underline-offset-2 [overflow-wrap:anywhere]"
                         target="_blank"
                         rel="noreferrer"
