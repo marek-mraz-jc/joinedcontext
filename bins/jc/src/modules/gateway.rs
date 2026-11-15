@@ -754,11 +754,18 @@ pub fn by_organization(
     let links: std::sync::Arc<Links> = std::sync::Arc::new(
         orgs.iter()
             .map(|org| {
+                let api = base(&org.api_base());
+                // A shared API host (`host = "auto"`) links the Organization's path on it.
+                let link = |h: &str| match org.hosts.shared {
+                    true => api.clone(),
+                    false => base(h),
+                };
                 let own = [&org.hosts.api, &org.hosts.mcp]
-                    .map(|h| (bare(h).to_owned(), base(h)))
                     .into_iter()
+                    .flatten()
+                    .map(|h| (bare(h).to_owned(), link(h)))
                     .collect();
-                (org.name.clone(), (base(&org.hosts.api), own))
+                (org.name.clone(), (api, own))
             })
             .collect(),
     );
