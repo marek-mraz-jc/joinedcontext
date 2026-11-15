@@ -650,6 +650,27 @@ fn expand_paths(
     Ok(out)
 }
 
+/// A component's `scanner` (or older `codec`) field, `lines` when absent, for inputs outside
+/// this crate that split a body the way the file inputs do (`http_client`'s `stream`).
+#[derive(Clone, Debug)]
+pub struct Scanner(FileScannerKind);
+
+impl Scanner {
+    pub fn from_config(obj: &serde_json::Map<String, JsonValue>) -> Result<Self, CoreError> {
+        parse_scanner_config(obj).map(Self)
+    }
+
+    /// The messages the scanner reads from `raw`; `name` is what `switch` cases match.
+    pub fn scan(&self, raw: &[u8], name: &str) -> Result<Vec<Part>, CoreError> {
+        let mut parts = Vec::new();
+        scan_reader(&mut &raw[..], &self.0, name, &mut |p| {
+            parts.push(p);
+            Ok(())
+        })?;
+        Ok(parts)
+    }
+}
+
 fn parse_scanner_config(
     obj: &serde_json::Map<String, JsonValue>,
 ) -> Result<FileScannerKind, CoreError> {

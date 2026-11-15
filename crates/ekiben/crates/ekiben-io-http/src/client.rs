@@ -81,6 +81,32 @@ fn oauth2_form(oa: &OAuth2Config, in_params: bool) -> String {
     form.finish()
 }
 
+/// `oauth2.endpoint_params`: extra token request fields, each a list of strings
+/// (`audience: [https://api.example.com]`).
+fn oauth2_endpoint_params(
+    v: Option<&JsonValue>,
+) -> Result<HashMap<String, Vec<String>>, CoreError> {
+    const HINT: &str = "oauth2.endpoint_params maps a name to a list of strings, for example {audience: [https://api.example.com]}";
+    let Some(v) = v else {
+        return Ok(HashMap::new());
+    };
+    v.as_object()
+        .ok_or_else(|| CoreError::config(HINT))?
+        .iter()
+        .map(|(k, vs)| {
+            let vs = vs
+                .as_array()
+                .and_then(|a| {
+                    a.iter()
+                        .map(|v| v.as_str().map(String::from))
+                        .collect::<Option<Vec<_>>>()
+                })
+                .ok_or_else(|| CoreError::config(format!("{HINT}; {k} is not")))?;
+            Ok((k.clone(), vs))
+        })
+        .collect()
+}
+
 /// `Basic base64(QueryEscape(id) ":" QueryEscape(secret))`, x/oauth2's AuthStyleInHeader.
 fn oauth2_basic(oa: &OAuth2Config) -> String {
     use base64::Engine as _;
@@ -365,7 +391,7 @@ impl HttpClient {
                     client_secret,
                     token_url,
                     scopes,
-                    endpoint_params: HashMap::new(),
+                    endpoint_params: oauth2_endpoint_params(oa.get("endpoint_params"))?,
                 })
             } else {
                 None
