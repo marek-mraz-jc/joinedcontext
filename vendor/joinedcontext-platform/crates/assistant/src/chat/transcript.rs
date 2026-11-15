@@ -336,13 +336,16 @@ pub(crate) fn usd(micros: i64) -> f64 {
     micros as f64 / 1_000_000.0
 }
 
-/// The list's query, ordered by `$order`: one row per conversation with what its turns add up to.
+/// The list's query, ordered by `$order` (`$page` is the same order over the page's columns):
+/// one row per conversation with what its turns add up to.
 macro_rules! list_sql {
-    ($order:literal) => {
+    ($order:literal, $page:literal) => {
         concat!(
             // The inner query pages the conversations; the outer one adds the two turn_steps
             // columns for that page only, so a deep cursor no longer runs them for every
             // conversation it skips (T-6941: offset 19,900 of 20,000 took 1.9 s, 0.25 s after).
+            // The inner ORDER BY + LIMIT stays a top-N sort; a row_number() window there sorted
+            // every conversation and made page one 10 % slower (T-6948).
             "SELECT p.conversation::text, p.deployment, p.origin, p.started, p.last, p.question, \
              p.turns, p.routes, p.total_ms, p.errors, p.timeouts, p.cost, p.uncosted, p.up, \
              p.down, p.tokens_in, p.tokens_out, \
@@ -369,10 +372,7 @@ macro_rules! list_sql {
              sum(t.tokens_in)::bigint AS tokens_in, sum(t.tokens_out)::bigint AS tokens_out, \
              (array_agg(t.first_token_ms ORDER BY t.turn))[1] AS first_token_ms, \
              (array_agg(coalesce(t.error->>'detail', t.error->>'title') ORDER BY t.turn DESC) \
-               FILTER (WHERE t.error IS NOT NULL))[1] AS last_error, \
-             row_number() OVER (ORDER BY ",
-            $order,
-            ") AS n \
+               FILTER (WHERE t.error IS NOT NULL))[1] AS last_error, max(t.at) AS last_at \
              FROM turns t LEFT JOIN LATERAL (SELECT count(*) FILTER (WHERE verdict = 'up') AS up, \
              count(*) FILTER (WHERE verdict = 'down') AS down FROM feedback \
              WHERE feedback.project = t.project AND feedback.conversation = t.conversation) f ON true \
@@ -391,7 +391,10 @@ macro_rules! list_sql {
              AND ($7::bigint IS NULL OR sum(t.cost_micros) >= $7) \
              AND ($8::text IS NULL OR bool_or(lower(unaccent(t.question || ' ' || t.answer)) \
                LIKE lower(unaccent($8)))) \
-             ORDER BY n LIMIT $9 OFFSET $10) p ORDER BY p.n"
+             ORDER BY ",
+            $order,
+            " LIMIT $9 OFFSET $10) p ORDER BY ",
+            $page
         )
     };
 }
@@ -431,10 +434,19 @@ pub async fn list(
         .and_then(|c| c.parse().ok())
         .unwrap_or(0);
     let sql = match filter.sort.as_deref() {
-        Some("costUsd") => list_sql!("sum(t.cost_micros) DESC, max(t.at) DESC"),
-        Some("tokens") => list_sql!("sum(t.tokens_in + t.tokens_out) DESC, max(t.at) DESC"),
-        Some("totalMs") => list_sql!("max(t.total_ms) DESC, max(t.at) DESC"),
-        _ => list_sql!("max(t.at) DESC"),
+        Some("costUsd") => list_sql!(
+            "sum(t.cost_micros) DESC, max(t.at) DESC",
+            "p.cost DESC, p.last_at DESC"
+        ),
+        Some("tokens") => list_sql!(
+            "sum(t.tokens_in + t.tokens_out) DESC, max(t.at) DESC",
+            "p.tokens_in + p.tokens_out DESC, p.last_at DESC"
+        ),
+        Some("totalMs") => list_sql!(
+            "max(t.total_ms) DESC, max(t.at) DESC",
+            "p.total_ms DESC, p.last_at DESC"
+        ),
+        _ => list_sql!("max(t.at) DESC", "p.last_at DESC"),
     };
     let mut tx = crate::project_scope(pool, project).await?;
     let rows: Vec<PgRow> = sqlx::query(sql)
@@ -677,6 +689,16 @@ pub async fn erase_mentioning(
 mod tests {
     use super::*;
     use crate::chat::agent::{Citation, Table};
+
+    #[test]
+    fn the_list_pages_with_a_bounded_sort_and_no_window() {
+        // A window over the groups sorts every conversation before the page is cut (T-6948).
+        let sql = list_sql!("max(t.at) DESC", "p.last_at DESC");
+        assert!(!sql.contains(" OVER ("), "{sql}");
+        assert!(
+            sql.contains("ORDER BY max(t.at) DESC LIMIT $9 OFFSET $10) p ORDER BY p.last_at DESC")
+        );
+    }
 
     #[test]
     fn seen_keeps_the_answer_the_visitor_read_and_what_it_showed() {
