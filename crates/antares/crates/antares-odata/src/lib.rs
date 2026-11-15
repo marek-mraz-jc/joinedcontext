@@ -290,6 +290,7 @@ fn assembled(
             .collect(),
     });
     let reads = Arc::new(read::Reads {
+        set_types: read::set_types(&edm),
         view,
         edm,
         state: state.clone(),
