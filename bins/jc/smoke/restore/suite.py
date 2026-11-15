@@ -14,7 +14,8 @@ gateway checkout, realms), secrets, repos, files, dashboards and the runner's re
 gtfs-realtime.proto; `fresh` starts an empty PostgreSQL
 of the same image for <restore env>; `restore` loads roles and databases; `start` runs up.sh on the
 copy (no export: the realms come from the restored state dir) on the source jc's --role; `converge` waits for a reconciler
-pass; `after` reruns the suites on the copy.
+pass; `settle` waits (--settle s) until the copy answers the before run's anonymous /types calls with
+200 and no 199 warning (its streams' first polls over); `after` reruns the suites on the copy.
 
 Pass: every check id of the compared suites has the same pass/fail/skip on the copy as before the
 dump (not an absolute pass; a row absent before is no fault only when every entity of its type in
@@ -254,6 +255,29 @@ def compare(res: Results, suite: str, before: dict | None, after: dict | None, c
         ok = bool(a and b and a["result"] == b["result"])
         why = "" if ok else (a or b or {}).get("actual", "")[:200]
         res.check(f"{suite}/{id}", suite, call, exp, act, ok, why)
+
+
+def discovery_calls(before: dict | None) -> list[str]:
+    """The anonymous /types paths the before run answered whole (types.match passed, no 199 warning)."""
+    out = []
+    for r in (before or {}).values():
+        method, _, path = r.get("call", "").partition(" ")
+        if (r["id"] == "anon.types.match" and r["result"] == PASS and method == "GET"
+                and "warning" not in r.get("actual", "")):
+            out.append(path)
+    return sorted(set(out))
+
+
+def unsettled(http: Http, paths: list[str]) -> list[str]:
+    """Of `paths`, those the copy answers other than 200 or with a 199 (a discovery cut at its
+    deadline or ceiling, CIM 009 6.3.17), each with what it answered."""
+    out = []
+    for path in paths:
+        status, h, _ = http.call("GET", path)
+        warn = h.get("ngsild-warning") or h.get("warning") or ""
+        if status != 200 or "199" in warn:
+            out.append(f"{path}: {status}{' ' + warn[:120] if warn else ''}")
+    return out
 
 
 def parse_counts(text: str) -> dict[str, int]:
@@ -538,6 +562,16 @@ class Ops:
             time.sleep(2)
         return n
 
+    def settle(self, base: str, paths: list[str], timeout: float) -> list[str]:
+        """Waits until the copy answers each of `paths` whole in one round; answers what still did
+        not at `timeout` (empty when it settled)."""
+        http, end = Http(base, timeout=30), time.time() + timeout
+        while True:
+            left = unsettled(http, paths)
+            if not left or time.time() >= end:
+                return left
+            time.sleep(5)
+
     def teardown(self) -> None:
         for f in ("jc.pid", "retain.pid"):
             pid = self.rhome / f
@@ -674,6 +708,18 @@ def pipeline(a, res: Results, ops: Ops, out: Path) -> dict:
         if a.state and Path(a.state).is_dir() and not copied(Path(a.state), ops.home):
             remap_view(Path(a.state), Path(map_path(a.state, ops.home, ops.rhome)), ops.home, ops.rhome)
 
+        # A started copy runs every saved stream's first poll at once: on the runner its /types took
+        # 6.2 s (the broker's discovery deadline, a 199 and a cut list) and entity reads 503 for a
+        # minute while the source, steady, answered in 0.9 s (smoke 43675981256). The after run
+        # starts once the copy answers the before run's whole discovery calls whole; a copy that
+        # never does is a red row, and the after run still shows what it answers.
+        calls = discovery_calls(load_checks(before_dir / "endpoints"))
+        left = steps.run("settle", f"the copy answers {len(calls)} /types of the before run whole",
+                         ops.settle, rbase, calls, a.settle)
+        res.check("control.settled", "restore", f"GET of {len(calls)} /types on the copy, every 5 s",
+                  f"200 without a 199 warning within {a.settle:g} s", f"{len(left)} not" if left else "all",
+                  not left, "; ".join(left[:4])[:600])
+
         def after():
             for s in suites:
                 ops.suite(s, rewrite_argv(inner_argv(a, s), ports, ops.home, ops.rhome), after_dir / s)
@@ -710,6 +756,8 @@ def main(argv=None) -> int:
     p.add_argument("--restore-pg-port", type=int, default=0, help="the copy's PostgreSQL port (default: a free one)")
     p.add_argument("--jc-bin", help="default: the source jc's executable, else $JC_BIN")
     p.add_argument("--converge", type=float, default=300)
+    p.add_argument("--settle", type=float, default=300,
+                   help="seconds the copy may take to answer the before run's /types whole (default 300)")
     p.add_argument("--max-disk", type=float, default=0.92, help="refuse when the disk would be fuller (0..1)")
     p.add_argument("--suite-timeout", type=float, default=3600)
     p.add_argument("--keep", action="store_true", help="leave the copy running")

@@ -106,7 +106,7 @@ def test_a_restored_db_is_vacuumed_and_analyzed_before_the_copy_serves(tmp_path,
 class FakeOps:
     """docker, pg_dump and up.sh stood in for: writes results the way the inner suites would."""
 
-    def __init__(self, a, home, rhome, backup, after=None, restored=None, held=(), roles=None, born=()):
+    def __init__(self, a, home, rhome, backup, after=None, restored=None, held=(), roles=None, born=(), unsettled=()):
         self.a, self.home, self.rhome, self.backup = a, home, rhome, backup
         self.dst = SimpleNamespace(container=f"rh-pg-{rhome.name}")
         self.counts = {}
@@ -119,6 +119,7 @@ class FakeOps:
         self.roles = roles or {"1": HELD, "999999": HELD}
         self.started_role = None
         self.born_types = born
+        self.unsettled = unsettled
 
     def check_disk(self):
         return {"databases": ["antares", "portal"], "needBytes": 1}
@@ -169,6 +170,10 @@ class FakeOps:
     def converge(self, timeout):
         return 2
 
+    def settle(self, base, paths, timeout):
+        self.settled = (base, paths, timeout)
+        return list(self.unsettled)
+
     def born(self, since):
         self.since = since
         return set(self.born_types)
@@ -193,7 +198,7 @@ def args(tmp_path, **kw):
     (home / "gtfs-realtime.proto").write_text("syntax = 'proto2';\n")
     a = SimpleNamespace(base_url="http://localhost:42310", home=str(home), suites="endpoints,names", extra={},
                         backup_dir=None, restore_env=None, restore_port=42311, restore_pg_port=55461,
-                        jc_bin="/bin/true", converge=1, max_disk=0.92, suite_timeout=10, keep=False, export="/e",
+                        jc_bin="/bin/true", converge=1, settle=7, max_disk=0.92, suite_timeout=10, keep=False, export="/e",
                         state=str(home / "smoke-state"), log_file=str(home / "jc.log"), admin_url=None, admin_token_file=None)
     for k, v in kw.items():
         setattr(a, k, v)
@@ -363,6 +368,61 @@ def test_the_compare_excuses_only_the_types_the_copy_proves_born(tmp_path, monke
     assert rows["step.born"]["result"] == "pass" and meta["born"] == ["Vehicle"] and meta["bornSince"] == ops.since
     assert rows["endpoints/ep Vehicle/one"]["result"] == "skip"
     assert rows["endpoints/ep Event/one"]["result"] == "fail"  # absent before, no proof
+
+
+TYPES = "/api/endpoint/ep/ngsi-ld/v1/types"
+
+
+def test_the_copy_is_asked_only_the_discovery_calls_the_source_answered_whole():
+    rows = {"checks": [
+        {"id": "anon.types.match", "target": "ep", "result": "pass", "call": f"GET {TYPES}", "actual": "missing []"},
+        {"id": "anon.types.match", "target": "cut", "result": "pass", "call": "GET /api/endpoint/cut/ngsi-ld/v1/types",
+         "actual": "missing [], extra []; warning 199 antares \"entity scan ceiling reached\""},
+        {"id": "anon.types.match", "target": "red", "result": "fail", "call": "GET /api/endpoint/red/ngsi-ld/v1/types",
+         "actual": "missing ['Tree']"},
+        {"id": "person.types.match", "target": "p", "result": "pass", "call": "GET /api/endpoint/p/ngsi-ld/v1/types",
+         "actual": "missing []"}]}
+    assert suite.discovery_calls(suite.load_rows(rows)) == [TYPES]
+    assert suite.discovery_calls(None) == []
+
+
+class FakeHttp:
+    def __init__(self, *answers):
+        self.answers, self.asked = list(answers), 0
+
+    def call(self, method, path):
+        self.asked += 1
+        return self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+
+
+def test_a_discovery_cut_at_its_deadline_or_a_503_is_not_settled():
+    # smoke 43675981256 (T-6953): the copy's /types answered 200 with a 199 after 6.2 s, reads 503
+    cut = (200, {"ngsild-warning": '199 antares "entity scan ceiling reached"'}, b"[]")
+    assert suite.unsettled(FakeHttp(cut), [TYPES]) == [f'{TYPES}: 200 199 antares "entity scan ceiling reached"']
+    assert suite.unsettled(FakeHttp((503, {}, b"")), [TYPES]) == [f"{TYPES}: 503"]
+    assert suite.unsettled(FakeHttp((200, {}, b"[]")), [TYPES]) == []
+
+
+def test_settle_waits_for_a_whole_round_and_gives_up_at_its_timeout(monkeypatch):
+    cut, whole = (200, {"warning": "199 antares x"}, b""), (200, {}, b"[]")
+    http = FakeHttp(cut, cut, whole)
+    monkeypatch.setattr(suite, "Http", lambda base, timeout: http)
+    monkeypatch.setattr(suite.time, "sleep", lambda s: None)
+    ops = SimpleNamespace()
+    assert suite.Ops.settle(ops, "http://localhost:1", [TYPES], 60) == [] and http.asked == 3
+    http = FakeHttp(cut)
+    monkeypatch.setattr(suite, "Http", lambda base, timeout: http)
+    assert suite.Ops.settle(ops, "http://localhost:1", [TYPES], 0) == [f"{TYPES}: 200 199 antares x"]
+
+
+def test_a_copy_that_never_settles_is_red_and_the_after_run_still_shows_its_answers(tmp_path, monkeypatch):
+    res, _, ops = run_fake(tmp_path, monkeypatch, unsettled=[f"{TYPES}: 503"])
+    rows = by_id(res)
+    assert rows["control.settled"]["result"] == "fail" and TYPES in rows["control.settled"]["reason"]
+    assert rows["step.after"]["result"] == "pass" and "endpoints/t/two" in rows
+    assert ops.settled == ("http://localhost:42311", [], 7)
+    res, _, _ = run_fake(tmp_path / "2", monkeypatch)
+    assert by_id(res)["control.settled"]["result"] == "pass"
 
 
 def test_a_copy_on_another_role_than_the_source_fails_its_control(tmp_path, monkeypatch):
