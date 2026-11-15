@@ -10989,11 +10989,8 @@
       "copy": "Kopírovat příkaz"
     },
     "claudeDesktop": {
-      "steps": "V Nastavení, část Konektory, zvolte Přidat vlastní konektor a vložte adresu. Nebo přidejte toto do claude_desktop_config.json (potřebuje Node.js) a restartujte Claude Desktop.",
+      "steps": "Přidejte toto do claude_desktop_config.json (vyžaduje Node.js) a restartujte Claude Desktop.",
       "copy": "Kopírovat konfiguraci"
-    },
-    "chatgpt": {
-      "steps": "V Nastavení, část Aplikace a konektory, zapněte Režim vývojáře, vytvořte konektor, vložte adresu a zvolte Bez ověření."
     },
     "generic": {
       "title": "Jiní klienti MCP",
@@ -11704,10 +11701,6 @@
       "mcp-local": "Claude Code, VS Code a jiní lokální klienti",
       "mcp-hub": "MCP hub organizace",
       "mcp-mobile": "Mobilní asistent"
-    },
-    "steps": {
-      "claudeAi": "Settings → Connectors → Add custom connector. Vložte adresu, zvolte Add, pak Connect a přihlaste se účtem Portálu.",
-      "chatgpt": "Settings → Apps & Connectors → Advanced settings: zapněte Developer mode. Pak Create, vložte adresu, zvolte OAuth a přihlaste se účtem Portálu."
     },
     "call": {
       "at": "Kdy",
@@ -12847,5 +12840,12 @@
       "toSources": "Přejít na Zdroje",
       "noCatalogueTitle": "Zatím zde není katalog otevřených dat"
     }
+  },
+  "assistantGuides": {
+    "lead": "Kam kliknout v kterém asistentovi, krok za krokem:",
+    "noHost": "Vložte adresu do asistenta tam, kde přidává vlastní konektor nebo MCP server.",
+    "signIn": "Tento konektor vyžaduje přihlášení: když se asistent zeptá na způsob přihlášení, zvolte OAuth a přihlaste se účtem Portálu.",
+    "list": "Postup pro jednotlivé asistenty",
+    "other": "Jiný klient MCP"
   }
 }

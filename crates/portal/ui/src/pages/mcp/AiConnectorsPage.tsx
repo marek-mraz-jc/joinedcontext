@@ -21,6 +21,7 @@ import {
   Select,
 } from "../../components/ui";
 import { ManifestGrid } from "../../components/grid/ManifestGrid";
+import { AssistantGuides } from "../../components/endpoints/AssistantGuides";
 import { CopyValue } from "./McpServerPanels";
 import { connectTab, disconnectTab, onPairingChange, pairing } from "../../connectors/pairedTab";
 import {
@@ -265,16 +266,7 @@ export function SetupPanel({ name, url }: { name: string; url: string }): JSX.El
       <h3 className="text-body font-semibold">{t("aiConnectors.setupTitle")}</h3>
       <CopyValue label={t("mcp.address")} value={url} />
       <CopyValue label={t("aiConnectors.client.claudeCode")} value={snippets.claudeCode} code />
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <h4 className="text-caption font-semibold">{t("aiConnectors.client.claudeAi")}</h4>
-          <p className="text-body text-fg">{t("aiConnectors.steps.claudeAi")}</p>
-        </div>
-        <div>
-          <h4 className="text-caption font-semibold">{t("aiConnectors.client.chatgpt")}</h4>
-          <p className="text-body text-fg">{t("aiConnectors.steps.chatgpt")}</p>
-        </div>
-      </div>
+      <AssistantGuides signIn />
       <details>
         <summary className="cursor-pointer text-caption font-semibold">{t("aiConnectors.client.vscode")}</summary>
         <CopyValue label={t("aiConnectors.client.vscode")} value={snippets.vscode} code />

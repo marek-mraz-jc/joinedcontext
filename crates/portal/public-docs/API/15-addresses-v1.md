@@ -25,7 +25,7 @@ https://{host}/{org}/api/v1/                            management API (OData se
 https://{host}/{org}/api/mcp                            MCP management door
 https://{host}/{org}/api/mcp/data                       MCP data hub
 https://{host}/{org}/api/endpoint/{slug}/{surface}/...  one Endpoint on one surface (§3)
-https://{host}/{org}/login/                             identity: issuer, sign-in, account, credentials
+https://{host}/{org}/id/                                identity: issuer, sign-in, account, credentials
 https://{host}/{org}/data/                              open data catalogue (dataroom)
 https://{host}/{org}/git/   /{org}/dash/   /{org}/dsc/  forge, dashboards, data space connector
 https://{host}/-/...                                    deployment pages: sign-in chooser, assets, docs, operator
@@ -52,9 +52,53 @@ The id in the path is the Organization's verified domain with its labels reverse
 | `hel.fi` | `fi_hel` |
 | `banskabystrica.sk` | `sk_banskabystrica` |
 
-The domains are confirmed when each Organization is created. An id matches `[a-z][a-z0-9_-]{1,62}` and contains `_`. A hostname holds no `_`, so the map from domain to id is one-to-one, and no route segment (`api`, `data`, `id`, `-`) can equal an id, so no reserved-word list exists. Only an operator mints an id, and only from a domain whose ownership a DNS TXT record verified: without the check anyone could take `com_google`. The id is a label: rows, tokens and logs carry the internal OrgId, and a later domain change keeps the id or adds an alias. An id in a `frozen` row is permanent; a rename keeps the old id answering in place for API, feed and MCP rows (`308` for pages), bound to the same OrgId.
+The domains are confirmed when each Organization is created. An id matches `[a-z][a-z0-9_-]{1,62}` and contains `_`. A hostname holds no `_`, so the map from domain to id is one-to-one, and no route segment (`api`, `data`, `id`, `-`) can equal an id; until such ids are minted, the reserved names below apply. Only an operator mints an id, and only from a domain whose ownership a DNS TXT record verified: without the check anyone could take `com_google`. The id is a label: rows, tokens and logs carry the internal OrgId, and a later domain change keeps the id or adds an alias. An id in a `frozen` row is permanent; a rename keeps the old id answering in place for API, feed and MCP rows (`308` for pages), bound to the same OrgId.
 
 Entity URNs carry the owning Organization's id, `urn:ngsi-ld:{Type}:sk_bbsk:{rest}` ([ADR-N-068](../Decisions/adr-n-068-urn-owner-prefix.md)). Ids minted before carry the domain, `urn:ngsi-ld:{Type}:bbsk.sk:{space}:{id}`, which names the same Organization and stays valid; no URN is minted again (an entity's identity is its Context Space and URN, and temporal history and outside links hold today's ids). Nothing derives an Organization or a right from a URN (ADR-N-041).
+
+### The broker tenant
+
+The NGSI-LD Tenant that holds a Context Space's data names the space's Organization and its `{space}` segment (PF-130):
+
+| Organization id | Space segment | Broker tenant |
+|---|---|---|
+| `sk_bbsk` | `helsinki-mobility` | `sk_bbsk__helsinki-mobility` |
+| `fi_hel` | `mobility-parking` | `fi_hel__mobility-parking` |
+
+The name splits at the first `__`: the left half is an Organization id, which holds no `__`; the right half is the segment, which holds no `_`. Two Organizations with the same Project and space names therefore never share a Tenant. The name is at most 128 characters and stays a plain Tenant string (ETSI GS CIM 009 §4.14), so an NGSI-LD client needs nothing new; a client on an Endpoint never sends it, because the gateway pins the Tenant on its internal hop (EP-22) and drops a client's `NGSILD-Tenant`.
+
+Entity ids keep the segment alone: `urn:ngsi-ld:{Type}:sk_bbsk:{rest}` names the Organization, the Tenant names the Organization and the space. The broker compares the Organization of the Tenant with the Organization the gateway admitted the caller for, and answers a mismatch as it answers an unknown Tenant (EP-188). A space whose Project names no Organization with a verified domain gets no broker tenant, and its Endpoints answer `503`. An existing broker tenant gets its new name only through the rename procedure, which moves every row and its history, compares counts and digests per table before and after, and keeps the old name refused for good.
+
+### Reserved names
+
+Until ids of the form above are minted, the Organization in a path is its `metadata.name` (a DNS-1123 label such as `bratislava`, no `_`), and the same name may become a host label (`bratislava.{base}`). A name the platform's routing uses would take that path segment or host label from the service, so no Organization takes one. The list is `jc_core::names::RESERVED_LABELS` (T-6974), and it only grows:
+
+- every first path segment jc places on a shared host: the module slugs (`id`, `opendata`, `dashboards`, `streams`, `broker`, `api`, `portal`, `git`, `assistant`, `embed` and its old name `viz` (which answers `308` to the same path and query under `embed`, T-6992), `model-tools`), the gateway's and the assistant's root paths (`cs`, `catalog`, `oauth`, `d`), jc's own pages (`closed`, `healthz`, `metrics`), the Portal's roots (`assets`, `docs`) and page roots (`projects`, `organization`, `catalogue`, `login` and the others of its router), and the deployment's `grafana`;
+- every host label: `idm`, `data`, `status`, `tiles`, `apps`, `mcp` and the module labels;
+- the labels the domain layout plans: `login`, `embed`, `git`, `www`, `mail`, `admin`, `autodiscover`.
+
+A Portal door refuses a reserved Organization name with `422` naming `metadata.name` ("reserved for the platform"). The reconciler's load of `main` and `jcctl validate` refuse it through the kind's own validation, and jc refuses to start with one in `[[organizations]]`. A bins/jc test fails when jc places a path segment or host label, or the Portal adds a page root, that is not on the list. An existing Organization's name is never added: `bbsk` (jc-prod serves a landing page on `bbsk.{base}`) and `ops` (a jc-dev Organization) stay usable.
+
+### Origins of an Organization
+
+The domain layout (T-6975, amended by T-6991) gives an Organization on its own domain up to five origins, each a bound host of the registry, because a different kind of person or code uses each one. An Organization may take fewer, or none and answer on the shared host only; both kinds run in one deployment.
+
+| Origin (default label) | Serves | Refuses |
+| --- | --- | --- |
+| working host (`smartcity.{domain}`) | Portal, assistant, dashboards, `/api/v1`, the gateway paths the Portal pages read | nothing beyond §8 |
+| open data host (`opendata.{domain}`) | open data pages, catalogue, feeds, the open-data Endpoints' read surfaces, anonymously | every method but `GET`, `HEAD`, `OPTIONS` (`405`); `Cookie` and `Authorization` removed before any module; `Set-Cookie` removed; an Endpoint that is not open data answers `404` |
+| API host (`api.{domain}`) | Endpoint data API and MCP, every Endpoint of the Organization | `Cookie` removed before any module; `Set-Cookie` removed; Portal pages `404` |
+| sign-in host (the installation's, `login.{base}`) | identity (§4) | Portal, data and App paths `404` |
+| Apps (`*.apps.{domain}` or the installation's Apps domain) | `{app}--{org}.{apps-base}`, embeds on `embed.{apps-base}` | no session cookie of another origin is scoped there |
+
+- **Settings.** `[[organizations]].hosts = { portal, opendata, api, apps, portals }`: `portal` required, the others optional; an absent one is served as paths on the working host (`/data/`, `/api/`), or for `apps` on the installation's Apps domain. `mcp` is read one release as a second API host. `host = "auto"` derives the working host `{org}.{base}` and uses the installation's shared `opendata.{base}`, `api.{base}` and sign-in hosts with `/{org}/` in the path, so the origins stay apart without a customer record. `data.` is no default label.
+- **Smaller setups.** One host with paths puts open data pages on the session's origin; two hosts (working, open data) put the data API on it. The design (T-6991 §1) lists what each smaller setup loses; `jc doctor domains` prints it for the configuration it reads.
+- **Writes.** An open-data Endpoint refuses every write on every host (T-6972); the open data host's method rule is a second lock. The API host also serves the open-data Endpoints, read-only, so the kept addresses of §6 hold.
+- **CORS.** No answer carries `Access-Control-Allow-Credentials: true`. `/api/v1` allows no other origin; the API host allows the Endpoint's `allowedOrigins` and the Organization's own hosts, with `Authorization`; the open data host allows `*` for reads.
+- **Sign-in.** The sign-in host is the installation's: kaisatsu builds the issuer from the host a request arrives on, so a sign-in host per Organization would be a second issuer for one realm, which the gateway and the Portal (one configured issuer each) refuse. An Organization created under this layout has the issuer `https://{sign-in host}/{org}/id`; an existing one keeps its issuer (§4).
+- **Redirect rule.** For an Organization with hosts of its own, a page asked on the shared host (`https://{base}/{org}/{rest}?{query}`) answers `308` to the host of its group with the same rest and query; a page on another group's host answers `308` to its own group's host; an API, feed, MCP or Git call is served in place, as the permanence rule below says. The Location's host is a configured host, never a request header or parameter, and a return address a person supplies is a registered redirect URI or a path starting with one `/`.
+- **Cookies.** Every cookie jc reads is `__Host-` (host-only, `Path=/`, no `Domain`), the sign-in and CSRF cookies included (T-6974), so a sibling host of the same site cannot plant or overwrite one.
+- **Path-mode Apps.** A public App may be served as `/{org}/app/{app}/` with a `sandbox` Content-Security-Policy without `allow-same-origin` on every response under that prefix: its code runs in an opaque origin and reads public Endpoints only. An App that needs sign-in, storage, functions, services or a private Endpoint keeps its own host `{app}--{org}.{apps-base}`.
 
 ### Hosts and the two deployment settings
 
@@ -118,7 +162,7 @@ A Context Space has the same surfaces under `/{org}/cs/{space}/` (today `/cs/{sp
 | `{api host}/api/mcp/{project}/{name}` (named MCP server) | `/{org}/api/mcp/{project}/{name}` | MCP | frozen | `GW mcp/mod.rs:62` |
 | `{api host}/catalog.jsonld`, `/catalog.ttl`, `/catalog/{file}` | `/{org}/catalog.jsonld`, `/{org}/catalog.ttl`, `/{org}/catalog/{file}` | API | frozen | `GW handlers/catalog.rs:378`…`:381` |
 | `{api host}/oauth/register`, `/oauth/authorize`, `/oauth/token` | `/{org}/oauth/...` | API | frozen | `GW oauth.rs:453`…`:456` |
-| `id.{base}/realms/{realm}` and its OIDC paths | `/{org}/login/` (`/{org}/id/` answers 308 there, T-7006) | identity | frozen | `KA oidc/src/handlers.rs:47` |
+| `id.{base}/realms/{realm}` and its OIDC paths | `/{org}/id/` | identity | frozen | `KA oidc/src/handlers.rs:47` |
 | `opendata.{base}/` pages: `/dataset/{name}`, `/dataset/{name}/resource/{id}`, `/organization/{name}`, `/{lang}/...` | `/{org}/data/` + the same path | page | frozen | `DR api/src/lib.rs:1332`, `DR web/src/lib.rs:1455`, `:1665`, `:1958` |
 | `opendata.{base}/api/3/action/{action}`, `/api/action/{action}` (CKAN API) | `/{org}/data/api/3/action/{action}` | API | frozen | `DR api/src/lib.rs:494` |
 | `opendata.{base}/catalog`, `/catalog.{ttl,n3,jsonld,rdf,xml,nt}`, `/profiles/{profile}/catalog.*`, `/publisher/{publisher}/catalog.*` | `/{org}/data/` + the same path | API | frozen | `DR api/src/lib.rs:502`…`:508` |
@@ -136,16 +180,16 @@ How a module gets its host today: `JC app.rs:164` (`plan_mounts`: slug mode puts
 
 ### Identity and discovery
 
-The issuer of an Organization is `https://{canonical-host}/{org}/login`, fixed by this page (EP-183). `{canonical-host}` is the host the Organization has when it is created (with "Organization in the path" `off`, the issuer is `https://{canonical-host}/login`), and the issuer stays that string when the Organization later binds an own domain or the setting changes: an issuer is an identifier, and changing it signs every person out and breaks every client that stored it. It is built from the registry, never from `Host`, `X-Forwarded-Host` or `Forwarded`. Discovery follows the path-issuer rules:
+The issuer of an Organization is `https://{canonical-host}/{org}/id`, fixed by this page (EP-183). `{canonical-host}` is the host the Organization has when it is created (with "Organization in the path" `off`, the issuer is `https://{canonical-host}/id`), and the issuer stays that string when the Organization later binds an own domain or the setting changes: an issuer is an identifier, and changing it signs every person out and breaks every client that stored it. It is built from the registry, never from `Host`, `X-Forwarded-Host` or `Forwarded`. Discovery follows the path-issuer rules:
 
 | Document | Address |
 |---|---|
-| OpenID configuration | `https://{canonical-host}/{org}/login/.well-known/openid-configuration` |
-| RFC 8414 authorization server metadata | `https://{canonical-host}/.well-known/oauth-authorization-server/{org}/login` |
+| OpenID configuration | `https://{canonical-host}/{org}/id/.well-known/openid-configuration` |
+| RFC 8414 authorization server metadata | `https://{canonical-host}/.well-known/oauth-authorization-server/{org}/id` |
 | RFC 9728 protected resource, management door | `https://{host}/.well-known/oauth-protected-resource/{org}/api/mcp` |
 | RFC 9728 protected resource, data hub | `https://{host}/.well-known/oauth-protected-resource/{org}/api/mcp/data` |
 | RFC 9728 protected resource, one Endpoint | `https://{host}/.well-known/oauth-protected-resource/{org}/api/endpoint/{slug}/mcp` |
-| OpenID4VCI credential issuer metadata | `https://{canonical-host}/.well-known/openid-credential-issuer/{org}/login` |
+| OpenID4VCI credential issuer metadata | `https://{canonical-host}/.well-known/openid-credential-issuer/{org}/id` |
 
 Each document names only its own Organization. The suffix form a client may build (`{resource}/.well-known/oauth-protected-resource`, `GW mcp/mod.rs:36`, `:44`) stays served beside it.
 

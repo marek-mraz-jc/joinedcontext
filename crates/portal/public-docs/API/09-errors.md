@@ -74,7 +74,15 @@ What to do: Ask a project owner or an organization administrator for the role th
 
 The Endpoint is public, and its model and projection would serve attributes the model marks as personal data (DM-122, ADR-N-054), so the Endpoint answers nothing until that changes.
 
-What to do: Hide the attributes the Endpoint's model marks as personal data in its projection, or narrow its audience.
+What to do: Hide the attributes the detail names in the Endpoint's projection, or narrow its audience.
+
+### `open-data-read-only` {#open-data-read-only}
+
+**Open Data Is Read-Only**, status 403.
+
+The Endpoint publishes open data, so it only reads: every write through it is refused for every caller, whatever a Policy grants (EP-187). The detail names the operation.
+
+What to do: Write through an internal Endpoint of the space; an open-data Endpoint only reads.
 
 ### `domain-not-verified` {#domain-not-verified}
 

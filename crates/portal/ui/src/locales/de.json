@@ -10989,11 +10989,8 @@
       "copy": "Befehl kopieren"
     },
     "claudeDesktop": {
-      "steps": "Wählen Sie in den Einstellungen unter Konnektoren „Eigenen Konnektor hinzufügen“ und fügen Sie die Adresse ein. Oder tragen Sie dies in claude_desktop_config.json ein (braucht Node.js) und starten Sie Claude Desktop neu.",
+      "steps": "Fügen Sie dies zu claude_desktop_config.json hinzu (braucht Node.js) und starten Sie Claude Desktop neu.",
       "copy": "Konfiguration kopieren"
-    },
-    "chatgpt": {
-      "steps": "Schalten Sie in den Einstellungen unter Apps und Konnektoren den Entwicklermodus ein, legen Sie einen Konnektor an, fügen Sie die Adresse ein und wählen Sie „Keine Authentifizierung“."
     },
     "generic": {
       "title": "Andere MCP-Clients",
@@ -11704,10 +11701,6 @@
       "mcp-local": "Claude Code, VS Code und andere lokale Clients",
       "mcp-hub": "MCP-Hub der Organisation",
       "mcp-mobile": "Mobiler Assistent"
-    },
-    "steps": {
-      "claudeAi": "Settings → Connectors → Add custom connector. Adresse einfügen, Add wählen, dann Connect und mit dem Portal-Konto anmelden.",
-      "chatgpt": "Settings → Apps & Connectors → Advanced settings: Developer mode einschalten. Dann Create, Adresse einfügen, OAuth wählen und mit dem Portal-Konto anmelden."
     },
     "call": {
       "at": "Wann",
@@ -12847,5 +12840,12 @@
       "toSources": "Zu den Quellen",
       "noCatalogueTitle": "Hier noch kein Open-Data-Katalog"
     }
+  },
+  "assistantGuides": {
+    "lead": "Wo Sie in jedem Assistenten klicken, Schritt für Schritt:",
+    "noHost": "Fügen Sie die Adresse im Assistenten dort ein, wo er einen eigenen Connector oder MCP-Server hinzufügt.",
+    "signIn": "Dieser Connector braucht eine Anmeldung: Wo der Assistent nach der Anmeldung fragt, wählen Sie OAuth und melden sich mit Ihrem Portal-Konto an.",
+    "list": "Einrichtung je Assistent",
+    "other": "Anderer MCP-Client"
   }
 }

@@ -2459,9 +2459,15 @@ pub fn jc_assistant_guide(
         example: prompt.clone(),
         prompt,
         good: jc_t("guide_good", lang).replace("{name}", CONNECTOR_NAME),
+        // A Portal connector needs sign-in where this one needs none (T-7043): every section says
+        // so once, and the Portal links here instead of keeping its own copy of the clicks.
         trouble: trouble
             .into_iter()
             .map(|(p, f)| (p.to_owned(), f.to_owned()))
+            .chain(std::iter::once((
+                jc_t("guide_signed_in", lang),
+                jc_t("guide_signed_in_fix", lang).replace("{name}", name),
+            )))
             .collect(),
         checked: if id == "other" {
             jc_t("guide_checked_spec", lang).replace("{date}", checked_date)
