@@ -13,8 +13,8 @@
 use jc_core::kinds::data_source::{check_class, env_var_of, records_mapping};
 use jc_core::kinds::mqtt_broker;
 use jc_core::kinds::{
-    DataSourceSpec, DataSourceType, GtfsFeed, HttpArchive, HttpBodyFormat, IdMint, Mint,
-    PipelineSpec, TemplatePart,
+    DataSourceSpec, DataSourceType, GtfsFeed, HttpArchive, HttpBodyFormat, HttpPaging, IdMint,
+    Mint, PipelineSpec, TemplatePart,
 };
 use serde_norway::{Mapping, Value};
 
@@ -325,6 +325,7 @@ pub fn input_of(spec: &DataSourceSpec, context: &InputContext) -> Value {
 /// `records` into one message per element of that array (PL-114).
 pub fn prepended_processors(spec: &DataSourceSpec, context: &InputContext) -> Vec<Value> {
     if let (DataSourceType::Http, Some(http)) = (&spec.source_type, spec.http.as_ref()) {
+        let http = http.effective();
         let mut processors = body_bound(http.max_bytes());
         if let Some(archive) = &http.archive {
             processors.extend(archive_processors(spec, archive, context));
@@ -670,6 +671,7 @@ fn http(spec: &DataSourceSpec, context: &InputContext) -> Mapping {
     let Some(connection) = &spec.http else {
         return Mapping::new();
     };
+    let connection = connection.effective();
     let mut out = Mapping::new();
     out.insert(key("url"), text(&connection.url));
     out.insert(
@@ -702,6 +704,59 @@ fn http(spec: &DataSourceSpec, context: &InputContext) -> Mapping {
     }
     if let Some(tls) = tls_block(spec, context, connection.url.starts_with("https://")) {
         out.insert(key("tls"), Value::Mapping(tls));
+    }
+    if let Some(paging) = &connection.paging {
+        out.insert(
+            key("paginate"),
+            Value::Mapping(paginate(paging, connection.records.as_deref())),
+        );
+    }
+    out
+}
+
+/// The runner's `paginate` option (ekiben extension, T-7056) for `spec.http.paging`: the same
+/// fields in the runner's snake_case, with `records` taken from `spec.http.records`.
+fn paginate(paging: &HttpPaging, records: Option<&str>) -> Mapping {
+    let mut out = Mapping::new();
+    out.insert(key("mode"), text(paging.mode.as_str()));
+    let texts = [
+        ("param", &paging.param),
+        ("size_param", &paging.size_param),
+        ("offset_param", &paging.offset_param),
+        ("limit_param", &paging.limit_param),
+        ("cursor", &paging.cursor),
+        ("cursor_param", &paging.cursor_param),
+        ("cursor_header", &paging.cursor_header),
+        ("next", &paging.next),
+        ("total", &paging.total),
+        ("more", &paging.more),
+        ("delay", &paging.delay),
+    ];
+    for (name, value) in texts {
+        if let Some(value) = value {
+            out.insert(key(name), text(value));
+        }
+    }
+    let numbers = [
+        ("start", paging.start),
+        ("size", paging.size),
+        ("limit", paging.limit),
+        ("max_pages", paging.max_pages),
+        ("max_records", paging.max_records),
+    ];
+    for (name, value) in numbers {
+        if let Some(value) = value {
+            out.insert(key(name), Value::Number(value.into()));
+        }
+    }
+    if let Some(records) = records {
+        out.insert(key("records"), text(records));
+    }
+    if let Some(order) = &paging.order_by {
+        let mut by = Mapping::new();
+        by.insert(key("param"), text(&order.param));
+        by.insert(key("value"), text(&order.value));
+        out.insert(key("order_by"), Value::Mapping(by));
     }
     out
 }

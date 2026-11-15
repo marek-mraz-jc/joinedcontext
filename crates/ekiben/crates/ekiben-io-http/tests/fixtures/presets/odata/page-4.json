@@ -1,0 +1,106 @@
+{
+ "@odata.context": "https://services.odata.org/V4/Northwind/Northwind.svc/$metadata#Customers(CustomerID,CompanyName,City)",
+ "value": [
+  {
+   "CustomerID": "QUEDE",
+   "CompanyName": "Que Delícia",
+   "City": "Rio de Janeiro"
+  },
+  {
+   "CustomerID": "QUEEN",
+   "CompanyName": "Queen Cozinha",
+   "City": "Sao Paulo"
+  },
+  {
+   "CustomerID": "QUICK",
+   "CompanyName": "QUICK-Stop",
+   "City": "Cunewalde"
+  },
+  {
+   "CustomerID": "RANCH",
+   "CompanyName": "Rancho grande",
+   "City": "Buenos Aires"
+  },
+  {
+   "CustomerID": "RATTC",
+   "CompanyName": "Rattlesnake Canyon Grocery",
+   "City": "Albuquerque"
+  },
+  {
+   "CustomerID": "REGGC",
+   "CompanyName": "Reggiani Caseifici",
+   "City": "Reggio Emilia"
+  },
+  {
+   "CustomerID": "RICAR",
+   "CompanyName": "Ricardo Adocicados",
+   "City": "Rio de Janeiro"
+  },
+  {
+   "CustomerID": "RICSU",
+   "CompanyName": "Richter Supermarkt",
+   "City": "Genève"
+  },
+  {
+   "CustomerID": "ROMEY",
+   "CompanyName": "Romero y tomillo",
+   "City": "Madrid"
+  },
+  {
+   "CustomerID": "SANTG",
+   "CompanyName": "Santé Gourmet",
+   "City": "Stavern"
+  },
+  {
+   "CustomerID": "SAVEA",
+   "CompanyName": "Save-a-lot Markets",
+   "City": "Boise"
+  },
+  {
+   "CustomerID": "SEVES",
+   "CompanyName": "Seven Seas Imports",
+   "City": "London"
+  },
+  {
+   "CustomerID": "SIMOB",
+   "CompanyName": "Simons bistro",
+   "City": "Kobenhavn"
+  },
+  {
+   "CustomerID": "SPECD",
+   "CompanyName": "Spécialités du monde",
+   "City": "Paris"
+  },
+  {
+   "CustomerID": "SPLIR",
+   "CompanyName": "Split Rail Beer & Ale",
+   "City": "Lander"
+  },
+  {
+   "CustomerID": "SUPRD",
+   "CompanyName": "Suprêmes délices",
+   "City": "Charleroi"
+  },
+  {
+   "CustomerID": "THEBI",
+   "CompanyName": "The Big Cheese",
+   "City": "Portland"
+  },
+  {
+   "CustomerID": "THECR",
+   "CompanyName": "The Cracker Box",
+   "City": "Butte"
+  },
+  {
+   "CustomerID": "TOMSP",
+   "CompanyName": "Toms Spezialitäten",
+   "City": "Münster"
+  },
+  {
+   "CustomerID": "TORTU",
+   "CompanyName": "Tortuga Restaurante",
+   "City": "México D.F."
+  }
+ ],
+ "@odata.nextLink": "Customers?$select=CustomerID,CompanyName,City&$skiptoken='TORTU'"
+}
