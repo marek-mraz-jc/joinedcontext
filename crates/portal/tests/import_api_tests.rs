@@ -1164,6 +1164,70 @@ async fn a_binding_on_another_project_grants_nothing_here() {
     assert!(written(&server).await.is_empty());
 }
 
+/// S-5-08: the import door refuses what the single-manifest door refuses its proposer, an
+/// Endpoint bound to a Policy they cannot read and an McpServer admitting a project they cannot
+/// read, before any branch or merge request; reading the Policy lets the same bundle through.
+#[tokio::test]
+async fn an_import_binding_an_unreadable_policy_or_admitting_a_foreign_project_is_refused() {
+    let server = forge().await;
+    let space: Value = serde_norway::from_str(SPACE).expect("the space parses");
+    let endpoint = json!({
+        "apiVersion": API_VERSION, "kind": "Endpoint",
+        "metadata": { "name": "secret-air", "namespace": SOURCE },
+        "spec": { "contextSpaceRef": "ovzdusie", "slug": "secretairslugsecretairslug",
+                  "audience": "organization", "enabledRepresentations": ["ngsi-ld"],
+                  "policyRefs": ["urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-ovzdusie:public-air"] },
+    });
+    let mcp = json!({
+        "apiVersion": API_VERSION, "kind": "McpServer",
+        "metadata": { "name": "air-tools", "namespace": SOURCE },
+        "spec": { "members": [{ "kind": "Endpoint", "name": "secret-air", "namespace": SOURCE }],
+                  "audience": "project-list", "allowedProjects": ["skolstvo"] },
+    });
+    let server = &server;
+    let import = |verbs: Value, items: Vec<Value>| async move {
+        let importer = role(
+            "importer",
+            json!([
+                { "kinds": ["ContextSpace", "Endpoint", "McpServer"], "verbs": ["propose"] },
+                { "kinds": ["Policy"], "verbs": verbs }
+            ]),
+        );
+        let (state, cookie) = state_as(
+            server,
+            vec![POLICY],
+            &[],
+            vec![importer, binding("importer")],
+        );
+        let body =
+            json!({ "manifests": { "apiVersion": API_VERSION, "kind": "List", "items": items } });
+        post(
+            state,
+            &cookie,
+            "application/json",
+            serde_json::to_vec(&body).expect("body"),
+        )
+        .await
+    };
+
+    let (status, problem) = import(json!([]), vec![space.clone(), endpoint.clone()]).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{problem}");
+    let detail = problem["detail"].as_str().unwrap_or_default();
+    assert!(detail.starts_with("spec.policyRefs: "), "{detail}");
+
+    let (status, problem) =
+        import(json!(["read"]), vec![space.clone(), endpoint.clone(), mcp]).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+    assert_eq!(
+        problem["errors"][0]["path"], "spec.allowedProjects",
+        "{problem}"
+    );
+    assert!(written(server).await.is_empty());
+
+    let (status, change) = import(json!(["read"]), vec![space, endpoint]).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{change}");
+}
+
 #[tokio::test]
 async fn a_native_file_under_a_directory_that_names_no_kind_is_refused_even_with_every_role() {
     let server = forge().await;
