@@ -236,3 +236,14 @@ def test_the_reader_and_the_refused_token_call_use_the_state_realm(tmp_path, mon
     assert seen == ["/id/realms/smartcity/protocol/openid-connect/token"]
     kaisatsu = [c for c in suite.refused_calls("m", None, "smartcity") if c["module"] == "kaisatsu"]
     assert [c["path"] for c in kaisatsu] == ["/id/realms/smartcity/protocol/openid-connect/token"]
+
+
+def test_a_result_file_is_named_by_its_dir_so_every_shard_names_it_alike(tmp_path):
+    for d in ("restore", "multiorg@path"):
+        (tmp_path / d / "endpoints").mkdir(parents=True)
+        (tmp_path / d / "endpoints" / "results.json").write_text("{}")
+        (tmp_path / d / "shot.png").write_bytes(b"x")
+    names = lambda dirs: [n for n, _, _ in suite.result_sources([str(tmp_path / d) for d in dirs])]  # noqa: E731
+    assert names(["restore", "multiorg@path"]) == ["results.restore.endpoints/results.json",
+                                                   "results.multiorg@path.endpoints/results.json"]
+    assert names(["multiorg@path", "restore"]) == list(reversed(names(["restore", "multiorg@path"])))

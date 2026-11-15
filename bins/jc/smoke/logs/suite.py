@@ -494,6 +494,15 @@ def scan_text_sources(res: Results, index: ls.SecretIndex, sources: list[tuple[s
 
 # ------------------------------------------------------------------ main
 
+def result_sources(dirs: list[str]) -> list[tuple[str, str, Path]]:
+    """The files of other suites' result dirs to scan, each named by its dir (`run all` gives each
+    run its own: restore, multiorg@path), never by its place in the list: each shard of the gate
+    (ci/merge.py) hands logs another list, and the merged rows keep one id per file."""
+    return [(f"results.{Path(d).name}.{f.relative_to(d)}", f"results {d}", f)
+            for d in dirs for f in sorted(Path(d).rglob("*"))
+            if f.is_file() and f.stat().st_size < 64 << 20 and f.suffix in (".json", ".md", ".txt", ".log", ".jsonl", "")]
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--base-url", required=True)
@@ -657,10 +666,7 @@ def main(argv=None) -> int:
                 f"{len(found)} values", PASS)
         index = ls.SecretIndex(found)
         sources = [("log", "jc", log)] if log and log.is_file() else []
-        for i, d in enumerate(a.results_dir, 1):
-            for f in sorted(Path(d).rglob("*")):
-                if f.is_file() and f.stat().st_size < 64 << 20 and f.suffix in (".json", ".md", ".txt", ".log", ".jsonl", ""):
-                    sources.append((f"results{i}.{f.relative_to(d)}", f"results {d}", f))
+        sources += result_sources(a.results_dir)
         scan_text_sources(res, index, sources)
 
     if person:
