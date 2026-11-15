@@ -2523,7 +2523,7 @@
         "ckanDataset": "This is the dataset page, not a file. Open the CSV or JSON resource on it and copy its download address.",
         "layer": "Name the layer to read, or give the address of a GeoJSON file.",
         "records": "Give the path as names joined by dots, for example data.stations.",
-        "secretKey": "Give the name of the secret's entry, for example token."
+        "secretKey": "Give the name of the entry inside the secret that holds the credential."
       }
     },
     "test": {
@@ -2630,7 +2630,7 @@
         "file": "A file or a feed at an address",
         "other": "Something else: a stream, a file server, a queue, a database or a webhook"
       },
-      "otherHelp": "Opens the full form of that connection below, for example MQTT or SFTP.",
+      "otherHelp": "Opens the full form of that connection below: MQTT, SFTP, Kafka, a database and the others.",
       "otherNone": "Choose a connection…",
       "api": {
         "ckan": "Every dataset of one organization in a CKAN portal.",

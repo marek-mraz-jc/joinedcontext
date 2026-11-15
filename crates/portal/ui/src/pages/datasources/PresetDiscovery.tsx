@@ -61,12 +61,17 @@ export function PresetDiscovery({
   project,
   http,
   onUse,
+  inline = false,
 }: {
   project: string;
   http: Http | undefined;
   onUse: (http: Http) => void;
+  /** Inside the new source wizard, whose step heading names it: no heading or landmark of its own. */
+  inline?: boolean;
 }): JSX.Element {
+  const prefix = inline ? "wizard-discovery" : "preset-discovery";
   const { t } = useTranslation();
+  const Wrapper = inline ? "div" : "section";
   const kind = presetKind(http);
   const url = typeof http?.url === "string" ? http.url.trim() : "";
   const [picked, setPicked] = useState("");
@@ -98,10 +103,16 @@ export function PresetDiscovery({
         : null;
 
   return (
-    <section aria-labelledby="preset-discovery-heading" className="flex flex-col gap-2" data-testid="preset-discovery">
-      <h2 id="preset-discovery-heading" className="text-body font-medium">
-        {t("datasources.discover.title")}
-      </h2>
+    <Wrapper
+      {...(inline ? {} : { "aria-labelledby": `${prefix}-heading` })}
+      className="flex flex-col gap-2"
+      data-testid={prefix}
+    >
+      {inline ? null : (
+        <h2 id={`${prefix}-heading`} className="text-body font-medium">
+          {t("datasources.discover.title")}
+        </h2>
+      )}
       {kind && url ? <p className="text-caption text-fg-muted">{t("datasources.discover.hint")}</p> : null}
       {kind && url ? (
         <div>
@@ -127,13 +138,13 @@ export function PresetDiscovery({
         ) : answer ? (
           <>
             <Field
-              id="preset-discovery-choice"
+              id={`${prefix}-choice`}
               label={`${t(`datasources.discover.fields.${answer.field}`)} · ${t("datasources.discover.pick", { count: answer.choices.length })}`}
               description={t("datasources.discover.pickHint")}
             >
               <div className="flex flex-wrap items-center gap-2">
                 <Select
-                  id="preset-discovery-choice"
+                  id={`${prefix}-choice`}
                   className="min-w-0 flex-1"
                   value={picked}
                   onChange={(event) => setPicked(event.target.value)}
@@ -165,6 +176,6 @@ export function PresetDiscovery({
           </>
         ) : null}
       </div>
-    </section>
+    </Wrapper>
   );
 }

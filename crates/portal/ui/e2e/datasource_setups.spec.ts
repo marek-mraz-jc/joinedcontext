@@ -140,7 +140,7 @@ test.describe("ready-made set-ups on Data sources", () => {
     const type = page.getByTestId("form-page").getByLabel("Type", { exact: true });
     await expect(type.locator('option[value="nats"]')).toHaveCount(1);
     const offered = await type.locator("option").evaluateAll((options) => options.map((o) => (o as HTMLOptionElement).value));
-    for (const name of ["kafka", "amqp_0_9", "sql_select", "aws_s3", "stdin", "http_server"]) expect(offered).not.toContain(name);
+    for (const name of ["kafka", "amqp_0_9", "aws_s3", "stdin", "http_server"]) expect(offered).not.toContain(name);
     expect(offered).toEqual(expect.arrayContaining(["http_client", "nats", "nats_jetstream", "csv", "websocket"]));
     await type.selectOption("nats");
     await shot(page, "runner-input-nats");

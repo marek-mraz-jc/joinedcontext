@@ -141,9 +141,9 @@ export function TemplateGallery({ project, secrets, others, onUse, onPick }: Tem
   // The steps are numbered as they show: the discovery only for an API, the format only for a file.
   let at = 1;
   const step = (label: string, id?: string) => (
-    <h3 id={id} className="text-body font-semibold text-fg">
+    <h2 id={id} className="text-body font-semibold text-fg">
       {t("datasources.wizard.step", { n: ++at, label })}
-    </h3>
+    </h2>
   );
 
   return (
@@ -153,9 +153,9 @@ export function TemplateGallery({ project, secrets, others, onUse, onPick }: Tem
       </summary>
       <p className="mt-1 text-caption text-fg-muted">{t("datasources.template.lead")}</p>
       <section aria-labelledby="wizard-kind" className="mt-2 flex flex-col gap-2">
-        <h3 id="wizard-kind" className="text-body font-semibold text-fg">
+        <h2 id="wizard-kind" className="text-body font-semibold text-fg">
           {t("datasources.wizard.step", { n: 1, label: t("datasources.wizard.kind") })}
-        </h3>
+        </h2>
         {(["api", "file"] as const).map((group) => (
           <div key={group} className="flex flex-col gap-1">
             <p className="text-caption font-medium text-fg-muted">{t(`datasources.wizard.groups.${group}`)}</p>
@@ -263,6 +263,7 @@ export function TemplateGallery({ project, secrets, others, onUse, onPick }: Tem
               <PresetDiscovery
                 project={project}
                 http={presetHttp}
+                inline
                 onUse={(next) => {
                   setHttp(next);
                   guess.reset();
