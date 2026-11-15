@@ -58,7 +58,7 @@ test("a person creates a read-only connector, revokes it and finds it refused", 
     await expect(card.getByText(`claude mcp add --transport http ${connector.name} ${connector.url}`)).toBeVisible();
     await expect(page.locator("body")).not.toContainText(/eyJ|Bearer /);
     await card.getByRole("button", { name: `Revoke AI connector ${connector.name}` }).click();
-    await card.getByRole("button", { name: "Revoke now" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Revoke now" }).click();
     await expect(card.getByText("Revoked", { exact: true })).toBeVisible();
     const read = (await (await page.request.get(`/api/v1/connectors/${id}`)).json()) as { state: string };
     expect(read.state).toBe("revoked");

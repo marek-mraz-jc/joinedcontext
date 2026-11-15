@@ -10,6 +10,7 @@ import {
   Button,
   Card,
   Checkbox,
+  ConfirmDialog,
   Dialog,
   EmptyState,
   Field,
@@ -187,20 +188,21 @@ export function AiConnectorCard({ connector, justCreated }: { connector: AiConne
             {tab.error.message}
           </Alert>
         ) : null}
-        {confirming ? (
-          <Alert tone="warning" role="alert">
-            <p>{t("aiConnectors.revokeConfirm", { name: connector.name })}</p>
-            {revoke.isError ? <p>{revoke.error.message}</p> : null}
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Button variant="danger" size="sm" loading={revoke.isPending} onClick={() => revoke.mutate()}>
-                {t("aiConnectors.revokeNow")}
-              </Button>
-              <Button variant="secondary" size="sm" onClick={() => setConfirming(false)}>
-                {t("aiConnectors.keep")}
-              </Button>
-            </div>
-          </Alert>
-        ) : null}
+        <ConfirmDialog
+          open={confirming}
+          onOpenChange={setConfirming}
+          title={t("aiConnectors.revokeOf", { name: connector.name })}
+          description={t("aiConnectors.revokeConfirm", { name: connector.name })}
+          confirmLabel={t("aiConnectors.revokeNow")}
+          pending={revoke.isPending}
+          onConfirm={() => revoke.mutate()}
+        >
+          {revoke.isError ? (
+            <Alert tone="danger" role="alert">
+              {revoke.error.message}
+            </Alert>
+          ) : null}
+        </ConfirmDialog>
         {/* Above the facts: right after Create the address is the next thing to reach for. */}
         {showSetup && active ? <SetupPanel name={connector.name} url={connector.url} /> : null}
         <dl className="grid gap-x-6 gap-y-2 text-body sm:grid-cols-2 lg:grid-cols-3">

@@ -33,7 +33,7 @@ test.describe("Grafana visualizations", () => {
     await expect(saved).toBeVisible();
     await expect(saved.getByRole("link", { name: `Open ${title} in Grafana` })).toHaveAttribute("href", /\/d\/pv-/);
     await saved.getByRole("button", { name: `Remove ${title}` }).click();
-    await saved.getByRole("button", { name: "Remove from Grafana" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Remove from Grafana" }).click();
     await expect(saved).toHaveCount(0);
   });
 });

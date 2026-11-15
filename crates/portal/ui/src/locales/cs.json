@@ -6988,7 +6988,6 @@
       "open": "Otevřít {title} v Grafaně",
       "remove": "Odstranit {title}",
       "confirm": "Odstranit z Grafany",
-      "keep": "Ponechat",
       "emptyTitle": "Zatím nic uloženo",
       "empty": "Vyplňte formulář výše a uložte první vizualizaci.",
       "emptyReader": "Když někdo v projektu uloží vizualizaci, zobrazí se zde."
@@ -11562,7 +11561,6 @@
     "revokeOf": "Zrušit AI konektor {name}",
     "revokeConfirm": "Zrušit {name}? Další volání přes něj bude odmítnuto a znovu ho zapnout nelze.",
     "revokeNow": "Zrušit teď",
-    "keep": "Ponechat",
     "scopeOf": "Na co sahá {name}",
     "every": "každý, který smíte číst",
     "anyClient": "jakýkoli AI klient",

@@ -192,8 +192,11 @@ for (const width of [1440, 400]) {
       await shot(page, `ai-connectors-filled-${width}`);
 
       await card.getByRole("button", { name: "Revoke AI connector doprava-in-claude" }).click();
-      await expect(card.getByRole("alert")).toContainText("The next call through it is refused");
-      await card.getByRole("button", { name: "Revoke now" }).click();
+      const confirm = page.getByRole("alertdialog", { name: "Revoke AI connector doprava-in-claude" });
+      await expect(confirm).toContainText("The next call through it is refused");
+      await expect(confirm.getByRole("button", { name: "Cancel" })).toBeFocused();
+      await shot(page, `ai-connectors-revoke-confirm-${width}`);
+      await confirm.getByRole("button", { name: "Revoke now" }).click();
       await expect(card.getByText("Revoked", { exact: true })).toBeVisible();
       expect(requests.some((one) => one.method === "DELETE" && one.path === `/api/v1/connectors/${ID}`)).toBe(true);
       await expect(page.locator("body")).not.toContainText(/eyJ|Bearer /);

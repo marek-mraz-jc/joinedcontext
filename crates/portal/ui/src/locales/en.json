@@ -6988,7 +6988,6 @@
       "open": "Open {title} in Grafana",
       "remove": "Remove {title}",
       "confirm": "Remove from Grafana",
-      "keep": "Keep",
       "emptyTitle": "Nothing saved yet",
       "empty": "Fill in the form above and save your first visualization.",
       "emptyReader": "When someone in this project saves a visualization, it appears here."
@@ -11562,7 +11561,6 @@
     "revokeOf": "Revoke AI connector {name}",
     "revokeConfirm": "Revoke {name}? The next call through it is refused, and it cannot be turned on again.",
     "revokeNow": "Revoke now",
-    "keep": "Keep it",
     "scopeOf": "What {name} reaches",
     "every": "every one you may read",
     "anyClient": "any AI client",

@@ -6988,7 +6988,6 @@
       "open": "{title} in Grafana öffnen",
       "remove": "{title} entfernen",
       "confirm": "Aus Grafana entfernen",
-      "keep": "Behalten",
       "emptyTitle": "Noch nichts gespeichert",
       "empty": "Füllen Sie das Formular oben aus und speichern Sie Ihre erste Visualisierung.",
       "emptyReader": "Sobald jemand im Projekt eine Visualisierung speichert, erscheint sie hier."
@@ -11562,7 +11561,6 @@
     "revokeOf": "KI-Konnektor {name} widerrufen",
     "revokeConfirm": "{name} widerrufen? Der nächste Aufruf darüber wird abgelehnt, und er lässt sich nicht wieder einschalten.",
     "revokeNow": "Jetzt widerrufen",
-    "keep": "Behalten",
     "scopeOf": "Was {name} erreicht",
     "every": "jeder, den Sie lesen dürfen",
     "anyClient": "jeder KI-Client",
