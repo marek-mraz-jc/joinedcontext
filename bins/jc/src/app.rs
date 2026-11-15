@@ -380,11 +380,11 @@ fn host_table(cfg: &Config, plans: &[MountPlan]) -> Result<Option<HostTable>, Ro
             }
         }
         // A page on another group's host moves to the host that serves it (T-6991 §7).
-        if let Some(opendata) = org.hosts.opendata.as_deref().filter(|_| !org.hosts.shared) {
+        if org.hosts.opendata.is_some() {
             table = table.move_pages(
                 &org.hosts.portal,
                 crate::config::DATAROOM_ON_WORKING_HOST,
-                opendata,
+                &org.opendata_base(),
                 false,
             )?;
         }

@@ -314,10 +314,12 @@ impl HostTable {
     ) -> Result<Self, RouterError> {
         let prefix = normalize_prefix(prefix)?;
         let to = to.trim().to_ascii_lowercase();
-        if !well_formed(&to) {
-            return Err(RouterError::InvalidHostRow(format!(
-                "'{to}' is not a host a page can move to"
-            )));
+        // A host, or a host and the path a shared host keeps the Organization under.
+        let (to_host, to_path) = to.split_at(to.find('/').unwrap_or(to.len()));
+        let refused =
+            || RouterError::InvalidHostRow(format!("'{to}' is not a host a page can move to"));
+        if !well_formed(to_host) || normalize_prefix(to_path).map_err(|_| refused())? != to_path {
+            return Err(refused());
         }
         let host = without_port(host.trim()).to_ascii_lowercase();
         self.moves.entry(host).or_default().push(PageMove {
@@ -744,11 +746,14 @@ mod tests {
             .and_then(|t| t.role("*.apps.bbsk.sk", HostRole::Apps))
             .and_then(|t| t.move_pages("smartcity.bbsk.sk", "/data", "opendata.bbsk.sk", false))
             .and_then(|t| t.move_pages("api.bbsk.sk", "/", "smartcity.bbsk.sk", true))
+            .and_then(|t| t.bound("zilina.bbsk.sk", "zilina", "/"))
+            .and_then(|t| t.move_pages("zilina.bbsk.sk", "/data", "opendata.bbsk.sk/zilina", false))
             .expect("rows");
         let mut b = JcRouterBuilder::new("https", "smartcity.bbsk.sk").hosts(table);
         for (module, host, prefix) in [
             ("portal", "smartcity.bbsk.sk", None),
             ("dataroom", "smartcity.bbsk.sk", Some("/data")),
+            ("dataroom", "zilina.bbsk.sk", Some("/data")),
             ("dataroom", "opendata.bbsk.sk", None),
             ("gateway", "api.bbsk.sk", Some("/api/endpoint")),
             ("portal", "*.apps.bbsk.sk", None),
@@ -899,6 +904,16 @@ mod tests {
                 "/projects/p",
                 "https://smartcity.bbsk.sk/projects/p",
             ),
+            (
+                "zilina.bbsk.sk",
+                "/data/dataset/x",
+                "https://opendata.bbsk.sk/zilina/dataset/x",
+            ),
+            (
+                "zilina.bbsk.sk",
+                "/data",
+                "https://opendata.bbsk.sk/zilina/",
+            ),
         ];
         for (host, path, to) in cases {
             for headers in [&[page][..], &spoofed[..]] {
@@ -927,7 +942,18 @@ mod tests {
         let t = HostTable::new().role("a.example", HostRole::Api).unwrap();
         assert!(t.clone().role("a.example", HostRole::Api).is_ok());
         assert!(t.role("A.example:443", HostRole::OpenData).is_err());
-        for to in ["evil.example/x", "user@evil.example", "", "a b"] {
+        assert!(
+            HostTable::new()
+                .move_pages("a.example", "/", "b.example/org", false)
+                .is_ok()
+        );
+        for to in [
+            "evil.example/x/",
+            "evil.example//x",
+            "user@evil.example",
+            "",
+            "a b",
+        ] {
             assert!(
                 HostTable::new()
                     .move_pages("a.example", "/", to, false)
