@@ -2658,7 +2658,6 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
- "url",
  "uuid",
 ]
 
@@ -2671,7 +2670,6 @@ dependencies = [
  "dataroom-rdf",
  "dataroom-store-memory",
  "reqwest 0.12.28",
- "serde",
  "serde_json",
  "sha2 0.10.9",
  "tokio",
@@ -2698,7 +2696,6 @@ name = "dataroom-plugin"
 version = "0.1.0"
 dependencies = [
  "dataroom-core",
- "serde",
  "serde_json",
 ]
 
@@ -2714,7 +2711,6 @@ dependencies = [
  "oxttl",
  "serde",
  "serde_json",
- "url",
  "uuid",
 ]
 
@@ -2742,16 +2738,10 @@ dependencies = [
  "dataroom-api",
  "dataroom-core",
  "dataroom-harvest",
- "dataroom-mcp",
- "dataroom-plugin",
- "dataroom-rdf",
- "dataroom-search",
  "dataroom-shacl",
  "dataroom-store-memory",
  "dataroom-store-pg",
- "dataroom-web",
  "http-body-util",
- "serde",
  "serde_json",
  "sqlx",
  "tokio",
@@ -2767,7 +2757,6 @@ dependencies = [
  "dataroom-core",
  "dataroom-rdf",
  "regex",
- "serde",
  "serde_json",
  "uuid",
 ]
@@ -2791,7 +2780,6 @@ dependencies = [
  "dataroom-core",
  "dataroom-store-memory",
  "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
- "serde",
  "serde_json",
  "sqlx",
  "tokio",
@@ -2809,7 +2797,6 @@ dependencies = [
  "dataroom-search",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "url",
 ]
 
