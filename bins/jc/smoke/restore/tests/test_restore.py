@@ -386,6 +386,23 @@ def test_the_copy_is_asked_only_the_discovery_calls_the_source_answered_whole():
     assert suite.discovery_calls(None) == []
 
 
+COUNT = "/api/endpoint/ep/ngsi-ld/v1/entities?type=AirQualityObserved&count=true&limit=0"
+
+
+def test_the_copy_is_also_asked_the_count_reads_the_source_answered():
+    # smoke 43698237064: the copy's /types settled, its AirQualityObserved count 503'd after
+    rows = {"checks": [
+        {"id": "anon.types.written", "target": "ep AirQualityObserved", "result": "pass",
+         "call": "GET /api/endpoint/ep/ngsi-ld/v1/entities?type=AirQualityObserved&count=true", "actual": "count=13723"},
+        {"id": "anon.count", "target": "ep AirQualityObserved", "result": "pass", "call": f"GET {COUNT}",
+         "actual": "13723"},
+        {"id": "anon.count", "target": "ep Tree", "result": "fail",
+         "call": "GET /api/endpoint/ep/ngsi-ld/v1/entities?type=Tree&count=true&limit=0", "actual": "503"},
+        {"id": "anon.odata.query", "target": "ep", "result": "pass",
+         "call": "GET /api/endpoint/ep/odata/AirQualityObserved?$count=true", "actual": "ok"}]}
+    assert suite.discovery_calls(suite.load_rows(rows)) == [COUNT]
+
+
 class FakeHttp:
     def __init__(self, *answers):
         self.answers, self.asked = list(answers), 0
@@ -401,6 +418,12 @@ def test_a_discovery_cut_at_its_deadline_or_a_503_is_not_settled():
     assert suite.unsettled(FakeHttp(cut), [TYPES]) == [f'{TYPES}: 200 199 antares "entity scan ceiling reached"']
     assert suite.unsettled(FakeHttp((503, {}, b"")), [TYPES]) == [f"{TYPES}: 503"]
     assert suite.unsettled(FakeHttp((200, {}, b"[]")), [TYPES]) == []
+
+
+def test_a_count_read_settles_only_with_its_count():
+    assert suite.unsettled(FakeHttp((503, {}, b"")), [COUNT]) == [f"{COUNT}: 503"]
+    assert suite.unsettled(FakeHttp((200, {}, b"[]")), [COUNT]) == [f"{COUNT}: 200 no count"]
+    assert suite.unsettled(FakeHttp((200, {"ngsild-results-count": "13723"}, b"[]")), [COUNT]) == []
 
 
 def test_settle_waits_for_a_whole_round_and_gives_up_at_its_timeout(monkeypatch):

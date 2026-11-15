@@ -31,6 +31,87 @@ pub fn validate_dns1123_label(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Every name the platform's routing gives a meaning of its own (T-6974): the first path
+/// segments jc places on a shared host (module slugs, the gateway's and the assistant's root
+/// paths, jc's and the Portal's own pages and the deployment's extra prefixes), every host label
+/// below the deployment's domain (module hosts, the deployment's `idm`, `data`, `status`, `ai`,
+/// `mqtt`), the segments docs/API/15-addresses-v1.md fixes (`data`, `dash`, `dsc`, `app`, `c`) and
+/// labels held for hosts not served yet (`login`, `embed`, `apps`, ...). An Organization named like one
+/// would take that segment or label from the service on a host the Organizations share, so no
+/// Organization takes one. The list only grows; bins/jc fails a test when a mount, host label or
+/// Portal page root it places is missing here. No live Organization's name is on it: `bbsk`
+/// (jc-prod's landing host is named after it) and `ops` (a jc-dev Organization) stay out.
+pub const RESERVED_LABELS: &[&str] = &[
+    "accessibility",
+    "admin",
+    "ai",
+    "ai-connectors",
+    "api",
+    "app",
+    "apps",
+    "assets",
+    "assistant",
+    "autodiscover",
+    "broker",
+    "c",
+    "callback",
+    "catalog",
+    "catalogue",
+    "closed",
+    "connect",
+    "connectors",
+    "cs",
+    "d",
+    "dash",
+    "dashboards",
+    "data",
+    "docs",
+    "dsc",
+    "embed",
+    "endpoints",
+    "f",
+    "git",
+    "glossary",
+    "grafana",
+    "healthz",
+    "id",
+    "idm",
+    "login",
+    "logout",
+    "mail",
+    "mcp",
+    "mcp-confirmations",
+    "metrics",
+    "model-tools",
+    "mqtt",
+    "oauth",
+    "opendata",
+    "organization",
+    "playground",
+    "portal",
+    "portals",
+    "projects",
+    "settings",
+    "status",
+    "streams",
+    "tiles",
+    "v",
+    "viz",
+    "www",
+];
+
+/// Refuses an Organization name the platform's routing reserves ([`RESERVED_LABELS`]).
+pub fn validate_not_reserved(name: &str) -> Result<()> {
+    if RESERVED_LABELS.contains(&name) {
+        return Err(Error::Name {
+            field: "metadata.name",
+            value: name.to_string(),
+            reason: "is reserved for the platform: an address of a platform service uses this name; choose another Organization name",
+        });
+    }
+    Ok(())
+}
+
 /// Validates a target namespace: literal `org` or project slug (`^[a-z0-9][a-z0-9-]{0,62}$`) (MF-02).
 pub fn validate_namespace(ns: &str) -> Result<()> {
     if ns.is_empty() || ns.len() > 63 || !PROJECT_SLUG_RE.is_match(ns) {
@@ -249,6 +330,63 @@ pub(crate) fn validate_relative_path(field: &'static str, path: &str) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reserved_labels_are_sorted_unique_labels() {
+        assert!(RESERVED_LABELS.windows(2).all(|w| w[0] < w[1]));
+        for name in RESERVED_LABELS {
+            validate_dns1123_label(name).expect(name);
+        }
+    }
+
+    /// T-6974: every door that parses an Organization (the Portal's judge, import, the
+    /// reconciler's load, `jcctl validate`) reaches this check through `validate_spec`.
+    #[test]
+    fn an_organization_manifest_with_a_reserved_name_is_refused() {
+        let golden = include_str!("../tests/golden/004-Organization-03-domain-model.yaml");
+        let named =
+            |name: &str| golden.replacen("name: banskabystrica", &format!("name: {name}"), 1);
+        crate::registry::validate_yaml("Organization", golden)
+            .expect("registered")
+            .expect("the golden passes");
+        for name in ["api", "opendata", "oauth", "login"] {
+            let err = crate::registry::validate_yaml("Organization", &named(name))
+                .expect("registered")
+                .expect_err(name);
+            assert!(
+                err.to_string().contains("reserved for the platform"),
+                "{name}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reserved_name_is_refused_and_an_ordinary_one_passes() {
+        for name in ["api", "opendata", "oauth", "login"] {
+            let err = validate_not_reserved(name).expect_err(name);
+            assert!(
+                err.to_string().contains("reserved for the platform"),
+                "{err}"
+            );
+        }
+        for name in [
+            "bbsk",
+            "banskabystrica",
+            "hel",
+            "bratislava",
+            "praha",
+            "barcelona",
+            "zilina",
+            "slovensko",
+            "ctl-a",
+            "ctl-b",
+            "demo-mcp",
+            "ops",
+            "helsinki",
+        ] {
+            validate_not_reserved(name).expect(name);
+        }
+    }
 
     /// T-6769 (ADR-N-068): the owner segment is the text before the first `:` of the id part,
     /// and a URN with nothing after it, or without a `:`, names no owner.

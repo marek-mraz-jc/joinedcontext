@@ -723,6 +723,19 @@ async fn logged_read(
 /// The DM-128 line of one read of the Endpoint's personal attributes, none without them: the
 /// reader, the Endpoint and the Entities' URNs, never a value.
 pub(crate) fn log_personal_read(endpoint: &Endpoint, subject: &Subject, entities: &[String]) {
+    log_personal_read_of(endpoint, subject, "NGSI-LD", entities, None);
+}
+
+/// [`log_personal_read`] of a read on `surface` (S-3-09): an answer whose Entities could not be
+/// listed names the parameters of the `query` that chose them instead, never their values (a
+/// `q` filter can hold a personal value).
+pub(crate) fn log_personal_read_of(
+    endpoint: &Endpoint,
+    subject: &Subject,
+    surface: &str,
+    entities: &[String],
+    query: Option<&str>,
+) {
     let personal = endpoint.personal_attributes();
     if personal.is_empty() {
         return;
@@ -731,11 +744,28 @@ pub(crate) fn log_personal_read(endpoint: &Endpoint, subject: &Subject, entities
         target: "personal_read",
         slug = %endpoint.slug,
         space = %endpoint.space,
+        surface,
         principal = %principal_of(subject),
         attributes = %personal.join(","),
         entities = %entities.join(","),
+        parameters = %parameter_names(query.unwrap_or_default()),
         "personal attributes read"
     );
+}
+
+/// The names of a query string's parameters, each once in the order met, without their values:
+/// `f=csv&q=rider=="x"&f=zip` is `f,q`.
+fn parameter_names(query: &str) -> String {
+    let mut names: Vec<&str> = Vec::new();
+    for name in query
+        .split('&')
+        .map(|pair| pair.split('=').next().unwrap_or_default())
+    {
+        if !name.is_empty() && !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names.join(",")
 }
 
 /// The URNs of the Entities an NGSI-LD answer holds: one Entity, a list of them, or a GeoJSON
@@ -1079,7 +1109,11 @@ pub(crate) async fn view_request(
         return Err(Box::new(refusal));
     }
     if operation.is_write() {
-        if let Some(refusal) = gateway.domain_gate.refusal(&gateway.org_domain) {
+        let domain = gateway.domain_of(&endpoint.project);
+        if let Some(refusal) = gateway
+            .domain_gate
+            .refusal_for(domain.as_deref(), &endpoint.project)
+        {
             tracing::info!(slug = %endpoint.slug, %operation, "write refused: the domain is not verified");
             return Err(Box::new(refusal.into_response()));
         }
@@ -1477,6 +1511,16 @@ pub(crate) fn routes() -> Router<Arc<Gateway>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// DM-128: a streamed file's personal_read line names the query's parameters, never a
+    /// value a filter carries.
+    #[test]
+    fn a_logged_query_names_its_parameters_and_no_value() {
+        let names = parameter_names("f=csv&q=rider==%22Jana%20Nova%22&limit=5&f=zip&&flag");
+        assert_eq!(names, "f,q,limit,flag");
+        assert!(!names.contains("Jana"), "{names}");
+        assert_eq!(parameter_names(""), "");
+    }
 
     /// ADR-N-066 2.3: the attributes a write touches, read off its path or its entities.
     #[test]

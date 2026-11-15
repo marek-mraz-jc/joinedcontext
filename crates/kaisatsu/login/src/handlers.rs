@@ -16,7 +16,9 @@ use jc_router::Mount;
 use kaisatsu_core::page::{self, Page};
 use kaisatsu_core::*;
 use kaisatsu_crypto::*;
-use kaisatsu_oidc::{ClientIp, OidcState, read_cookie, second_factor_required};
+use kaisatsu_oidc::{
+    ClientIp, OidcState, read_cookie, second_factor_required, sign_in_cookie, sign_in_cookie_name,
+};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 
@@ -45,6 +47,10 @@ pub fn login_router(state: OidcState) -> Router {
         )
         .merge(kaisatsu_oidc::broker_router())
         .merge(crate::account::account_router())
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            kaisatsu_oidc::handlers::active_realm,
+        ))
         .with_state(state)
 }
 
@@ -901,7 +907,7 @@ async fn sign_out_other_sessions(
     user_id: &str,
     headers: &HeaderMap,
 ) -> Result<()> {
-    let current = read_cookie(headers, &mount.cookie_name("sso")).map(|raw| sha256_hex(&raw));
+    let current = read_cookie(headers, &sign_in_cookie_name("sso")).map(|raw| sha256_hex(&raw));
     for sso in state
         .store
         .list_user_sso_sessions(&realm.id, user_id)
@@ -917,18 +923,14 @@ async fn sign_out_other_sessions(
     Ok(())
 }
 
-pub(crate) fn read_auth_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
-    read_cookie(headers, &mount.cookie_name("auth"))
+pub(crate) fn read_auth_cookie(headers: &HeaderMap) -> Option<String> {
+    read_cookie(headers, &sign_in_cookie_name("auth"))
 }
 
 /// K1: Verifies that the browser's auth session cookie matches `auth_session.handle_hash` in
 /// constant time (`subtle`).
-pub(crate) fn auth_cookie_matches(
-    headers: &HeaderMap,
-    mount: &Mount,
-    auth_session: &AuthSession,
-) -> bool {
-    let Some(raw_cookie) = read_auth_cookie(headers, mount) else {
+pub(crate) fn auth_cookie_matches(headers: &HeaderMap, auth_session: &AuthSession) -> bool {
+    let Some(raw_cookie) = read_auth_cookie(headers) else {
         return false;
     };
     let presented_hash = sha256_hex(&raw_cookie);
@@ -1024,7 +1026,7 @@ async fn restart_login_get(
         .get_auth_session_by_id(&realm.id, &query.session_code)
         .await?
         .filter(|s| query.matches_client(&s.client_id))
-        .filter(|s| auth_cookie_matches(&headers, &mount, s))
+        .filter(|s| auth_cookie_matches(&headers, s))
     else {
         return render_expired_session_page(
             &state,
@@ -1066,6 +1068,7 @@ async fn authenticate_page_get(
     Query(query): Query<AuthPageQuery>,
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
+    client_ip: ClientIp,
 ) -> Result<Response> {
     let realm = state
         .store
@@ -1082,7 +1085,7 @@ async fn authenticate_page_get(
         return render_expired_session_page(&state, &mount, &realm, &headers, None, StatusCode::OK)
             .await;
     };
-    if !auth_cookie_matches(&headers, &mount, &auth_session) {
+    if !auth_cookie_matches(&headers, &auth_session) {
         return render_expired_session_page(
             &state,
             &mount,
@@ -1101,6 +1104,40 @@ async fn authenticate_page_get(
 
     let current_state: LoginState =
         serde_json::from_str(&auth_session.step_state_json).unwrap_or(LoginState::IdentityFirst);
+
+    // Only the broker marks this state verified, once the upstream assertion verified (S-4-01);
+    // an IdP hint alone never signs anyone on here. The sign-in goes on through the machine like a password one, so the second factor, required
+    // actions, the organization choice and consent run before any code is issued.
+    if let LoginState::UpstreamIdp {
+        assertion_verified: true,
+        ..
+    } = current_state
+        && let Some(user_id) = auth_session.user_id.clone()
+    {
+        let user = state
+            .store
+            .get_user_by_id(&realm.id, None, &user_id)
+            .await?
+            .filter(|u| u.enabled)
+            .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+        let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
+        let next = transition(
+            current_state,
+            LoginInput::UpstreamAssertionVerified { user_id },
+            &ctx,
+        )
+        .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        return advance_or_render(
+            &state,
+            &mount,
+            &realm,
+            auth_session,
+            next,
+            &headers,
+            &client_ip,
+        )
+        .await;
+    }
 
     render_state_page(
         &state,
@@ -1151,7 +1188,7 @@ async fn authenticate_page_post(
         )
         .await;
     };
-    if !auth_cookie_matches(&headers, &mount, &auth_session) {
+    if !auth_cookie_matches(&headers, &auth_session) {
         return render_expired_session_page(
             &state,
             &mount,
@@ -2136,6 +2173,15 @@ async fn advance_or_render(
         chosen_org,
     } = next_state
     {
+        // A brokered sign-in's first factor was the upstream one, never a local password.
+        let brokered = auth_session.amr == ["fed"];
+        let amr: Vec<String> = if brokered {
+            amr.into_iter()
+                .map(|m| if m == "pwd" { "fed".to_owned() } else { m })
+                .collect()
+        } else {
+            amr
+        };
         let user = state
             .store
             .get_user_by_id(&realm.id, None, &user_id)
@@ -2212,22 +2258,16 @@ async fn advance_or_render(
                 session_id: Some(sso_id),
                 ip_address: client_ip.for_audit(),
                 error: None,
-                details: BTreeMap::new(),
+                details: if brokered {
+                    BTreeMap::from([("identity_provider".into(), "oidc".into())])
+                } else {
+                    BTreeMap::new()
+                },
             })
             .await?;
 
-        let cookie_name = mount.cookie_name("sso");
-        let cookie_path = mount.realm_cookie_path(&realm.realm);
         let ttl = realm.sso_session_max_lifespan.max(3600);
-        let set_cookie = if mount.path_prefix.is_empty() {
-            format!(
-                "{cookie_name}={sso_handle}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={ttl}"
-            )
-        } else {
-            format!(
-                "{cookie_name}={sso_handle}; Path={cookie_path}; HttpOnly; Secure; SameSite=Lax; Max-Age={ttl}"
-            )
-        };
+        let set_cookie = sign_in_cookie("sso", &sso_handle, ttl);
 
         // The code goes back in the response mode the client asked for (query, fragment,
         // form_post), as on the SSO path.
@@ -2258,7 +2298,6 @@ async fn advance_or_render(
 /// this browser holds it.
 async fn reset_session(
     state: &OidcState,
-    mount: &Mount,
     realm: &RealmConfig,
     query: &AuthPageQuery,
     headers: &HeaderMap,
@@ -2271,7 +2310,7 @@ async fn reset_session(
         .get_auth_session_by_id(&realm.id, &query.session_code)
         .await?
         .filter(|s| query.matches_client(&s.client_id))
-        .filter(|s| auth_cookie_matches(headers, mount, s)))
+        .filter(|s| auth_cookie_matches(headers, s)))
 }
 
 async fn reset_credentials_get(
@@ -2287,7 +2326,7 @@ async fn reset_credentials_get(
         .await?
         .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
-    let mut session = reset_session(&state, &mount, &realm, &query, &headers).await?;
+    let mut session = reset_session(&state, &realm, &query, &headers).await?;
     if let (Some(s), Some(picked)) = (session.as_mut(), picked_locale(&realm, &query.kc_locale)) {
         s.ui_locales = Some(picked.to_owned());
         state.store.put_auth_session(s.clone()).await?;
@@ -2376,7 +2415,7 @@ async fn reset_credentials_post(
         .await?
         .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
-    let session = reset_session(&state, &mount, &realm, &query, &headers).await?;
+    let session = reset_session(&state, &realm, &query, &headers).await?;
     if let Some(s) = &session {
         let presented = form
             .get("csrf_token")
@@ -2607,15 +2646,7 @@ async fn action_token_get(
         };
         state.store.put_auth_session(auth_session.clone()).await?;
 
-        let cookie_name = mount.cookie_name("auth");
-        let cookie_path = mount.realm_cookie_path(&realm.realm);
-        let set_cookie = if mount.path_prefix.is_empty() {
-            format!("{cookie_name}={handle}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=900")
-        } else {
-            format!(
-                "{cookie_name}={handle}; Path={cookie_path}; HttpOnly; Secure; SameSite=Lax; Max-Age=900"
-            )
-        };
+        let set_cookie = sign_in_cookie("auth", &handle, 900);
 
         return render_action_form(
             &state,
@@ -2672,7 +2703,7 @@ async fn action_token_post(
         )
         .await;
     };
-    if !auth_cookie_matches(&headers, &mount, &auth_session) {
+    if !auth_cookie_matches(&headers, &auth_session) {
         return render_expired_session_page(
             &state,
             &mount,

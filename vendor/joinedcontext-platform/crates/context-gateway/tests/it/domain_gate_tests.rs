@@ -15,6 +15,7 @@ use context_gateway::domain_gate::{DomainGate, Item, Mode};
 use context_gateway::pdp::PolicyPdp;
 use context_gateway::proxy::Broker;
 use context_gateway::resolver::Endpoint;
+use context_gateway::store::Provenance;
 use jc_core::kinds::{Audience, PolicySpec, Representation};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -133,12 +134,23 @@ async fn send(
     uri: &str,
     body: Option<Value>,
 ) -> (StatusCode, Value, Vec<String>) {
+    send_with(gate, Provenance::without_organizations(), method, uri, body).await
+}
+
+/// [`send`] on a gateway whose repository says `provenance`.
+async fn send_with(
+    gate: Arc<DomainGate>,
+    provenance: Provenance,
+    method: Method,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value, Vec<String>) {
     let (upstream, hops) = broker().await;
-    let gateway = Arc::new(
-        Gateway::new(Broker::new(upstream), Box::new(PolicyPdp), DOMAIN)
-            .gate_writes_on(gate)
-            .serve([endpoint()]),
-    );
+    let gateway = Gateway::new(Broker::new(upstream), Box::new(PolicyPdp), DOMAIN)
+        .gate_writes_on(gate)
+        .serve([endpoint()]);
+    gateway.replace_provenance(provenance);
+    let gateway = Arc::new(gateway);
     let mut request = Request::builder()
         .method(method)
         .uri(format!("/api/endpoint/{SLUG}/ngsi-ld/v1{uri}"));
@@ -204,6 +216,74 @@ async fn enforce_refuses_a_write_until_the_domain_is_verified_and_never_asks_the
             "{state:?}: the broker was asked: {asked:?}"
         );
     }
+}
+
+/// The repository of two Organizations, bbsk on [`DOMAIN`] and other on `other.sk`, whose
+/// project [`SPACE`] belongs to `owner` (to none when `None`).
+fn two_organizations(owner: Option<&str>) -> Provenance {
+    Provenance {
+        organizations: owner
+            .map(|owner| (SPACE.to_owned(), owner.to_owned()))
+            .into_iter()
+            .collect(),
+        domains: [("bbsk", DOMAIN), ("other", "other.sk")]
+            .into_iter()
+            .map(|(o, d)| (o.to_owned(), d.to_owned()))
+            .collect(),
+        declared_organizations: 2,
+        ..Provenance::without_organizations()
+    }
+}
+
+/// S-3-14: on a deployment of several Organizations a write waits on the domain of the
+/// Organization owning the space, not the installation's: the installation's verified domain
+/// lets no other Organization write, and a project naming no Organization is refused.
+#[tokio::test]
+async fn a_write_waits_on_its_own_organizations_domain_and_an_unknown_one_is_refused() {
+    for (owner, named) in [(Some("other"), "other.sk"), (None, SPACE)] {
+        let (status, problem, asked) = send_with(
+            gate(Mode::Enforce, Some("verified")),
+            two_organizations(owner),
+            Method::POST,
+            "/entities",
+            Some(device()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{owner:?}: {problem}");
+        assert!(
+            problem["detail"]
+                .as_str()
+                .unwrap_or_default()
+                .contains(named),
+            "{owner:?}: the refusal names {named}: {problem}"
+        );
+        assert!(
+            asked.is_empty(),
+            "{owner:?}: the broker was asked: {asked:?}"
+        );
+    }
+    let (status, problem, _) = send_with(
+        gate(Mode::Enforce, Some("verified")),
+        two_organizations(Some("bbsk")),
+        Method::POST,
+        "/entities",
+        Some(device()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "bbsk is verified: {problem}");
+    let (status, problem, _) = send_with(
+        gate(Mode::Report, None),
+        two_organizations(None),
+        Method::POST,
+        "/entities",
+        Some(device()),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "report refuses nothing: {problem}"
+    );
 }
 
 /// PF-41: a verified domain lets the same write through, reads pass whatever the state, and

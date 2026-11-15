@@ -1106,6 +1106,26 @@ async fn a_token_socket_ends_when_its_token_expires() {
     // ends at once: the leeway never lengthens a socket past the token's exp.
     let (mut again, _) = open(&at, INTERNAL, "", &bearer).await.expect("upgraded");
     assert_eq!(closed_within_a_second(&mut again).await.0, "lifetime");
+    // S-3-12: a `jcctl token --resource` token names the CLI's audience, not the Endpoint's,
+    // and its socket ends at its exp all the same.
+    let cli = realm.mint(&json!({
+        "iss": common::ISSUER,
+        "sub": "someone-of-hel-mobility",
+        "aud": "jcctl-endpoint",
+        "azp": "jcctl",
+        "scope": format!("endpoint:{INTERNAL}"),
+        "preferred_username": "someone-of-hel-mobility",
+        "groups": ["/hel-mobility"],
+        "realm_access": { "roles": ["data-steward"] },
+        "exp": common::in_seconds(1),
+        "iat": common::in_seconds(-10),
+    }));
+    let bearer = [("authorization", format!("Bearer {cli}"))];
+    let (mut socket, _) = open(&at, INTERNAL, "", &bearer).await.expect("upgraded");
+    let closing = next_op(&mut socket, "x-closing")
+        .await
+        .expect("closed at the CLI token's exp, not at the 300 s cap");
+    assert_eq!(closing["metadata"]["x-reason"], "lifetime");
 }
 
 /// T-4874: an Endpoint that turns from public to restricted closes its anonymous sockets at the

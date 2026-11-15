@@ -281,6 +281,12 @@ impl Verifier {
         self.revoked.store(Arc::new(marks));
     }
 
+    /// The unix second `sub` was revoked at, when the list names it: a token of it issued at
+    /// or before that second is refused, and so is a session that token opened (S-3-12).
+    pub fn revoked_at(&self, sub: &str) -> Option<i64> {
+        self.revoked.load().get(sub).copied()
+    }
+
     /// The realm this verifier accepts tokens from.
     pub fn issuer(&self) -> &str {
         &self.issuer

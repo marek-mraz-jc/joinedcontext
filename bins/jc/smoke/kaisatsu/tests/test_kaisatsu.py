@@ -87,13 +87,16 @@ CIMD_POLICY = {"policies": [{"name": "cimd", "enabled": True, "profiles": ["cimd
     {"condition": "client-id-uri", "configuration": {"client-id-uri-allow-permitted-domains": ["claude.ai"]}}]}]}
 
 
-def jc_like(device=False, cimd=False):
-    """kaisatsu's answers; `cimd`: the realm has the client-id-uri policy, so a URL client_id signs in."""
+def jc_like(device=False, cimd=False, public=None):
+    """kaisatsu's answers; `cimd`: the realm has the client-id-uri policy, so a URL client_id signs in;
+    `public`: jc's own address when the suite reaches it through a forward (jc-dev), the issuer and
+    portal-ui's one registered redirect."""
     def answer(h):
         base = f"http://127.0.0.1:{h.server.server_port}"
         u = urllib.parse.urlparse(h.path)
+        site = public or base
         if u.path == f"/id/realms/{REALM}/.well-known/openid-configuration":
-            return 200, "application/json", json.dumps(kaisatsu_doc(f"{base}/id/realms/{REALM}", device)).encode()
+            return 200, "application/json", json.dumps(kaisatsu_doc(f"{site}/id/realms/{REALM}", device)).encode()
         if u.path == "/.well-known/oauth-authorization-server":
             meta = {k: (v.replace(PROD["gatewayIssuer"], base) if isinstance(v, str) else v)
                     for k, v in PROD["gatewayMetadata"].items()}
@@ -104,6 +107,9 @@ def jc_like(device=False, cimd=False):
             client = urllib.parse.parse_qs(u.query).get("client_id", [""])[0]
             if client.startswith("https://") and not cimd:
                 return 401, "application/json", b'{"error":"invalid_client","error_description":"unknown client_id"}'
+            redirect = urllib.parse.parse_qs(u.query).get("redirect_uri", [""])[0]
+            if client == "portal-ui" and redirect != site + "/":
+                return 400, "application/json", b'{"error":"invalid_request","error_description":"invalid redirect_uri"}'
             return 200, "text/html", LOGIN
         return 404, "text/plain", b"no"
     return answer
@@ -186,6 +192,30 @@ def test_the_suite_on_a_jc_like_stub_fails_only_the_missing_device_grant(tmp_pat
     assert rows["live"]["result"] == "skip" and "--state" in rows["live"]["reason"]
     rows = run_suite(tmp_path / "fixed", jc_like(device=True), monkeypatch)
     assert not [i for i, r in rows.items() if r["result"] == "fail" and i.startswith("discovery.")]
+
+
+def test_on_a_forward_to_jc_the_portal_ui_redirect_is_jcs_public_address(tmp_path, monkeypatch):
+    """jc-dev smoke 2026-11-15T050045Z: through the loopback forward the suite asked portal-ui's
+    authorize with the forward's own address as redirect_uri, which the realm never registered
+    (400 invalid redirect_uri); prod is asked with its public address (T-6969)."""
+    rows = run_suite(tmp_path, jc_like(device=True, public="https://jc.smoke.invalid"), monkeypatch)
+    assert rows["authorize.portal-ui"]["result"] == "pass", rows["authorize.portal-ui"]
+    assert not [i for i, r in rows.items() if r["result"] == "fail"]
+
+
+def test_the_public_origin_is_the_issuers_only_when_it_differs_from_the_base():
+    def doc(issuer):
+        def answer(h):
+            return 200, "application/json", json.dumps({"issuer": issuer(h)}).encode()
+        return answer
+    for issuer, want in ((lambda h: "https://jc.smoke.invalid/id/realms/dev", "https://jc.smoke.invalid"),
+                         (lambda h: f"http://127.0.0.1:{h.server.server_port}/id/realms/dev", None),
+                         (lambda h: "javascript:alert(1)", None)):
+        srv = stub(doc(issuer))
+        try:
+            assert suite.public_origin(suite.Http(f"http://127.0.0.1:{srv.server_port}"), "dev") == want
+        finally:
+            srv.shutdown()
 
 
 def test_a_url_client_id_signs_in_only_where_the_realm_has_the_cimd_policy(tmp_path, monkeypatch):

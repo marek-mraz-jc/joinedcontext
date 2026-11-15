@@ -69,7 +69,12 @@ fn endpoint(slug: &str, hidden: &[&str]) -> Endpoint {
         project: "trips".to_owned(),
         audience: Audience::Organization,
         allowed_projects: Vec::new(),
-        representations: vec![Representation::NgsiLd, Representation::Csv],
+        representations: vec![
+            Representation::NgsiLd,
+            Representation::Csv,
+            Representation::Odata,
+            Representation::OgcFeatures,
+        ],
         rate_limit: None,
         creates: None,
         file_limits: None,
@@ -180,6 +185,80 @@ async fn a_read_of_a_personal_attribute_names_reader_endpoint_and_entities_never
         (reads[1], "urn:ngsi-ld:BikeTrip:t1,urn:ngsi-ld:BikeTrip:t2"),
     ] {
         for named in [PERSONAL, "BikeTrip.rider", entities, "jana"] {
+            assert!(line.contains(named), "{named} missing: {line}");
+        }
+    }
+    assert!(!log.contains(RIDER), "a value reached the log: {log}");
+}
+
+/// S-3-09: a read through the view's other surfaces leaves the same line: OData and OGC API -
+/// Features name the Entities their answer holds, the Endpoint without a personal attribute
+/// logs nothing, and no value reaches the log.
+#[tokio::test]
+async fn a_personal_read_through_odata_and_ogc_names_its_entities() {
+    let captured = common::Log::capture();
+    // One page the stub answers every hop with: an OData `value` and a GeoJSON collection.
+    let page = json!({"value": [
+        {"id": "urn:ngsi-ld:BikeTrip:o1", "rider": RIDER},
+        {"id": "urn:ngsi-ld:BikeTrip:o2", "rider": RIDER}
+    ], "type": "FeatureCollection", "features": [
+        {"type": "Feature", "id": "urn:ngsi-ld:BikeTrip:g1",
+         "properties": {"rider": RIDER}, "geometry": null}
+    ]});
+    let broker =
+        common::BrokerStub::start(vec![page.clone(), page.clone(), page.clone(), page]).await;
+    let realm = common::Realm::new();
+    let app = router(Arc::new(
+        Gateway::new(
+            Broker::new(&broker.url),
+            Box::new(PolicyPdp),
+            "banskabystrica.sk",
+        )
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
+        .serve(vec![endpoint(PERSONAL, &[]), endpoint(PLAIN, &["rider"])])
+        .authenticate(
+            Arc::new(realm.verifier()),
+            ServiceAccounts::new(),
+            Some("https://city.example".to_owned()),
+        ),
+    ));
+    let token = realm.mint(&json!({
+        "iss": common::ISSUER,
+        "sub": "0f5a",
+        "aud": "context-gateway",
+        "preferred_username": "jana",
+        "groups": ["/trips"],
+        "realm_access": { "roles": ["steward"] },
+        "exp": common::in_seconds(300),
+        "iat": common::in_seconds(-10),
+    }));
+    for (slug, path) in [
+        (PERSONAL, "odata/v4/BikeTrip"),
+        (PERSONAL, "ogc/features/collections/BikeTrip/items"),
+        (PLAIN, "odata/v4/BikeTrip"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/endpoint/{slug}/{path}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("a request"),
+            )
+            .await
+            .expect("the gateway answers");
+        assert_eq!(response.status(), StatusCode::OK, "{slug}/{path}");
+    }
+    let log = captured.text();
+    let reads: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains("personal attributes read"))
+        .collect();
+    assert_eq!(reads.len(), 2, "one line per personal read: {log}");
+    let entities = "urn:ngsi-ld:BikeTrip:g1,urn:ngsi-ld:BikeTrip:o1,urn:ngsi-ld:BikeTrip:o2";
+    for (line, surface) in [(reads[0], "OData"), (reads[1], "OGC API Features")] {
+        for named in [PERSONAL, surface, entities, "jana"] {
             assert!(line.contains(named), "{named} missing: {line}");
         }
     }
