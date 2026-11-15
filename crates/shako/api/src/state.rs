@@ -102,6 +102,12 @@ impl ShakoState {
         self.owner_to_org.write().insert(owner_s, org_id);
     }
 
+    /// The Organization an owner name is bound to, if any.
+    #[must_use]
+    pub fn owner_org(&self, owner: &str) -> Option<OrgId> {
+        self.owner_to_org.read().get(owner).copied()
+    }
+
     #[must_use]
     pub fn resolve_org_for_owner(&self, owner: &str, caller: &Subject) -> OrgId {
         if let Some(&oid) = self.owner_to_org.read().get(owner) {
@@ -296,6 +302,27 @@ pub async fn read_body_bounded(body: Body, limit_bytes: usize) -> ShakoResult<Ve
 
 /// Streams a `Vec<u8>` produced on a blocking task to an axum `Body` in 64 KiB chunks through
 /// a bounded `tokio::sync::mpsc::channel(4)` (00-task.md section 2, S22).
+/// Streams an open file in 64 KiB chunks, so a large blob never sits in memory whole (PRF-04).
+pub fn stream_file_in_64k_chunks(mut file: tokio::fs::File) -> Body {
+    use tokio::io::AsyncReadExt as _;
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(4);
+    tokio::spawn(async move {
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            let item = match file.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => Ok(Bytes::copy_from_slice(&buf[..n])),
+                Err(e) => Err(e),
+            };
+            let failed = item.is_err();
+            if tx.send(item).await.is_err() || failed {
+                break;
+            }
+        }
+    });
+    Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx))
+}
+
 pub fn stream_bytes_in_64k_chunks(bytes: Vec<u8>) -> Body {
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(4);
     tokio::spawn(async move {
