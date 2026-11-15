@@ -959,6 +959,20 @@ pub(crate) async fn entity(
             version,
         ));
     }
+    // ODA-04: an option that pages, orders or counts a collection is refused, never dropped
+    if options.top.is_some()
+        || options.skip.is_some()
+        || options.orderby.is_some()
+        || options.count.is_some()
+        || options.skiptoken.is_some()
+    {
+        return Err(ODataErrorResponse::new(
+            StatusCode::BAD_REQUEST,
+            "BadRequest",
+            "$top, $skip, $orderby, $count and $skiptoken apply to a collection, not one Entity",
+        )
+        .with_version(version));
+    }
     // `$compute` alone: its values over the one Entity
     let computing = Translated {
         annotate: annotated(headers),
