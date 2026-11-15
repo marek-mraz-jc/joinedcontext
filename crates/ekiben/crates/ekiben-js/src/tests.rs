@@ -234,6 +234,34 @@ async fn a_spent_run_budget_runs_no_script() {
     assert!(flag(&out[0]).contains("max_cpu_time_ms_per_run"));
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn scripts_take_turns_for_a_quarter_of_the_cores() {
+    // Twice the slots plus one spins of 50 ms each: run all at once they end in about 50 ms,
+    // in turns of `slots` they need three turns.
+    let slots = script_slots().available_permits();
+    let p = Arc::new(processor(
+        json!({ "code": "while (true) {}", "timeout_ms": 50 }),
+    ));
+    let started = Instant::now();
+    let runs: Vec<_> = (0..2 * slots + 1)
+        .map(|_| {
+            let p = p.clone();
+            tokio::spawn(async move {
+                p.process_batch(&proc_ctx(), vec![Part::from_str("x")])
+                    .await
+            })
+        })
+        .collect();
+    for r in runs {
+        r.await.expect("joins").expect("runs");
+    }
+    let took = started.elapsed();
+    assert!(
+        took >= Duration::from_millis(140),
+        "{slots} slots, {took:?}"
+    );
+}
+
 #[test]
 fn lint_names_what_ekiben_refuses() {
     let errs = lint(&json!({"file": "a.js", "global_folders": ["/x"], "timeout_ms": 500}));

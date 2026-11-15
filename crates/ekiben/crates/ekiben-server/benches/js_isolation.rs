@@ -16,7 +16,10 @@ use ekiben_core::{
 use ekiben_server::build_full_registry;
 use tokio::sync::watch;
 
-const CALLS: usize = 2000;
+const CALLS: usize = 400;
+/// Messages per victim batch: enough work (about a millisecond) that a thread's wake-up jitter
+/// of a few microseconds does not decide the percentile.
+const BATCH: usize = 200;
 const ROUNDS: usize = 5;
 
 fn component(v: serde_json::Value) -> ComponentConfig {
@@ -87,9 +90,9 @@ fn main() {
         let mut took: Vec<Duration> = rt.block_on(async {
             let mut took = Vec::with_capacity(CALLS);
             for _ in 0..CALLS {
-                let batch = vec![Part::from_str(
-                    r#"{"id":"p-1","name":"  station  ","score":21}"#,
-                )];
+                let batch: Vec<Part> = (0..BATCH)
+                    .map(|_| Part::from_str(r#"{"id":"p-1","name":"  station  ","score":21}"#))
+                    .collect();
                 let at = Instant::now();
                 let res = execute_all(&pctx, &victim, vec![batch])
                     .await
@@ -124,7 +127,7 @@ fn main() {
         v[v.len() / 2]
     };
     let base = (median(&mut p50[0]), median(&mut p99[0]));
-    println!("workers {workers}, {CALLS} calls x {ROUNDS} rounds, median of the rounds");
+    println!("workers {workers}, {CALLS} calls of {BATCH} messages x {ROUNDS} rounds, median of the rounds");
     for (i, n) in cases.iter().enumerate() {
         let (a, b) = (median(&mut p50[i]), median(&mut p99[i]));
         println!(

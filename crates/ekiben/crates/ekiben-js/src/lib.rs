@@ -22,7 +22,9 @@
 //! the batch's time to the run (`StreamMetrics::charge_processing`), and inside a batch no script
 //! runs past what the run has left, so the messages after the budget is spent are flagged unrun.
 //! ponytail: workers running batches in parallel each see the budget left when their batch
-//! started, so a run overshoots by at most one budget per worker.
+//! started, so a run overshoots by at most one budget per worker. At most a quarter of the
+//! process's cores run scripts at once ([`script_slots`]); a batch waiting for a slot is charged
+//! for the wait as for any time inside a processor.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -359,6 +361,18 @@ fn budget_spent(budget: Duration) -> String {
     )
 }
 
+/// Scripts that may run at once in this process: a quarter of the cores, at least one. A
+/// stream's workers run its batches in parallel, so without this one stream spinning every
+/// script to its deadline holds a core per worker; js_isolation measured the other streams' p99
+/// going from 1.2 ms to 9-13 ms with eight spinning on eight workers (T-7082).
+fn script_slots() -> &'static tokio::sync::Semaphore {
+    static SLOTS: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+    SLOTS.get_or_init(|| {
+        let cores = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+        tokio::sync::Semaphore::new((cores / 4).max(1))
+    })
+}
+
 /// The batch after the script ran on each message: the flags to set and the lines to log.
 type Outcome = (Batch, Vec<(usize, String)>, Vec<(String, String)>);
 
@@ -427,6 +441,10 @@ impl Processor for JavascriptProcessor {
             .max_cpu_time_ms_per_run
             .saturating_mul(1_000_000);
         let budget = Duration::from_nanos(limit_ns.saturating_sub(ctx.metrics.processing_ns()));
+        let _slot = script_slots()
+            .acquire()
+            .await
+            .map_err(|e| CoreError::other(format!("javascript: {e}")))?;
         let (mut batch, errors, logs) =
             tokio::task::spawn_blocking(move || run_batch(&code, limits, budget, batch))
                 .await
