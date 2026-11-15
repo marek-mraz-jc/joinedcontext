@@ -6704,6 +6704,7 @@
       "failed": "Version {version} wird nicht veröffentlicht, solange {failed} ihrer Tests fehlschlagen: {names}. Bitten Sie den Assistenten, sie zu beheben."
     },
     "publishOver": "Dieser Lauf ist beendet und hat nichts zu veröffentlichen.",
+    "publishNotReady": "Noch ist keine Version zum Veröffentlichen bereit: Veröffentlichen wird möglich, sobald ihre Vorschau gebaut ist und ihre Tests bestehen.",
     "failedNext": "Es wurde nichts veröffentlicht. Bauen Sie die App auf der Seite Assistent neu.",
     "failedOpen": "Neu bauen"
   },

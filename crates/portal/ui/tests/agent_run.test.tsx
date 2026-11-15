@@ -356,13 +356,15 @@ describe("watching a run", () => {
     await screen.findByRole("heading", { name: APP_TITLE });
 
     const publish = screen.getByRole("button", { name: en.agentRun.publish });
-    expect(publish).toBeDisabled();
+    // Still building: the button keeps its place in the tab order and says why it waits (UI-44).
+    expect(publish).toHaveAttribute("aria-disabled", "true");
+    expect(publish).toHaveAccessibleDescription(en.agentRun.publishNotReady);
 
     setRun({ ...RUN, status: "previewing", previewUrl: "/apps/ovzdusie-dnes-preview/" });
     await emit("status", { seq: 8, status: "previewing" });
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: en.agentRun.publish })).toBeEnabled();
+      expect(screen.getByRole("button", { name: en.agentRun.publish })).not.toHaveAttribute("aria-disabled");
     });
   });
 
@@ -370,11 +372,11 @@ describe("watching a run", () => {
     const previewUrl = `/api/v1/projects/${PROJECT}/agent-runs/${RUN_ID}/preview?v=2`;
     renderRun({ run: { ...RUN, status: "previewing", previewUrl } });
     await screen.findByRole("heading", { name: APP_TITLE });
-    expect(screen.getByRole("button", { name: en.agentRun.publish })).toBeEnabled();
+    expect(screen.getByRole("button", { name: en.agentRun.publish })).not.toHaveAttribute("aria-disabled");
 
     await emit("tests", { seq: 10, version: 2, outcome: "running" });
     const publish = await screen.findByRole("button", { name: en.agentRun.publish });
-    await waitFor(() => expect(publish).toBeDisabled());
+    await waitFor(() => expect(publish).toHaveAttribute("aria-disabled", "true"));
     expect(publish).toHaveAccessibleDescription(en.agentRun.testsHold.running.replace("{version}", "2"));
     expect(screen.getByText(en.agentRun.line.testsRunning.replace("{version}", "2"))).toBeInTheDocument();
 
@@ -389,12 +391,12 @@ describe("watching a run", () => {
     await waitFor(() =>
       expect(publish).toHaveAccessibleDescription(/src\/App\.test\.tsx › lists the stations/),
     );
-    expect(publish).toBeDisabled();
+    expect(publish).toHaveAttribute("aria-disabled", "true");
 
     // An older version's result is past; the newest of the version on screen decides.
     await emit("tests", { seq: 12, version: 1, outcome: "failed", failed: 4 });
     await emit("tests", { seq: 13, version: 2, outcome: "passed", passed: 3, failed: 0 });
-    await waitFor(() => expect(publish).toBeEnabled());
+    await waitFor(() => expect(publish).not.toHaveAttribute("aria-disabled"));
     expect(publish).not.toHaveAttribute("aria-describedby");
   });
 
@@ -407,7 +409,7 @@ describe("watching a run", () => {
     expect(
       await screen.findByText(/Version 3 was not tested here: this installation has no test sandbox/),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: en.agentRun.publish })).toBeEnabled();
+    expect(screen.getByRole("button", { name: en.agentRun.publish })).not.toHaveAttribute("aria-disabled");
   });
 
   it("publishes an unattended run that waits for approval with its preview built (AG-69)", async () => {
@@ -416,7 +418,7 @@ describe("watching a run", () => {
     });
     await screen.findByRole("heading", { name: APP_TITLE });
 
-    expect(screen.getByRole("button", { name: en.agentRun.publish })).toBeEnabled();
+    expect(screen.getByRole("button", { name: en.agentRun.publish })).not.toHaveAttribute("aria-disabled");
   });
 
   it("links the source in Git and approves its own publication in place as an administrator (AP-71, PF-58)", async () => {
@@ -440,7 +442,7 @@ describe("watching a run", () => {
     );
     // Already published: the run's Change stands for it, so Publish is not offered twice.
     expect(await screen.findByRole("button", { name: en.agentRun.publication.approve })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: en.agentRun.publish })).toBeDisabled();
+    expect(screen.getByRole("button", { name: en.agentRun.publish })).toHaveAttribute("aria-disabled", "true");
 
     await userEvent.click(screen.getByRole("button", { name: en.agentRun.publication.approve }));
     await waitFor(() => {
@@ -565,7 +567,7 @@ describe("watching a run", () => {
     await screen.findByRole("heading", { name: APP_TITLE });
 
     expect(screen.queryByRole("button", { name: en.agentRun.cancel })).toBeNull();
-    expect(screen.getByRole("button", { name: en.agentRun.publish })).toBeDisabled();
+    expect(screen.getByRole("button", { name: en.agentRun.publish })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByText(en.agentRun.states.cancelled)).toBeInTheDocument();
   });
 
