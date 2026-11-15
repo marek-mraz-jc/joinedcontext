@@ -77,6 +77,9 @@ def test_every_suite_runs_on_exactly_one_shard_and_logs_on_each():
     assert ran.pop("logs") == [m["shard"] for m in matrix()]
     split = {"ui"}  # by persona, ui's rows below
     assert {r: len(v) for r, v in ran.items() if r not in split} == {r: 1 for r in ran if r not in split}
+    # restore compares before and after: on a young rehearsal the Pipelines' first runs write new
+    # types in between (runs 43683591053, 43685936569), so it follows pipelines on their shard
+    assert ran["restore"] == ran["pipelines"] and plan.index("pipelines") < plan.index("restore")
     ui = [m["with"] for m in matrix() if m["shard"] in ran["ui"]]
     personas = [x for w in ui for x in w.split("--personas ")[1].split()[0].split(",")]
     assert sorted(personas) == ["admin", "outsider", "viewer"]
