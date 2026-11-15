@@ -304,10 +304,21 @@ async fn explain(
     project: &str,
     input: ExplainInput,
 ) -> Result<Value, OpError> {
+    // The token the MCP door verified carries the caller's Organization claims; a session or a
+    // run has none here, and the session's own ID token stands in for it.
+    let mut headers = axum::http::HeaderMap::new();
+    if let Some(value) = caller
+        .bearer
+        .as_ref()
+        .and_then(|bearer| axum::http::HeaderValue::from_str(&format!("Bearer {}", bearer.0)).ok())
+    {
+        headers.insert(axum::http::header::AUTHORIZATION, value);
+    }
     let Json(explained) = crate::api::access_attributes::explain_attribute(
         as_user(caller),
         State(state.clone()),
         Path((project.to_owned(), input.name)),
+        headers,
         Ok(Query(Asked {
             entity_type: input.entity_type,
             attribute: input.attribute,

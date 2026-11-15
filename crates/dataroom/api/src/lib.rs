@@ -395,6 +395,10 @@ impl DataroomState {
             validator: Some(self.profiles.clone()),
             harvester: Some(self.harvester.clone()),
             sources_by_portal: self.sources_by_portal,
+            branding: Some({
+                let state = self.clone();
+                Arc::new(move |cat: &Catalogue| state.branding_of(cat))
+            }),
         }
     }
 
@@ -1245,7 +1249,8 @@ async fn handle_upload_logo(
         org_id: ctx.org_id,
         catalogue_id: ctx.catalogue_id,
     };
-    let dec = state.authorizer.check(&ctx, Action::Propose, &target);
+    // The logo is part of the theme: Admin on the catalogue, as for `/api/v1/branding`.
+    let dec = state.authorizer.check(&ctx, Action::Admin, &target);
     if !dec.allowed {
         return problem_response(DataroomError::Forbidden(dec.reason));
     }
@@ -1264,9 +1269,28 @@ async fn handle_upload_logo(
         .unwrap_or_else(|e| e.into_inner())
         .insert(fname, asset.clone());
     cat.theme.logo = Some(asset.url_path.clone());
-    if let Err(e) = state.store.upsert_catalogue(cat).await {
-        return problem_response(e);
-    }
+    let saved = match state.store.upsert_catalogue(cat).await {
+        Ok(c) => c,
+        Err(e) => return problem_response(e),
+    };
+    let _ = state
+        .store
+        .record_activity(
+            &ctx,
+            ActivityRow {
+                org_id: ctx.org_id,
+                catalogue_id: ctx.catalogue_id,
+                id: format!("act-{}", Uuid::now_v7()),
+                at: chrono::Utc::now(),
+                actor: ctx.actor_name().to_owned(),
+                operation: "branding.logo".into(),
+                object_type: "Catalogue".into(),
+                object_id: saved.id.to_string(),
+                summary: format!("Uploaded the logo of catalogue {}", saved.name),
+                details: json!({ "logo": asset.url_path }),
+            },
+        )
+        .await;
     let full_url = format!("{}{}", state.mount_prefix(), asset.url_path);
     Json(json!({
         "url": full_url,
@@ -1921,33 +1945,13 @@ async fn dispatch_ui_route(
                 Ok(p) => p,
                 Err(e) => return problem_response(e),
             };
-            if pub_rec
-                .as_ref()
-                .is_some_and(|p| p.state == RecordState::Withdrawn)
-                && ctx.subject.is_anonymous()
-            {
+            // The page and its RDF show what `package_show` shows this caller.
+            if !dataset_shown(&state, &ctx, &cat, &ds, pub_rec.as_ref()) {
                 return problem_response(DataroomError::NotFound(format!(
                     "dataset '{ds_name}' not found"
                 )));
             }
             let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
-            if cat.hidden_datasets.contains_key(&ds.name) {
-                let can_edit = !ctx.subject.is_anonymous()
-                    && state
-                        .authorizer
-                        .check(&ctx, Action::Propose, &target)
-                        .allowed;
-                if !can_edit {
-                    return problem_response(DataroomError::NotFound(format!(
-                        "dataset '{ds_name}' not found"
-                    )));
-                }
-            }
-            if !state.authorizer.check(&ctx, Action::Read, &target).allowed {
-                return problem_response(DataroomError::NotFound(format!(
-                    "dataset '{ds_name}' not found"
-                )));
-            }
 
             let accept = headers.get(header::ACCEPT).and_then(|v| v.to_str().ok());
             if let Some(rdf_fmt) = negotiate_rdf_format(ext, accept) {

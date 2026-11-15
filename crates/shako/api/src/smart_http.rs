@@ -270,7 +270,14 @@ async fn handle_post_receive_pack(
                 &cmd.new_oid.to_string(),
                 &ctx.subject.username,
             );
-            let idem = format!("push:{}:{}:{}", repo.id, cmd.refname, cmd.new_oid);
+            // Each ref move is one event: a branch can return to a commit it held before.
+            let idem = format!(
+                "push:{}:{}:{}:{}",
+                repo.id,
+                cmd.refname,
+                cmd.new_oid,
+                uuid::Uuid::now_v7()
+            );
             let _ =
                 emit_and_dispatch_event(&state, repo.org_id, Some(repo.id), "push", idem, payload)
                     .await;

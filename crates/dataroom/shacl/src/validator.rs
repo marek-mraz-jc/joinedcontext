@@ -13,7 +13,8 @@ use dataroom_core::{
 use dataroom_rdf::turtle::parse_turtle_checked;
 use dataroom_rdf::{ns, RdfGraph, RdfLimits, SubjectNode, Term};
 use regex::RegexBuilder;
-use std::collections::{BTreeMap, BTreeSet};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 const SH: &str = ns::SHACL;
 const SH_LEGACY: &str = "http://www.w3.org/ns/shacl#";
@@ -574,6 +575,10 @@ pub fn validate_graph_against_shapes(
             )]),
         });
     }
+    let eval = Eval {
+        graph: shapes,
+        conforms: RefCell::default(),
+    };
     for shape in shapes.node_shapes.values().filter(|_| usable.is_ok()) {
         let mut focus_nodes: Vec<Term> = Vec::new();
         for class_iri in &shape.target_classes {
@@ -591,7 +596,7 @@ pub fn validate_graph_against_shapes(
         }
 
         for focus in focus_nodes {
-            validate_node_shape(data, shapes, shape, &focus, &mut findings);
+            validate_node_shape(data, &eval, shape, &focus, &mut findings);
         }
     }
 
@@ -621,7 +626,7 @@ pub fn validate_graph_against_shapes(
 
 fn validate_node_shape(
     data: &RdfGraph,
-    shapes: &ShapesGraph,
+    shapes: &Eval<'_>,
     shape: &NodeShape,
     focus: &Term,
     findings: &mut Vec<ShaclFinding>,
@@ -702,7 +707,7 @@ fn validate_node_shape(
 
 fn validate_property_shape(
     data: &RdfGraph,
-    shapes: &ShapesGraph,
+    shapes: &Eval<'_>,
     ps: &PropertyShape,
     focus: &Term,
     is_lang_string_prop: bool,
@@ -838,7 +843,7 @@ fn validate_property_shape(
 #[allow(clippy::too_many_arguments)]
 fn check_value_constraints(
     data: &RdfGraph,
-    shapes: &ShapesGraph,
+    shapes: &Eval<'_>,
     c: &ShapeConstraints,
     focus: &Term,
     val: &Term,
@@ -1136,21 +1141,35 @@ fn check_value_constraints(
     }
 }
 
+/// One validation's shapes graph and the answers of [`conforms_to_shape_ref`] so far: a shape's
+/// verdict on a value depends on nothing else, so shapes that share references (`sh:or` over a
+/// DAG) are checked once per value instead of once per path to them.
+struct Eval<'a> {
+    graph: &'a ShapesGraph,
+    conforms: RefCell<HashMap<(SubjectNode, Term), bool>>,
+}
+
 fn conforms_to_shape_ref(
     data: &RdfGraph,
-    shapes: &ShapesGraph,
+    shapes: &Eval<'_>,
     shape_ref: &SubjectNode,
     val: &Term,
 ) -> bool {
+    let key = (shape_ref.clone(), val.clone());
+    if let Some(known) = shapes.conforms.borrow().get(&key) {
+        return *known;
+    }
     let mut temp_findings = Vec::new();
-    if let Some(ns_item) = shapes.node_shapes.get(shape_ref) {
+    if let Some(ns_item) = shapes.graph.node_shapes.get(shape_ref) {
         validate_node_shape(data, shapes, ns_item, val, &mut temp_findings);
-    } else if let Some(ps_item) = shapes.property_shapes.get(shape_ref) {
+    } else if let Some(ps_item) = shapes.graph.property_shapes.get(shape_ref) {
         validate_property_shape(data, shapes, ps_item, val, false, &mut temp_findings);
     }
-    !temp_findings
+    let conforms = !temp_findings
         .iter()
-        .any(|f| f.severity == ShaclSeverity::Violation)
+        .any(|f| f.severity == ShaclSeverity::Violation);
+    shapes.conforms.borrow_mut().insert(key, conforms);
+    conforms
 }
 
 /// Compiles an `sh:pattern` with its `sh:flags` (XPath `i`, `s`, `m`, `x`, `q`); an unknown flag
@@ -1585,5 +1604,32 @@ mod tests {
         assert!(conforms(""));
         assert!(!conforms("0G"));
         assert!(!conforms("ABC"));
+    }
+
+    /// Shapes that share their references (a DAG) cost one check per shape and value: 28 layers
+    /// of two `sh:or` branches each, every branch failing, answer at once.
+    #[test]
+    fn shared_shape_references_are_checked_once_per_value() {
+        let layers = 28;
+        let mut body = String::from(
+            "ex:Root a sh:NodeShape ; sh:targetNode ex:x ; sh:or ( ex:S1a ex:S1b ) .\n",
+        );
+        for i in 1..layers {
+            for side in ["a", "b"] {
+                body.push_str(&format!(
+                    "ex:S{i}{side} a sh:NodeShape ; sh:or ( ex:S{n}a ex:S{n}b ) .\n",
+                    n = i + 1
+                ));
+            }
+        }
+        for side in ["a", "b"] {
+            body.push_str(&format!(
+                "ex:S{layers}{side} a sh:NodeShape ; sh:nodeKind sh:Literal .\n"
+            ));
+        }
+        let started = std::time::Instant::now();
+        let rep = report(&body, "ex:x ex:p 1 .");
+        assert_eq!(components(&rep), vec!["OrConstraintComponent"]);
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
     }
 }

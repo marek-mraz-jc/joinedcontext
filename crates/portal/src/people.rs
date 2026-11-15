@@ -304,6 +304,31 @@ impl Admin<'_> {
         self.json(&format!("/users/{}", segment(id)?)).await
     }
 
+    /// The id of the one person whose e-mail is exactly `email`, if the realm holds one.
+    pub async fn id_of_email(&self, email: &str) -> Result<Option<String>, PeopleError> {
+        let request = self.request(Method::GET, "/users").query(&[
+            ("email", email),
+            ("exact", "true"),
+            ("max", "2"),
+            ("briefRepresentation", "true"),
+        ]);
+        let found: Vec<KcUser> = self
+            .send(request)
+            .await?
+            .json()
+            .await
+            .map_err(|err| PeopleError::Unreachable(err.to_string()))?;
+        let mut matching = found.into_iter().filter(|user| {
+            user.email
+                .as_deref()
+                .is_some_and(|held| held.trim().eq_ignore_ascii_case(email.trim()))
+        });
+        Ok(match (matching.next(), matching.next()) {
+            (Some(user), None) => Some(user.id),
+            _ => None,
+        })
+    }
+
     /// The raw representation, for a read-modify-write that keeps what the Portal does not edit.
     async fn raw(&self, id: &str) -> Result<Value, PeopleError> {
         self.json(&format!("/users/{}", segment(id)?)).await
@@ -583,6 +608,17 @@ pub fn temporary_password() -> String {
     chars.into_iter().map(char::from).collect()
 }
 
+/// The Keycloak id of the person with the e-mail `email`, as a RoleBinding or Group names people
+/// since ADR-N-061; `None` without a realm, when nobody or more than one person holds it, or when
+/// the realm does not answer, so a check on it stays refused.
+pub async fn realm_id_of(people: Option<&People>, email: &str) -> Option<String> {
+    let people = people.filter(|_| email.contains('@'))?;
+    let found = async { people.admin().await?.id_of_email(email).await }.await;
+    found.unwrap_or_else(|err| {
+        tracing::warn!(?err, "the realm did not name a person by their e-mail");
+        None
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;
