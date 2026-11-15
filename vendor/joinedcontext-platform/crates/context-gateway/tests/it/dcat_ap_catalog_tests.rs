@@ -507,7 +507,7 @@ fn an_open_data_access_policy_prohibits_every_write() {
         "{prohibited:?}"
     );
     assert!(
-        odrl::turtle(&open).contains("odrl:prohibition [ odrl:action ngsi-ld:createEntity"),
+        odrl::turtle(&open).contains("odrl:prohibition [\n    odrl:action ngsi-ld:createEntity"),
         "{}",
         odrl::turtle(&open)
     );
