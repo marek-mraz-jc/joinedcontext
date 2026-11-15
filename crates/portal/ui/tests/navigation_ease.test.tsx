@@ -257,6 +257,19 @@ describe("the shortcuts (T-3242)", () => {
     expect(submitted).toEqual(["dialog"]);
   });
 
+  it("submits no page form the focus is not in: a page's form may propose a Change", () => {
+    page(`<main><form id="page"><input id="name"/></form><button id="elsewhere">x</button></main>`);
+    const submitted: string[] = [];
+    document.getElementById("page")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submitted.push("page");
+    });
+    (document.getElementById("elsewhere") as HTMLButtonElement).focus();
+    expect(shortcut(key({ key: "s", ctrlKey: true }))).toBe(false);
+    expect(submitted).toEqual([]);
+    expect(available()).not.toContain("save");
+  });
+
   it("saves nothing behind an open dialog that holds no form", () => {
     page(`<main><form id="page"></form></main><div role="dialog"><button>x</button></div>`);
     const submitted: string[] = [];

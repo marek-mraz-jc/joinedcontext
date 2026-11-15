@@ -128,6 +128,18 @@ describe("endpointSource", () => {
     expect(call.body).toEqual({ availableBikeNumber: { type: "Property", value: 10 } });
   });
 
+  it("reads a 207 that left an attribute out as a refusal naming that attribute", async () => {
+    const transport = stubTransport(new Map([
+      ["PATCH /api/endpoint/demo/ngsi-ld/v1/entities/urn%3Angsi-ld%3ABike%3Ahel%3Afi%3A001/attrs", () => ({
+        status: 207,
+        body: { updated: ["https://smartdatamodels.org/name"], notUpdated: [{ attributeName: "https://smartdatamodels.org/dataModel.Transportation/refDevice", reason: "attribute does not exist" }] },
+      })],
+    ]));
+    const source = endpointSource("demo", transport);
+    const write = source.patch!("urn:ngsi-ld:Bike:hel:fi:001", { name: { type: "Property", value: "a" }, refDevice: { type: "Relationship", object: "urn:ngsi-ld:Device:1" } });
+    await expect(write).rejects.toMatchObject({ status: 207, slot: "refDevice", message: "refDevice: attribute does not exist" });
+  });
+
   it("throws SourceError with detail from problem body on 403", async () => {
     const transport = stubTransport(new Map([
       ["GET /api/endpoint/demo/ngsi-ld/v1/entities?type=Bike&options=sysAttrs&count=true&limit=50", () => ({

@@ -9,6 +9,7 @@ import { LifecycleBadge } from "../components/status/LifecycleBadge";
 import { Button, Card, InlineError, PageHeader, PermissionGuard, Term } from "../components/ui";
 import { ResourcePageFailed } from "../components/ui/PageState";
 import { fromRegistrationEnvelope, targetOf } from "./RegistrationsPage";
+import { endpointView } from "../components/ui/safeHref";
 
 const LINK =
   "text-sm text-primary-soft-fg underline hover:no-underline focus:outline-none focus:ring-2 focus:ring-border-focus";
@@ -157,7 +158,7 @@ export function RegistrationPage({ project, name }: { project: string; name: str
               {shape.endpointRef}
             </Link>
           ) : (
-            <span className="break-all font-mono text-caption">{shape.endpoint ?? none}</span>
+            <span className="break-all font-mono text-caption">{(shape.endpoint && endpointView(shape.endpoint).shown) || none}</span>
           )}
         </Row>
         <Row label={t("registrations.page.types")}>{mono(types, none)}</Row>

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
 use ekiben_core::{
@@ -7,6 +7,7 @@ use ekiben_core::{
 use serde_json::Value as JsonValue;
 
 use crate::client::HttpClient;
+use crate::paginate::{self, PaginateConf, Walk};
 
 pub fn register(registry: &Registry) {
     registry.register_input("http_client", |conf, ctx| {
@@ -24,6 +25,11 @@ pub struct HttpClientInput {
     prev_response: Batch,
     queued_stream_parts: Vec<Part>,
     connected: bool,
+    /// ekiben extension `paginate` (T-7056): one page per read, the input ends with the walk.
+    paginate: Option<Arc<PaginateConf>>,
+    walk: Option<Walk>,
+    /// The first nack a page got: the run is then incomplete.
+    failed: Arc<Mutex<Option<String>>>,
 }
 
 impl HttpClientInput {
@@ -41,6 +47,18 @@ impl HttpClientInput {
             _ => None,
         };
 
+        let paginate = conf
+            .config
+            .get("paginate")
+            .filter(|v| !v.is_null())
+            .map(|v| PaginateConf::from_json(v, &ctx.blobl_env))
+            .transpose()?;
+        if paginate.is_some() && stream_lines {
+            return Err(CoreError::config(
+                "http_client.paginate cannot be combined with stream.enabled",
+            ));
+        }
+
         Ok(Self {
             client,
             drop_empty_bodies,
@@ -48,6 +66,9 @@ impl HttpClientInput {
             prev_response: Vec::new(),
             queued_stream_parts: Vec::new(),
             connected: false,
+            paginate,
+            walk: None,
+            failed: Arc::new(Mutex::new(None)),
         })
     }
 }
@@ -67,6 +88,40 @@ impl Input for HttpClientInput {
         &mut self,
         ctx: &StreamContext,
     ) -> Result<(Batch, AckResponder), CoreError> {
+        if let Some(conf) = &self.paginate {
+            // ponytail: the last page's nack can land after the input ended; the runner awaits
+            // each write before the next read, so it is in by then in practice. Upgrade path:
+            // hold EndOfInput until the outstanding page acks drained.
+            let nacked = || {
+                self.failed
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .take()
+                    .map(|e| CoreError::other(format!("paginate: a page was not delivered: {e}")))
+            };
+            if let Some(e) = nacked() {
+                return Err(e);
+            }
+            let walk = self.walk.get_or_insert_with(|| Walk::new(conf.clone()));
+            let page =
+                paginate::next_page(&self.client, walk, &[], &ctx.org, &ctx.resources).await?;
+            return match page {
+                Some(part) => {
+                    let failed = self.failed.clone();
+                    let ack = AckResponder::from_fn(move |err| {
+                        if let Some(e) = err {
+                            failed
+                                .lock()
+                                .unwrap_or_else(PoisonError::into_inner)
+                                .get_or_insert(e.message);
+                        }
+                    });
+                    Ok((vec![part], ack))
+                }
+                None => Err(nacked().unwrap_or(CoreError::EndOfInput)),
+            };
+        }
+
         if !self.queued_stream_parts.is_empty() {
             let p = self.queued_stream_parts.remove(0);
             return Ok((vec![p], AckResponder::noop()));

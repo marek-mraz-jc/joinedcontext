@@ -19,6 +19,8 @@ use serde_json::Value as JsonValue;
 use tokio::sync::Mutex as AsyncMutex;
 use url::Url;
 
+use crate::paginate::PageRequest;
+
 pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
 pub const MAX_REDIRECTS: usize = 5;
 
@@ -468,6 +470,13 @@ impl HttpClient {
         &self.raw_url
     }
 
+    /// The configured `url` interpolated against `batch`.
+    pub fn resolve_url(&self, batch: &[Part]) -> Result<String, CoreError> {
+        self.url
+            .resolve_string(0, &PartsView(batch))
+            .map_err(|e| CoreError::other(format!("url interpolation error: {e}")))
+    }
+
     fn check_status(&self, code: u16) -> (bool, RetryStrategy) {
         if self.drop_on.contains(&code) {
             return (false, RetryStrategy::NoRetry);
@@ -615,13 +624,14 @@ impl HttpClient {
         &self,
         ref_batch: &[Part],
         batch_as_multipart: bool,
+        page: Option<&PageRequest>,
         org: &OrgContext,
     ) -> Result<(reqwest::RequestBuilder, String, Option<String>), CoreError> {
         let view = PartsView(ref_batch);
-        let resolved_url_str = self
-            .url
-            .resolve_string(0, &view)
-            .map_err(|e| CoreError::other(format!("url interpolation error: {e}")))?;
+        let resolved_url_str = match page {
+            Some(p) => p.url.to_string(),
+            None => self.resolve_url(ref_batch)?,
+        };
 
         let parsed_url = validate_resolved_url(&resolved_url_str, org)?;
         org.admit_http_request().await;
@@ -653,6 +663,9 @@ impl HttpClient {
                 has_content_type = true;
             }
             req = req.header(k, val);
+        }
+        for (k, v) in page.map(|p| p.headers.as_slice()).unwrap_or_default() {
+            req = req.header(k, v);
         }
 
         if let Some(first) = ref_batch.first() {
@@ -749,11 +762,26 @@ impl HttpClient {
     /// Executes an HTTP request with retries, rate limiting, and response size cap.
     pub async fn send(
         &self,
-        mut send_batch: Batch,
+        send_batch: Batch,
         batch_as_multipart: bool,
         org: &OrgContext,
         resources: &ResourceManager,
     ) -> Result<Batch, CoreError> {
+        self.send_page(send_batch, batch_as_multipart, None, org, resources)
+            .await
+            .map(|(batch, _)| batch)
+    }
+
+    /// [`Self::send`] with a page's URL and headers in place of the configured URL, answering
+    /// the response headers too (`paginate`).
+    pub async fn send_page(
+        &self,
+        mut send_batch: Batch,
+        batch_as_multipart: bool,
+        page: Option<&PageRequest>,
+        org: &OrgContext,
+        resources: &ResourceManager,
+    ) -> Result<(Batch, reqwest::header::HeaderMap), CoreError> {
         for p in &mut send_batch {
             let _ = p.as_bytes();
         }
@@ -764,7 +792,7 @@ impl HttpClient {
         loop {
             self.wait_rate_limit(org, resources, &send_batch).await?;
             let (req_builder, redacted_url, request_id) = self
-                .build_request(&send_batch, batch_as_multipart, org)
+                .build_request(&send_batch, batch_as_multipart, page, org)
                 .await?;
 
             match req_builder.send().await {
@@ -783,7 +811,8 @@ impl HttpClient {
                         {
                             tracing::info!(request_id = %id, url = %redacted_url, status = code, "http_client: jc's listener answered; each call of this stream is X-Request-Id {}-<n>", self.run);
                         }
-                        return Ok(self.response_to_batch(code, &headers, body_bytes));
+                        let batch = self.response_to_batch(code, &headers, body_bytes);
+                        return Ok((batch, headers));
                     }
 
                     let status_err = UnexpectedHttpStatusError {
