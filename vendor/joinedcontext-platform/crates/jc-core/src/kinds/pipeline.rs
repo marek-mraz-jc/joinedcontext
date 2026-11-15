@@ -109,6 +109,36 @@ pub struct PipelineSpec {
     /// deleted, as with `mode: never`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_deletes: Option<super::pipeline_source_deletes::SourceDeletes>,
+    /// Published Script versions applied to every record, or to records of some types
+    /// (PL-119); `v1alpha2`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scripts: Vec<AppliedScript>,
+}
+
+/// The most scripts one pipeline applies to every record (PL-119).
+pub const MAX_APPLIED_SCRIPTS: usize = 8;
+
+/// A Script version a pipeline applies to every record (PL-119).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AppliedScript {
+    /// The published version, e.g. `{name: drop-test-rows, version: 1.0.0}`.
+    pub script_ref: super::script::ScriptRef,
+    /// Where it runs: `steps-start` (before the first step) or `before-output` (after the last).
+    pub apply_to: ApplyTo,
+    /// The entity types it runs for, e.g. `[ParkingSpot]`; absent, every record.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub types: Vec<String>,
+}
+
+/// Where an [`AppliedScript`] runs among the pipeline's steps (PL-119).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ApplyTo {
+    /// Before the first step, on the record as the source sent it.
+    StepsStart,
+    /// After the last step, on the record about to be written.
+    BeforeOutput,
 }
 
 /// The longest expiry window, in hours: a year (PL-64).
@@ -350,6 +380,10 @@ pub struct Compute {
     /// The cubes of a `datacube` step (PL-112).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub datacube: Option<Box<crate::datacube::DatacubeStep>>,
+    /// The published Script version a `script` step runs (PL-119), e.g.
+    /// `{name: sjtsk-to-wgs84, version: 1.0.0}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_ref: Option<super::script::ScriptRef>,
 }
 
 impl Compute {
@@ -386,6 +420,9 @@ pub enum ComputeKind {
     Kpi,
     /// JSON-stat 2.0 statistical cubes (PL-112), rendered to a mapping by jc-core.
     Datacube,
+    /// A published version of a stored [`Script`][crate::kinds::Script] (PL-119), rendered by
+    /// the reconciler as one sandboxed `javascript` processor.
+    Script,
 }
 
 impl ComputeKind {
@@ -405,6 +442,7 @@ impl ComputeKind {
             Self::Container => "container",
             Self::Kpi => "kpi",
             Self::Datacube => "datacube",
+            Self::Script => "script",
         }
     }
 }
@@ -994,7 +1032,23 @@ impl PipelineSpec {
             if let Some(source) = &self.source {
                 validate_source(source)?;
             }
+            if !self.scripts.is_empty() {
+                return Err(Error::Name {
+                    field: "spec.scripts",
+                    value: String::new(),
+                    reason: "scripts apply to a pipeline written with `sources`, `steps` and \
+                             `outputs` (PL-119)",
+                });
+            }
             if let Some(compute) = &self.compute {
+                if compute.kind == ComputeKind::Script {
+                    return Err(Error::Name {
+                        field: "spec.compute.kind",
+                        value: "script".to_owned(),
+                        reason: "a script step is written in `steps` of a pipeline with `sources` \
+                                 and `outputs` (PL-119)",
+                    });
+                }
                 if compute.kind == ComputeKind::Kpi {
                     return Err(Error::Name {
                         field: "spec.compute.kind",
@@ -1683,6 +1737,35 @@ fn validate_compute(c: &Compute, own: &[&str]) -> Result<()> {
     if let Some(step) = &c.datacube {
         step.validate()?;
     }
+    match (&c.script_ref, c.kind == ComputeKind::Script) {
+        (None, true) => {
+            return Err(Error::Name {
+                field: "spec.steps.scriptRef",
+                value: String::new(),
+                reason: "a `script` step names the published version it runs, e.g. \
+                         `scriptRef: {name: sjtsk-to-wgs84, version: 1.0.0}` (PL-119)",
+            })
+        }
+        (Some(_), false) => {
+            return Err(Error::Name {
+                field: "spec.steps.scriptRef",
+                value: c.kind.to_string(),
+                reason:
+                    "a `script` step carries `scriptRef`, and only a `script` step does (PL-119)",
+            })
+        }
+        (Some(r), true) => {
+            r.validate("spec.steps.scriptRef")?;
+            if c.module.is_some() || c.function.is_some() || c.mapping_ref.is_some() {
+                return Err(Error::Name {
+                    field: "spec.steps",
+                    value: "script".to_owned(),
+                    reason: "a `script` step carries `scriptRef` alone (PL-119)",
+                });
+            }
+        }
+        (None, false) => {}
+    }
     if let Some(ref mapping) = c.bloblang {
         if c.kind != ComputeKind::Bloblang {
             return Err(Error::Name {
@@ -1788,8 +1871,43 @@ impl PipelineSpec {
             }
         }
         validate_steps("spec.steps", &self.steps, &own, self.is_scheduled())?;
+        self.validate_scripts()?;
         self.validate_kpi()?;
         self.validate_routes()
+    }
+
+    /// `spec.scripts` (PL-119): at most eight, each reference well formed, `before-output` only
+    /// without routes, each named type an entity type.
+    fn validate_scripts(&self) -> Result<()> {
+        if self.scripts.len() > MAX_APPLIED_SCRIPTS {
+            return Err(Error::Name {
+                field: "spec.scripts",
+                value: self.scripts.len().to_string(),
+                reason: "a pipeline applies at most 8 scripts (PL-119)",
+            });
+        }
+        for applied in &self.scripts {
+            applied.script_ref.validate("spec.scripts.scriptRef")?;
+            if applied.apply_to == ApplyTo::BeforeOutput && !self.routes.is_empty() {
+                return Err(Error::Name {
+                    field: "spec.scripts.applyTo",
+                    value: "before-output".to_owned(),
+                    reason: "a pipeline with routes writes after each route's steps: put the \
+                             script as a step of each route instead (PL-119)",
+                });
+            }
+            if applied.types.len() > EXPIRY_MAX_TYPES {
+                return Err(Error::Name {
+                    field: "spec.scripts.types",
+                    value: applied.types.len().to_string(),
+                    reason: "a script names at most 20 types (PL-119)",
+                });
+            }
+            for entity_type in &applied.types {
+                names::validate_entity_type(entity_type)?;
+            }
+        }
+        Ok(())
     }
 
     /// A `kpi` step (PL-102, PL-103): the only step, no routes, over two to five named Endpoint
@@ -2011,5 +2129,84 @@ mod runner_registry_tests {
         .expect_err("javascript nested in try is refused")
         .to_string();
         assert!(nested.contains("`javascript` inside `try`"), "{nested}");
+    }
+}
+
+#[cfg(test)]
+mod script_step_tests {
+    use super::PipelineSpec;
+    use serde_json::{json, Value};
+
+    fn spec(extra: Value) -> PipelineSpec {
+        let mut spec = json!({
+            "class": "resident",
+            "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "feed" } }],
+            "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:air:intake" }]
+        });
+        spec.as_object_mut()
+            .expect("object")
+            .extend(extra.as_object().expect("object").clone());
+        serde_json::from_value(spec).expect("parses")
+    }
+
+    fn refusal(extra: Value) -> String {
+        spec(extra).validate().expect_err("refused").to_string()
+    }
+
+    const PIN: &str = r#"{ "name": "flag-ok", "version": "1.0.0" }"#;
+
+    /// PL-119 (T-7083): a script step and an applied script with a well-formed pin are valid.
+    #[test]
+    fn a_pinned_script_step_and_an_applied_script_are_valid() {
+        let pin: Value = serde_json::from_str(PIN).expect("pin");
+        spec(json!({
+            "steps": [{ "kind": "script", "scriptRef": pin }],
+            "scripts": [{ "scriptRef": pin, "applyTo": "before-output", "types": ["AirQualityObserved"] }]
+        }))
+        .validate()
+        .expect("valid");
+    }
+
+    /// PL-119: each broken field is refused by its name.
+    #[test]
+    fn each_broken_script_field_is_refused_by_name() {
+        let pin: Value = serde_json::from_str(PIN).expect("pin");
+        assert!(refusal(json!({ "steps": [{ "kind": "script" }] })).contains("scriptRef"));
+        assert!(refusal(json!({ "steps": [{ "kind": "bloblang", "bloblang": "root = this", "scriptRef": pin }] }))
+            .contains("only a `script` step"));
+        assert!(refusal(
+            json!({ "steps": [{ "kind": "script", "scriptRef": pin, "module": "m" }] })
+        )
+        .contains("`scriptRef` alone"));
+        assert!(refusal(json!({ "steps": [{ "kind": "script", "scriptRef": { "name": "flag-ok", "version": "latest" } }] }))
+            .contains("spec.steps.scriptRef.version"));
+        assert!(refusal(json!({ "scripts": [{ "scriptRef": pin, "applyTo": "steps-start", "types": ["not a type"] }] }))
+            .contains("not a type"));
+        let routed = json!({
+            "scripts": [{ "scriptRef": pin, "applyTo": "before-output" }],
+            "routes": [{ "name": "a", "when": "true", "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:air:intake" }] }]
+        });
+        assert!(refusal(routed).contains("spec.scripts.applyTo"));
+        let nine: Vec<Value> = (0..9)
+            .map(|_| json!({ "scriptRef": pin, "applyTo": "steps-start" }))
+            .collect();
+        assert!(refusal(json!({ "scripts": nine })).contains("at most 8"));
+    }
+
+    /// PL-119: the first shape takes no script.
+    #[test]
+    fn a_first_shape_pipeline_takes_no_script() {
+        let first: PipelineSpec = serde_json::from_value(json!({
+            "class": "resident",
+            "source": { "dataSourceRef": { "kind": "DataSource", "name": "feed" } },
+            "compute": { "kind": "script", "scriptRef": { "name": "flag-ok", "version": "1.0.0" } },
+            "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:air:intake"
+        }))
+        .expect("parses");
+        assert!(first
+            .validate()
+            .expect_err("refused")
+            .to_string()
+            .contains("spec.compute.kind"));
     }
 }

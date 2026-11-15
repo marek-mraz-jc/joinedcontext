@@ -42,6 +42,7 @@ pub mod policy;
 pub mod policy_odrl;
 pub mod portal;
 pub mod role;
+pub mod script;
 pub mod service_account;
 pub mod space;
 pub mod subscription;
@@ -128,9 +129,10 @@ pub use organization::{
     DEFAULT_NAME_COOLDOWN_DAYS, LEGACY_ORGANIZATION_PATH,
 };
 pub use pipeline::{
-    replace_conflicts, Compute, ComputeKind, Expiry, IdMint, Mint, Output, OutputMode,
-    PipelineClass, PipelineOutput, PipelineQuotas, PipelineSource, PipelineSpec, ProcessorStep,
-    ReplaceConflict, SourceQuery, Step, SubscriptionTrigger, TemplatePart, TemporalWindow, Trigger,
+    replace_conflicts, AppliedScript, ApplyTo, Compute, ComputeKind, Expiry, IdMint, Mint, Output,
+    OutputMode, PipelineClass, PipelineOutput, PipelineQuotas, PipelineSource, PipelineSpec,
+    ProcessorStep, ReplaceConflict, SourceQuery, Step, SubscriptionTrigger, TemplatePart,
+    TemporalWindow, Trigger,
 };
 pub use pipeline_history::{AttributeHistory, History, Keep};
 pub use pipeline_lifetime::{AttributeLifetime, End, Lifetime, LifetimeMode};
@@ -148,6 +150,9 @@ pub use portal::{
 pub use role::{
     BindingValidity, Constraint, RoleBindingSpec, RoleSpec, Rule, Subject, SubjectSource, Verb,
     PERSON,
+};
+pub use script::{
+    ScriptLanguage, ScriptLimits, ScriptRef, ScriptSpec, ScriptState, ScriptTest, ScriptVersion,
 };
 pub use service_account::{
     Credential, CredentialKind, KubernetesBinding, Owner, RoleBinding, RoleScope,
@@ -236,6 +241,8 @@ pub type Environment = crate::envelope::ResourceEnvelope<EnvironmentSpec>;
 pub type Group = crate::envelope::ResourceEnvelope<GroupSpec>;
 /// `kind: Portal` as a whole manifest.
 pub type Portal = crate::envelope::ResourceEnvelope<PortalSpec>;
+/// A stored, versioned JavaScript transformation (PL-118).
+pub type Script = crate::envelope::ResourceEnvelope<ScriptSpec>;
 /// `kind: DelegationPolicy` as a whole manifest.
 pub type DelegationPolicy = crate::envelope::ResourceEnvelope<DelegationPolicySpec>;
 /// `kind: ContextBroker` as a whole manifest.

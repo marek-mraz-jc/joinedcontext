@@ -345,6 +345,10 @@ fn compute_processor(
             kind: compute.kind,
             reason: "container compute is a Kubernetes Job, not a Bento processor (PL-35)",
         }),
+        ComputeKind::Script => Err(DerivedError::Elsewhere {
+            kind: compute.kind,
+            reason: "a script step is a stored Script the Portal's reconciler inlines after checking its digest (PL-120)",
+        }),
         ComputeKind::Kpi => Err(DerivedError::Elsewhere {
             kind: compute.kind,
             reason: "a kpi step reads several sources: the Portal's reconciler renders it with jc-core's kpi_join (PL-104)",
