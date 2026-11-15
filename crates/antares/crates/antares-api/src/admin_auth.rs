@@ -164,6 +164,183 @@ fn vouched_subject(names: &[String], st: &AppState, headers: &axum::http::Header
         && (crate::state::in_process_depth() > 0 || from_named_gateway(st, headers))
 }
 
+/// The gateway's word for the caller's home Organization id (`sk_bbsk`),
+/// believed beside `x-jc-member: true` only (EP-188).
+pub const ORGANIZATION_ID_HEADER: &str = "x-jc-organization-id";
+/// The gateway's word for the Organization id of the space the Endpoint
+/// serves, believed on every other vouched request (EP-188).
+pub const SPACE_ORGANIZATION_HEADER: &str = "x-jc-space-organization";
+/// `true` when the gateway admitted the caller as a member of the
+/// Organization of the Endpoint's project (ADR-N-067 2.3).
+const MEMBER_HEADER: &str = "x-jc-member";
+
+/// Why [`organization_admits`] refused a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrganizationRefusal {
+    /// The Tenant is no `{organization id}__{segment}`, or a vouched request
+    /// named none: the answer a malformed Tenant gets.
+    Malformed,
+    /// The Organization the gateway vouched is not the Tenant's: the answer
+    /// an unknown Tenant gets, so the refusal tells nothing of existence.
+    Unknown,
+}
+
+/// The Organization id half of a Tenant `{organization id}__{segment}`
+/// (PF-130): split at the first `__`, so the left half holds no `__`; the
+/// segment holds no `_` and neither half is empty. The full grammar of each
+/// half is the platform's (`jc_core::names::TenantName`); this is the shape
+/// the comparison needs and never a prefix match (`sk_a` is not `sk_ab`).
+#[must_use]
+pub fn tenant_organization(tenant: &str) -> Option<&str> {
+    let (organization, segment) = tenant.split_once("__")?;
+    (!organization.is_empty()
+        && organization.contains('_')
+        && !segment.is_empty()
+        && !segment.contains('_'))
+    .then_some(organization)
+}
+
+/// The one value of header `name`: `None` when absent, repeated or not text,
+/// so two values can never be read as either.
+fn one_header<'a>(headers: &'a axum::http::HeaderMap, name: &str) -> Option<&'a str> {
+    let mut all = headers.get_all(name).iter();
+    match (all.next(), all.next()) {
+        (Some(value), None) => value.to_str().ok(),
+        _ => None,
+    }
+}
+
+/// The Organization check (EP-188, `ANTARES_TENANT_ORGANIZATION=enforce`),
+/// one rule for every door that resolves a client Tenant: a consistency
+/// check between the gateway's two derivations of the Organization, not a
+/// control against a compromised gateway (it sets both).
+///
+/// - Off, or a call this process makes (in-process callers act for a Tenant
+///   the door already checked and send no caller headers): admitted.
+/// - Without a vouched subject (the admin bearer): a named Tenant must have
+///   the `{organization id}__{segment}` shape, else `Malformed`.
+/// - From the gateway: a Tenant is required and must have the shape
+///   (`Malformed`); a member (`x-jc-member: true`) is admitted when
+///   `x-jc-organization-id` equals the Tenant's Organization, every other
+///   caller when `x-jc-space-organization` does; else `Unknown`, counted in
+///   `antares_tenant_organization_refused_total` and logged: it is a gateway
+///   bug every time.
+pub fn organization_admits(
+    st: &AppState,
+    tenant: Option<&str>,
+    headers: &axum::http::HeaderMap,
+) -> Result<(), OrganizationRefusal> {
+    if !st.tenant_organization || crate::state::in_process_depth() > 0 {
+        return Ok(());
+    }
+    let vouched = vouched_subject(&crate::policy::SUBJECT_HEADERS, st, headers);
+    let Some(tenant) = tenant else {
+        return if vouched {
+            Err(OrganizationRefusal::Malformed)
+        } else {
+            Ok(())
+        };
+    };
+    if antares_model::TenantId::is_reserved_str(tenant) && !vouched {
+        return Ok(());
+    }
+    let organization = tenant_organization(tenant).ok_or(OrganizationRefusal::Malformed)?;
+    if !vouched {
+        return Ok(());
+    }
+    let member = one_header(headers, MEMBER_HEADER) == Some("true");
+    let header = if member {
+        ORGANIZATION_ID_HEADER
+    } else {
+        SPACE_ORGANIZATION_HEADER
+    };
+    let vouched_for = one_header(headers, header);
+    if vouched_for == Some(organization) {
+        return Ok(());
+    }
+    metrics::counter!("antares_tenant_organization_refused_total").increment(1);
+    tracing::warn!(
+        tenant_organization = organization,
+        vouched_organization = vouched_for.unwrap_or("<none>"),
+        header,
+        "a gateway request names a Tenant of another Organization (EP-188): refused as an unknown Tenant"
+    );
+    Err(OrganizationRefusal::Unknown)
+}
+
+/// [`organization_admits`] on the NGSI-LD API (EP-188): between
+/// [`subject_or_admin`] and the Tenant existence check, on the one
+/// `NGSILD-Tenant` value the handler reads too. A refusal answers what a
+/// malformed or an unknown Tenant gets there, before any store read or
+/// implicit creation.
+pub async fn organization_layer(State(st): State<AppState>, req: Request, next: Next) -> Response {
+    if !st.tenant_organization {
+        return next.run(req).await;
+    }
+    let named = match crate::negotiate::single_header(req.headers(), "NGSILD-Tenant") {
+        Ok(named) => named,
+        Err(e) => return e.into_response(),
+    };
+    match organization_admits(&st, named.as_deref(), req.headers()) {
+        Ok(()) => next.run(req).await,
+        Err(OrganizationRefusal::Malformed) => {
+            crate::negotiate::ApiError::from(antares_model::NgsiError::BadRequestData(format!(
+                "invalid NGSILD-Tenant value: {:?}",
+                named.as_deref().unwrap_or_default()
+            )))
+            .into_response()
+        }
+        Err(OrganizationRefusal::Unknown) => match named
+            .as_deref()
+            .and_then(|raw| antares_model::TenantId::new(raw).ok())
+        {
+            Some(tenant) => crate::router::nonexistent_tenant(&tenant),
+            None => {
+                crate::negotiate::ApiError::from(antares_model::NgsiError::BadRequestData(format!(
+                    "invalid NGSILD-Tenant value: {:?}",
+                    named.as_deref().unwrap_or_default()
+                )))
+                .into_response()
+            }
+        },
+    }
+}
+
+tokio::task_local! {
+    /// The headers of the request the view root is serving, for
+    /// [`view_admits`]: a view's Tenant is known only once its id is looked up.
+    static VIEW_CALLER: axum::http::HeaderMap;
+}
+
+/// The view root's half of the Organization check (EP-188): keeps the
+/// request's headers in scope while a view surface serves it, so the view
+/// lookup can ask [`view_admits`] on the view's own Tenant. Off, a request
+/// passes as before.
+pub async fn view_organization_layer(
+    State(st): State<AppState>,
+    req: Request,
+    next: Next,
+) -> Response {
+    if !st.tenant_organization {
+        return next.run(req).await;
+    }
+    VIEW_CALLER
+        .scope(req.headers().clone(), next.run(req))
+        .await
+}
+
+/// Whether the caller the view root is serving may see a view of `tenant`
+/// ([`organization_admits`]); a refused one is answered as an unknown view.
+/// Outside a view root request (a lookup this process makes for itself) there
+/// is no caller to check, and the view is served.
+#[must_use]
+pub fn view_admits(st: &AppState, tenant: &str) -> bool {
+    !st.tenant_organization
+        || VIEW_CALLER
+            .try_with(|headers| organization_admits(st, Some(tenant), headers).is_ok())
+            .unwrap_or(true)
+}
+
 /// No gateway named, or the request carries its mesh identity.
 #[cfg(feature = "jc")]
 fn from_named_gateway(st: &AppState, headers: &axum::http::HeaderMap) -> bool {

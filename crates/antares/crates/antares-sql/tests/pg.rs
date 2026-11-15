@@ -1061,6 +1061,15 @@ async fn the_postgres_store_keeps_tenants_apart() {
         (t(format!("isp{run}xb")), t(format!("isp{run}_b"))),
         (t(format!("isq{run}")), t(format!("isq{run}x"))),
         (t(format!("isr{run}")), TenantId::default()),
+        // T-7036 (PF-130): the `{organization}__{segment}` shape, and a
+        // 128-character name.
+        (t(format!("sk_a{run}__x")), t(format!("skxa{run}__x"))),
+        (t(format!("sk_b{run}__x")), t(format!("sk_b{run}__x-y"))),
+        (t(format!("sk_c{run}__x")), t(format!("sk_c{run}b__x"))),
+        (
+            t(format!("{run:0<61}_b__{}", "c".repeat(63))),
+            t(format!("sk_d{run}__x")),
+        ),
     ];
     let store = antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(
         pool.clone(),

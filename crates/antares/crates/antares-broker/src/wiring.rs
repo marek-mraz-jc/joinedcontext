@@ -792,7 +792,7 @@ mod tests {
         assert!(m.tenants().is_empty(), "junk deltas grew the mirror");
 
         // Hostile tenants: not addressable by any request (the header is
-        // validated to [A-Za-z0-9_-]{1,64}), so they may not take memory.
+        // validated to [A-Za-z0-9_-]{1,128}), so they may not take memory.
         for hostile in [
             "a".repeat(4096),
             "../../etc".into(),

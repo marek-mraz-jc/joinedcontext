@@ -46,6 +46,15 @@ fn isolation_pairs() -> Vec<(TenantId, TenantId)> {
         (t("isoxb"), t("iso_b")),
         (t("iso"), t("isox")),
         (t("isonamed"), TenantId::default()),
+        // T-7036 (PF-130): the same traps in the `{organization}__{segment}`
+        // shape, and the longest such name.
+        (t("sk_a__x"), t("skxa__x")),
+        (t("sk_a__x"), t("sk_a__x-y")),
+        (t("sk_a__x"), t("sk_ab__x")),
+        (
+            t(&format!("{}_b__{}", "a".repeat(61), "c".repeat(63))),
+            t("sk_a__x"),
+        ),
     ]
 }
 

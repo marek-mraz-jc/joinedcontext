@@ -1109,6 +1109,50 @@ impl Repository {
         jc_core::kinds::urn_segment(project, name, pin.as_deref())
     }
 
+    /// The Organization whose id opens the tenant of `project`'s spaces (PF-130, EP-188): the
+    /// Project's `spec.organizationRef`, that Organization's verified `spec.domain`, then
+    /// [`OrganizationId::from_domain`](jc_core::names::OrganizationId::from_domain). Read from
+    /// the repository only, with no installation or environment fallback: a project whose
+    /// Organization does not resolve gets no tenant, and the error says which link is missing.
+    pub fn space_organization(
+        &self,
+        project: &str,
+    ) -> std::result::Result<jc_core::names::OrganizationId, String> {
+        let org_scoped = |kind: &str, name: &str| {
+            let id = ResourceId::new(
+                "joinedcontext.com",
+                kind,
+                Some(ORG_NAMESPACE.to_owned()),
+                name,
+            );
+            self.resources.get(&id)
+        };
+        let named = org_scoped("Project", project)
+            .and_then(|loaded| loaded.manifest.spec.get("organizationRef"))
+            .and_then(|reference| {
+                reference
+                    .as_str()
+                    .or_else(|| reference.get("name").and_then(serde_json::Value::as_str))
+            })
+            .ok_or_else(|| {
+                format!(
+                    "project `{project}` has no Project manifest naming its `spec.organizationRef`"
+                )
+            })?;
+        let domain = org_scoped("Organization", named)
+            .and_then(|loaded| loaded.manifest.spec.get("domain"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                format!(
+                    "project `{project}` names Organization `{named}`, which the repository \
+                     does not hold with a `spec.domain`"
+                )
+            })?;
+        jc_core::names::OrganizationId::from_domain(domain).map_err(|err| {
+            format!("Organization `{named}` of project `{project}`: domain `{domain}`: {err}")
+        })
+    }
+
     /// Iterates over all loaded resources in deterministic `ResourceId` sorted order (CC-18).
     pub fn iter(&self) -> impl Iterator<Item = (&ResourceId, &LoadedResource)> {
         self.resources.iter()

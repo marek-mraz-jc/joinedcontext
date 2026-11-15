@@ -210,6 +210,11 @@ name = "policy_subject_on_the_wire_p6"
 path = "tests/policy_subject_on_the_wire_p6.rs"
 
 [[test]]
+# own process: names the subject headers once for the whole binary (T-7036)
+name = "tenant_organization"
+path = "tests/tenant_organization.rs"
+
+[[test]]
 # own process: sets and removes ANTARES_PUBLIC_URL and ANTARES_HTTP_PORT
 name = "public_url_default_5_8_1"
 path = "tests/public_url_default_5_8_1.rs"
