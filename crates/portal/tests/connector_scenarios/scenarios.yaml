@@ -580,17 +580,18 @@
       call: jc_change_apply
       args: { planId: '{planId}' }
       contains: ['changeRequests']
-    # An Endpoint and the Pipeline writing into it plan together and open one change (T-6282).
+    # An Endpoint and the Pipeline writing into it plan together and open one change (T-6282);
+    # the Endpoint is internal, as open data is read-only (EP-187).
     - proves: expect
       call: jc_change_plan
-      args: { changes: [{ op: create, kind: Pipeline, name: counters-bundled, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Pipeline, metadata: { name: counters-bundled, namespace: '{project}' }, spec: { class: scheduled, schedule: '0 * * * *', source: { dataSourceRef: { kind: DataSource, name: counters-csv } }, targetEndpoint: 'urn:ngsi-ld:Endpoint:hel.fi:{project}-doprava:{project}-bundled', output: { type: BikeCounter, mode: upsert }, quotas: { maxMemoryMb: 128, cpuMillicores: 100 } } } }, { op: create, kind: Endpoint, name: '{project}-bundled', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-bundled', namespace: '{project}' }, spec: { contextSpaceRef: doprava, policyRefs: ['urn:ngsi-ld:Policy:hel.fi:{project}-doprava:public-read'], audience: public, enabledRepresentations: [ngsi-ld] } } }] }
+      args: { changes: [{ op: create, kind: Pipeline, name: counters-bundled, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Pipeline, metadata: { name: counters-bundled, namespace: '{project}' }, spec: { class: scheduled, schedule: '0 * * * *', source: { dataSourceRef: { kind: DataSource, name: counters-csv } }, targetEndpoint: 'urn:ngsi-ld:Endpoint:hel.fi:{project}-doprava:{project}-bundled', output: { type: BikeCounter, mode: upsert }, quotas: { maxMemoryMb: 128, cpuMillicores: 100 } } } }, { op: create, kind: Endpoint, name: '{project}-bundled', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-bundled', namespace: '{project}' }, spec: { contextSpaceRef: doprava, audience: organization, enabledRepresentations: [ngsi-ld] } } }] }
       refused: true
       contains: ['/changes/0/manifest', 'jc_pipeline_test']
     - proves: expect
       runner_tested: counters-bundled
     - proves: expect
       call: jc_change_plan
-      args: { changes: [{ op: create, kind: Pipeline, name: counters-bundled, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Pipeline, metadata: { name: counters-bundled, namespace: '{project}' }, spec: { class: scheduled, schedule: '0 * * * *', source: { dataSourceRef: { kind: DataSource, name: counters-csv } }, targetEndpoint: 'urn:ngsi-ld:Endpoint:hel.fi:{project}-doprava:{project}-bundled', output: { type: BikeCounter, mode: upsert }, quotas: { maxMemoryMb: 128, cpuMillicores: 100 } } } }, { op: create, kind: Endpoint, name: '{project}-bundled', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-bundled', namespace: '{project}' }, spec: { contextSpaceRef: doprava, policyRefs: ['urn:ngsi-ld:Policy:hel.fi:{project}-doprava:public-read'], audience: public, enabledRepresentations: [ngsi-ld] } } }] }
+      args: { changes: [{ op: create, kind: Pipeline, name: counters-bundled, manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Pipeline, metadata: { name: counters-bundled, namespace: '{project}' }, spec: { class: scheduled, schedule: '0 * * * *', source: { dataSourceRef: { kind: DataSource, name: counters-csv } }, targetEndpoint: 'urn:ngsi-ld:Endpoint:hel.fi:{project}-doprava:{project}-bundled', output: { type: BikeCounter, mode: upsert }, quotas: { maxMemoryMb: 128, cpuMillicores: 100 } } } }, { op: create, kind: Endpoint, name: '{project}-bundled', manifest: { apiVersion: joinedcontext.com/v1alpha1, kind: Endpoint, metadata: { name: '{project}-bundled', namespace: '{project}' }, spec: { contextSpaceRef: doprava, audience: organization, enabledRepresentations: [ngsi-ld] } } }] }
       keep: planId
       contains: ['"planId"', '"ok":true']
     - proves: expect
@@ -1372,7 +1373,7 @@
   segment: operate
   as: steward
   says: "Open a workspace, change the model and the pipeline together, preview, propose."
-  given: 'Name the workspace s43-both. The model change: DataModel bike-counter becomes a 1.1.0 draft. The pipeline: a Pipeline counters-load that reads DataSource counters-csv hourly into Endpoint {project}-counters with the mapping root = this.'
+  given: 'Name the workspace s43-both. The model change: DataModel bike-counter becomes a 1.1.0 draft. The pipeline: a Pipeline counters-load that reads DataSource counters-csv hourly into Endpoint {project}-intake with the mapping root = this.'
   expect: 'workspace open, two file edits, preview runs, one change request with both files'
   deny: 'none'
   script:
@@ -1402,7 +1403,7 @@
                 period: 1h
                 source: { dataSourceRef: { kind: DataSource, name: counters-csv } }
                 compute: { kind: bloblang, bloblang: 'root = this' }
-                targetEndpoint: 'urn:ngsi-ld:Endpoint:hel.fi:doprava:{project}-counters'
+                targetEndpoint: 'urn:ngsi-ld:Endpoint:hel.fi:{project}-doprava:{project}-intake'
       refused: true
       contains: ['/changes/0/manifest', 'jc_pipeline_test']
     - proves: expect

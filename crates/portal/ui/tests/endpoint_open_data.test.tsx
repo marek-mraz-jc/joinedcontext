@@ -83,7 +83,7 @@ describe("an open-data Endpoint's page", () => {
     const title = await screen.findByText(en.endpoints.page.openDataWrite);
     const warning = title.closest('[role="status"]');
     expect(warning?.textContent).toContain(WHY);
-    expect(warning?.textContent).toContain("urn:ngsi-ld:Policy:city.example:air:public-read");
+    expect(warning?.textContent).toContain("the Policy public-read");
   });
 
   it("shows the badge alone while it only reads", async () => {

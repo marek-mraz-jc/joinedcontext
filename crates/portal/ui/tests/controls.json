@@ -1360,6 +1360,7 @@
       "tests": [
         "endpoint_admission.test.tsx",
         "endpoint_geo_property.test.ts",
+        "endpoint_open_data.test.tsx",
         "part_endpoint_links.test.tsx",
         "part_operation_groups.test.tsx"
       ]

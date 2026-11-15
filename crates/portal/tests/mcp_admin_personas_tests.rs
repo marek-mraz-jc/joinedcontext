@@ -638,13 +638,37 @@ async fn data_path(who: &Identity, state: &AppState, project: &str, domain: &str
     minted["spec"]["slug"] = json!("zt4qm7ge2xdv6ksb3ncf5arw2y");
     approved(state, &minted);
 
+    // Open data is read-only (EP-187): the feed writes through an internal Endpoint of the space.
+    let internal = manifest(
+        "Endpoint",
+        "air-feed-in",
+        project,
+        json!({
+            "contextSpaceRef": { "kind": "ContextSpace", "name": "air" },
+            "audience": "organization",
+            "enabledRepresentations": ["ngsi-ld"]
+        }),
+    );
+    let (status, body) = step(
+        who,
+        state,
+        project,
+        "jc_resource_propose",
+        json!({ "manifest": internal }),
+    )
+    .await;
+    proposed(status, &body, "internal endpoint");
+    let mut minted = internal.clone();
+    minted["spec"]["slug"] = json!("qh7dn3xk5wbm2rcf6tsv4ajp3e");
+    approved(state, &minted);
+
     let pipeline = manifest(
         "Pipeline",
         "air-feed",
         project,
         json!({
             "class": "resident",
-            "targetEndpoint": format!("urn:ngsi-ld:Endpoint:{domain}:{project}:air-public"),
+            "targetEndpoint": format!("urn:ngsi-ld:Endpoint:{domain}:{project}:air-feed-in"),
             "quotas": { "maxMemoryMb": 128, "cpuMillicores": 250 }
         }),
     );

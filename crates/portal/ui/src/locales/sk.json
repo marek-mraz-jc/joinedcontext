@@ -1586,7 +1586,7 @@
       "open": "Otvorená",
       "custom": "Vlastná"
     },
-    "publicNotice": "Endpoint s verejným publikom odpovedá anonymným volajúcim, ktorí len čítajú. Keď slúži politike pre rolu public alebo publikuje do katalógu, sú to otvorené dáta, len na čítanie pre každého (EP-187): Portál odmietne politiku, ktorú slúži a ktorá zapisuje. Zapisujte cez interný endpoint toho istého priestoru, napr. s publikom Organizácia a politikou, ktorá povoľuje updateAttrs.",
+    "publicNotice": "Endpoint s verejným publikom odpovedá anonymným volajúcim, ktorí len čítajú. Keď slúži politike pre rolu public alebo publikuje do katalógu, sú to otvorené dáta, len na čítanie pre každého: Portál odmietne politiku, ktorú slúži a ktorá zapisuje. Zapisujte cez interný endpoint toho istého priestoru, napr. s publikom Organizácia a politikou, ktorá povoľuje updateAttrs.",
     "data": {
       "title": "Čo tento endpoint odpovedá",
       "type": "Typ entity",
@@ -1868,9 +1868,9 @@
       "filterUntouched": "Najprv zmeňte filter: je rovnaký ako uložený.",
       "filterFaulty": "Najprv opravte označené polia.",
       "openData": "Otvorené dáta: len na čítanie",
-      "openDataHint": "Každý zápis cez tento Endpoint je odmietnutý, pre každého. Vlastník dát zapisuje cez interný Endpoint priestoru, napr. s publikom organizácia.",
+      "openDataHint": "Každý zápis cez tento Endpoint je odmietnutý, pre každého. Vlastník dát zapisuje cez interný Endpoint priestoru, taký s publikom Organizácia.",
       "openDataWrite": "Tento Endpoint otvorených dát viaže politiku, ktorá zapisuje",
-      "openDataWriteHint": "Čítanie pokračuje a každý zápis je odmietnutý. V policyRefs uveďte len politiky na čítanie, napr. urn:ngsi-ld:Policy:city.example:air:public-read, alebo presuňte zapisujúcu politiku na interný Endpoint."
+      "openDataWriteHint": "Čítanie pokračuje a každý zápis je odmietnutý. V policyRefs uveďte len politiky na čítanie, napr. politiku public-read, alebo presuňte zapisujúcu politiku na interný Endpoint."
     },
     "condition": {
       "title": "Pridať podmienku",

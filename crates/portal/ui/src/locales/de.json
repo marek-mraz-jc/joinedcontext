@@ -1563,7 +1563,7 @@
       "open": "Offen",
       "custom": "Eigene"
     },
-    "publicNotice": "Ein Endpoint mit öffentlichem Publikum antwortet anonymen Aufrufern, die nur lesen. Sobald er eine Policy für die Rolle public bedient oder in einen Katalog veröffentlicht, sind es offene Daten, für alle nur lesbar (EP-187): das Portal lehnt eine bediente Policy ab, die schreibt. Schreiben Sie über einen internen Endpoint desselben Raums, z. B. mit dem Publikum Organisation und einer Policy, die updateAttrs gewährt.",
+    "publicNotice": "Ein Endpoint mit öffentlichem Publikum antwortet anonymen Aufrufern, die nur lesen. Sobald er eine Policy für die Rolle public bedient oder in einen Katalog veröffentlicht, sind es offene Daten, für alle nur lesbar: das Portal lehnt eine bediente Policy ab, die schreibt. Schreiben Sie über einen internen Endpoint desselben Raums, z. B. mit dem Publikum Organisation und einer Policy, die updateAttrs gewährt.",
     "data": {
       "title": "Was dieser Endpunkt antwortet",
       "type": "Entitätstyp",
@@ -1868,9 +1868,9 @@
       "filterUntouched": "Ändern Sie zuerst den Filter: Er ist derselbe wie der gespeicherte.",
       "filterFaulty": "Korrigieren Sie zuerst die markierten Felder.",
       "openData": "Offene Daten: nur lesen",
-      "openDataHint": "Jeder Schreibzugriff über diesen Endpoint wird für alle abgelehnt. Der Datenhalter schreibt über einen internen Endpoint des Raums, z. B. mit Publikum Organisation.",
+      "openDataHint": "Jeder Schreibzugriff über diesen Endpoint wird für alle abgelehnt. Der Datenhalter schreibt über einen internen Endpoint des Raums, einen mit dem Publikum Organisation.",
       "openDataWrite": "Dieser Offene-Daten-Endpoint bindet eine Policy, die schreibt",
-      "openDataWriteHint": "Lesen geht weiter, jeder Schreibzugriff wird abgelehnt. Nennen Sie in policyRefs nur lesende Policies, z. B. urn:ngsi-ld:Policy:city.example:air:public-read, oder verschieben Sie die schreibende Policy auf einen internen Endpoint."
+      "openDataWriteHint": "Lesen geht weiter, jeder Schreibzugriff wird abgelehnt. Nennen Sie in policyRefs nur lesende Policies, z. B. die Policy public-read, oder verschieben Sie die schreibende Policy auf einen internen Endpoint."
     },
     "condition": {
       "title": "Bedingung hinzufügen",
