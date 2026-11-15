@@ -81,6 +81,8 @@ fn under<'a>(path: &'a str, root: &str) -> Option<&'a str> {
 pub struct HostTable {
     rows: BTreeMap<String, HostRow>,
     organizations: BTreeSet<String>,
+    /// Organization id -> name, for the Organizations whose path segment is their id (EP-186).
+    ids: BTreeMap<String, String>,
     reserved: BTreeSet<String>,
 }
 
@@ -170,8 +172,35 @@ impl HostTable {
                 "Organization '{name}' is reserved for the platform"
             )));
         }
+        if self.ids.contains_key(name) {
+            return Err(RouterError::InvalidHostRow(format!(
+                "'{name}' is another Organization's id"
+            )));
+        }
         self.organizations.insert(name.to_owned());
         Ok(self)
+    }
+
+    /// An Organization whose path segment is its id (`sk_bbsk`, EP-186), its `name`
+    /// (`metadata.name`, no `_`) what the router hands the modules. On a shared host `/{id}/...`
+    /// is the Organization; the old `/{name}/...` still answers: an API call in place, a page
+    /// `308` to `/{id}/...`. A name with `_`, an id without one, or a name or id another
+    /// Organization holds is refused, so no segment can name two Organizations.
+    pub fn organization_id(self, name: &str, id: &str) -> Result<Self, RouterError> {
+        if name.contains('_') || !id_shaped(id) {
+            return Err(RouterError::InvalidHostRow(format!(
+                "Organization '{name}' with id '{id}': the name holds no `_`, the id holds one"
+            )));
+        }
+        let taken = |s: &str| self.organizations.contains(s) || self.ids.contains_key(s);
+        if self.ids.values().any(|n| n == name) || taken(id) || self.reserved.contains(id) {
+            return Err(RouterError::InvalidHostRow(format!(
+                "Organization '{name}' with id '{id}': the name or the id is taken"
+            )));
+        }
+        let mut this = self.organization(name)?;
+        this.ids.insert(id.to_owned(), name.to_owned());
+        Ok(this)
     }
 
     /// A shared host (`city.example`, `localhost:42301`, `*.apps.city.example`).
@@ -230,6 +259,30 @@ impl HostTable {
             })
     }
 
+    /// The Organization a first path segment names, as `(name, its id when the segment is its
+    /// old name)`: its id, or its name.
+    fn named(&self, segment: &str) -> Option<(&str, Option<&str>)> {
+        if let Some(name) = self.ids.get(segment) {
+            return Some((name, None));
+        }
+        self.organizations.get(segment).map(|name| {
+            let id = self
+                .ids
+                .iter()
+                .find(|(_, n)| *n == name)
+                .map(|(id, _)| id.as_str());
+            (name.as_str(), id)
+        })
+    }
+
+    /// The path segment of Organization `name`: its id, else the name.
+    fn segment(&self, name: &str) -> String {
+        self.ids
+            .iter()
+            .find(|(_, n)| *n == name)
+            .map_or_else(|| name.to_owned(), |(id, _)| id.clone())
+    }
+
     /// Places a request for `path` on a host; `page` says a browser asked for a page.
     pub(crate) fn place(
         &self,
@@ -245,11 +298,18 @@ impl HostTable {
             Some((first, rest)) => (first, format!("/{rest}")),
             None => (path.trim_start_matches('/'), String::new()),
         };
-        let known = self.organizations.contains(first);
+        let named = self.named(first);
+        let known = named.is_some();
         match row {
+            // The old name of an Organization with an id: a page moves to the id (`rest` keeps
+            // the raw path, so the Location stays below `/{id}/`), an API call answers in place.
+            HostRow::Shared if page && named.is_some_and(|(_, id)| id.is_some()) => {
+                let id = named.and_then(|(_, id)| id).unwrap_or_default();
+                Placed::Canonical(format!("/{id}{rest}"))
+            }
             HostRow::Shared if known => Placed::Route {
                 path: if rest.is_empty() { "/".into() } else { rest },
-                organization: Some(first.to_owned()),
+                organization: named.map(|(name, _)| name.to_owned()),
                 via: Via::Prefixed(first.to_owned()),
             },
             HostRow::Shared if id_shaped(first) => Placed::NotFound,
@@ -258,7 +318,9 @@ impl HostTable {
                 organization: None,
                 via: Via::Plain,
             },
-            HostRow::Bound { organization, root } if known && first == organization => {
+            HostRow::Bound { organization, root }
+                if named.is_some_and(|(name, _)| name == organization) =>
+            {
                 let inner = if rest.is_empty() {
                     "/".to_owned()
                 } else {
@@ -277,7 +339,7 @@ impl HostTable {
                     None => Placed::Route {
                         path: inner,
                         organization: Some(organization.clone()),
-                        via: Via::Prefixed(organization.clone()),
+                        via: Via::Prefixed(first.to_owned()),
                     },
                 }
             }
@@ -286,7 +348,7 @@ impl HostTable {
                 path: format!("{root}{path}"),
                 organization: Some(organization.clone()),
                 via: Via::Bound {
-                    organization: organization.clone(),
+                    organization: self.segment(organization),
                     root: root.clone(),
                 },
             },
@@ -520,6 +582,133 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         assert_eq!(jc.dispatch(post, None).await.status(), StatusCode::OK);
+    }
+
+    /// T-7007 (EP-186): Organizations whose segment is their id, one also on a bound host.
+    fn jc_ids() -> JcRouter {
+        let table = HostTable::new()
+            .shared("city.example")
+            .and_then(|t| t.organization_id("bbsk", "sk_bbsk"))
+            .and_then(|t| t.organization_id("hel", "fi_hel"))
+            .and_then(|t| t.bound("data.bbsk.sk", "bbsk", "/"))
+            .expect("rows");
+        let mut b = JcRouterBuilder::new("https", "city.example").hosts(table);
+        for name in ["data", "api"] {
+            b = b.mount(
+                MountSpec {
+                    module: name.into(),
+                    host: None,
+                    path_prefix: Some(format!("/{name}")),
+                },
+                Router::new().fallback(any(echo)),
+            );
+        }
+        b.build().expect("router")
+    }
+
+    #[tokio::test]
+    async fn the_id_is_the_segment_and_the_old_name_moves_to_it() {
+        let jc = jc_ids();
+        // Modules learn the Organization's name; its public addresses carry the id.
+        assert_eq!(
+            call(&jc, "city.example", "/sk_bbsk/data/dataset/x", API).await,
+            (
+                StatusCode::OK,
+                "data org=bbsk base=https://city.example/sk_bbsk/data path=/dataset/x".into()
+            )
+        );
+        // A page under the old name moves to the id with its path and query; the Location is
+        // host-relative, so a forwarded host from an untrusted peer cannot reach it.
+        let req = Request::builder()
+            .uri("/bbsk/data/x?y=1")
+            .header("host", "city.example")
+            .header("x-forwarded-host", "evil.example")
+            .header("accept", PAGE)
+            .body(Body::empty())
+            .unwrap();
+        let resp = jc.dispatch(req, None).await;
+        assert_eq!(resp.status(), StatusCode::PERMANENT_REDIRECT);
+        assert_eq!(resp.headers()["location"], "/sk_bbsk/data/x?y=1");
+        for (path, location) in [
+            ("/bbsk", "/sk_bbsk"),
+            ("/bbsk//evil.example/x", "/sk_bbsk//evil.example/x"),
+            ("/bbsk/%2f%2fevil.example", "/sk_bbsk/%2f%2fevil.example"),
+        ] {
+            assert_eq!(
+                call(&jc, "city.example", path, PAGE).await,
+                (StatusCode::PERMANENT_REDIRECT, location.into()),
+                "{path}"
+            );
+        }
+        // An API call under the old name answers in place, during the move.
+        assert_eq!(
+            call(&jc, "city.example", "/bbsk/data/x", API).await,
+            (
+                StatusCode::OK,
+                "data org=bbsk base=https://city.example/bbsk/data path=/x".into()
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_id_is_the_404_of_a_hidden_organization() {
+        let jc = jc_ids();
+        let unknown = call(&jc, "city.example", "/sk_other/data/x", API).await;
+        assert_eq!(unknown.0, StatusCode::NOT_FOUND);
+        // On bbsk's own host, hel's id and name are as absent as an id nobody holds.
+        for path in ["/fi_hel/data/x", "/hel/data/x", "/sk_other/data/x"] {
+            assert_eq!(
+                call(&jc, "data.bbsk.sk", path, API).await,
+                unknown,
+                "{path}"
+            );
+        }
+        // The bound host takes its own id (and name) in the prefixed form.
+        assert_eq!(
+            call(&jc, "data.bbsk.sk", "/sk_bbsk/data/x", PAGE).await,
+            (StatusCode::PERMANENT_REDIRECT, "/data/x".into())
+        );
+        assert_eq!(
+            call(&jc, "data.bbsk.sk", "/bbsk/data/x", API).await,
+            (
+                StatusCode::OK,
+                "data org=bbsk base=https://data.bbsk.sk/bbsk/data path=/x".into()
+            )
+        );
+        assert_eq!(
+            call(&jc, "data.bbsk.sk", "/data/x", API).await,
+            (
+                StatusCode::OK,
+                "data org=bbsk base=https://data.bbsk.sk/data path=/x".into()
+            )
+        );
+    }
+
+    #[test]
+    fn a_name_and_an_id_never_name_two_organizations() {
+        let base = || HostTable::new().organization_id("bbsk", "sk_bbsk").unwrap();
+        for (name, id) in [
+            ("sk_x", "sk_y"),     // a name with `_`
+            ("x", "x-y"),         // an id without one
+            ("other", "sk_bbsk"), // the id taken
+            ("bbsk", "sk_other"), // the name taken
+        ] {
+            assert!(base().organization_id(name, id).is_err(), "{name} {id}");
+        }
+        assert!(base().organization("sk_bbsk").is_err());
+        assert!(
+            HostTable::new()
+                .organization("sk_bbsk")
+                .unwrap()
+                .organization_id("x", "sk_bbsk")
+                .is_err()
+        );
+        assert!(
+            HostTable::new()
+                .reserving(&["sk_admin"])
+                .organization_id("x", "sk_admin")
+                .is_err()
+        );
     }
 
     #[test]
