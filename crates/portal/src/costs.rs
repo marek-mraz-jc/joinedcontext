@@ -20,6 +20,8 @@ use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::api::change_export::cell;
+
 /// A GiB: Hetzner sizes volumes in GiB.
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
@@ -330,20 +332,6 @@ pub fn split(
 pub const CSV_COLUMNS: [&str; 7] = [
     "month", "project", "part", "item", "bytes", "cost", "currency",
 ];
-
-/// One CSV cell: quoted when it holds a separator, a quote or a line break, and a leading
-/// formula sign defused, so a spreadsheet never runs a name as a formula.
-fn cell(text: &str) -> String {
-    let text = match text.chars().next() {
-        Some('=' | '+' | '-' | '@' | '\t' | '\r') => format!("'{text}"),
-        _ => text.to_owned(),
-    };
-    if text.contains([',', '"', '\n', '\r']) {
-        format!("\"{}\"", text.replace('"', "\"\""))
-    } else {
-        text
-    }
-}
 
 /// The split as CSV: one line per space, assistant and node share, the platform's lines last.
 pub fn csv(month: &str, currency: &str, split: &Split) -> String {

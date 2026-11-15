@@ -340,27 +340,39 @@ pub(crate) fn usd(micros: i64) -> f64 {
 macro_rules! list_sql {
     ($order:literal) => {
         concat!(
-            "SELECT t.conversation::text, t.deployment, min(t.origin), \
-             to_char(min(t.at) AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
-             to_char(max(t.at) AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
-             (array_agg(t.question ORDER BY t.turn))[1], count(*), \
-             array_agg(DISTINCT t.route), max(t.total_ms), \
-             count(*) FILTER (WHERE t.error IS NOT NULL AND NOT t.timed_out), \
-             count(*) FILTER (WHERE t.timed_out), sum(t.cost_micros)::bigint, \
-             sum(t.uncosted)::bigint, coalesce(max(f.up), 0), coalesce(max(f.down), 0), \
-             sum(t.tokens_in)::bigint, sum(t.tokens_out)::bigint, \
+            // The inner query pages the conversations; the outer one adds the two turn_steps
+            // columns for that page only, so a deep cursor no longer runs them for every
+            // conversation it skips (T-6941: offset 19,900 of 20,000 took 1.9 s, 0.25 s after).
+            "SELECT p.conversation::text, p.deployment, p.origin, p.started, p.last, p.question, \
+             p.turns, p.routes, p.total_ms, p.errors, p.timeouts, p.cost, p.uncosted, p.up, \
+             p.down, p.tokens_in, p.tokens_out, \
              (SELECT sum(s.cached_tokens) FROM turn_steps s JOIN turns u ON u.id = s.turn_id \
-               WHERE u.conversation = t.conversation AND u.deployment = t.deployment \
+               WHERE u.conversation = p.conversation AND u.deployment = p.deployment \
                AND ($2::timestamptz IS NULL OR u.at >= $2::timestamptz) \
                AND ($3::timestamptz IS NULL OR u.at < $3::timestamptz))::bigint, \
-             (array_agg(t.first_token_ms ORDER BY t.turn))[1], \
+             p.first_token_ms, \
              (SELECT array_agg(DISTINCT s.model ORDER BY s.model) FROM turn_steps s \
-               JOIN turns u ON u.id = s.turn_id WHERE u.conversation = t.conversation \
-               AND u.deployment = t.deployment AND s.model IS NOT NULL \
+               JOIN turns u ON u.id = s.turn_id WHERE u.conversation = p.conversation \
+               AND u.deployment = p.deployment AND s.model IS NOT NULL \
                AND ($2::timestamptz IS NULL OR u.at >= $2::timestamptz) \
                AND ($3::timestamptz IS NULL OR u.at < $3::timestamptz)), \
+             p.last_error \
+             FROM (SELECT t.conversation, t.deployment, min(t.origin) AS origin, \
+             to_char(min(t.at) AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS started, \
+             to_char(max(t.at) AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS last, \
+             (array_agg(t.question ORDER BY t.turn))[1] AS question, count(*) AS turns, \
+             array_agg(DISTINCT t.route) AS routes, max(t.total_ms) AS total_ms, \
+             count(*) FILTER (WHERE t.error IS NOT NULL AND NOT t.timed_out) AS errors, \
+             count(*) FILTER (WHERE t.timed_out) AS timeouts, sum(t.cost_micros)::bigint AS cost, \
+             sum(t.uncosted)::bigint AS uncosted, coalesce(max(f.up), 0) AS up, \
+             coalesce(max(f.down), 0) AS down, \
+             sum(t.tokens_in)::bigint AS tokens_in, sum(t.tokens_out)::bigint AS tokens_out, \
+             (array_agg(t.first_token_ms ORDER BY t.turn))[1] AS first_token_ms, \
              (array_agg(coalesce(t.error->>'detail', t.error->>'title') ORDER BY t.turn DESC) \
-               FILTER (WHERE t.error IS NOT NULL))[1] \
+               FILTER (WHERE t.error IS NOT NULL))[1] AS last_error, \
+             row_number() OVER (ORDER BY ",
+            $order,
+            ") AS n \
              FROM turns t LEFT JOIN LATERAL (SELECT count(*) FILTER (WHERE verdict = 'up') AS up, \
              count(*) FILTER (WHERE verdict = 'down') AS down FROM feedback \
              WHERE feedback.project = t.project AND feedback.conversation = t.conversation) f ON true \
@@ -379,9 +391,7 @@ macro_rules! list_sql {
              AND ($7::bigint IS NULL OR sum(t.cost_micros) >= $7) \
              AND ($8::text IS NULL OR bool_or(lower(unaccent(t.question || ' ' || t.answer)) \
                LIKE lower(unaccent($8)))) \
-             ORDER BY ",
-            $order,
-            " LIMIT $9 OFFSET $10"
+             ORDER BY n LIMIT $9 OFFSET $10) p ORDER BY p.n"
         )
     };
 }

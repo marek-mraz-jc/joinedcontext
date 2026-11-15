@@ -124,8 +124,9 @@ fn csv(items: &[ChangeProposal]) -> String {
 }
 
 /// One RFC 4180 field. A value a spreadsheet would run as a formula starts with `'` (OWASP CSV
-/// injection): a rejection reason is free text a proposer's colleague typed.
-fn cell(value: &str) -> String {
+/// injection): a rejection reason is free text a proposer's colleague typed. The cost export
+/// (`crate::costs`) writes its cells with it too.
+pub(crate) fn cell(value: &str) -> String {
     let value = if value.starts_with(['=', '+', '-', '@', '\t', '\r']) {
         format!("'{value}")
     } else {
