@@ -2,6 +2,7 @@
 //! `ekiben-io-file` — Local and utility inputs/outputs:
 //! `file`, `stdout`, `generate`, `broker`, `resource`, `drop`, `drop_on`, `switch`, `fallback`, `retry`, `reject`, `reject_errored`, `cache`, `sync_response`.
 
+pub mod cron;
 pub mod inputs;
 pub mod outputs;
 pub mod path_guard;

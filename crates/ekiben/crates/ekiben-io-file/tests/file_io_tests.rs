@@ -149,6 +149,126 @@ fallback:
     assert_eq!(dlq_json["dlq_reason"], "validation failed");
 }
 
+fn generate(
+    reg: &Registry,
+    sctx: &StreamContext,
+    conf: serde_json::Value,
+) -> Box<dyn ekiben_core::Input> {
+    let conf = ComponentConfig::from_json_value(
+        &serde_json::json!({ "generate": conf }),
+        "generate",
+        None,
+    )
+    .unwrap();
+    reg.build_input(&conf, sctx).unwrap()
+}
+
+// Ported from Bento input_generate_test.go: a duration's first batch is free, a cron
+// schedule waits for its first activation, and a bad interval names both readings.
+#[tokio::test(start_paused = true)]
+async fn generate_paces_by_duration_and_by_cron() {
+    let (reg, sctx) = make_stream_ctx(None);
+    let mut every = generate(
+        &reg,
+        &sctx,
+        serde_json::json!({"mapping": "root = 1", "interval": "50ms", "count": 2}),
+    );
+    let t0 = tokio::time::Instant::now();
+    every.read_batch(&sctx).await.unwrap();
+    assert_eq!(t0.elapsed(), std::time::Duration::ZERO);
+    every.read_batch(&sctx).await.unwrap();
+    assert_eq!(t0.elapsed(), std::time::Duration::from_millis(50));
+
+    // `@every 1s` is a cron schedule: it fires on the next whole second after one second.
+    let mut cron = generate(
+        &reg,
+        &sctx,
+        serde_json::json!({"mapping": "root = 1", "interval": "@every 1s"}),
+    );
+    let t0 = tokio::time::Instant::now();
+    cron.read_batch(&sctx).await.unwrap();
+    let waited = t0.elapsed();
+    assert!(
+        waited > std::time::Duration::ZERO && waited <= std::time::Duration::from_secs(1),
+        "{waited:?}"
+    );
+
+    // No interval is Bento's `1s` default; an empty one does not wait.
+    let mut default = generate(&reg, &sctx, serde_json::json!({"mapping": "root = 1"}));
+    default.read_batch(&sctx).await.unwrap();
+    let t0 = tokio::time::Instant::now();
+    default.read_batch(&sctx).await.unwrap();
+    assert_eq!(t0.elapsed(), std::time::Duration::from_secs(1));
+    let mut fast = generate(
+        &reg,
+        &sctx,
+        serde_json::json!({"mapping": "root = 1", "interval": ""}),
+    );
+    fast.read_batch(&sctx).await.unwrap();
+    let t0 = tokio::time::Instant::now();
+    fast.read_batch(&sctx).await.unwrap();
+    assert_eq!(t0.elapsed(), std::time::Duration::ZERO);
+
+    let conf = ComponentConfig::from_json_value(
+        &serde_json::json!({"generate": {"mapping": "root = 1", "interval": "61 * * * *"}}),
+        "generate",
+        None,
+    )
+    .unwrap();
+    let err = reg
+        .build_input(&conf, &sctx)
+        .err()
+        .expect("refused")
+        .to_string();
+    assert!(
+        err.contains("failed to parse interval as duration string"),
+        "{err}"
+    );
+    assert!(
+        err.contains("end of range (61) above maximum (59): 61"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn generate_replays_a_nacked_batch_before_it_ends() {
+    use ekiben_core::BatchError;
+    let (reg, sctx) = make_stream_ctx(None);
+    let mut input = generate(
+        &reg,
+        &sctx,
+        serde_json::json!({"mapping": "root = counter()", "interval": "", "count": 1}),
+    );
+    let (batch, ack) = input.read_batch(&sctx).await.unwrap();
+    assert_eq!(batch[0].as_bytes_ref().as_ref(), b"1");
+    // The answer comes later: the exhausted input waits for it instead of ending.
+    let pending = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        ack.nack(BatchError::new(batch, "output refused".to_string()));
+    });
+    let (again, ack) = input.read_batch(&sctx).await.unwrap();
+    pending.await.unwrap();
+    assert_eq!(again[0].as_bytes_ref().as_ref(), b"1");
+    // A responder dropped unanswered does not hold the input open.
+    drop(ack);
+    assert!(matches!(
+        input.read_batch(&sctx).await,
+        Err(ekiben_core::CoreError::EndOfInput)
+    ));
+
+    let mut no_replay = generate(
+        &reg,
+        &sctx,
+        serde_json::json!({"mapping": "root = 1", "interval": "", "count": 1, "auto_replay_nacks": false}),
+    );
+    let (batch, ack) = no_replay.read_batch(&sctx).await.unwrap();
+    ack.nack(BatchError::new(batch, "output refused".to_string()));
+    assert!(matches!(
+        no_replay.read_batch(&sctx).await,
+        Err(ekiben_core::CoreError::EndOfInput)
+    ));
+}
+
 #[tokio::test]
 async fn a_composite_output_closes_its_children_and_a_batched_child_flushes() {
     let (reg, sctx) = make_stream_ctx(None);

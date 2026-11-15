@@ -66,12 +66,84 @@ pub fn register(registry: &Registry) {
 /// Implements `generate` input (`internal/impl/pure/input_generate.go`).
 pub struct GenerateInput {
     exec: Executor,
-    interval: Option<Duration>,
+    timer: GenerateTimer,
     remaining: Option<usize>,
     batch_size: usize,
     first_run: bool,
-    auto_replay_nacks: bool,
-    replay_queue: VecDeque<Batch>,
+    replay: Option<Arc<NackReplay>>,
+}
+
+/// How `interval` paces the reads: a duration ticks after a free first batch, a cron schedule
+/// waits for its first activation (Bento's `firstIsFree: !isCron`).
+enum GenerateTimer {
+    None,
+    Every(Duration),
+    Cron(crate::cron::Schedule),
+}
+
+/// Nacked batches waiting to be read again, and how many sent batches are still unanswered:
+/// a `count`-limited input ends only once every batch it sent is acked.
+#[derive(Default)]
+struct NackReplay {
+    state: std::sync::Mutex<(VecDeque<Batch>, usize)>,
+    changed: tokio::sync::Notify,
+}
+
+impl NackReplay {
+    fn lock(&self) -> std::sync::MutexGuard<'_, (VecDeque<Batch>, usize)> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn track(self: &Arc<Self>, batch: &Batch) -> AckResponder {
+        self.lock().1 += 1;
+        // The guard answers for the batch when its responder is dropped unanswered too.
+        let guard = InFlight(self.clone());
+        let copy = batch.clone();
+        AckResponder::from_fn(move |res| {
+            if res.is_some() {
+                guard.0.lock().0.push_back(copy);
+            }
+            drop(guard);
+        })
+    }
+
+    /// A nacked batch to send again, waiting for the unanswered ones when `drain` is set.
+    async fn next(&self, drain: bool) -> Option<Batch> {
+        loop {
+            let notified = self.changed.notified();
+            {
+                let mut st = self.lock();
+                if let Some(b) = st.0.pop_front() {
+                    return Some(b);
+                }
+                if !drain || st.1 == 0 {
+                    return None;
+                }
+            }
+            notified.await;
+        }
+    }
+}
+
+struct InFlight(Arc<NackReplay>);
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.0.lock().1 -= 1;
+        self.0.changed.notify_one();
+    }
+}
+
+/// Resolves once the stream is told to stop.
+async fn stopped(ctx: &StreamContext) {
+    let mut rx = ctx.shutdown_rx.clone();
+    while !*rx.borrow_and_update() {
+        if rx.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
 }
 
 impl GenerateInput {
@@ -87,14 +159,14 @@ impl GenerateInput {
             .ok_or_else(|| CoreError::config("generate input requires a 'mapping' field"))?;
         let exec = ctx.blobl_env.compile_mapping(mapping_str)?;
 
-        let interval = match obj.get("interval").and_then(JsonValue::as_str) {
-            Some(s) if !s.trim().is_empty() && s.trim() != "0" && s.trim() != "0s" => {
-                // In `render.rs`, `interval` can be a duration like `"60s"` or `"100ms"` or a cron string;
-                // if it's a duration string, parse it; if it's a cron expression, default interval to 60s in resident mode.
-                parse_duration_str(s).ok().or(Some(Duration::from_secs(60)))
-            }
-            _ => None,
+        // Bento's default is `1s`; an empty string generates as fast as the stream reads.
+        let interval = match obj.get("interval") {
+            None => "1s",
+            Some(v) => v
+                .as_str()
+                .ok_or_else(|| CoreError::config("generate input 'interval' must be a string"))?,
         };
+        let timer = generate_timer(interval)?;
 
         let count = obj.get("count").and_then(JsonValue::as_u64).unwrap_or(0) as usize;
         let remaining = if count > 0 { Some(count) } else { None };
@@ -110,14 +182,59 @@ impl GenerateInput {
 
         Ok(Self {
             exec,
-            interval,
+            timer,
             remaining,
             batch_size,
             first_run: true,
-            auto_replay_nacks,
-            replay_queue: VecDeque::new(),
+            replay: auto_replay_nacks.then(Arc::default),
         })
     }
+
+    fn ack_for(&self, batch: &Batch) -> AckResponder {
+        match &self.replay {
+            Some(r) => r.track(batch),
+            None => AckResponder::noop(),
+        }
+    }
+
+    async fn wait_tick(&self, ctx: &StreamContext) -> Result<(), CoreError> {
+        let wait = match &self.timer {
+            GenerateTimer::None => return Ok(()),
+            GenerateTimer::Every(_) if self.first_run => return Ok(()),
+            GenerateTimer::Every(iv) => *iv,
+            GenerateTimer::Cron(s) => {
+                let now = Utc::now();
+                let at = s.next(now).ok_or_else(|| {
+                    CoreError::other("generate input: the cron interval never fires again")
+                })?;
+                (at - now).to_std().unwrap_or_default()
+            }
+        };
+        tokio::select! {
+            _ = tokio::time::sleep(wait) => Ok(()),
+            _ = stopped(ctx) => Err(CoreError::EndOfInput),
+        }
+    }
+}
+
+/// Bento reads `interval` as a Go duration first, then as a cron expression.
+fn generate_timer(interval: &str) -> Result<GenerateTimer, CoreError> {
+    if interval.is_empty() {
+        return Ok(GenerateTimer::None);
+    }
+    let dur_err = match parse_duration_str(interval) {
+        Ok(d) if d.is_zero() => return Ok(GenerateTimer::None),
+        Ok(d) => return Ok(GenerateTimer::Every(d)),
+        Err(e) => e.to_string(),
+    };
+    crate::cron::parse(interval)
+        .map(GenerateTimer::Cron)
+        .map_err(|cron_err| {
+            CoreError::config(format!(
+                "failed to parse interval as duration string: {}, or as cron expression: {cron_err}",
+                dur_err.trim()
+            ))
+        })
 }
 
 #[async_trait]
@@ -130,29 +247,22 @@ impl Input for GenerateInput {
         &mut self,
         ctx: &StreamContext,
     ) -> Result<(Batch, AckResponder), CoreError> {
-        if let Some(replayed) = self.replay_queue.pop_front() {
-            return Ok((replayed, AckResponder::noop()));
-        }
-
-        if let Some(rem) = self.remaining {
-            if rem == 0 {
-                return Err(CoreError::EndOfInput);
+        let exhausted = self.remaining == Some(0);
+        if let Some(r) = self.replay.clone() {
+            let replayed = tokio::select! {
+                b = r.next(exhausted) => b,
+                _ = stopped(ctx) => return Err(CoreError::EndOfInput),
+            };
+            if let Some(replayed) = replayed {
+                let ack = self.ack_for(&replayed);
+                return Ok((replayed, ack));
             }
         }
-
-        if !self.first_run {
-            if let Some(iv) = self.interval {
-                let mut rx = ctx.shutdown_rx.clone();
-                tokio::select! {
-                    _ = tokio::time::sleep(iv) => {}
-                    _ = rx.changed() => {
-                        if *rx.borrow() {
-                            return Err(CoreError::EndOfInput);
-                        }
-                    }
-                }
-            }
+        if exhausted {
+            return Err(CoreError::EndOfInput);
         }
+
+        self.wait_tick(ctx).await?;
         self.first_run = false;
 
         let to_gen = match self.remaining {
@@ -182,8 +292,8 @@ impl Input for GenerateInput {
             }
         }
 
-        let _ = self.auto_replay_nacks;
-        Ok((batch, AckResponder::noop()))
+        let ack = self.ack_for(&batch);
+        Ok((batch, ack))
     }
 }
 

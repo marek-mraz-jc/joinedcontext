@@ -3267,6 +3267,7 @@ dependencies = [
  "bytes",
  "bzip2",
  "chrono",
+ "chrono-tz",
  "csv",
  "ekiben-bloblang",
  "ekiben-core",
