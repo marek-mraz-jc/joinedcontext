@@ -4323,14 +4323,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb5fef3fbef9788069016ae1b18e899ac22a508387f9935bb8185c280ef01333"
 dependencies = [
  "bstr 1.13.1",
- "flate2",
  "gix-date",
  "gix-error",
  "gix-object",
- "gix-path",
  "gix-worktree-stream",
- "rawzip",
- "tar",
 ]
 
 [[package]]
@@ -6356,8 +6352,6 @@ dependencies = [
  "context-gateway",
  "daiya-model",
  "daiya-server",
- "daiya-store-memory",
- "daiya-store-pg",
  "dataroom-api",
  "dataroom-core",
  "dataroom-harvest",
@@ -10070,12 +10064,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60a357793950651c4ed0f3f52338f53b2f809f32d83a07f72909fa13e4c6c1e3"
 
 [[package]]
-name = "rawzip"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d9575f44c8cf85bc843ad666dcdf20d05a7753772bef56eb2a5140282b32150"
-
-[[package]]
 name = "rayon"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11335,8 +11323,6 @@ dependencies = [
  "gix-ref",
  "hex",
  "hmac 0.12.1",
- "http",
- "http-body-util",
  "jc-router",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
@@ -11351,14 +11337,12 @@ dependencies = [
  "shako-core",
  "shako-git",
  "shako-store-memory",
- "subtle",
  "tempfile",
  "tokio",
  "tokio-stream",
  "tower",
  "tracing",
  "url",
- "utoipa",
  "uuid",
 ]
 
@@ -11371,16 +11355,13 @@ dependencies = [
  "gix-validate",
  "globset",
  "hex",
- "hmac 0.12.1",
  "ipnet",
  "jsonwebtoken 11.1.0",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
- "odata-url 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "p256 0.14.0",
  "parking_lot",
  "rand 0.9.5",
- "regex",
  "reqwest 0.12.28",
  "schemars 0.8.22",
  "serde",
@@ -11392,7 +11373,6 @@ dependencies = [
  "url",
  "utoipa",
  "uuid",
- "zeroize",
 ]
 
 [[package]]
@@ -11401,34 +11381,25 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "bstr 1.13.1",
- "bytes",
  "chrono",
  "flate2",
  "gix",
- "gix-archive",
  "gix-hash",
  "gix-merge",
  "gix-object",
  "gix-odb",
  "gix-pack",
  "gix-packetline",
- "gix-protocol",
  "gix-ref",
- "gix-revwalk",
  "gix-validate",
- "hex",
  "parking_lot",
  "regex",
  "reqwest 0.12.28",
  "serde",
- "serde_json",
  "serde_norway",
- "sha1 0.10.7",
- "sha2 0.10.9",
  "shako-core",
  "tar",
  "tempfile",
- "thiserror 2.0.21",
  "tokio",
  "uuid",
  "zip",
@@ -11454,18 +11425,12 @@ name = "shako-registry"
 version = "0.1.0"
 dependencies = [
  "axum",
- "base64 0.22.1",
- "bytes",
  "chrono",
- "futures-util",
- "hex",
- "http",
  "http-body-util",
  "jc-router",
  "parking_lot",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "shako-api",
  "shako-core",
  "shako-store-memory",
@@ -11485,7 +11450,6 @@ dependencies = [
  "clap",
  "hex",
  "hmac 0.12.1",
- "http",
  "http-body-util",
  "ipnet",
  "jc-router",
@@ -11510,7 +11474,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tower",
- "tracing",
  "url",
  "uuid",
  "zip",
@@ -11521,10 +11484,7 @@ name = "shako-store-memory"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "parking_lot",
- "serde",
- "serde_json",
  "shako-core",
  "tokio",
  "uuid",
@@ -11534,10 +11494,7 @@ dependencies = [
 name = "shako-store-pg"
 version = "0.1.0"
 dependencies = [
- "async-nats 0.51.0",
  "chrono",
- "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
- "parking_lot",
  "serde",
  "serde_json",
  "shako-core",
@@ -11554,9 +11511,7 @@ name = "shako-web"
 version = "0.1.0"
 dependencies = [
  "askama",
- "askama_escape",
  "axum",
- "http",
  "http-body-util",
  "jc-router",
  "pulldown-cmark",
@@ -11568,7 +11523,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tower",
- "url",
 ]
 
 [[package]]

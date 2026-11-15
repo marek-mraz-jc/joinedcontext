@@ -712,6 +712,77 @@ fn walk_tree(
     Ok(())
 }
 
+/// Collects every non-tree entry of `tree` that no tree of `parents` holds at the same path with
+/// the same id, skipping a subtree a parent holds unchanged; the limits of [`collect_tree_blobs`]
+/// apply to the entries it visits.
+pub(crate) fn collect_changed_blobs(
+    repo: &gix::Repository,
+    tree: &gix::Tree<'_>,
+    parents: &[gix::Tree<'_>],
+    out: &mut BTreeMap<String, ObjectId>,
+) -> ShakoResult<()> {
+    walk_changed(repo, tree, parents, "", 0, &mut TreeWalk::default(), out)
+}
+
+fn walk_changed(
+    repo: &gix::Repository,
+    tree: &gix::Tree<'_>,
+    parents: &[gix::Tree<'_>],
+    prefix: &str,
+    depth: usize,
+    walk: &mut TreeWalk,
+    out: &mut BTreeMap<String, ObjectId>,
+) -> ShakoResult<()> {
+    walk.enter(depth)?;
+    let held = parents
+        .iter()
+        .map(|t| {
+            let d = t
+                .decode()
+                .map_err(|e| ShakoError::Git(format!("decode tree: {e}")))?;
+            Ok(d.entries
+                .into_iter()
+                .map(|e| (e.filename, e))
+                .collect::<BTreeMap<_, _>>())
+        })
+        .collect::<ShakoResult<Vec<_>>>()?;
+    let decoded = tree
+        .decode()
+        .map_err(|e| ShakoError::Git(format!("decode tree: {e}")))?;
+    for entry in decoded.entries {
+        let name = entry.filename.to_str_lossy();
+        let full = if prefix.is_empty() {
+            name.into_owned()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        walk.visit(&full)?;
+        let same: Vec<_> = held.iter().filter_map(|h| h.get(entry.filename)).collect();
+        if same
+            .iter()
+            .any(|e| e.oid == entry.oid && e.mode.is_tree() == entry.mode.is_tree())
+        {
+            continue;
+        }
+        if entry.mode.is_tree() {
+            let find = |oid| {
+                repo.find_tree(oid)
+                    .map_err(|e| ShakoError::Git(format!("find subtree: {e}")))
+            };
+            let sub = find(entry.oid)?;
+            let subs = same
+                .iter()
+                .filter(|e| e.mode.is_tree())
+                .map(|e| find(e.oid))
+                .collect::<ShakoResult<Vec<_>>>()?;
+            walk_changed(repo, &sub, &subs, &full, depth + 1, walk, out)?;
+        } else {
+            out.insert(full, entry.oid.to_owned());
+        }
+    }
+    Ok(())
+}
+
 /// Builds a hierarchy of `gix_object::Tree` objects bottom-up from a flat map of `path -> (EntryKind, ObjectId)`.
 pub(crate) fn build_nested_trees(
     files: &BTreeMap<String, (EntryKind, ObjectId)>,
