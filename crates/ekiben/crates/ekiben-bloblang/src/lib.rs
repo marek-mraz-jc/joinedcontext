@@ -13,6 +13,7 @@ pub mod functions;
 pub mod go_fmt;
 pub mod go_json;
 pub mod go_sort;
+mod gorand;
 mod html_entities;
 pub mod json_schema;
 pub mod methods;
