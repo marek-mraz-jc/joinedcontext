@@ -68,12 +68,12 @@ No `unsafe` was found in any reviewed crate. Every high finding is fixed (J-1 in
 
 | Id | Verdict | Fix |
 |---|---|---|
-| K-9 | documented | the guard's `*.svc.cluster.local` exemption applies only to configured realm-admin targets, never to client-controlled `backchannel.logout.url` |
+| K-9 | fixed | kaisatsu's outbound guard exempts only the exact Kubernetes API host (`https`, port 443) and the exact hosts listed in `[kaisatsu] outbound_private_hosts` (no suffix rule, no address literal); the ServiceAccount token goes to the Kubernetes API alone; `backchannel.logout.url` and identity-provider `jwksUrl`/`tokenUrl` are checked on save (422 naming the field), and a realm import keeps a refused stored value with a warning while every send to it is refused |
 | K-10 | documented | first broker login asks the existing account to sign in (or confirm by e-mail) before linking, whatever credentials it holds |
 | S-8 | documented | a project binding matches only targets in that project; repo bindings match owner and repo; principals keep their kind |
 | S-9 | documented | filter the OData sets `Deliveries`, `Events`, `Packages*` to visible repositories and projects |
 | S-10 | documented | queue webhook and mirror work after the request, outside the repo lock |
-| E-5 | documented | `http_client` uses the shared outbound rule (NAT64, 6to4, IPv4-compatible) and ignores `*_PROXY` |
+| E-5 | fixed | the guarded `http_client` judges every address by the shared outbound rule (NAT64, 6to4, IPv4-compatible), sends an Organization's listed `private_hosts` through a client that admits private ranges only (never loopback, link-local or metadata) and takes no proxy from the environment |
 | E-6 | documented | redact `tls.client_certs[].key` in `GET /streams/{id}` |
 | E-7 | documented | check the nearest existing ancestor when the target does not exist, and recheck each glob match |
 | D-14 | documented | CKAN resource writes go through `dataset.propose` (publish gate, activity row) |

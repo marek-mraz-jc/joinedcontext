@@ -491,7 +491,10 @@ pub fn client_builder(policy: EgressPolicy) -> reqwest::ClientBuilder {
         attempt.follow()
     });
     install_crypto_provider();
+    // No proxy from the environment: a proxy would dial the target itself and skip both the
+    // resolver check and the redirect check above.
     let mut b = reqwest::Client::builder()
+        .no_proxy()
         .redirect(redirect)
         .dns_resolver(std::sync::Arc::new(PolicyResolver(policy)));
     if let Ok(path) = std::env::var("ANTARES_EXTRA_CA_FILE") {

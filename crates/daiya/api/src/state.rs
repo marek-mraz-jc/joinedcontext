@@ -12,7 +12,7 @@ use daiya_model::{
 use daiya_model::{CrResult, DatasourceRecord};
 use daiya_query::{
     Datasource, DenyTokenExchanger, DriverDeps, DsError, MapSecretResolver, OutboundPolicy,
-    QueryCache, SecretResolver, TokenExchanger, WasmPluginHost, Zeroizing, build_driver,
+    QueryCache, SecretResolver, TokenExchanger, WasmPluginHost, Zeroizing, build_driver, guard_for,
 };
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
@@ -327,6 +327,30 @@ impl DaiyaState {
             return Ok(None);
         };
         self.driver_for_record(&record).await.map(Some)
+    }
+
+    /// The URL of `record` checked before it is stored, as the guard its driver gets checks it
+    /// before any lookup (scheme, allow-list, address literal): 422 naming `url`. A Postgres
+    /// datasource names `host:port`, which its pool checks when it resolves and connects.
+    pub fn check_datasource_url(&self, record: &DatasourceRecord) -> CrResult<()> {
+        if !matches!(
+            record.kind.as_str(),
+            "prometheus" | "ngsild" | "ngsild-grafana-datasource" | "odata"
+        ) {
+            return Ok(());
+        }
+        let mut policy = self.outbound_policy.clone();
+        policy.own_reach.clone_from(&self.own_reach);
+        guard_for(record, &policy, 443)
+            .and_then(|guard| guard.validate_url(&record.url))
+            .map(|_| ())
+            .map_err(|e| {
+                let why = format!("url: {e}");
+                CrError::Unprocessable {
+                    detail: why.clone(),
+                    errors: vec![format!("/{why}")],
+                }
+            })
     }
 
     /// The driver built from `record` (see [`daiya_query::build_driver`]), cached by record

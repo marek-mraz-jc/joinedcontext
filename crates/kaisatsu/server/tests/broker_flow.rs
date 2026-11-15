@@ -144,7 +144,7 @@ async fn k12_upstream_oidc_broker_happy_path_pkce_state_nonce_and_link_confirmat
     let _ = base_state;
 
     let guard = OutboundGuard::new(OutboundPolicy {
-        in_cluster_hosts: vec!["127.0.0.1".into()],
+        test_loopback: true,
         ..OutboundPolicy::default()
     });
     store
@@ -405,7 +405,7 @@ async fn a_brokered_sign_in_under_the_floor_goes_on_to_the_second_factor() {
         .await
         .unwrap();
     let guard = OutboundGuard::new(OutboundPolicy {
-        in_cluster_hosts: vec!["127.0.0.1".into()],
+        test_loopback: true,
         ..OutboundPolicy::default()
     });
     let state = KaisatsuState::new(
