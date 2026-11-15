@@ -632,8 +632,11 @@ export function dataSourceSchema(
         records: {
           type: "string",
           title: t("datasources.field.records"),
+          description: t("datasources.field.recordsHelp"),
           pattern: RECORDS_PATH,
         },
+        preset: presetSchema(t),
+        paging: pagingSchema(t),
         authorization: {
           type: "object",
           title: t("datasources.field.authorization"),
@@ -680,6 +683,130 @@ export function dataSourceSchema(
       title,
       [CONNECTION_BLOCK[type]]: connection[type],
       tls,
+    },
+  };
+}
+
+/** The open data APIs `spec.http.preset` reads (jc-core `HttpPresetKind`). */
+export const PRESET_KINDS = ["ckan", "arcgisFeature", "odata", "wfs", "ogcFeatures", "sensorThings"] as const;
+export type PresetKind = (typeof PRESET_KINDS)[number];
+
+/** How `spec.http.paging` names the next page (jc-core `HttpPagingMode`). */
+export const PAGING_MODES = ["page", "offset", "cursor", "link", "nextUrl"] as const;
+
+/** A field of the preset or paging block, its hint under it: `datasources.<block>.<name>Hint`. */
+function hinted(t: (key: string) => string, block: string, name: string, schema: JsonSchema): JsonSchema {
+  return { ...schema, title: t(`datasources.${block}.${name}`), description: t(`datasources.${block}.${name}Hint`) };
+}
+
+/**
+ * `spec.http.preset` (T-7067, T-7076): an open data API the platform knows, which sets the
+ * paging and the records itself; each field names the kinds it applies to in its hint, and jc-core
+ * refuses one the kind does not read.
+ */
+function presetSchema(t: (key: string) => string): JsonSchema {
+  const text = (name: string, pattern?: string) =>
+    hinted(t, "preset", name, { type: "string", minLength: 1, maxLength: 200, ...(pattern ? { pattern } : {}) });
+  return {
+    type: "object",
+    title: t("datasources.preset.title"),
+    description: t("datasources.preset.hint"),
+    required: ["kind"],
+    properties: {
+      kind: hinted(t, "preset", "kind", {
+        type: "string",
+        oneOf: PRESET_KINDS.map((kind) => ({ const: kind, title: t(`datasources.preset.kinds.${kind}`) })),
+      }),
+      pageSize: hinted(t, "preset", "pageSize", { type: "integer", minimum: 1, maximum: 10000 }),
+      organization: text("organization"),
+      resourceId: text("resourceId"),
+      objectIdField: text("objectIdField", "^[A-Za-z_][A-Za-z0-9_]*$"),
+      outFields: hinted(t, "preset", "outFields", {
+        type: "array",
+        items: { type: "string", pattern: "^[A-Za-z_][A-Za-z0-9_]*$" },
+      }),
+      typeNames: text("typeNames"),
+      srsName: text("srsName", "^EPSG:[0-9]{4,6}$"),
+      expand: text("expand"),
+    },
+  };
+}
+
+/** `spec.http.paging` (T-7056): how a paged source names its next page, for a source no preset reads. */
+function pagingSchema(t: (key: string) => string): JsonSchema {
+  const text = (name: string) => hinted(t, "paging", name, { type: "string", minLength: 1, maxLength: 200 });
+  const count = (name: string, maximum?: number) =>
+    hinted(t, "paging", name, { type: "integer", minimum: name === "start" ? 0 : 1, ...(maximum ? { maximum } : {}) });
+  return {
+    type: "object",
+    title: t("datasources.paging.title"),
+    description: t("datasources.paging.hint"),
+    required: ["mode"],
+    properties: {
+      mode: hinted(t, "paging", "mode", {
+        type: "string",
+        oneOf: PAGING_MODES.map((mode) => ({ const: mode, title: t(`datasources.paging.modes.${mode}`) })),
+      }),
+      param: text("param"),
+      start: count("start"),
+      sizeParam: text("sizeParam"),
+      size: count("size"),
+      offsetParam: text("offsetParam"),
+      limitParam: text("limitParam"),
+      limit: count("limit"),
+      cursor: text("cursor"),
+      cursorParam: text("cursorParam"),
+      cursorHeader: text("cursorHeader"),
+      next: text("next"),
+      total: text("total"),
+      more: text("more"),
+      maxPages: count("maxPages", 10000),
+      maxRecords: count("maxRecords"),
+      delay: hinted(t, "paging", "delay", { type: "string", pattern: "^[0-9]+(ms|s)$" }),
+    },
+  };
+}
+
+/** The preset fields each kind reads, beside `kind` (jc-core `HttpPreset::validate`). */
+const PRESET_FIELDS: Record<PresetKind, string[]> = {
+  ckan: ["pageSize", "organization", "resourceId"],
+  arcgisFeature: ["pageSize", "objectIdField", "outFields"],
+  odata: ["pageSize"],
+  wfs: ["pageSize", "typeNames", "srsName"],
+  ogcFeatures: ["pageSize"],
+  sensorThings: ["pageSize", "expand"],
+};
+
+/** The paging fields each mode reads, beside `mode` and the stop rules every mode has. */
+const PAGING_FIELDS: Record<(typeof PAGING_MODES)[number], string[]> = {
+  page: ["param", "start", "sizeParam", "size"],
+  offset: ["offsetParam", "limitParam", "limit", "start"],
+  cursor: ["cursor", "cursorParam", "cursorHeader"],
+  link: [],
+  nextUrl: ["next"],
+};
+const PAGING_STOPS = ["total", "more", "maxPages", "maxRecords", "delay"];
+
+/** `names` of `all` that are not in `shown`, hidden. */
+function hiddenExcept(all: string[], shown: string[]): UiSchema {
+  return Object.fromEntries(all.filter((name) => !shown.includes(name)).map((name) => [name, HIDDEN]));
+}
+
+/**
+ * The http form shows the fields the chosen preset kind or paging mode reads (T-7076): none before
+ * a kind or a mode is chosen, and no Paging block once a preset pages the source itself.
+ */
+export function httpUiSchema(http: Record<string, unknown> | undefined): UiSchema {
+  const preset = (http?.preset ?? {}) as { kind?: string };
+  const paging = (http?.paging ?? {}) as { mode?: string };
+  const presetAll = [...new Set(Object.values(PRESET_FIELDS).flat())];
+  const pagingAll = [...new Set([...Object.values(PAGING_FIELDS).flat(), ...PAGING_STOPS])];
+  const kind = (PRESET_KINDS as readonly string[]).includes(preset.kind ?? "") ? (preset.kind as PresetKind) : undefined;
+  const mode = (PAGING_MODES as readonly string[]).includes(paging.mode ?? "") ? (paging.mode as (typeof PAGING_MODES)[number]) : undefined;
+  return {
+    http: {
+      preset: hiddenExcept(presetAll, kind ? PRESET_FIELDS[kind] : []),
+      paging: kind ? HIDDEN : hiddenExcept(pagingAll, mode ? [...PAGING_FIELDS[mode], ...PAGING_STOPS] : []),
     },
   };
 }

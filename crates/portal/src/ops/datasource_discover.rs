@@ -30,6 +30,7 @@ const MAX_TEXT: usize = 300;
 /// What to list: the preset kind and the service's URL as the person typed it.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[schema(example = json!({ "kind": "wfs", "url": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs" }))]
 pub struct DiscoverRequest {
     /// `ckan`, `arcgisFeature`, `odata`, `wfs`, `ogcFeatures` or `sensorThings`.
     #[schema(value_type = String, example = "arcgisFeature")]
