@@ -326,7 +326,11 @@ pub fn with_endpoint_roles(subject: &mut Subject, roles: &EndpointRoles, claims:
         .roles
         .retain(|role| !role.starts_with(jc_core::kinds::ENDPOINT_ROLE_PREFIX));
     let held: Vec<String> = roles
-        .held_by(subject.user_principal(), &subject.groups, &client_roles)
+        .held_by(
+            subject.user_principal(),
+            subject.grant_groups(),
+            &client_roles,
+        )
         .map(str::to_owned)
         .collect();
     subject.roles.extend(held);
@@ -963,6 +967,42 @@ mod tests {
             anonymous_with(&app).roles,
             BTreeSet::from(["public".to_owned(), "endpoint:city/app-map".to_owned()])
         );
+    }
+
+    /// ADR-N-067 2.3: an Endpoint role given to a group is matched as a Policy's `group` assignee
+    /// is, against the groups of the Endpoint's Organization: the person's group there holds it,
+    /// a same-named group under another Organization does not.
+    #[test]
+    fn an_endpoint_role_of_a_group_is_held_by_that_group_of_the_endpoints_organization() {
+        let claims = |paths: &[&str]| -> Claims {
+            serde_json::from_value(serde_json::json!({
+                "sub": "5b1e", "iss": "realm", "exp": 1, "azp": "portal-ui",
+                "preferred_username": "reader", "groups": paths, "jc_groups": paths,
+            }))
+            .expect("claims")
+        };
+        let spec: jc_core::kinds::EndpointSpec = serde_json::from_value(serde_json::json!({
+            "contextSpaceRef": "air", "slug": "w3nq7pzk2mtv6hx5brj4gcdsfa", "audience": "public",
+            "enabledRepresentations": ["ngsi-ld"],
+            "roles": [{"name": "analyst", "subjects": [{"group": "analysts"}]}]
+        }))
+        .expect("an Endpoint spec");
+        let roles = EndpointRoles::of("city", "air", &spec);
+        let holds = |paths: &[&str]| {
+            let claims = claims(paths);
+            let mut subject = person(&claims, Audience::Public, Some("hel")).expect("a person");
+            with_endpoint_roles(&mut subject, &roles, Some(&claims));
+            subject.roles.contains("endpoint:city/air/analyst")
+        };
+        assert!(
+            holds(&["/hel/analysts"]),
+            "the group of the Endpoint's Organization"
+        );
+        assert!(
+            !holds(&["/esp/analysts"]),
+            "a same-named group of another Organization"
+        );
+        assert!(!holds(&["/analysts"]), "a group under no Organization");
     }
 
     /// The panel reader of the synthetic bundle (jc-panel-grant): the reconciler writes the
