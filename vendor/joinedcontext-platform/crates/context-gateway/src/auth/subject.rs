@@ -809,6 +809,8 @@ pub(crate) fn admit(
     }
     // ADR-N-054 2.6 (DM-122): a public Endpoint never serves a personal attribute, so one whose
     // model and projection would is refused whole until its owner hides them or narrows it.
+    // The answer reaches anyone, before authentication: which attributes are personal goes to
+    // the operator's log and the owner's model, never into it.
     let personal = endpoint.public_personal_attributes();
     if !personal.is_empty() {
         tracing::warn!(slug, attributes = ?personal, "refused: a public endpoint exposes personal data");
@@ -818,10 +820,9 @@ pub(crate) fn admit(
                 "personal-data-public",
                 "Personal Data on a Public Endpoint",
             )
-            .with_detail(format!(
-                "the model marks {} as personal data; hide them or narrow the audience",
-                personal.join(", ")
-            ))
+            .with_detail(
+                "the Endpoint's model marks attributes it would serve publicly as personal data",
+            )
             .into_response(),
         ));
     }

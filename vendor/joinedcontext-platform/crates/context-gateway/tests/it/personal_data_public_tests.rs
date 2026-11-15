@@ -128,12 +128,8 @@ async fn a_public_endpoint_serving_a_personal_attribute_is_refused_whole() {
             .is_some_and(|v| v.ends_with("personal-data-public"))
     };
     assert!(named("type") || named("code"), "{problem}");
-    assert!(
-        problem["detail"]
-            .as_str()
-            .is_some_and(|d| d.contains("BikeTrip.rider")),
-        "{problem}"
-    );
+    // The refusal reaches anonymous callers: it names no attribute of the model.
+    assert!(!problem.to_string().contains("rider"), "{problem}");
     assert_eq!(hops, 0, "a refused Endpoint never reaches the broker");
 }
 
