@@ -367,42 +367,35 @@ async fn generate_paces_by_duration_and_by_cron() {
 }
 
 #[tokio::test]
-async fn generate_replays_a_nacked_batch_before_it_ends() {
+async fn generate_replays_a_nacked_batch_of_an_unlimited_stream() {
     use ekiben_core::BatchError;
     let (reg, sctx) = make_stream_ctx(None);
+    let body = |b: &ekiben_core::Batch| String::from_utf8_lossy(&b[0].as_bytes_ref()).into_owned();
     let mut input = generate(
         &reg,
         &sctx,
-        serde_json::json!({"mapping": "root = counter()", "interval": "", "count": 1}),
+        serde_json::json!({"mapping": "root = counter()", "interval": ""}),
     );
     let (batch, ack) = input.read_batch(&sctx).await.unwrap();
-    assert_eq!(batch[0].as_bytes_ref().as_ref(), b"1");
-    // The answer comes later: the exhausted input waits for it instead of ending.
-    let pending = tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        ack.nack(BatchError::new(batch, "output refused".to_string()));
-    });
-    let (again, ack) = input.read_batch(&sctx).await.unwrap();
-    pending.await.unwrap();
-    assert_eq!(again[0].as_bytes_ref().as_ref(), b"1");
-    // A responder dropped unanswered does not hold the input open.
-    drop(ack);
-    assert!(matches!(
-        input.read_batch(&sctx).await,
-        Err(ekiben_core::CoreError::EndOfInput)
-    ));
-
-    let mut no_replay = generate(
-        &reg,
-        &sctx,
-        serde_json::json!({"mapping": "root = 1", "interval": "", "count": 1, "auto_replay_nacks": false}),
-    );
-    let (batch, ack) = no_replay.read_batch(&sctx).await.unwrap();
+    assert_eq!(body(&batch), "1");
     ack.nack(BatchError::new(batch, "output refused".to_string()));
-    assert!(matches!(
-        no_replay.read_batch(&sctx).await,
-        Err(ekiben_core::CoreError::EndOfInput)
-    ));
+    let (again, ack) = input.read_batch(&sctx).await.unwrap();
+    assert_eq!(body(&again), "1", "the nacked batch comes again");
+    ack.ack();
+    let (next, _) = input.read_batch(&sctx).await.unwrap();
+    assert_eq!(body(&next), "2");
+
+    // Off, or a count-limited (one-run) generate: a nack is the run's failure, never replayed.
+    for conf in [
+        serde_json::json!({"mapping": "root = counter()", "interval": "", "auto_replay_nacks": false}),
+        serde_json::json!({"mapping": "root = counter()", "interval": "", "count": 2}),
+    ] {
+        let mut input = generate(&reg, &sctx, conf);
+        let (batch, ack) = input.read_batch(&sctx).await.unwrap();
+        ack.nack(BatchError::new(batch, "output refused".to_string()));
+        let (next, _) = input.read_batch(&sctx).await.unwrap();
+        assert_eq!(body(&next), "2");
+    }
 }
 
 #[tokio::test]

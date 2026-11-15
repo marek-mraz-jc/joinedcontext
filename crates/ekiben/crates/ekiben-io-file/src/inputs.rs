@@ -81,58 +81,25 @@ enum GenerateTimer {
     Cron(crate::cron::Schedule),
 }
 
-/// Nacked batches waiting to be read again, and how many sent batches are still unanswered:
-/// a `count`-limited input ends only once every batch it sent is acked.
+/// Nacked batches waiting to be sent again, at the pace of new ones.
 #[derive(Default)]
-struct NackReplay {
-    state: std::sync::Mutex<(VecDeque<Batch>, usize)>,
-    changed: tokio::sync::Notify,
-}
+struct NackReplay(std::sync::Mutex<VecDeque<Batch>>);
 
 impl NackReplay {
-    fn lock(&self) -> std::sync::MutexGuard<'_, (VecDeque<Batch>, usize)> {
-        self.state
+    fn lock(&self) -> std::sync::MutexGuard<'_, VecDeque<Batch>> {
+        self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn track(self: &Arc<Self>, batch: &Batch) -> AckResponder {
-        self.lock().1 += 1;
-        // The guard answers for the batch when its responder is dropped unanswered too.
-        let guard = InFlight(self.clone());
+        let this = self.clone();
         let copy = batch.clone();
         AckResponder::from_fn(move |res| {
             if res.is_some() {
-                guard.0.lock().0.push_back(copy);
+                this.lock().push_back(copy);
             }
-            drop(guard);
         })
-    }
-
-    /// A nacked batch to send again, waiting for the unanswered ones when `drain` is set.
-    async fn next(&self, drain: bool) -> Option<Batch> {
-        loop {
-            let notified = self.changed.notified();
-            {
-                let mut st = self.lock();
-                if let Some(b) = st.0.pop_front() {
-                    return Some(b);
-                }
-                if !drain || st.1 == 0 {
-                    return None;
-                }
-            }
-            notified.await;
-        }
-    }
-}
-
-struct InFlight(Arc<NackReplay>);
-
-impl Drop for InFlight {
-    fn drop(&mut self) {
-        self.0.lock().1 -= 1;
-        self.0.changed.notify_one();
     }
 }
 
@@ -186,7 +153,11 @@ impl GenerateInput {
             remaining,
             batch_size,
             first_run: true,
-            replay: auto_replay_nacks.then(Arc::default),
+            // Decided (worker-t7078, owner may override): only an unlimited generate replays.
+            // ekiben's runner goes on after a failed write and reports the message as a failed
+            // run outcome, so a `count`-limited generate (the Portal's one-run shape) replaying
+            // a nack would turn a failed run into an endless one.
+            replay: (auto_replay_nacks && remaining.is_none()).then(Arc::default),
         })
     }
 
@@ -247,23 +218,18 @@ impl Input for GenerateInput {
         &mut self,
         ctx: &StreamContext,
     ) -> Result<(Batch, AckResponder), CoreError> {
-        let exhausted = self.remaining == Some(0);
-        if let Some(r) = self.replay.clone() {
-            let replayed = tokio::select! {
-                b = r.next(exhausted) => b,
-                _ = stopped(ctx) => return Err(CoreError::EndOfInput),
-            };
-            if let Some(replayed) = replayed {
-                let ack = self.ack_for(&replayed);
-                return Ok((replayed, ack));
-            }
-        }
-        if exhausted {
+        if self.remaining == Some(0) {
             return Err(CoreError::EndOfInput);
         }
 
         self.wait_tick(ctx).await?;
         self.first_run = false;
+
+        let replayed = self.replay.as_ref().and_then(|r| r.lock().pop_front());
+        if let Some(replayed) = replayed {
+            let ack = self.ack_for(&replayed);
+            return Ok((replayed, ack));
+        }
 
         let to_gen = match self.remaining {
             Some(rem) => {
