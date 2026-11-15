@@ -6,7 +6,8 @@ use crate::document::{context, covers, scope_paths, Policy, Table};
 use crate::subject::{Caller, Platform};
 use antares_api::policy::metadata::{Metadata, MEMBERS};
 use antares_api::policy::{
-    Decision, Filter, Operation, Rule, Warning, FILTERABLE, NAME_READS, WHOLE_TENANT, WRITE_BY_ID,
+    Decision, Filter, Operation, Rule, StoredImage, Warning, FILTERABLE, NAME_READS, WHOLE_TENANT,
+    WRITE_BY_ID,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -48,8 +49,80 @@ pub const INTERNAL_ONLY: &str =
     "a request without a subject reaches the Context Source operations only";
 
 /// The decision for `op` by `caller` under the Tenant's `table` at `now`.
+///
+/// A write by id to one Entity whose body names no type, so only the stored Entity decides it,
+/// is refused the way an absent Entity is whenever the caller writes something by that
+/// operation (S-3-10, ADR-0023 rule 3): an Entity of a type the caller may not write, one a
+/// prohibition covers, and one outside the grant's scope then all answer the 404 an absent id
+/// does, so the answer tells nothing of what the Tenant holds. A caller who writes nothing
+/// by it is refused 403 whatever the id.
 #[must_use]
 pub fn decide(
+    table: Option<&Table>,
+    caller: &Caller,
+    op: &Operation<'_>,
+    now: DateTime<Utc>,
+) -> Decision {
+    let decision = decided(table, caller, op, now);
+    let (Decision::Deny(reason), Caller::Platform(platform), Some(table)) =
+        (&decision, caller, table)
+    else {
+        return decision;
+    };
+    let by_stored = WRITE_BY_ID.contains(&op.clause)
+        && !BATCH_WRITES.contains(&op.clause)
+        && op.ids.len() == 1
+        && op
+            .body
+            .is_none_or(|b| antares_api::policy::entity_types(b).is_empty());
+    if !by_stored || ![NOT_GRANTED, PROHIBITED].contains(&reason.as_str()) {
+        return decision;
+    }
+    // Would the caller write an Entity of a type it is granted, holding nothing yet, by this
+    // same request? Only then does the refusal depend on what is stored.
+    let writes_some = held(table, platform, now)
+        .filter(|p| !p.prohibit && p.clauses.contains(op.clause))
+        .flat_map(probe_types)
+        .any(|t| {
+            let stored = StoredImage {
+                types: vec![t],
+                ..StoredImage::default()
+            };
+            let probe = Operation {
+                types: &[],
+                stored: Some(&stored),
+                ..*op
+            };
+            !matches!(decided(Some(table), caller, &probe, now), Decision::Deny(_))
+        });
+    if writes_some {
+        // A rule naming no type holds for nothing: the store answers the Entity as absent.
+        Decision::AllowIf(Filter {
+            rules: vec![Rule::default()],
+            ..Filter::default()
+        })
+    } else {
+        decision
+    }
+}
+
+/// The batch writes (5.6.8 to 5.6.10): each Entity of the batch is answered on its own.
+const BATCH_WRITES: [&str; 3] = ["5.6.8", "5.6.9", "5.6.10"];
+
+/// The types `p` would admit a write on: those its selectors name, or one stand-in for a
+/// grant over every type.
+fn probe_types(p: &Policy) -> Vec<String> {
+    if p.selectors.is_empty() {
+        return vec![String::new()];
+    }
+    p.selectors
+        .iter()
+        .flat_map(|s| s.types.iter().cloned())
+        .collect()
+}
+
+/// [`decide`] before a write by id is answered as absent.
+fn decided(
     table: Option<&Table>,
     caller: &Caller,
     op: &Operation<'_>,

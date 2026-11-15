@@ -4,13 +4,13 @@
 
 use crate::broker::{UpstreamIdTokenClaims, UpstreamOidcBroker, idp_link_attribute};
 use crate::client_ip::ClientIp;
-use crate::handlers::{OidcState, redirect_with_params};
+use crate::handlers::OidcState;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Extension, Form, Router};
-use chrono::{Duration, Utc};
+use chrono::Utc;
 use jc_router::Mount;
 use kaisatsu_core::i18n::{Bundle, negotiate_for_realm};
 use kaisatsu_core::page;
@@ -21,7 +21,7 @@ use kaisatsu_crypto::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingBrokerSession {
@@ -77,16 +77,12 @@ pub fn broker_router() -> Router<OidcState> {
         )
 }
 
-fn read_auth_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
-    crate::handlers::read_cookie(headers, &mount.cookie_name("auth"))
+fn read_auth_cookie(headers: &HeaderMap) -> Option<String> {
+    crate::handlers::read_cookie(headers, &crate::handlers::sign_in_cookie_name("auth"))
 }
 
-fn verify_auth_cookie(
-    headers: &HeaderMap,
-    mount: &Mount,
-    auth_session: &AuthSession,
-) -> Result<()> {
-    let Some(raw) = read_auth_cookie(headers, mount) else {
+fn verify_auth_cookie(headers: &HeaderMap, auth_session: &AuthSession) -> Result<()> {
+    let Some(raw) = read_auth_cookie(headers) else {
         return Err(KaisatsuError::BadRequest(
             "missing auth session cookie".into(),
         ));
@@ -120,7 +116,7 @@ async fn broker_login_get(
         .get_auth_session_by_id(&realm.id, &query.session_code)
         .await?
         .ok_or_else(|| KaisatsuError::BadRequest("login session expired".into()))?;
-    verify_auth_cookie(&headers, &mount, &auth_session)?;
+    verify_auth_cookie(&headers, &auth_session)?;
 
     let idp = state
         .store
@@ -181,7 +177,6 @@ async fn broker_endpoint_get(
     Query(query): Query<BrokerEndpointQuery>,
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
-    client_ip: ClientIp,
 ) -> Result<Response> {
     let realm = state
         .store
@@ -204,7 +199,7 @@ async fn broker_endpoint_get(
         .get_auth_session_by_id(&realm.id, session_id)
         .await?
         .ok_or_else(|| KaisatsuError::BadRequest("login session expired".into()))?;
-    verify_auth_cookie(&headers, &mount, &auth_session)?;
+    verify_auth_cookie(&headers, &auth_session)?;
 
     let mut pending: PendingBrokerSession = serde_json::from_str(
         auth_session
@@ -327,15 +322,7 @@ async fn broker_endpoint_get(
             .await?
             .filter(|u| u.enabled)
     {
-        return issue_broker_session_and_code(
-            &state,
-            &mount,
-            &realm,
-            auth_session,
-            &user,
-            &client_ip,
-        )
-        .await;
+        return hand_to_login(&state, &mount, &realm, auth_session, &user, &idp.alias).await;
     }
 
     // 2. First broker login: requires verified email and `idp.trust_email`.
@@ -361,15 +348,8 @@ async fn broker_endpoint_get(
             .get(&attr_key)
             .is_some_and(|v| v.iter().any(|s| s == &claims.sub));
         if already_linked && existing.enabled {
-            return issue_broker_session_and_code(
-                &state,
-                &mount,
-                &realm,
-                auth_session,
-                &existing,
-                &client_ip,
-            )
-            .await;
+            return hand_to_login(&state, &mount, &realm, auth_session, &existing, &idp.alias)
+                .await;
         }
         // Existing account is not yet linked: require explicit link confirmation (POST + CSRF),
         // and require local password verification when the existing account has a password.
@@ -421,14 +401,14 @@ async fn broker_endpoint_get(
             realm_id: realm.id.clone(),
             org_id: created.org_id.clone(),
             user_id: created.id.clone(),
-            idp_alias: idp.alias,
+            idp_alias: idp.alias.clone(),
             external_user_id: claims.sub,
             external_username: claims.preferred_username.or(claims.email),
             created_at: Utc::now(),
         })
         .await?;
 
-    issue_broker_session_and_code(&state, &mount, &realm, auth_session, &created, &client_ip).await
+    hand_to_login(&state, &mount, &realm, auth_session, &created, &idp.alias).await
 }
 
 /// `POST /realms/{realm}/broker/{alias}/endpoint` (K12):
@@ -453,7 +433,7 @@ async fn broker_endpoint_confirm_post(
         .get_auth_session_by_id(&realm.id, &form.session_code)
         .await?
         .ok_or_else(|| KaisatsuError::BadRequest("login session expired".into()))?;
-    verify_auth_cookie(&headers, &mount, &auth_session)?;
+    verify_auth_cookie(&headers, &auth_session)?;
 
     if !constant_time_str_eq(&form.csrf_token, &auth_session.csrf_token) {
         return Err(KaisatsuError::Forbidden("invalid CSRF token".into()));
@@ -534,14 +514,14 @@ async fn broker_endpoint_confirm_post(
             realm_id: realm.id.clone(),
             org_id: existing.org_id.clone(),
             user_id: existing.id.clone(),
-            idp_alias: alias,
+            idp_alias: alias.clone(),
             external_user_id: claims.sub,
             external_username: claims.preferred_username.or(claims.email),
             created_at: Utc::now(),
         })
         .await?;
 
-    issue_broker_session_and_code(&state, &mount, &realm, auth_session, &existing, &client_ip).await
+    hand_to_login(&state, &mount, &realm, auth_session, &existing, &alias).await
 }
 
 /// keycloak.v2's login-idp-link-confirm with the local password when the account has one: the
@@ -634,137 +614,21 @@ async fn render_broker_link_confirm_page(
         .into_response())
 }
 
-async fn issue_broker_session_and_code(
-    state: &OidcState,
-    mount: &Mount,
-    realm: &RealmConfig,
-    auth_session: AuthSession,
-    user: &UserRepresentation,
-    client_ip: &ClientIp,
-) -> Result<Response> {
-    // The upstream sign-in is the first factor only: a person who needs a second factor goes
-    // on to the local one-time code (or its enrolment) before any code is issued.
-    if crate::second_factor_required(state, realm, user).await? {
-        return continue_with_second_factor(state, mount, realm, auth_session, user).await;
-    }
-    let now = Utc::now();
-    let sso_id = uuid::Uuid::now_v7().to_string();
-    let sso_handle = random_handle_256();
-    let sso = SsoSession {
-        id: sso_id.clone(),
-        realm_id: realm.id.clone(),
-        org_id: user.org_id.clone().or_else(|| auth_session.org_id.clone()),
-        handle_hash: sha256_hex(&sso_handle),
-        user_id: user.id.clone(),
-        username: user.username.clone(),
-        ip_address: client_ip.for_audit(),
-        user_agent: String::new(),
-        start: now.timestamp_millis(),
-        last_access: now.timestamp_millis(),
-        auth_time: now.timestamp(),
-        acr: "pwd".into(),
-        amr: vec!["fed".into()],
-        clients: HashMap::from([(
-            auth_session.client_id.clone(),
-            auth_session.client_id.clone(),
-        )]),
-        idle_expires_at: now + Duration::seconds(realm.sso_session_idle_timeout.max(3600)),
-        max_expires_at: now + Duration::seconds(realm.sso_session_max_lifespan.max(36000)),
-    };
-    state.store.upsert_sso_session(sso).await?;
-
-    let raw_code = random_handle_256();
-    let code_rec = AuthorizationCodeRecord {
-        code_hash: sha256_hex(&raw_code),
-        realm_id: realm.id.clone(),
-        org_id: user.org_id.clone().or(auth_session.org_id),
-        client_id: auth_session.client_id.clone(),
-        user_id: user.id.clone(),
-        sso_session_id: sso_id.clone(),
-        redirect_uri: auth_session.redirect_uri.clone(),
-        scope: auth_session.scope.clone(),
-        mapper_scopes: auth_session.mapper_scopes.clone(),
-        code_challenge: auth_session.code_challenge.clone(),
-        code_challenge_method: auth_session.code_challenge_method.clone(),
-        nonce: auth_session.nonce.clone(),
-        acr: "pwd".into(),
-        amr: vec!["fed".into()],
-        dpop_jkt: auth_session.dpop_jkt.clone(),
-        auth_time: now.timestamp(),
-        consumed: false,
-        created_at: now,
-        expires_at: now + Duration::seconds(realm.access_code_lifespan.max(60)),
-    };
-    state.store.put_auth_code(code_rec).await?;
-    state
-        .store
-        .delete_auth_session(&realm.id, &auth_session.id)
-        .await?;
-
-    state
-        .store
-        .append_event(AuditEvent {
-            id: uuid::Uuid::now_v7().to_string(),
-            realm_id: realm.id.clone(),
-            org_id: user.org_id.clone(),
-            time: now.timestamp_millis(),
-            event_type: "LOGIN".into(),
-            client_id: Some(auth_session.client_id),
-            user_id: Some(user.id.clone()),
-            session_id: Some(sso_id),
-            ip_address: client_ip.for_audit(),
-            error: None,
-            details: BTreeMap::from([("identity_provider".into(), "oidc".into())]),
-        })
-        .await?;
-
-    let cookie_name = mount.cookie_name("sso");
-    let cookie_path = mount.realm_cookie_path(&realm.realm);
-    let ttl = realm.sso_session_max_lifespan.max(3600);
-    let set_cookie = if mount.path_prefix.is_empty() {
-        format!("{cookie_name}={sso_handle}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={ttl}")
-    } else {
-        format!(
-            "{cookie_name}={sso_handle}; Path={cookie_path}; HttpOnly; Secure; SameSite=Lax; Max-Age={ttl}"
-        )
-    };
-
-    let mut pairs = vec![("code", raw_code.as_str())];
-    if let Some(st) = &auth_session.state {
-        pairs.push(("state", st.as_str()));
-    }
-    let mut resp = redirect_with_params(
-        &auth_session.redirect_uri,
-        &auth_session.response_mode,
-        &pairs,
-    );
-    let cookie = header::HeaderValue::from_str(&set_cookie)
-        .map_err(|_| KaisatsuError::Storage("invalid session cookie".into()))?;
-    resp.headers_mut().append(header::SET_COOKIE, cookie);
-    Ok(resp)
-}
-
-/// Hands a brokered sign-in to the login pages at the second-factor step: the one-time code
-/// when the person has an authenticator, its enrolment when not.
-async fn continue_with_second_factor(
+/// Hands a verified upstream sign-in to the login pages (S-4-01): the upstream assertion is the
+/// first factor, and the login machine runs everything after it as for a password sign-in (the
+/// second factor or its enrolment, required actions, the organization choice, consent) before
+/// any code is issued.
+async fn hand_to_login(
     state: &OidcState,
     mount: &Mount,
     realm: &RealmConfig,
     mut auth_session: AuthSession,
     user: &UserRepresentation,
+    alias: &str,
 ) -> Result<Response> {
-    let has_totp = state
-        .store
-        .list_credentials(&realm.id, &user.id)
-        .await?
-        .iter()
-        .any(|c| c.credential_type == "otp");
-    let step = if has_totp {
-        serde_json::json!({ "step": "SecondFactorOtp", "user_id": user.id, "first_factor_passed": true })
-    } else {
-        serde_json::json!({ "step": "EnrolTotp", "user_id": user.id, "first_factor_passed": true })
-    };
-    auth_session.step_state_json = step.to_string();
+    auth_session.step_state_json =
+        serde_json::json!({ "step": "UpstreamIdp", "idp_alias": alias, "assertion_verified": true })
+            .to_string();
     auth_session.user_id = Some(user.id.clone());
     auth_session.amr = vec!["fed".into()];
     auth_session.acr_achieved = "pwd".into();

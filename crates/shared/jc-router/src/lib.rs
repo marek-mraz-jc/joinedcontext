@@ -87,12 +87,6 @@ impl Mount {
         format!("{}/realms/{realm}", self.public_base())
     }
 
-    /// Cookie path for a realm: `{prefix}/realms/{realm}` (W9).
-    #[must_use]
-    pub fn realm_cookie_path(&self, realm: &str) -> String {
-        format!("{}/realms/{realm}", self.path_prefix)
-    }
-
     /// Cookie prefix rule of W9: `__Host-wk_` only when mounted at the host root (`path_prefix == ""`),
     /// otherwise `__Secure-wk_` with `Path={prefix}/realms/{realm}`.
     #[must_use]
@@ -1170,10 +1164,8 @@ mod tests {
         let m = Mount::default();
         assert_eq!(m.module, "kaisatsu");
         assert_eq!(m.public_base(), "https://idm.localhost");
-        assert_eq!(m.realm_cookie_path("dev"), "/realms/dev");
         assert_eq!(m.cookie_name("sso"), "__Host-wk_sso");
         let m = Mount::new("kaisatsu", "https", "city.example", "/id/").unwrap();
-        assert_eq!(m.realm_cookie_path("dev"), "/id/realms/dev");
         assert_eq!(m.realm_issuer("dev"), "https://city.example/id/realms/dev");
         assert!(Mount::new("x", "https", "h", "id").is_err());
         assert!(Mount::new("x", "https", "h", "/a?b").is_err());
