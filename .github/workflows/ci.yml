@@ -594,9 +594,9 @@ jobs:
       - uses: ./.github/actions/rust
         with: { workspace: crates/ekiben, key: ekiben, components: "clippy, rustfmt" }
       - run: >-
-          docker run -d --name versitygw -p 7070:7070 -e ROOT_ACCESS_KEY=$S3_TEST_ID -e ROOT_SECRET_KEY=$S3_TEST_SECRET
+          docker run -d --name versitygw -p 7070:7070 -e "ROOT_ACCESS_KEY=$S3_TEST_ID" -e "ROOT_SECRET_KEY=$S3_TEST_SECRET"
           versity/versitygw@sha256:605de57c0cdc297fc5bc905ece592965d542d8df70d6eedf755734c80f2eb797 --port :7070 posix /tmp
-          && sleep 2 && docker exec versitygw mkdir -p /tmp/$S3_TEST_BUCKET
+          && sleep 2 && docker exec versitygw mkdir -p "/tmp/$S3_TEST_BUCKET"
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked --no-fail-fast
