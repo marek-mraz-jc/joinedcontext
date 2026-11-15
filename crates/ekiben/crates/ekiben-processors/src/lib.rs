@@ -11,6 +11,7 @@ pub mod processor_cached;
 pub mod processor_group_by;
 pub mod processor_group_by_value;
 pub mod resources;
+pub mod spreadsheet;
 pub mod switch;
 pub mod utility;
 pub mod workflow;
@@ -36,6 +37,11 @@ pub fn register_all(registry: &Registry) {
     registry.register_processor("group_by_value", |conf, ctx| {
         Ok(std::sync::Arc::new(
             processor_group_by_value::GroupByValueProcessor::from_config(conf, ctx)?,
+        ))
+    });
+    registry.register_buffer("memory", |conf, ctx| {
+        Ok(std::sync::Arc::new(
+            ekiben_core::buffer::MemoryBuffer::from_config(conf, ctx)?,
         ))
     });
     registry.register_buffer("system_window", |conf, ctx| {

@@ -423,6 +423,7 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
                 .map(|(k, v)| (k.to_string(), v.into()))
                 .collect();
             let env = Environment::new();
+            names.insert("scanners".into(), ekiben_io_file::inputs::SCANNERS.into());
             names.insert("bloblang-functions".into(), env.function_names().into());
             names.insert("bloblang-methods".into(), env.method_names().into());
             // Names Bento refuses: a config using one of them runs on ekiben only.

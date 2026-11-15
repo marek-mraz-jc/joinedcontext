@@ -9,6 +9,7 @@ members = [
     "crates/ekiben-parquet",
     "crates/ekiben-protobuf",
     "crates/ekiben-text",
+    "crates/ekiben-js",
     "crates/ekiben-io-nats",
     "crates/ekiben-io-ngsild",
     "crates/ekiben-io-sql",
@@ -50,6 +51,7 @@ ekiben-io-file = { path = "crates/ekiben-io-file" }
 ekiben-parquet = { path = "crates/ekiben-parquet" }
 ekiben-protobuf = { path = "crates/ekiben-protobuf" }
 ekiben-text = { path = "crates/ekiben-text" }
+ekiben-js = { path = "crates/ekiben-js" }
 ekiben-io-nats = { path = "crates/ekiben-io-nats" }
 ekiben-io-ngsild = { path = "crates/ekiben-io-ngsild" }
 ekiben-io-sql = { path = "crates/ekiben-io-sql" }
