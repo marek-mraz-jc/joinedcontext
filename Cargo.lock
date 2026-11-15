@@ -7398,6 +7398,7 @@ name = "linkml-model"
 version = "0.3.0"
 dependencies = [
  "moka",
+ "regex",
  "serde",
  "serde_json",
 ]
