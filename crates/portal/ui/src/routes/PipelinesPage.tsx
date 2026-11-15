@@ -32,7 +32,7 @@ import type { PipelineSpec } from "../pages/pipelines/PipelineOverview";
 import type { PipelineForm, toEnvelope } from "../pages/pipelines/PipelineEditor";
 import { takeEditRequest, takePrefill } from "../assistant/state";
 import { useProjectUsage } from "../components/ProjectQuota";
-import { PermissionGuard } from "../components/ui/PermissionGuard";
+import { DeniedNote, PermissionGuard } from "../components/ui/PermissionGuard";
 import { EditResourceDialog } from "../components/EditResourceDialog";
 import { usePermissions } from "../api/permissions";
 import { proposeChecked } from "../api/proposal";
@@ -422,6 +422,8 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
           </PermissionGuard>
         }
       />
+      {/* A reader's New, Pause and Resume are refused: the page says why once, in words. */}
+      <DeniedNote project={project} kind="Pipeline" verb="propose" />
 
       <Tabs
         id="pipeline-views"
@@ -660,6 +662,7 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
                       size="sm"
                       className="whitespace-nowrap"
                       disabled={toggle.isPending && toggle.variables?.pipeline.metadata.name === pipeline.metadata.name}
+                      loading={toggle.isPending && toggle.variables?.pipeline.metadata.name === pipeline.metadata.name}
                       disabledReason={t("app.busyReason")}
                       onClick={() => toggle.mutate({ pipeline, run: !running })}
                       title={t(running ? "pipelines.pauseHint" : "pipelines.resumeHint")}

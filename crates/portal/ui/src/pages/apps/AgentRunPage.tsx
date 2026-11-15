@@ -303,6 +303,11 @@ export function AgentRunPage({
               {t("agentRun.publishOver")}
             </span>
           ) : null}
+          {!publishable && !over && !publish.isPending ? (
+            <span className="basis-full text-caption text-fg-muted" aria-hidden="true">
+              {t("agentRun.publishNotReady")}
+            </span>
+          ) : null}
           {heldText ? (
             <span className="basis-full text-caption text-fg-muted" aria-hidden="true">
               {heldText}
