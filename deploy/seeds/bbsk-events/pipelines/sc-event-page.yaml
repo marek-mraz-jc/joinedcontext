@@ -1,0 +1,41 @@
+# The smart-city WordPress theme's event page (Sliač; its REST API answers 401, T-5354): rss-list.yaml lists the
+# posts of post_type=event, and each page marks its event as schema.org microdata: `<time datetime>` with
+# itemprop startDate and endDate, the place as itemprop location, and its point in the theme's static-map URL
+# (`static-map?lat=..&lon=..`). On 2026-10-23 every page named the town alone as its place and showed one point for
+# it: such a point is the theme's default, so a point is read only beside a place other than the town. The dates in
+# the post text are free text and never read. One page of the source's own host at a time, a second apart.
+- branch:
+    # Only a page of the source's own host: the path is checked before the request and the host is fixed in
+    # the url below, so an item can never send the run to another host.
+    request_map: |
+      let path = this.url.or("").re_find_object("^__HOST_RE__/(?P<p>[A-Za-z0-9._~%/-]{1,300})$").p.or("")
+      root = if $path == "" || $path.contains("..") { deleted() } else { "" }
+      meta event_path = $path
+    processors:
+      - sleep:
+          duration: 1s
+      - http:
+          url: __HOST__/${! @event_path }
+          verb: GET
+          headers:
+            User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public events)
+            Accept: text/html
+          timeout: 20s
+          retries: 1
+    result_map: |
+      # "2026-10-23T18:00" is Bratislava's wall time; "2026-10-23" alone a whole day.
+      map at {
+        let v = this.or("").trim()
+        root = if $v.re_match("^[0-9]{4}-[0-9]{2}-[0-9]{2}$") { $v } else if $v.re_match("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}$") { $v + ":00" + ($v + ":00Z").ts_format("-07:00", "Europe/Bratislava") } else { null }
+      }
+      let page = content().string()
+      let point = $page.re_find_object("static-map\\?lat=(?P<lat>[0-9]{1,2}\\.[0-9]{1,8})&(?:#038;|amp;)?lon=(?P<lon>[0-9]{1,2}\\.[0-9]{1,8})")
+      root.start = $page.re_find_object("<time\\s+datetime=\"(?P<v>[0-9T:-]{10,16})\"\\s+itemprop=\"startDate\"").v.or(null).apply("at")
+      root.end = $page.re_find_object("<time\\s+datetime=\"(?P<v>[0-9T:-]{10,16})\"\\s+itemprop=\"endDate\"").v.or(null).apply("at")
+      let venue = $page.re_find_object("itemprop=\"location\"[^>]*>\\s*<span itemprop=\"name\">(?P<v>[^<]{1,300})</span>").v.or("").trim()
+      let own = $venue != "" && $venue.lowercase() != __TOWN__.or("").lowercase()
+      root.venue = if $venue == "" { null } else { $venue }
+      root.lat = if $own && $point.lat.or("") != "" { $point.lat } else { null }
+      root.lon = if $own && $point.lon.or("") != "" { $point.lon } else { null }
+- archive:
+    format: json_array

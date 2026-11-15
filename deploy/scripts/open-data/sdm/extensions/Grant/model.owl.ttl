@@ -1,0 +1,708 @@
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix linkml: <https://w3id.org/linkml/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+jc:Entity a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "Entity" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:observedAt ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:id ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:type ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:location ] ;
+    skos:definition "The root every NGSI-LD entity class specialises." ;
+    skos:exactMatch ngsi-ld:Entity ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:Grant a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "Grant" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:ziadatel ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:poznamky ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:prveDorucenie ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:name ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:denneTabory ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dataProvider ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:kampan ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:vZN ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:stavZiadosti ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:iCOZiadatela ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:pocetDni ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:rozdielNaVratenie ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:typ ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:ePZFSucet ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:vyplatenaSumaSpoluSucet ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:rokDotacie ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:pravnaForma ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:opravneneSpolu ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:akcia ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:druh ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:identifier ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:datumUhradyDotacie ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dotacnyTitul ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:pSC ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:iD ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:typTabora ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:datumRealizacieProjektu ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:okres ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:pozadovaneProstriedky ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:ePFRVSucet ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:schvalenaVyskaDotacie ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:obecPO ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:typDotacie ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:pobytoveTabory ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:pozadovanaDotacia ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:rok ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:mena ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:vSuladeSPrioritamiPoskytovaniaDotacii ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:datumZverejneniaZmluvy ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:stavFinanVyuctovania ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:skutocneCerpanie ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:datumDoruceniaVyuctovania ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:vratenaNedocerpanaCastDotacieDna ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:source ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:sRSRSucet ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:schvProstr ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:cDodavatela ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:isPartOf ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:sidlo ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:rokKampan ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:iCO ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:popisDotacnehoTitulu ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:rozpocet ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:stavVybav ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:pocetDeti ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:cZmluvy ],
+        jc:Entity ;
+    skos:definition "A grant or subsidy the publisher awarded or paid out." ;
+    skos:exactMatch jc:Grant ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:upstream_source "https://smart-data-models.github.io/dataModel.CPSV-AP/Cost/schema.json" .
+
+jc:akcia a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "akcia" ;
+    skos:definition "The source column `Akcia`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:cDodavatela a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "cDodavatela" ;
+    skos:definition "The source column `Č__dodávateľa`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:cZmluvy a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "cZmluvy" ;
+    skos:definition "The source column `Č__zmluvy`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:dataProvider a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dataProvider" ;
+    skos:definition "Who published the row, with the credit its licence asks for." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" .
+
+jc:datumDoruceniaVyuctovania a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "datumDoruceniaVyuctovania" ;
+    rdfs:range jc:date ;
+    skos:definition "The source column `Dátum_doručenia_vyúčtovania`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:datumRealizacieProjektu a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "datumRealizacieProjektu" ;
+    skos:definition "The source column `Dátum_realizácie_projektu`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:datumUhradyDotacie a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "datumUhradyDotacie" ;
+    rdfs:range jc:date ;
+    skos:definition "The source column `Dátum_úhrady_dotácie`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:datumZverejneniaZmluvy a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "datumZverejneniaZmluvy" ;
+    rdfs:range jc:date ;
+    skos:definition "The source column `Dátum_zverejnenia_zmluvy`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:denneTabory a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "denneTabory" ;
+    skos:definition "The source column `Denné_tábory`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:dotacnyTitul a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dotacnyTitul" ;
+    skos:definition "The source column `Dotačný_titul`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:druh a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "druh" ;
+    skos:definition "The source column `Druh`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:ePFRVSucet a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "ePFRVSucet" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `EPFRV___súčet`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:ePZFSucet a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "ePZFSucet" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `EPZF___súčet`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:iCO a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "iCO" ;
+    skos:definition "The source column `IČO`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:iCOZiadatela a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "iCOZiadatela" ;
+    skos:definition "The source column `IČO_žiadateľa`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:iD a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "iD" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `ID`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:id a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "id" ;
+    skos:definition "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:jsonld_keyword "@id" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:identifier a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "identifier" ;
+    skos:definition "The source column `Číslo`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" .
+
+jc:isPartOf a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "isPartOf" ;
+    rdfs:range jc:uri ;
+    skos:definition "The catalogue dataset the row belongs to, where its licence and its other rows are." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:kampan a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "kampan" ;
+    skos:definition "The source column `Kampaň`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:location a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "location" ;
+    rdfs:range jc:string ;
+    skos:definition "Where the entity is, as GeoJSON geometry." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "GeoProperty" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:mena a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "mena" ;
+    skos:definition "The source column `Mena`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:name a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "name" ;
+    skos:definition "The source column `Názov`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" .
+
+jc:obecPO a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "obecPO" ;
+    skos:definition "The source column `Obec__PO_`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:observedAt a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "observedAt" ;
+    rdfs:range jc:datetime ;
+    skos:definition "When the observation the entity reports was made." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:okres a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "okres" ;
+    skos:definition "The source column `Okres`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:opravneneSpolu a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "opravneneSpolu" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `Oprávnené_spolu`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:pSC a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "pSC" ;
+    skos:definition "The source column `PSČ`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:pobytoveTabory a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "pobytoveTabory" ;
+    skos:definition "The source column `Pobytové_tábory`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:pocetDeti a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "pocetDeti" ;
+    skos:definition "The source column `Počet_detí`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:pocetDni a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "pocetDni" ;
+    skos:definition "The source column `Počet_dní`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:popisDotacnehoTitulu a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "popisDotacnehoTitulu" ;
+    skos:definition "The source column `Popis_dotačného_titulu`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:pozadovanaDotacia a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "pozadovanaDotacia" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `Požadovaná_dotácia`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:pozadovaneProstriedky a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "pozadovaneProstriedky" ;
+    skos:definition "The source column `Požadované_prostriedky`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:poznamky a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "poznamky" ;
+    skos:definition "The source column `Poznámky`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:pravnaForma a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "pravnaForma" ;
+    skos:definition "The source column `Právna_forma`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:prveDorucenie a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "prveDorucenie" ;
+    rdfs:range jc:date ;
+    skos:definition "The source column `Prvé_doručenie`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:rok a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "rok" ;
+    skos:definition "The source column `Rok`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:rokDotacie a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "rokDotacie" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `Rok_dotácie`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:rokKampan a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "rokKampan" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `Rok___kampaň`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:rozdielNaVratenie a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "rozdielNaVratenie" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `Rozdiel_na_vrátenie`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:rozpocet a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "rozpocet" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `Rozpočet`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:sRSRSucet a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "sRSRSucet" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `ŠR_SR___súčet`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:schvProstr a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "schvProstr" ;
+    skos:definition "The source column `Schv._prostr.`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:schvalenaVyskaDotacie a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "schvalenaVyskaDotacie" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `Schválená_výška_dotácie`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:sidlo a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "sidlo" ;
+    skos:definition "The source column `Sídlo`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:skutocneCerpanie a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "skutocneCerpanie" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `Skutočné_čerpanie`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:source a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "source" ;
+    rdfs:range jc:uri ;
+    skos:definition "The service the row was read from." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" .
+
+jc:stavFinanVyuctovania a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "stavFinanVyuctovania" ;
+    skos:definition "The source column `Stav_finan__vyúčtovania`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:stavVybav a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "stavVybav" ;
+    skos:definition "The source column `Stav_vybav.`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:stavZiadosti a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "stavZiadosti" ;
+    skos:definition "The source column `Stav_žiadosti`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:typ a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "typ" ;
+    skos:definition "The source column `Typ`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:typDotacie a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "typDotacie" ;
+    skos:definition "The source column `Typ_dotácie`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:typTabora a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "typTabora" ;
+    skos:definition "The source column `Typ_tábora`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:type a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "type" ;
+    skos:definition "The entity type, one class of a published data model." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:jsonld_keyword "@type" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:vSuladeSPrioritamiPoskytovaniaDotacii a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "vSuladeSPrioritamiPoskytovaniaDotacii" ;
+    skos:definition "The source column `V_súlade_s_prioritami_poskytovania_dotácií`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:vZN a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "vZN" ;
+    skos:definition "The source column `VZN`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:vratenaNedocerpanaCastDotacieDna a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "vratenaNedocerpanaCastDotacieDna" ;
+    skos:definition "The source column `Vrátená_nedočerpaná_časť_dotácie_dňa`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:vyplatenaSumaSpoluSucet a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "vyplatenaSumaSpoluSucet" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `Vyplatená_suma_spolu___súčet`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:ziadatel a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "ziadatel" ;
+    skos:definition "The source column `Žiadateľ`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Grant> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:datetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:datetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:string a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:string ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:uri a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:uri ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:date a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:date ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:integer a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:integer ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:float a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:float ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+linkml:topValue a owl:DatatypeProperty ;
+    rdfs:label "value" .
+
+<https://joinedcontext.com/models/sdm/extensions/Grant> a owl:Ontology ;
+    rdfs:label "Grant" ;
+    dcterms:license "https://joinedcontext.com/licenses/cc-by-4.0" ;
+    dcterms:title "Grant, an extension of dataModel.CPSV-AP/Cost" ;
+    skos:definition "A grant or subsidy the publisher awarded or paid out. Extends dataModel.CPSV-AP/Cost: CPSV-AP Cost is the official model of an amount a public body pays or charges (value, currency, identifier); no subject holds a contract, order, invoice, grant or procurement." .
+

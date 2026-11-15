@@ -1,0 +1,17 @@
+# One PointOfInterest per object of a national cultural monument in the city, placed at its
+# address, written into the city's public space through its one Endpoint (PL-18, T-3138).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: pamiatky
+  namespace: zilina
+  title: { sk: Kultúrne pamiatky mesta, en: Cultural monuments of the city }
+spec:
+  class: scheduled
+  # The register changed last in 2019 and the addresses daily; a weekly read is plenty.
+  schedule: '41 3 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: mksr-pamiatky-zsk }
+  targetEndpoint: urn:ngsi-ld:Endpoint:zilina.sk:zilina-verejne:zilina-verejne
+  output: { type: PointOfInterest, mode: upsert }
+  quotas: { maxMemoryMb: 384, cpuMillicores: 200 }

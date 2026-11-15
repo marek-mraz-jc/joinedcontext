@@ -1,0 +1,27 @@
+# Helsinki's public data as one read-only MCP connector (T-4750, T-5367, ADR-N-043):
+# `https://{domain}/api/mcp/helsinki/otvorene-data`, the server the public assistant
+# helsinki-public reads through. It selects every public Endpoint of the project helsinki, the
+# Apps' public Endpoints included; every call is still that Endpoint's own call under its
+# anonymous Policy, and a public server lists read tools only, whoever calls (EP-141).
+apiVersion: joinedcontext.com/v1alpha1
+kind: McpServer
+metadata:
+  name: otvorene-data
+  namespace: helsinki
+  # What an AI client reads as serverInfo and initialize.instructions (EP-92).
+  title:
+    sk: Helsinki — otvorené údaje
+    en: Helsinki, open data
+  description:
+    sk: 'Otvorené údaje Helsínk, len na čítanie: kvalita ovzdušia, výstrahy, kvalita vody na plážach, mestské bicykle, sčítanie cyklistov a dopravy, mestské časti, podujatia, správy mesta, parkovanie, miesta, povolenia na verejné priestranstvá, čistenie ulíc, verejná doprava HSL, cestné meteostanice a ukazovatele mesta. Zdroje: mesto Helsinki, HSL, Fintraffic / digitraffic.fi, HSY a FMI; CC BY 4.0. Pri citovaní uveďte zdroj.'
+    en: "Read-only open data of Helsinki: air quality, weather alerts, beach water quality, city bikes, cycle and traffic counts, districts, events, the city's news, parking, places, public area permits, street cleaning, HSL public transport, road weather stations in Helsinki, Espoo and Vantaa, and the city's indicators. Start with list_endpoints or search, then query_entities naming one endpoint, with a small limit. Sources: City of Helsinki, HSL, Fintraffic / digitraffic.fi, HSY and FMI; CC BY 4.0, credit the source each Endpoint names when you quote it."
+spec:
+  # Every public Endpoint of the project, resolved on each call (MF-55, T-5367): a new one joins
+  # without an edit here, one that stops being public leaves.
+  select:
+    projects: [helsinki]
+    accessLevel: [public]
+  audience: public
+  # search_documents over hel.fi and the data portal's dataset pages (MF-57, T-6167): one
+  # address answers a dataset question and a city-website question; public sources only.
+  knowledgeSources: [web, data-portal]

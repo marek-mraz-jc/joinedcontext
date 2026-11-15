@@ -1,0 +1,32 @@
+{
+  "alps": "alps",
+  "ctt": "ctt",
+  "dataProvider": "dataProvider",
+  "dlzka": 0.0,
+  "fName": "fName",
+  "fNazov": "fNazov",
+  "farba": "farba",
+  "id": "urn:ngsi-ld:CycleRoute:joinedcontext.com:example:1",
+  "isPartOf": "https://example.org/isPartOf",
+  "layer": "layer",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "name": "name",
+  "nazov": "nazov",
+  "obnRok": "obnRok",
+  "observedAt": "2026-01-01T00:00:00Z",
+  "povrch": "povrch",
+  "source": "https://example.org/source",
+  "sourceId": "sourceId",
+  "spr": "spr",
+  "spravca": "spravca",
+  "stav": "stav",
+  "typ": "typ",
+  "type": "CycleRoute",
+  "zdroj": "zdroj"
+}

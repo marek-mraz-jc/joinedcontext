@@ -1,0 +1,47 @@
+# Cool spots: water areas and streams of the IPR Praha geoportal (T-5426), PointOfInterest of the space praha-mesto read through
+# its own Policy, which narrows the public read to the area-water-areas- ids.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-vodni-plochy
+  namespace: praha
+  title: { cs: Vodní plochy a toky — Praha, en: Water areas and streams — Prague }
+  description:
+    cs: 'Vodní plochy a toky z vrstvy Oázy chladu jako plochy: název, zda jde o tok nebo plochu, a obrys. Zdroj: IPR Praha, CC BY 4.0.'
+    en: 'Water areas and streams of the cool spots layer as areas: name, whether it is a stream or a pond, and outline. Source: IPR Praha, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: vx2pl6kcm4gwtqz7jhdsnb3eofyra5ui
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-vodni-plochy
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Mapped areas and lines: no record names a person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha (CC BY 4.0)'
+      en: 'Source: data © IPR Praha (CC BY 4.0)'
+    themes: [ENVI]
+    keywords:
+      cs: [Praha, oázy chladu, vodní plochy, potoky, rybníky]
+      en: [Prague, cool spots, water areas, streams, ponds]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: IRREG
+    source:
+      - url: https://hub.arcgis.com/api/v3/datasets/e01b4bb6d148496abff4f065686290ff_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Oázy chladu – vodní plochy a toky (IPR Praha)
+          en: 'Cool spots: water areas and streams (IPR Praha)'
+        description:
+          cs: Oázy chladu – vodní plochy a toky z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: 'Cool spots: water areas and streams from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.'
+    pipelineRef: { kind: Pipeline, name: area-water-areas }

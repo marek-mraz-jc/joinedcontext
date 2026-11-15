@@ -1,0 +1,104 @@
+# The mapping of the traffic-volumes pipeline (PL-03, T-5669): one TrafficFlowObserved per counting
+# point, direction and year of the city's autumn traffic volume table (hki_liikennemaarat.csv, HRI
+# liikennemaarat-helsingissa, CC BY 4.0) with the motor vehicles counted on that year's autumn day.
+#
+# The file has one row per point, direction, year and time slot: an hour, or a quarter hour in the
+# peaks 06-09 and 15-18, 42 slots a day, on the Monday-to-Thursday of September-October the city
+# chose as closest to the autumn's average, every year since 2010 (71820 rows, 57 points, 1695
+# point-direction-years on 2026-10-25). The day is the sum of its 42 slots of autot, every motor
+# vehicle class (trams are not motor vehicles, and the file's autot leaves them out too). The city
+# names the year, not the day: dateObservedFrom and dateObservedTo are the September-October window
+# it was picked from.
+#
+# Decided (worker-t5669, owner may override): a day per entity, not a slot per entity, because one
+# run writing 71190 slot entities needed 512 MiB to 1 GiB of the shared runner (256 MiB held 24000;
+# measured with docker run --memory), and a day is what the class describes; options: a slot per
+# entity (the memory above, or 15 pipelines of one year each).
+#
+# Direction 1 runs into the centre (inbound), 2 out of it; on the D screen line (D01-D13) 1 runs west
+# and 2 east. Satamatunneli (C18) names no direction: both its directions' rows sum into one entity
+# without trafficDirection. Positions are ETRS-GK25 (EPSG:3879), turned into WGS84 by a cubic fitted
+# to the projection over x 25470-25530 km, y 6650-6705 km (under 1 cm off;
+# test_helsinki_traffic_volumes.py checks it against pyproj).
+#
+# The file is 5 MB: it is read whole once to judge and deduplicate its lines as text, then each kept
+# line goes on as its own message, the lines are grouped by point, direction and year, and each group
+# becomes its entity, so no table of parsed rows is ever built.
+#
+# Plausibility (owner 2026-10-22): a line that is not 15 fields of the published shape, a time of day
+# that is no slot start, a year before 2010 or after this one, a point outside Helsinki (GK25 x
+# 25488-25515 km, y 6660-6688 km, inside the space's area), a count above 20000 in one slot, or a
+# slot written twice for one direction (the later line stays, as a correction appended to the file
+# would) is left out, each counted by its reason in the run's log line. A day without its 42 slots
+# per direction is not written, since its sum would undercount, and is logged as a warning. A file
+# without its header or without one kept line fails the run, which writes nothing and leaves the
+# entities as they were.
+
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 16777216 { throw("the traffic volume file is %d bytes, more than the 16 MiB read".format(content().length())) } else { content() }
+        - mapping: |
+            let header = "piste;nimi;x_gk25;y_gk25;suunta;aika;vuosi;ha;pa;ka;ra;la;mp;rv;autot"
+            let lines = content().string().trim_prefix("﻿").split("\n").map_each(l -> l.trim()).filter(l -> l != "")
+            root = if $lines.length() == 0 || $lines.index(0) != $header { throw("the traffic volume file does not start with the header %s".format($header)) } else { $lines.slice(1) }
+        - mapping: |
+            let year = now().ts_format("2006", "Europe/Helsinki").number()
+            let judged = this.map_each(l -> if !l.re_match("^[A-Z][0-9]{2};[^;]+;[0-9]{8};[0-9]{7};[12]?;[0-9]{1,4};[0-9]{4}(;[0-9]{1,6}){8}$") { "!malformedRow" } else { l.split(";").(f -> if !f.index(5).re_match("^(0|15|30|45|([1-9]|1[0-9]|2[0-3])(00|15|30|45))$") || f.index(6).number() < 2010 || f.index(6).number() > $year { "!badDate" } else if f.index(2).number() < 25488000 || f.index(2).number() > 25515000 || f.index(3).number() < 6660000 || f.index(3).number() > 6688000 { "!outsideHelsinki" } else if f.index(14).number() > 20000 { "!implausibleCount" } else { l }) })
+            let kept = $judged.filter(j -> !j.has_prefix("!"))
+            let labelled = $kept.filter(l -> !l.re_match("^[^;]*;[^;]*;[^;]*;[^;]*;;"))
+            # squash turns a key two lines share into an array of both; the later one stays.
+            let firsts = $labelled.map_each(l -> l.split(";").(f -> { ("%s;%s;%s;%s".format(f.index(0), f.index(4), f.index(5), f.index(6))): l })).squash()
+            let rows = $firsts.values().map_each(v -> if v.type() == "array" { v.index(v.length() - 1) } else { v }).append($kept.filter(l -> l.re_match("^[^;]*;[^;]*;[^;]*;[^;]*;;"))).flatten()
+            root = if $rows.length() == 0 { throw("the traffic volume file has no line this mapping keeps") } else { {
+              "rows": $rows,
+              "dropped": {
+                "malformedRow": $judged.filter(j -> j == "!malformedRow").length(),
+                "badDate": $judged.filter(j -> j == "!badDate").length(),
+                "outsideHelsinki": $judged.filter(j -> j == "!outsideHelsinki").length(),
+                "implausibleCount": $judged.filter(j -> j == "!implausibleCount").length(),
+                "duplicateSlot": $labelled.length() - $firsts.keys().length()
+              }
+            } }
+        - log:
+            level: INFO
+            message: 'traffic-volumes: ${! json("rows").length() } slot rows kept, left out by reason ${! json("dropped").format_json(no_indent: true) }'
+        - mapping: root = this.rows
+        - unarchive: { format: json_array }
+        - mapping: |
+            meta day = this.string().split(";").(f -> "%s;%s;%s".format(f.index(0), f.index(4), f.index(6)))
+        - group_by_value:
+            value: ${! meta("day") }
+        - archive: { format: json_array }
+        - switch:
+            - check: this.length() != if this.index(0).split(";").index(4) == "" { 84 } else { 42 }
+              processors:
+                - log:
+                    level: WARN
+                    message: 'traffic-volumes: ${! meta("day") } has ${! json().length() } slot rows, not 42 per direction; its day is not written'
+                - mapping: root = deleted()
+        - mapping: |
+            let f = this.index(0).split(";")
+            let u = ($f.index(2).number() - 25500000) / 100000
+            let v = ($f.index(3).number() - 6675000) / 100000
+            let lon = 25 + 1.80234126553 * $u + 0.0491922360828 * $u * $v + 0.00156687350803 * $u * $v * $v - 0.00052235670308 * $u * $u * $u
+            let lat = 60.1878328006 + 0.897541416475 * $v - 0.0000615844233178 * $v * $v + 0.000000367488433337 * $v * $v * $v - 0.0122486830217 * $u * $u - 0.000443182177401 * $u * $u * $v
+            let year = $f.index(6)
+            let screen = $f.index(0).has_prefix("D")
+            let direction = if $f.index(4) == "1" { if $screen { "west" } else { "inbound" } } else if $f.index(4) == "2" { if $screen { "east" } else { "outbound" } } else { null }
+            let from = $year + "-08-31T21:00:00Z"
+            let to = $year + "-10-31T22:00:00Z"
+            root = {
+              "id": "urn:ngsi-ld:%v:%v:%v:autumn-%v-%v-%v".format("TrafficFlowObserved", env("JC_ORG_DOMAIN"), env("JC_SPACE"), $f.index(0).lowercase(), if $f.index(4) == "" { "both" } else { $f.index(4) }, $year),
+              "type": "TrafficFlowObserved",
+              "name": { "type": "LanguageProperty", "languageMap": { "fi": $f.index(1) } },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [($lon * 1000000).round() / 1000000, ($lat * 1000000).round() / 1000000] } },
+              "dateObserved": { "type": "Property", "value": $to },
+              "dateObservedFrom": { "type": "Property", "value": $from },
+              "dateObservedTo": { "type": "Property", "value": $to },
+              "intensity": { "type": "Property", "value": this.map_each(l -> l.split(";").index(14).number()).sum().int64(), "observedAt": $to },
+              "trafficDirection": if $direction == null { deleted() } else { { "type": "Property", "value": $direction } },
+              "dataProvider": { "type": "Property", "value": "City of Helsinki, autumn weekday traffic volumes" },
+              "source": { "type": "Property", "value": "https://www.hel.fi/static/avoindata/kymp/hki_liikennemaarat.csv" }
+            }

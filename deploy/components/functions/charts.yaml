@@ -1,0 +1,4 @@
+---
+functions:
+  runtime:
+    chart: ../../charts/workload

@@ -1,0 +1,432 @@
+[
+ {
+  "id": 14903,
+  "modified_gmt": "2026-10-22T12:23:53",
+  "link": "https://www.podujatiaksk.sk/podujatie/oktobrove-stretnutie-v-klubiku-2/",
+  "title": {
+   "rendered": "Októbrové stretnutie v klubíku"
+  },
+  "meta": {
+   "_acf_changed": false,
+   "footnotes": ""
+  },
+  "acf": {
+   "podujatie_adresa": "2",
+   "podujatie_region": 60,
+   "podujatie_datum": {
+    "podujatie_datum_od": "2026-10-30 10:00:00",
+    "podujatie_datum_do": "2026-10-30 12:00:00"
+   },
+   "podujatie_forma": [
+    43,
+    42
+   ],
+   "podujatie_zaner": [
+    29
+   ],
+   "podujatie_cielova_skupina": [
+    19
+   ],
+   "podujatie_listok": "",
+   "podujatie_link": "https://vkjb.sk/oktobrove-stretnutie-v-klubiku-2/",
+   "podujatie_priloha": ""
+  }
+ },
+ {
+  "id": 14900,
+  "modified_gmt": "2026-10-22T12:20:37",
+  "link": "https://www.podujatiaksk.sk/podujatie/stvrtkove-rozhovory-o-filmovych-miestach-na-slovensku/",
+  "title": {
+   "rendered": "Štvrtkové rozhovory o filmových miestach na Slovensku"
+  },
+  "meta": {
+   "_acf_changed": false,
+   "footnotes": ""
+  },
+  "acf": {
+   "podujatie_adresa": "1",
+   "podujatie_region": 60,
+   "podujatie_datum": {
+    "podujatie_datum_od": "2026-10-29 17:00:00",
+    "podujatie_datum_do": "2026-10-29 18:00:00"
+   },
+   "podujatie_forma": [
+    51
+   ],
+   "podujatie_zaner": [
+    12,
+    29
+   ],
+   "podujatie_cielova_skupina": [
+    22,
+    21,
+    49,
+    48
+   ],
+   "podujatie_listok": "",
+   "podujatie_link": "https://vkjb.sk/stvrtkove-rozhovory-o-filmovych-miestach-na-slovensku/",
+   "podujatie_priloha": ""
+  }
+ },
+ {
+  "id": 14897,
+  "modified_gmt": "2026-10-22T12:18:02",
+  "link": "https://www.podujatiaksk.sk/podujatie/tasteggio-soave-hudobna-cesta-do-sveta-starej-lutnovej-hudby/",
+  "title": {
+   "rendered": "Tasteggio soave: Hudobná cesta do sveta starej lutnovej hudby"
+  },
+  "meta": {
+   "_acf_changed": false,
+   "footnotes": ""
+  },
+  "acf": {
+   "podujatie_adresa": "0",
+   "podujatie_region": 60,
+   "podujatie_datum": {
+    "podujatie_datum_od": "2026-10-27 16:30:00",
+    "podujatie_datum_do": "2026-10-27 17:30:00"
+   },
+   "podujatie_forma": [
+    57
+   ],
+   "podujatie_zaner": [
+    28
+   ],
+   "podujatie_cielova_skupina": [
+    22,
+    21,
+    49,
+    48
+   ],
+   "podujatie_listok": "",
+   "podujatie_link": "https://vkjb.sk/tasteggio-soave-hudobna-cesta-do-sveta-starej-lutnovej-hudby/",
+   "podujatie_priloha": ""
+  }
+ },
+ {
+  "id": 14894,
+  "modified_gmt": "2026-10-22T11:17:32",
+  "link": "https://www.podujatiaksk.sk/podujatie/jesenna-prazdninova-kniznica-smartlab-jesenna-pyrografia/",
+  "title": {
+   "rendered": "Jesenná prázdninová knižnica: SmartLab. Jesenná pyrografia"
+  },
+  "meta": {
+   "_acf_changed": false,
+   "footnotes": ""
+  },
+  "acf": {
+   "podujatie_adresa": "2",
+   "podujatie_region": 65,
+   "podujatie_datum": {
+    "podujatie_datum_od": "2026-10-30 14:00:00",
+    "podujatie_datum_do": "2026-10-30 16:00:00"
+   },
+   "podujatie_forma": [
+    42,
+    41
+   ],
+   "podujatie_zaner": [
+    35,
+    37
+   ],
+   "podujatie_cielova_skupina": [
+    19,
+    20
+   ],
+   "podujatie_listok": "",
+   "podujatie_link": "www.kniznica.skcak.sk",
+   "podujatie_priloha": ""
+  }
+ },
+ {
+  "id": 14891,
+  "modified_gmt": "2026-10-22T11:10:28",
+  "link": "https://www.podujatiaksk.sk/podujatie/jesenna-prazdninova-kniznica/",
+  "title": {
+   "rendered": "Jesenná prázdninová knižnica"
+  },
+  "meta": {
+   "_acf_changed": false,
+   "footnotes": ""
+  },
+  "acf": {
+   "podujatie_adresa": "1",
+   "podujatie_region": 65,
+   "podujatie_datum": {
+    "podujatie_datum_od": "2026-10-29 10:00:00",
+    "podujatie_datum_do": "2026-10-30 13:00:00"
+   },
+   "podujatie_forma": [
+    43,
+    42,
+    41
+   ],
+   "podujatie_zaner": [
+    29,
+    35,
+    37
+   ],
+   "podujatie_cielova_skupina": [
+    19,
+    20
+   ],
+   "podujatie_listok": "",
+   "podujatie_link": "www.kniznica.skcak.sk",
+   "podujatie_priloha": ""
+  }
+ },
+ {
+  "id": 14888,
+  "modified_gmt": "2026-10-22T10:56:20",
+  "link": "https://www.podujatiaksk.sk/podujatie/klub-mladych-knihomolov-20/",
+  "title": {
+   "rendered": "Klub mladých knihomoľov"
+  },
+  "meta": {
+   "_acf_changed": false,
+   "footnotes": ""
+  },
+  "acf": {
+   "podujatie_adresa": "1",
+   "podujatie_region": 65,
+   "podujatie_datum": {
+    "podujatie_datum_od": "2026-10-30 15:30:00",
+    "podujatie_datum_do": "2026-10-30 17:30:00"
+   },
+   "podujatie_forma": [
+    43,
+    58
+   ],
+   "podujatie_zaner": [
+    29,
+    37
+   ],
+   "podujatie_cielova_skupina": [
+    21
+   ],
+   "podujatie_listok": "",
+   "podujatie_link": "www.kniznica.skcak.sk",
+   "podujatie_priloha": ""
+  }
+ },
+ {
+  "id": 14885,
+  "modified_gmt": "2026-10-22T10:49:12",
+  "link": "https://www.podujatiaksk.sk/podujatie/co-nas-ucia-knihy-mengeleho-dievca/",
+  "title": {
+   "rendered": "Čo nás učia knihy: Mengeleho dievča"
+  },
+  "meta": {
+   "_acf_changed": false,
+   "footnotes": ""
+  },
+  "acf": {
+   "podujatie_adresa": "1",
+   "podujatie_region": 65,
+   "podujatie_datum": {
+    "podujatie_datum_od": "2026-10-26 13:00:00",
+    "podujatie_datum_do": "2026-10-26 14:00:00"
+   },
+   "podujatie_forma": [
+    40
+   ],
+   "podujatie_zaner": [
+    29
+   ],
+   "podujatie_cielova_skupina": [
+    21
+   ],
+   "podujatie_listok": "",
+   "podujatie_link": "www.kniznica.skcak.sk",
+   "podujatie_priloha": ""
+  }
+ },
+ {
+  "id": 14879,
+  "modified_gmt": "2026-10-22T09:13:02",
+  "link": "https://www.podujatiaksk.sk/podujatie/tvorivna-kyanotypia/",
+  "title": {
+   "rendered": "TVORIVŇA: Kyanotypia"
+  },
+  "meta": {
+   "_acf_changed": false,
+   "footnotes": ""
+  },
+  "acf": {
+   "podujatie_adresa": "0",
+   "podujatie_region": 65,
+   "podujatie_datum": {
+    "podujatie_datum_od": "2026-11-10 17:00:00",
+    "podujatie_datum_do": "2026-11-10 19:00:00"
+   },
+   "podujatie_forma": [
+    42,
+    41
+   ],
+   "podujatie_zaner": [
+    36,
+    37,
+    69
+   ],
+   "podujatie_cielova_skupina": [
+    22,
+    21,
+    49,
+    48,
+    20
+   ],
+   "podujatie_listok": "",
+   "podujatie_link": "https://skc.skcak.sk/tvorivna-kyanotypia/",
+   "podujatie_priloha": 14882
+  }
+ },
+ {
+  "id": 14876,
+  "modified_gmt": "2026-10-22T09:09:17",
+  "link": "https://www.podujatiaksk.sk/podujatie/dvorne-dialogy-119-v-objati-zivlov/",
+  "title": {
+   "rendered": "Dvorné dialógy 119 | V objatí živlov.."
+  },
+  "meta": {
+   "_acf_changed": false,
+   "footnotes": ""
+  },
+  "acf": {
+   "podujatie_adresa": "0",
+   "podujatie_region": 65,
+   "podujatie_datum": {
+    "podujatie_datum_od": "2026-10-28 16:00:00",
+    "podujatie_datum_do": "2026-10-28 17:00:00"
+   },
+   "podujatie_forma": [
+    40,
+    46
+   ],
+   "podujatie_zaner": [
+    27
+   ],
+   "podujatie_cielova_skupina": [
+    22,
+    21,
+    49,
+    48
+   ],
+   "podujatie_listok": "",
+   "podujatie_link": "https://www.muzeumspisa.com/podujatia/muzeum-spisa-v-spisskej-novej-vsi/dvorne-dialogy-119",
+   "podujatie_priloha": ""
+  }
+ },
+ {
+  "id": 14872,
+  "modified_gmt": "2026-10-22T09:06:47",
+  "link": "https://www.podujatiaksk.sk/podujatie/jesenna-hrava-priroda-2026-muzeum-spisa/",
+  "title": {
+   "rendered": "Jesenná hravá príroda 2026 | Múzeum Spiša"
+  },
+  "meta": {
+   "_acf_changed": false,
+   "footnotes": ""
+  },
+  "acf": {
+   "podujatie_adresa": "0",
+   "podujatie_region": 65,
+   "podujatie_datum": {
+    "podujatie_datum_od": "2026-10-29 13:30:00",
+    "podujatie_datum_do": "2026-10-29 14:30:00"
+   },
+   "podujatie_forma": [
+    42,
+    41
+   ],
+   "podujatie_zaner": [
+    30
+   ],
+   "podujatie_cielova_skupina": [
+    20
+   ],
+   "podujatie_listok": "",
+   "podujatie_link": "https://www.muzeumspisa.com/podujatia/muzeum-spisa-v-spisskej-novej-vsi/jesenna-hrava-priroda-2026",
+   "podujatie_priloha": ""
+  }
+ },
+ {
+  "id": 14868,
+  "modified_gmt": "2026-10-22T09:04:18",
+  "link": "https://www.podujatiaksk.sk/podujatie/tanecne-skoly-na-spisi-5/",
+  "title": {
+   "rendered": "Tanečné školy na Spiši"
+  },
+  "meta": {
+   "_acf_changed": false,
+   "footnotes": ""
+  },
+  "acf": {
+   "podujatie_adresa": "14",
+   "podujatie_region": 59,
+   "podujatie_datum": {
+    "podujatie_datum_od": "2026-11-20 18:00:00",
+    "podujatie_datum_do": "2026-11-20 20:30:00"
+   },
+   "podujatie_forma": [
+    47,
+    41
+   ],
+   "podujatie_zaner": [
+    13,
+    34,
+    37,
+    69
+   ],
+   "podujatie_cielova_skupina": [
+    22,
+    21,
+    49,
+    48,
+    20
+   ],
+   "podujatie_listok": "",
+   "podujatie_link": "https://skc.skcak.sk/tanecne-skoly-na-spisi-11-rocnik-2/",
+   "podujatie_priloha": 14869
+  }
+ },
+ {
+  "id": 14864,
+  "modified_gmt": "2026-10-22T09:08:27",
+  "link": "https://www.podujatiaksk.sk/podujatie/tanecne-skoly-na-spisi-4/",
+  "title": {
+   "rendered": "Tanečné školy na Spiši"
+  },
+  "meta": {
+   "_acf_changed": false,
+   "footnotes": ""
+  },
+  "acf": {
+   "podujatie_adresa": "24",
+   "podujatie_region": 65,
+   "podujatie_datum": {
+    "podujatie_datum_od": "2026-10-30 18:30:00",
+    "podujatie_datum_do": "2026-10-30 21:00:00"
+   },
+   "podujatie_forma": [
+    47,
+    41
+   ],
+   "podujatie_zaner": [
+    13,
+    34,
+    37,
+    69
+   ],
+   "podujatie_cielova_skupina": [
+    22,
+    21,
+    49,
+    48,
+    20
+   ],
+   "podujatie_listok": "",
+   "podujatie_link": "https://skc.skcak.sk/tanecne-skoly-na-spisi-11-rocnik/",
+   "podujatie_priloha": 14865
+  }
+ }
+]

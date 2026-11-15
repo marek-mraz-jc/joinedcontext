@@ -1,0 +1,15 @@
+# The right to manage one CKAN instance, bbsk/bbsk (PF-107): the organization administrator's
+# by default through org-admin, handed to a group or a person by a RoleBinding of the same name at
+# `scope: { project: bbsk }`, which the instance's Access panel proposes. Seeded bound to nobody.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Role
+metadata:
+  name: ckan-admin-bbsk-bbsk
+  namespace: org
+spec:
+  rules:
+    - kinds: [CkanInstance]
+      verbs: [propose, approve, delete]
+      constraints:
+        - field: metadata.name
+          in: [bbsk]

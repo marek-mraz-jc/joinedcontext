@@ -1,0 +1,18 @@
+---
+monitoring:
+  monitoring:
+    # Scrape configuration is only useful where a Prometheus Operator is watching, which is
+    # what global.metrics.enabled says (OPS-16).
+    enabled: {{ .Values.global.metrics.enabled }}
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "monitoring") }}
+    # The namespace the Operator's Prometheus runs in. The broker, the gateway and the Portal
+    # admit its pods from this namespace alone (namespaceFrom in their networkpolicies, T-3771):
+    # by pod label from any namespace, any pod that labels itself would reach their APIs. Empty:
+    # no Prometheus is admitted and the scrapes stay blocked. Not a part's `namespace`: this
+    # repository never manages the operator's namespace. With the prometheus component in the
+    # list it is that component's namespace (T-5154).
+    {{- if has "prometheus" .Values.components }}
+    prometheusNamespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "prometheus") }}
+    {{- else }}
+    prometheusNamespace: ''
+    {{- end }}

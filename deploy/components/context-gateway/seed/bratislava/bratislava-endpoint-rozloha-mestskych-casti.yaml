@@ -1,0 +1,40 @@
+# Area of the city districts: one public dataset of the hub (T-5672), item baa9f32132a340b7a193d5cd130619c2, written by the statistics pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-rozloha-mestskych-casti
+  namespace: bratislava
+  title: { sk: Rozloha mestských častí, en: Area of the city districts }
+  description:
+    sk: 'Ukazovatele tabuľky „Rozloha mestských častí“ z data.bratislava.sk, jeden na mestskú časť, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Area of the city districts” (as published 2023), one per city district, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: w4gw6wckjvk43id3fsnhddkvre6wyi5v
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-rozloha-mestskych-casti
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [REGI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/baa9f32132a340b7a193d5cd130619c2
+        title: { sk: Rozloha mestských častí, en: Area of the city districts }
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Rozloha mestských častí. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Area of the city districts. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics }

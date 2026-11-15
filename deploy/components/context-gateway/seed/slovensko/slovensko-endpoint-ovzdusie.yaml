@@ -1,0 +1,48 @@
+# The one door of the space, public: the measurements are open data, and republishing them with
+# the credit their licence asks for is what the licence allows (T-4340). The title, description
+# and name say what the data is; the source is credited once, in the attribution and the licence.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: ovzdusie-sk
+  namespace: slovensko
+  title: { sk: Kvalita ovzdušia — Slovensko, en: Air quality — Slovakia }
+  description:
+    sk: Hodinové koncentrácie PM10, PM2,5, NO2 a O3 na všetkých staniciach monitorovania kvality ovzdušia na Slovensku, jedna položka na stanicu s poslednou nameranou hodinou a históriou za 7 dní.
+    en: Hourly concentrations of PM10, PM2.5, NO2 and O3 at every air-quality monitoring station in Slovakia, one record per station with its latest measured hour and a week of history.
+spec:
+  contextSpaceRef: ovzdusie-sk
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:joinedcontext.com:ovzdusie-sk:pipelines-write
+    - urn:ngsi-ld:Policy:joinedcontext.com:ovzdusie-sk:public-read
+  slug: wtvuppkop6y3qv7bnvzqwifv4uts4e2k
+  audience: public
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: slovensko }
+      license: cc-by
+  # The EEA's reuse terms (CC BY 4.0, https://www.eea.europa.eu/en/legal-notice) ask for the
+  # source to be credited, so the attribution names it; nothing else does (owner, 2026-10-16).
+  catalog:
+    publisher:
+      name: { sk: Platforma joinedcontext, en: The joinedcontext platform }
+      uri: https://dev.joinedcontext.com/
+    license: CC_BY_4_0
+    attribution:
+      sk: Európska environmentálna agentúra (EEA), údaje Slovenského hydrometeorologického ústavu (SHMÚ), CC BY 4.0
+      en: European Environment Agency (EEA), data of the Slovak Hydrometeorological Institute (SHMÚ), CC BY 4.0
+    themes: [ENVI]
+    keywords:
+      sk:
+        - kvalita ovzdušia
+        - PM10
+        - PM2,5
+        - NO2
+        - ozón
+        - Slovensko
+      en: [air quality, PM10, PM2.5, NO2, ozone, Slovakia]
+    spatial: [SK0]
+    frequency: HOURLY
+    pipelineRef: { kind: Pipeline, name: ovzdusie }

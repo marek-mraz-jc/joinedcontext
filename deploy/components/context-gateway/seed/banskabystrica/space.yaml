@@ -1,0 +1,32 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: ovzdusie
+  namespace: banskabystrica
+  title: { sk: Ovzdušie, en: Air quality }
+spec:
+  # Pinned so no entity id changes: the space predates rendered segments (PF-84).
+  urnSegment: ovzdusie
+  isSandbox: false
+  # The one model of this space: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: bb-air-quality }
+  defaultLocale: sk
+  # History per type (DM-82, ADR-N-046 2.3, T-4275): a measurement series keeps 30 days, every
+  # other type keeps its current state only. Owners change it on the space's Retention tab.
+  retention:
+    - entityType: AirQualityObserved
+      history: P30D
+      # Written on every run without an observedAt: one row per change and one a week,
+      # not one per run (T-4844, DM-108, DM-109; scripts/temporal-audit.py).
+      attributes:
+        dateObserved: { record: onChange, heartbeat: P7D }
+        location: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+  # The space's place (T-4525): the catalogue's Dataset carries it, so georel=near finds the space.
+  # the city of Banská Bystrica with a margin; a AirQualityObserved outside it is flagged, never refused (DM-87).
+  quality:
+    - name: in-area
+      entityType: AirQualityObserved
+      kind: area
+      attribute: location
+      bbox: [18.95, 48.6, 19.35, 48.9]

@@ -1,0 +1,65 @@
+{
+ "SK010": {
+  "en": "Bratislava Region",
+  "sk": "Bratislavský kraj",
+  "cs": "Bratislavský kraj",
+  "de": "Region Bratislava",
+  "hu": "Pozsonyi kerület"
+ },
+ "SK021": {
+  "en": "Trnava Region",
+  "sk": "Trnavský kraj",
+  "cs": "Trnavský kraj",
+  "de": "Region Trnava",
+  "hu": "Nagyszombati kerület"
+ },
+ "SK022": {
+  "en": "Trenčín Region",
+  "sk": "Trenčiansky kraj",
+  "cs": "Trenčínský kraj",
+  "de": "Region Trenčín",
+  "hu": "Trencséni kerület"
+ },
+ "SK023": {
+  "en": "Nitra Region",
+  "sk": "Nitriansky kraj",
+  "cs": "Nitranský kraj",
+  "de": "Region Nitra",
+  "hu": "Nyitrai kerület"
+ },
+ "SK031": {
+  "en": "Žilina Region",
+  "sk": "Žilinský kraj",
+  "cs": "Žilinský kraj",
+  "de": "Region Žilina",
+  "hu": "Zsolnai kerület"
+ },
+ "SK032": {
+  "en": "Banská Bystrica Region",
+  "sk": "Banskobystrický kraj",
+  "cs": "Banskobystrický kraj",
+  "de": "Region Banská Bystrica",
+  "hu": "Besztercebányai kerület"
+ },
+ "SK041": {
+  "en": "Prešov Region",
+  "sk": "Prešovský kraj",
+  "cs": "Prešovský kraj",
+  "de": "Region Prešov",
+  "hu": "Eperjesi kerület"
+ },
+ "SK042": {
+  "en": "Košice Region",
+  "sk": "Košický kraj",
+  "cs": "Košický kraj",
+  "de": "Region Košice",
+  "hu": "Kassai kerület"
+ },
+ "CZ010": {
+  "en": "Prague",
+  "sk": "Praha",
+  "cs": "Hlavní město Praha",
+  "de": "Prag",
+  "hu": "Prága"
+ }
+}

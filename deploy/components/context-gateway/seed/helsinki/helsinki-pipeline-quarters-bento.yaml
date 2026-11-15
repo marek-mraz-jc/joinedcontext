@@ -1,0 +1,22 @@
+# The mapping of the quarters pipeline (PL-03): one AdministrativeArea per quarter (kortteli) of
+# Helsinki, from the open WFS layer `Helsingin_korttelit`. The code is the register's ten-digit
+# quarter code (municipality 091, district, quarter). A detailed plan names a quarter by district
+# and quarter number together (district 41, quarter 62: kortteli 41062); that is its name where the
+# register gives it none of its own (about 50 quarters carry one, such as Kaartin lasaretti).
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this.features.or([]).filter(f -> f.properties.korttelitunnus.or("").string().re_match("^091[0-9]{7}$") && f.geometry.or(null) != null).map_each(f -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:quarter-%v".format("AdministrativeArea", env("JC_ORG_DOMAIN"), env("JC_SPACE"), f.properties.korttelitunnus),
+          "type": "AdministrativeArea",
+          "name": { "type": "LanguageProperty", "languageMap": {
+            "fi": f.properties.nimi_suomi.or("").string().trim().not_empty().catch("Kortteli %d%03d".format(f.properties.korttelitunnus.slice(3, 6).number().int64(), f.properties.korttelitunnus.slice(6, 10).number().int64())),
+            "sv": f.properties.nimi_ruotsi.or("").string().trim().not_empty().catch("Kvarter %d%03d".format(f.properties.korttelitunnus.slice(3, 6).number().int64(), f.properties.korttelitunnus.slice(6, 10).number().int64()))
+          } },
+          "districtCode": { "type": "Property", "value": f.properties.korttelitunnus },
+          "divisionLevel": { "type": "Property", "value": "quarter" },
+          "location": { "type": "GeoProperty", "value": f.geometry },
+          "dataProvider": { "type": "Property", "value": "City of Helsinki, Urban Environment, quarter register" },
+          "source": { "type": "Property", "value": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:Helsingin_korttelit" }
+        })

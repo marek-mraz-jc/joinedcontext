@@ -1,0 +1,440 @@
+{
+  "gateway": [
+    {
+      "path": "/schema/index.json",
+      "file": "host-test/index.json"
+    },
+    {
+      "path": "/schema/v1/json-schema",
+      "file": "host-test/json-schema.json"
+    },
+    {
+      "path": "/ngsi-ld/v1/entities",
+      "query": {
+        "type": "Alert",
+        "offset": "0",
+        "options": "keyValues"
+      },
+      "file": "host-test/alerts.json"
+    },
+    {
+      "path": "/ngsi-ld/v1/entities",
+      "query": {
+        "type": "Event",
+        "offset": "0",
+        "options": "keyValues"
+      },
+      "file": "host-test/events.json"
+    },
+    {
+      "path": "/ngsi-ld/v1/entities/urn%3Angsi-ld%3AAlert%3Ahel.fi%3Ahelsinki%3Afix-1/attrs",
+      "method": "PATCH",
+      "status": 204,
+      "times": 2
+    },
+    {
+      "path": "/ngsi-ld/v1/entities/urn%3Angsi-ld%3AAlert%3Ahel.fi%3Ahelsinki%3Alocked-1/attrs",
+      "method": "PATCH",
+      "status": 403,
+      "file": "host-test/forbidden.json",
+      "times": 1
+    }
+  ],
+  "steps": [
+    {
+      "call": "GET /api/runs",
+      "status": 200,
+      "length": {
+        "/runs": 0
+      },
+      "expect": {
+        "/stale": true
+      }
+    },
+    {
+      "job": "inspect-daily"
+    },
+    {
+      "call": "GET /api/runs",
+      "status": 200,
+      "length": {
+        "/runs": 1,
+        "/runs/0/types": 2
+      },
+      "expect": {
+        "/stale": false,
+        "/runs/0/types/0/type": "Alert",
+        "/runs/0/types/0/entities": 2,
+        "/runs/0/types/0/findings": 1,
+        "/runs/0/types/1/type": "Event",
+        "/runs/0/entities": 3,
+        "/runs/0/findings": 1,
+        "/runs/0/types/1/findings": 0
+      },
+      "save": {
+        "run": "/runs/0/id"
+      }
+    },
+    {
+      "call": "GET /api/runs",
+      "status": 200,
+      "length": {
+        "/runs": 1
+      }
+    },
+    {
+      "call": "POST /api/runs",
+      "status": 405
+    },
+    {
+      "call": "GET /api/runs/{run}/report",
+      "status": 200,
+      "download": "/url",
+      "downloaded": "urn:ngsi-ld:Alert:a1"
+    },
+    {
+      "call": "GET /api/runs/999999/report",
+      "status": 404
+    },
+    {
+      "call": "GET /api/runs/{run}/report",
+      "as": "second",
+      "status": 404
+    },
+    {
+      "call": "GET /api/me",
+      "caller": "anonymous",
+      "status": 200,
+      "expect": {
+        "": null
+      }
+    },
+    {
+      "call": "GET /api/me",
+      "caller": "viewer",
+      "status": 200,
+      "expect": {
+        "/roles/0": "viewer"
+      }
+    },
+    {
+      "call": "GET /api/resolutions",
+      "caller": "anonymous",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "POST /api/resolutions",
+      "caller": "anonymous",
+      "body": {
+        "entity": "urn:ngsi-ld:Alert:hel.fi:helsinki:fix-1",
+        "attribute": "name",
+        "note": "Checked on site"
+      },
+      "status": 401,
+      "rows": {
+        "resolutions": 0,
+        "app_audit": 0
+      }
+    },
+    {
+      "call": "POST /api/resolutions",
+      "caller": "viewer",
+      "body": {
+        "entity": "urn:ngsi-ld:Alert:hel.fi:helsinki:fix-1",
+        "attribute": "name",
+        "note": "Checked on site"
+      },
+      "status": 403,
+      "rows": {
+        "resolutions": 0,
+        "app_audit": 0
+      }
+    },
+    {
+      "call": "POST /api/resolutions",
+      "caller": "steward+viewer",
+      "body": {
+        "entity": "urn:ngsi-ld:Building:x",
+        "attribute": "name",
+        "note": "Checked on site"
+      },
+      "status": 400,
+      "rows": {
+        "resolutions": 0
+      }
+    },
+    {
+      "call": "POST /api/resolutions",
+      "caller": "steward+viewer",
+      "body": {
+        "entity": "urn:ngsi-ld:Alert:hel.fi:helsinki:fix-1",
+        "attribute": "location",
+        "note": "Checked on site"
+      },
+      "status": 400,
+      "rows": {
+        "resolutions": 0
+      }
+    },
+    {
+      "call": "POST /api/resolutions",
+      "caller": "steward+viewer",
+      "body": {
+        "entity": "urn:ngsi-ld:Alert:hel.fi:helsinki:fix-1",
+        "attribute": "name",
+        "note": " "
+      },
+      "status": 400,
+      "rows": {
+        "resolutions": 0
+      }
+    },
+    {
+      "call": "POST /api/resolutions",
+      "caller": "steward+viewer",
+      "body": {
+        "entity": "urn:ngsi-ld:Alert:hel.fi:helsinki:fix-1",
+        "attribute": "name",
+        "note": "Checked on site",
+        "owner_id": "u-viewer"
+      },
+      "status": 400,
+      "rows": {
+        "resolutions": 0,
+        "app_audit": 0
+      }
+    },
+    {
+      "call": "POST /api/resolutions",
+      "caller": "steward+viewer",
+      "body": {
+        "entity": "urn:ngsi-ld:Alert:hel.fi:helsinki:fix-1",
+        "attribute": "name",
+        "note": "Checked on site"
+      },
+      "status": 201,
+      "expect": {
+        "/attribute": "name",
+        "/corrected": false,
+        "/resolverName": "Person u-steward"
+      },
+      "save": {
+        "res": "/id"
+      },
+      "rows": {
+        "resolutions": 1,
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "POST /api/resolutions",
+      "caller": "steward+viewer",
+      "body": {
+        "entity": "urn:ngsi-ld:Alert:hel.fi:helsinki:fix-1",
+        "attribute": "name",
+        "note": "Checked on site"
+      },
+      "status": 409,
+      "rows": {
+        "resolutions": 1,
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "GET /api/resolutions",
+      "caller": "anonymous",
+      "status": 200,
+      "length": {
+        "": 1
+      },
+      "expect": {
+        "/0/entity": "urn:ngsi-ld:Alert:hel.fi:helsinki:fix-1",
+        "/0/note": "Checked on site",
+        "/0/resolverName": "Person u-steward"
+      }
+    },
+    {
+      "call": "DELETE /api/resolutions/{res}",
+      "caller": "anonymous",
+      "status": 401,
+      "rows": {
+        "resolutions": 1
+      }
+    },
+    {
+      "call": "DELETE /api/resolutions/{res}",
+      "caller": "viewer",
+      "status": 403,
+      "rows": {
+        "resolutions": 1,
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "DELETE /api/resolutions/x",
+      "caller": "steward+viewer",
+      "status": 404,
+      "rows": {
+        "resolutions": 1
+      }
+    },
+    {
+      "call": "POST /api/corrections",
+      "caller": "anonymous",
+      "body": {
+        "entity": "urn:ngsi-ld:Alert:hel.fi:helsinki:fix-1",
+        "attribute": "description",
+        "value": "  Road works until Friday ",
+        "note": "From the permit"
+      },
+      "status": 401,
+      "rows": {
+        "resolutions": 1,
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "POST /api/corrections",
+      "caller": "viewer",
+      "body": {
+        "entity": "urn:ngsi-ld:Alert:hel.fi:helsinki:fix-1",
+        "attribute": "description",
+        "value": "  Road works until Friday ",
+        "note": "From the permit"
+      },
+      "status": 403,
+      "rows": {
+        "resolutions": 1,
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "POST /api/corrections",
+      "caller": "steward+viewer",
+      "body": {
+        "entity": "urn:ngsi-ld:Alert:hel.fi:helsinki:fix-1",
+        "attribute": "description",
+        "value": [
+          1
+        ],
+        "note": "From the permit"
+      },
+      "status": 400,
+      "rows": {
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "POST /api/corrections",
+      "caller": "steward+viewer",
+      "body": {
+        "entity": "urn:ngsi-ld:Alert:hel.fi:helsinki:fix-1",
+        "attribute": "id",
+        "value": "  Road works until Friday ",
+        "note": "From the permit"
+      },
+      "status": 400,
+      "rows": {
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "POST /api/corrections",
+      "caller": "steward+viewer",
+      "body": {
+        "entity": "urn:ngsi-ld:Alert:hel.fi:helsinki:locked-1",
+        "attribute": "description",
+        "value": "  Road works until Friday ",
+        "note": "From the permit"
+      },
+      "status": 403,
+      "rows": {
+        "resolutions": 1,
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "POST /api/corrections",
+      "caller": "steward+viewer",
+      "body": {
+        "entity": "urn:ngsi-ld:Alert:hel.fi:helsinki:fix-1",
+        "attribute": "description",
+        "value": "  Road works until Friday ",
+        "note": "From the permit"
+      },
+      "status": 201,
+      "expect": {
+        "/attribute": "description",
+        "/corrected": true
+      },
+      "rows": {
+        "resolutions": 2,
+        "app_audit": 3
+      }
+    },
+    {
+      "call": "POST /api/corrections",
+      "caller": "steward+viewer",
+      "body": {
+        "entity": "urn:ngsi-ld:Alert:hel.fi:helsinki:fix-1",
+        "attribute": "description",
+        "value": 42,
+        "note": "From the permit"
+      },
+      "status": 200,
+      "expect": {
+        "/corrected": true
+      },
+      "rows": {
+        "resolutions": 2,
+        "app_audit": 4
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "anonymous",
+      "status": 401
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "viewer",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "steward+viewer",
+      "status": 200,
+      "length": {
+        "": 4
+      },
+      "expect": {
+        "/0/action": "edit",
+        "/0/target": "urn:ngsi-ld:Alert:hel.fi:helsinki:fix-1",
+        "/0/summary": "corrected description: From the permit"
+      }
+    },
+    {
+      "call": "DELETE /api/resolutions/{res}",
+      "caller": "steward+viewer",
+      "status": 204,
+      "rows": {
+        "resolutions": 1,
+        "app_audit": 5
+      }
+    },
+    {
+      "call": "DELETE /api/resolutions/{res}",
+      "caller": "steward+viewer",
+      "status": 404,
+      "rows": {
+        "app_audit": 5
+      }
+    }
+  ]
+}

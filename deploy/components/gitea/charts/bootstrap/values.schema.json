@@ -1,0 +1,269 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "values of bootstrap (T-4956: an unknown key is a typo and fails the render)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "giteaUrl": {
+      "type": "string"
+    },
+    "teams": {
+      "type": "object"
+    },
+    "projectTeams": {
+      "type": "array"
+    },
+    "repo": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        }
+      }
+    },
+    "layout": {
+      "type": "number"
+    },
+    "apps": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner": {
+          "type": "string"
+        }
+      }
+    },
+    "adminSecret": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "usernameKey": {
+          "type": "string"
+        },
+        "passwordKey": {
+          "type": "string"
+        }
+      }
+    },
+    "tokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "portal": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "secret": {
+              "type": "string"
+            },
+            "user": {
+              "type": "string"
+            },
+            "restart": {
+              "type": "array"
+            },
+            "scopes": {
+              "type": "array"
+            },
+            "namespaces": {
+              "type": "array"
+            }
+          }
+        },
+        "apps": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "secret": {
+              "type": "string"
+            },
+            "user": {
+              "type": "string"
+            },
+            "scopes": {
+              "type": "array"
+            },
+            "namespaces": {
+              "type": "array"
+            },
+            "restart": {
+              "type": "array"
+            }
+          }
+        },
+        "gateway": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "secret": {
+              "type": "string"
+            },
+            "user": {
+              "type": "string"
+            },
+            "scopes": {
+              "type": "array"
+            },
+            "namespaces": {
+              "type": "array"
+            },
+            "restart": {
+              "type": "array"
+            }
+          }
+        },
+        "registry": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "secret": {
+              "type": "string"
+            },
+            "scopes": {
+              "type": "array"
+            },
+            "host": {
+              "type": "string"
+            },
+            "namespaces": {
+              "type": "array"
+            }
+          }
+        },
+        "lane": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "secret": {
+              "type": "string"
+            },
+            "scopes": {
+              "type": "array"
+            },
+            "namespaces": {
+              "type": "array"
+            }
+          }
+        },
+        "runner": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "secret": {
+              "type": "string"
+            },
+            "namespaces": {
+              "type": "array"
+            },
+            "restart": {
+              "type": "array"
+            }
+          }
+        }
+      }
+    },
+    "seed": {
+      "type": "object"
+    },
+    "seedProjects": {
+      "type": "array"
+    },
+    "seedConfigMaps": {
+      "type": "string"
+    },
+    "laneToken": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "schedule": {
+          "type": "string"
+        },
+        "tokenUrl": {
+          "type": "string"
+        },
+        "clientId": {
+          "type": "string"
+        },
+        "audience": {
+          "type": "string"
+        },
+        "secretName": {
+          "type": "string"
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "pullPolicy": {
+          "type": "string"
+        }
+      }
+    },
+    "resources": {
+      "type": "object"
+    },
+    "podSecurityContext": {
+      "type": "object"
+    },
+    "securityContext": {
+      "type": "object"
+    },
+    "serviceMesh": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "sampleApps": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "configMaps": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "publicBase": {
+          "type": "string"
+        },
+        "apps": {
+          "type": "object"
+        }
+      }
+    },
+    "rewrites": {
+      "type": "array"
+    },
+    "global": {
+      "type": "object"
+    }
+  }
+}

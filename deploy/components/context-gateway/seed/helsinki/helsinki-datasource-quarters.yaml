@@ -1,0 +1,15 @@
+# The city's quarters (korttelit) as an open WFS layer, in WGS84: about 6,000 outlines, 7 MB of GeoJSON. No key.
+# CC-BY-4.0, read from the HRI catalogue (package helsingin-korttelit).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-quarters
+  namespace: helsinki
+  title: { en: City quarters (korttelit), fi: Helsingin korttelit }
+spec:
+  type: http
+  http:
+    url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Helsingin_korttelit
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

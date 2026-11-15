@@ -1,0 +1,535 @@
+id: https://joinedcontext.com/models/praha/catalog
+name: catalog
+title: Open data catalogue
+description: >-
+  The types of the catalogue space (DM-61, EP-140): one Smart Data Models
+  DCAT-AP Dataset per public CKAN dataset, one Organization per CKAN organization that publishes
+  one, one DataService per public Endpoint and a Dataset of its own for an Endpoint no CKAN
+  dataset names, IRIs cited rather than minted (DM-04, DM-16).
+license: https://joinedcontext.com/licenses/cc-by-4.0
+prefixes:
+  dct: http://purl.org/dc/terms/
+  jc: https://joinedcontext.com/models/
+  linkml: https://w3id.org/linkml/
+  dcat: http://www.w3.org/ns/dcat#
+  ngsi-ld: https://uri.etsi.org/ngsi-ld/
+  foaf: http://xmlns.com/foaf/0.1/
+default_prefix: dcat
+default_range: string
+imports:
+  - linkml:types
+  - ngsi-ld-core
+slots:
+  title:
+    slot_uri: dct:title
+    description: >-
+      The title of the dataset or Endpoint in each language its record gives.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Title
+          sk: Názov
+          cs: Název
+          fi: Nimi
+          de: Titel
+      ngsi_ld_kind: LanguageProperty
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  description:
+    slot_uri: dct:description
+    description: >-
+      What the dataset or Endpoint holds: a text per language from the Endpoint's record, or the CKAN dataset's notes.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Description
+          sk: Popis
+          cs: Popis
+          fi: Kuvaus
+          de: Beschreibung
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  name:
+    slot_uri: foaf:name
+    description: >-
+      The title CKAN gives the dataset or the organization.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Name
+          sk: Názov
+          cs: Název
+          fi: Nimi
+          de: Name
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  identifier:
+    slot_uri: dct:identifier
+    description: >-
+      The CKAN name of a dataset or an organization, or the slug of an Endpoint.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Identifier
+          sk: Identifikátor
+          cs: Identifikátor
+          fi: Tunniste
+          de: Kennung
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  url:
+    slot_uri: dcat:landingPage
+    description: >-
+      The page of the dataset or the organization on its CKAN.
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Web page
+          sk: Webová stránka
+          cs: Webová stránka
+          fi: Verkkosivu
+          de: Webseite
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  keyword:
+    slot_uri: dcat:keyword
+    description: >-
+      The keywords of the dataset.
+    range: string
+    multivalued: true
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Keywords
+          sk: Kľúčové slová
+          cs: Klíčová slova
+          fi: Avainsanat
+          de: Schlagwörter
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  theme:
+    slot_uri: dcat:theme
+    description: >-
+      The EU data themes of the dataset, as IRIs of the EU vocabulary.
+    range: uri
+    multivalued: true
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Themes
+          sk: Témy
+          cs: Témata
+          fi: Teemat
+          de: Themen
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  spatial:
+    slot_uri: dct:spatial
+    description: >-
+      The places the dataset covers, as IRIs (NUTS, LAU).
+    range: uri
+    multivalued: true
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Area
+          sk: Územie
+          cs: Území
+          fi: Alue
+          de: Gebiet
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  temporal:
+    slot_uri: dct:temporal
+    description: >-
+      The time the data covers, as `{ startDate, endDate }` dates.
+    range: Any
+    inlined: true
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Time range
+          sk: Časový rozsah
+          cs: Časový rozsah
+          fi: Aikaväli
+          de: Zeitraum
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  frequency:
+    slot_uri: dct:accrualPeriodicity
+    description: >-
+      How often the data changes, as an IRI of the EU frequency vocabulary.
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Update frequency
+          sk: Frekvencia aktualizácie
+          cs: Frekvence aktualizace
+          fi: Päivitystiheys
+          de: Aktualisierungshäufigkeit
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  publisher:
+    slot_uri: jc:publisher
+    description: >-
+      The publisher the Endpoint's record names, as `{ id, name }`, for a dataset no CKAN organization publishes.
+    range: Any
+    inlined: true
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Publisher
+          sk: Vydavateľ
+          cs: Vydavatel
+          fi: Julkaisija
+          de: Herausgeber
+  refPublisher:
+    slot_uri: dct:publisher
+    description: >-
+      The CKAN organization that publishes the dataset.
+    range: Organization
+    inverse: publishedDatasets
+    inlined: false
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Publisher
+          sk: Vydavateľ
+          cs: Vydavatel
+          fi: Julkaisija
+          de: Herausgeber
+      ngsi_ld_kind: Relationship
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  publishedDatasets:
+    slot_uri: jc:publishedDatasets
+    description: >-
+      The datasets the organization publishes, computed from their refPublisher and never stored.
+    range: Dataset
+    multivalued: true
+    inverse: refPublisher
+    inlined: false
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Datasets
+          sk: Dátové sady
+          cs: Datové sady
+          fi: Aineistot
+          de: Datensätze
+      ngsi_ld_kind: Relationship
+  refDataService:
+    slot_uri: dcat:accessService
+    description: >-
+      The Endpoint the dataset's data is read through.
+    range: DataService
+    inverse: refDataset
+    inlined: false
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Endpoint
+          sk: Rozhranie
+          cs: Rozhraní
+          fi: Rajapinta
+          de: Endpunkt
+      ngsi_ld_kind: Relationship
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  refDataset:
+    slot_uri: dcat:servesDataset
+    description: >-
+      The datasets the Endpoint serves. The computed end of refDataService, which the catalogue also writes so one read of a DataService names its datasets.
+    range: Dataset
+    multivalued: true
+    inverse: refDataService
+    inlined: false
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Datasets
+          sk: Dátové sady
+          cs: Datové sady
+          fi: Aineistot
+          de: Datensätze
+      ngsi_ld_kind: Relationship
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  license:
+    slot_uri: dct:license
+    description: >-
+      The license of the dataset or the Endpoint, as an IRI.
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          en: License
+          sk: Licencia
+          cs: Licence
+          fi: Lisenssi
+          de: Lizenz
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  accessRights:
+    slot_uri: dct:accessRights
+    description: >-
+      Who may read the Endpoint, as an IRI of the EU access-right vocabulary.
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Access rights
+          sk: Prístupové práva
+          cs: Přístupová práva
+          fi: Käyttöoikeudet
+          de: Zugriffsrechte
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  issued:
+    slot_uri: dct:issued
+    description: >-
+      When CKAN first published the dataset.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Published
+          sk: Zverejnené
+          cs: Zveřejněno
+          fi: Julkaistu
+          de: Veröffentlicht
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  modified:
+    slot_uri: dct:modified
+    description: >-
+      When CKAN last changed the dataset.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Modified
+          sk: Zmenené
+          cs: Změněno
+          fi: Muutettu
+          de: Geändert
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  source:
+    slot_uri: dct:source
+    description: >-
+      Where the dataset's data comes from, as its publisher names it.
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Source
+          sk: Zdroj
+          cs: Zdroj
+          fi: Lähde
+          de: Quelle
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  endpointURL:
+    slot_uri: dcat:endpointURL
+    description: >-
+      The root address of the Endpoint.
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Endpoint address
+          sk: Adresa rozhrania
+          cs: Adresa rozhraní
+          fi: Rajapinnan osoite
+          de: Endpunktadresse
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  accessURL:
+    slot_uri: dcat:accessURL
+    description: >-
+      The Endpoint's access paths, each as `{ accessURL, conformsTo, mediaType }`.
+    range: Any
+    inlined: true
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Access paths
+          sk: Prístupové cesty
+          cs: Přístupové cesty
+          fi: Käyttöpolut
+          de: Zugriffswege
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  accessLevel:
+    slot_uri: jc:accessLevel
+    description: >-
+      Who may read the Endpoint: `public` for anyone.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Access level
+          sk: Úroveň prístupu
+          cs: Úroveň přístupu
+          fi: Käyttötaso
+          de: Zugriffsstufe
+  visibleBecause:
+    slot_uri: jc:visibleBecause
+    description: >-
+      Why the catalogue lists the Endpoint to its readers.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Listed because
+          sk: Uvedené, lebo
+          cs: Uvedeno, protože
+          fi: Näkyy, koska
+          de: Aufgeführt, weil
+  entityTypes:
+    slot_uri: jc:entityTypes
+    description: >-
+      The entity types the Endpoint holds, each as `{ type, count }`, most first.
+    range: Any
+    inlined: true
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Entity types
+          sk: Typy entít
+          cs: Typy entit
+          fi: Entiteettityypit
+          de: Entitätstypen
+  nextQuery:
+    slot_uri: jc:nextQuery
+    description: >-
+      The query that reads the first entities of the dataset through its Endpoint, as `{ tool, arguments }`.
+    range: Any
+    inlined: true
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Next query
+          sk: Ďalší dopyt
+          cs: Další dotaz
+          fi: Seuraava kysely
+          de: Nächste Abfrage
+  searchText:
+    slot_uri: jc:searchText
+    description: >-
+      The words a search matches, folded to lower case without diacritics: titles, keywords, the publisher, the space and the entity types.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Search text
+          sk: Text na vyhľadávanie
+          cs: Text pro vyhledávání
+          fi: Hakuteksti
+          de: Suchtext
+  datasetCount:
+    slot_uri: jc:datasetCount
+    description: >-
+      How many public datasets the organization publishes.
+    range: integer
+    annotations:
+      label:
+        tag: label
+        value:
+          en: Datasets
+          sk: Dátové sady
+          cs: Datové sady
+          fi: Aineistot
+          de: Datensätze
+classes:
+  Dataset:
+    is_a: Entity
+    slots:
+      - title
+      - description
+      - name
+      - identifier
+      - url
+      - keyword
+      - theme
+      - spatial
+      - location
+      - temporal
+      - frequency
+      - publisher
+      - refPublisher
+      - refDataService
+      - license
+      - issued
+      - modified
+      - source
+      - nextQuery
+      - searchText
+    slot_usage:
+      location:
+        description: >-
+          The area the dataset covers, a GeoJSON geometry in WGS 84, when its record gives one.
+        annotations:
+          label:
+            tag: label
+            value:
+              en: Location
+              sk: Poloha
+              cs: Poloha
+              fi: Sijainti
+              de: Standort
+          ngsi_ld_kind: GeoProperty
+          upstream_source: ETSI NGSI-LD core context v1.8
+    class_uri: dcat:Dataset
+    description: >-
+      One dataset of the catalogue: a public CKAN dataset by its CKAN name, or a public Endpoint
+      no CKAN dataset names.
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  DataService:
+    is_a: Entity
+    slots:
+      - title
+      - description
+      - identifier
+      - endpointURL
+      - accessURL
+      - accessRights
+      - license
+      - accessLevel
+      - visibleBecause
+      - refDataset
+      - entityTypes
+      - nextQuery
+    class_uri: dcat:DataService
+    description: One public Endpoint of a dataset, its access path.
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  Organization:
+    is_a: Entity
+    slots: [name, identifier, url, datasetCount, publishedDatasets, searchText]
+    class_uri: foaf:Organization
+    description: One CKAN organization that publishes at least one public dataset, with their count.
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.DCAT-AP
+  Any:
+    class_uri: linkml:Any
+    description: >-
+      Any value: the structured values of the catalogue (`temporal`, `publisher`, `accessURL`,
+      `entityTypes`, `nextQuery`) are JSON objects or lists of them.
+    annotations:
+      upstream_source: https://w3id.org/linkml/Any

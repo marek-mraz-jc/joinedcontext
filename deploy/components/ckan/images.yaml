@@ -1,0 +1,30 @@
+---
+# Three images, one release: CKAN itself, the Solr the CKAN project ships with CKAN's own
+# schema already loaded, and a Redis for the cache and the job queue. Re-pin a digest with:
+#   T=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:<repo>:pull" | jq -r .token)
+#   curl -sI -H "Authorization: Bearer $T" \
+#     -H 'Accept: application/vnd.oci.image.index.v1+json' \
+#     https://registry-1.docker.io/v2/<repo>/manifests/<tag> | grep -i docker-content-digest
+ckan:
+  catalogue:
+    # CKAN plus the OIDC authenticator the Keycloak login needs (`images/ckan/Dockerfile`),
+    # published, signed and scanned by `.github/workflows/image-ckan.yml` (run 42511879158 at 9edc201a: T-6643 CKAN 2.11.7 base with certifi 2026.10.19, T-6696) from
+    # the public repository, so the package is public and the node pulls it anonymously (T-0403).
+    # This pin and `global.ckan.sso` travel together: the plugin list names `oidc_pkce` only when
+    # the flag is on, and CKAN exits on a plugin it cannot import. Stock base, for a rollback:
+    # docker.io/ckan/ckan-base:2.11.7@sha256:822c79ad696a8f7539c8762f1a0455d6957ae69a451f49bfa2eec2a0ec6d0f1d
+    repository: 'ghcr.io/marek-mraz-jc/joinedcontext-ckan'
+    tag: '2.11.7'
+    digest: 'sha256:b05767a1311421d75d0beed5abc1c2eb594fa3cac125e0ec851af980d0e2b6c5'
+  solr:
+    # A plain Solr cannot index CKAN: the collection needs CKAN's schema, and this image is
+    # the one that carries it. Its minor version tracks the CKAN one above. ckan/ckan-solr
+    # 2.11-solr9 with the Ubuntu archive's fixes (libbrotli1 for CVE-2026-111497, T-6114):
+    # images/patched-ckan-solr, signed by image-patched.yml run 40958311324 at b92a8aa0.
+    repository: 'ghcr.io/marek-mraz-jc/joinedcontext-ckan-solr'
+    tag: '2.11-solr9'
+    digest: 'sha256:959ac52f1ed559db58d56d3411088d8c6729e86f311efe3657394666349c232d'
+  redis:
+    repository: 'docker.io/library/redis'
+    tag: '7-alpine'
+    digest: 'sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499'

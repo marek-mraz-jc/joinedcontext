@@ -1,0 +1,36 @@
+# One Smart Data Model type per catalogue dataset (T-4344): Bridge of the space
+# bbsk-registre, read through its own Policy, which narrows the space's public read to these types.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bbsk-mosty
+  namespace: bbsk
+  title: { sk: Mosty — Banskobystrický kraj, en: Bridges — Banská Bystrica Region }
+  description:
+    sk: 'Mosty na cestách kraja. Zdroj: Banskobystrický samosprávny kraj, CC BY-SA 4.0.'
+    en: "The bridges on the region's roads. Source: Banská Bystrica Self-Governing Region, CC BY-SA 4.0."
+spec:
+  contextSpaceRef: bbsk-registre
+  slug: omto6qk5sfn5ft7zl5pdiaxunj2ljnae
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:bbsk.sk:bbsk-registre:mosty-read
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bbsk }
+      license: cc-by-sa
+  catalog:
+    publisher:
+      name: { sk: Banskobystrický samosprávny kraj, en: Banská Bystrica Self-Governing Region }
+      uri: https://www.bbsk.sk/
+    license: CC_BYSA_4_0
+    attribution:
+      sk: 'Zdroj: Banskobystrický samosprávny kraj, https://opendata.bbsk.sk/, CC BY-SA 4.0'
+      en: 'Source: Banská Bystrica Self-Governing Region, https://opendata.bbsk.sk/, CC BY-SA 4.0'
+    themes: [TRAN]
+    keywords:
+      sk: [mosty, cesty]
+      en: [bridges, roads]
+    spatial: [SK032]
+    frequency: WEEKLY
+    pipelineRef: { kind: Pipeline, name: mosty }

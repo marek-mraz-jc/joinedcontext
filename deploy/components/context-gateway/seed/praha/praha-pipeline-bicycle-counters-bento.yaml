@@ -1,0 +1,119 @@
+# The mapping of the bicycle-counters pipeline (T-5681, PL-03): one TrafficFlowObserved per
+# counted direction of Golemio's cycle counters in Prague (Operátor ICT, a.s., counters by Camea),
+# with the bicycles of its newest five-minute interval of the last hour.
+#
+# Two reads a run. The DataSource reads the counter list: each counter's name, place and
+# directions. This mapping then asks /v2/bicyclecounters/detections for the last hour (`from=`
+# now minus one hour): the route sorts by direction, not by time, so without the window one
+# answer of 10,000 rows holds a day of the first directions and nothing of the rest (T-5268).
+# That second call carries the same Golemio key as the DataSource, from the Pipeline's own
+# secretRef (PRAHA_GOLEMIO_TOKEN), never written here; the host stays literal (PL-07).
+#
+# Ids: urn:ngsi-ld:TrafficFlowObserved:{org}:{space}:golemio-bicycle-{direction id}, Golemio's own
+# direction id ("camea-bc-al-pl"), so a direction keeps its entity from run to run.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a counter outside Prague's box (the city plus about 1 km,
+# the space's in-area rule) or at 0,0, or a direction without a name, is dropped; a direction Golemio
+# lists twice keeps one. An interval whose count is no number or outside 0..2000 bicycles in five
+# minutes is left out; a direction with no counted interval in the hour is not written, so its
+# last count stays with the time it was counted. The run logs how many it dropped and why.
+#
+# A counter list that is not a feature list, an empty one or one updated more than a day ago, a
+# detections answer that is not a list, is cut at 10,000 rows, or holds no count at all, fails the
+# run: the counts already written stay instead of being emptied.
+pipeline:
+  processors:
+    # One try: the first refusal ends the message there, so its reason is the one the run reports.
+    - try:
+        - mapping: |
+            map at {
+              root = this.ts_parse("2006-01-02T15:04:05Z07:00").ts_format("2006-01-02T15:04:05Z", "UTC")
+            }
+            let features = this.features.catch(null)
+            let n = if $features.type() == "array" { $features.length() } else { -1 }
+            let newest = if $n > 0 { $features.map_each(f -> f.properties.updated_at.apply("at").catch("")).sort().index(-1) } else { "" }
+            meta from = (now().ts_unix() - 3600).ts_format("2006-01-02T15:04:05Z", "UTC")
+            root = if $n < 0 {
+              throw("Golemio's cycle counters are not a feature list")
+            } else if $n == 0 {
+              throw("Golemio listed no cycle counter; the register is never empty, so the feed failed")
+            } else if $newest == "" || $newest.ts_parse("2006-01-02T15:04:05Z").ts_unix() < now().ts_unix() - 86400 {
+              throw("Golemio's newest cycle counter update (%v) is older than a day".format($newest))
+            } else { { "counters": $features } }
+        - branch:
+            request_map: |
+              meta from = @from
+              root = ""
+            processors:
+              - http:
+                  url: https://api.golemio.cz/v2/bicyclecounters/detections?from=${! @from }&limit=10000
+                  verb: GET
+                  headers:
+                    Accept: application/json
+                    X-Access-Token: ${PRAHA_GOLEMIO_TOKEN}
+                  timeout: 30s
+                  retries: 1
+                  rate_limit: pipeline_egress
+            result_map: root.detections = this
+        - mapping: |
+            map at {
+              root = this.ts_parse("2006-01-02T15:04:05Z07:00").ts_format("2006-01-02T15:04:05Z", "UTC")
+            }
+            map slug {
+              root = this.string().lowercase().re_replace_all("[^a-z0-9]+", "-").trim("-")
+            }
+            map words {
+              root = if this.type() == "string" { this.trim().re_replace_all("\\s+", " ") } else { "" }
+            }
+            let detections = this.detections.catch(null)
+            let rows = if $detections.type() != "array" {
+              throw("Golemio's cycle counts for the last hour are not a list")
+            } else if $detections.length() >= 10000 {
+              throw("Golemio answered 10,000 cycle counts for one hour, its cap: the window is cut")
+            } else { $detections }
+            let counted = $rows.map_each(d -> {
+              "id": d.id.catch(""),
+              "value": d.value.catch(null),
+              "from": d.measured_from.apply("at").catch(""),
+              "to": d.measured_to.apply("at").catch("")
+            }).filter(d -> d.id.type() == "string" && d.id != "" && d.from != "" && d.to != "" && d.value.type() == "number")
+            let plausible = $counted.filter(d -> d.value >= 0 && d.value <= 2000)
+            let latest = $plausible.sort_by(d -> 0 - d.to.ts_parse("2006-01-02T15:04:05Z").ts_unix()).unique(d -> d.id)
+            let by_direction = $latest.fold({}, acc -> acc.tally.assign({ (acc.value.id): acc.value }))
+            let directions = this.counters.map_each(f -> f.properties.directions.or([]).map_each(d -> {
+              "id": d.id.catch(""),
+              "key": d.id.catch("").string().apply("slug"),
+              "direction": d.name.apply("words"),
+              "counter": f.properties.name.apply("words"),
+              "c": f.geometry.coordinates.catch(null)
+            })).flatten()
+            let usable = $directions.filter(d -> d.id.type() == "string" && d.key != "" && d.direction != "" && d.counter != "")
+            let located = $usable.filter(d -> d.c.type() == "array" && d.c.length() == 2 && d.c.index(0).type() == "number" && d.c.index(1).type() == "number")
+            let inside = $located.filter(d -> d.c.index(0) >= 14.2 && d.c.index(0) <= 14.75 && d.c.index(1) >= 49.9 && d.c.index(1) <= 50.2)
+            let unique = $inside.unique(d -> d.id)
+            let written = $unique.filter(d -> $by_direction.exists(d.id)).map_each(d -> d.assign({ "n": $by_direction.get(d.id) }))
+            meta read = $directions.length()
+            meta unusable = $directions.length() - $usable.length()
+            meta outside = $usable.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            meta silent = $unique.length() - $written.length()
+            meta range = $counted.length() - $plausible.length()
+            root = if $plausible.length() == 0 {
+              throw("Golemio counted no bicycle in the last hour at any counter, so the feed failed")
+            } else { $written }
+        - log:
+            level: INFO
+            message: 'bicycle-counters: read ${! meta("read") } directions, dropped ${! meta("unusable") } without id or name, ${! meta("outside") } outside Prague, ${! meta("duplicate") } duplicates, ${! meta("silent") } with no count in the hour; left out ${! meta("range") } counts out of range'
+        - mapping: |
+            root = this.map_each(d -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:golemio-bicycle-%v".format("TrafficFlowObserved", env("JC_ORG_DOMAIN"), env("JC_SPACE"), d.key),
+              "type": "TrafficFlowObserved",
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": "%v: %v".format(d.counter, d.direction) } },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": d.c } },
+              "vehicleType": { "type": "Property", "value": "bicycle" },
+              "intensity": { "type": "Property", "value": d.n.value.round().int64(), "observedAt": d.n.to },
+              "dateObservedFrom": { "type": "Property", "value": d.n.from },
+              "dateObservedTo": { "type": "Property", "value": d.n.to },
+              "dataProvider": { "type": "Property", "value": "Golemio, Operátor ICT, a.s." },
+              "source": { "type": "Property", "value": "https://api.golemio.cz/v2/bicyclecounters" }
+            })

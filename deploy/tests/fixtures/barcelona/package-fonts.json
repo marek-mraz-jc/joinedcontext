@@ -1,0 +1,40 @@
+{
+ "success": true,
+ "result": {
+  "name": "fonts",
+  "resources": [
+   {
+    "id": "8f63c3cf-399a-4a8d-a73d-eb1fca80d7f0",
+    "name": "2026_Fonts_beure.csv",
+    "format": "CSV",
+    "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/889c583e-6c11-46c3-bc45-7f3ae5e6c621/resource/8f63c3cf-399a-4a8d-a73d-eb1fca80d7f0/download/fonts_beure_2026.csv",
+    "last_modified": "2026-03-25T09:26:27.194469",
+    "datastore_active": true
+   },
+   {
+    "id": "a01363d7-3caa-454d-b61e-42221efe7532",
+    "name": "2025_Fonts_Beure.csv",
+    "format": "CSV",
+    "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/889c583e-6c11-46c3-bc45-7f3ae5e6c621/resource/a01363d7-3caa-454d-b61e-42221efe7532/download/2025_fonts_beure.csv",
+    "last_modified": "2025-03-27T07:32:05.161051",
+    "datastore_active": true
+   },
+   {
+    "id": "c858b3e6-6c8d-4b75-8ec1-8519d8e8b4f2",
+    "name": "2024_Fonts_Beure.csv",
+    "format": "CSV",
+    "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/889c583e-6c11-46c3-bc45-7f3ae5e6c621/resource/c858b3e6-6c8d-4b75-8ec1-8519d8e8b4f2/download/fonts_beure_2024.csv",
+    "last_modified": "2024-03-25T11:53:57.479624",
+    "datastore_active": true
+   },
+   {
+    "id": "cb306a1d-3ded-48ce-aa51-1483b2a68342",
+    "name": "2016_Fonts_201610.xml",
+    "format": "XML",
+    "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/889c583e-6c11-46c3-bc45-7f3ae5e6c621/resource/cb306a1d-3ded-48ce-aa51-1483b2a68342/download/0_fonts_201610.xml",
+    "last_modified": "2017-12-28T12:55:02.791514",
+    "datastore_active": false
+   }
+  ]
+ }
+}

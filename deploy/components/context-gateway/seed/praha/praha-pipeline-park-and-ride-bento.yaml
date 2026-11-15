@@ -1,0 +1,17 @@
+# The mapping of the park-and-ride pipeline (PL-03): one OffStreetParking per P+R car park of the
+# city geoportal (IPR Praha), 28 on 2026-09-25, with the number of cars it holds today. The live
+# occupancy is the `park-and-ride-occupancy` pipeline's, from Golemio, onto these ids;
+# `kapacita_vyhled` is a planned capacity and is not a fact about today, so it is not read.
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this.features.or([]).filter(f -> f.properties.globalid.or("").string().re_replace_all("[{}]", "").lowercase().re_match("^[0-9a-f-]{36}$") && f.geometry.or(null) != null && f.properties.nazev.or("").trim() != "").map_each(f -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:ipr-%v".format("OffStreetParking", env("JC_ORG_DOMAIN"), env("JC_SPACE"), f.properties.globalid.or("").string().re_replace_all("[{}]", "").lowercase()),
+          "type": "OffStreetParking",
+          "name": { "type": "LanguageProperty", "languageMap": { "cs": "P+R " + f.properties.nazev.trim() } },
+          "totalSpotNumber": if f.properties.kapacita.or(null) == null { null } else { { "type": "Property", "value": f.properties.kapacita } },
+          "location": { "type": "GeoProperty", "value": f.geometry },
+          "dataProvider": { "type": "Property", "value": "datový podklad © IPR Praha (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://opendata.geoportalpraha.cz/" }
+        }.filter(entry -> entry.value != null))

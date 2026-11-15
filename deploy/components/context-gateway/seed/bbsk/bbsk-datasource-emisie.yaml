@@ -1,0 +1,16 @@
+# Solid particulate emissions per square kilometre from large and medium sources, the kraj and its 13 okresy. The cube carries 2019 to 2023 and no more, which is why no indicator built on it is measured against the 2005 baseline of Directive (EU) 2016/2284. No key, CC-BY-SA-4.0.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: susr-zp3803rs
+  namespace: bbsk
+  title:
+    sk: Emisie znečisťujúcich látok (ŠÚ SR, zp3803rs)
+    en: Pollutant emissions (ŠÚ SR, zp3803rs)
+spec:
+  type: http
+  http:
+    url: https://data.statistics.sk/api/v2/dataset/zp3803rs/SK032,SK0321,SK0322,SK0323,SK0324,SK0325,SK0326,SK0327,SK0328,SK0329,SK032A,SK032B,SK032C,SK032D/*/ODPAD_TONY_KM2/1?lang=sk&type=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

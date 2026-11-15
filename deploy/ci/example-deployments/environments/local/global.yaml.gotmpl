@@ -1,0 +1,13 @@
+---
+global:
+  domain: joinedcontext.test
+  profile: development
+  instanceSlug: local
+  ingress:
+    # The k3d cluster of the deployment-variants lane installs ingress-nginx, so this
+    # environment is published behind a controller. This flag gates exactly one thing in the
+    # repository: the `apisix-edge` Certificate that fills the Secret the APISIX Ingress
+    # terminates on. The Ingress renders either way, so leaving it off cost no error at all —
+    # ingress-nginx just served its fake certificate, and only a client that verifies the
+    # chain ever noticed (T-0350).
+    enabled: true

@@ -1,0 +1,17 @@
+# One OnStreetParking per record of the IPR layer Vyhrazené stání speciální into the city space (T-5424).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: geo-special
+  namespace: praha
+  title: { en: Special reserved bays, cs: Vyhrazené stání speciální }
+spec:
+  class: auto
+  # TSK republishes its parking layers every few weeks; one read a week keeps up.
+  period: 168h
+  schedule: '20 3 * * 2'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-geo-special }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: OnStreetParking, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 200 }

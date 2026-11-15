@@ -1,0 +1,31 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-kpi-forecast-1
+  namespace: helsinki
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:helsinki/app-kpi-forecast
+    kind: role
+  assigner: did:web:hel.fi
+  contextSpaceRef:
+    kind: ContextSpace
+    name: helsinki-kpi
+  information:
+  - entities:
+    - type: KeyPerformanceIndicator
+    propertyNames:
+    - name
+    - currentValue
+    - calculationFormula
+    - source
+    relationshipNames:
+    - name
+    - currentValue
+    - calculationFormula
+    - source
+  operations:
+  - queryEntity
+  - retrieveEntity

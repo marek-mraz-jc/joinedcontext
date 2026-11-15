@@ -1,0 +1,107 @@
+@prefix geojson: <https://purl.org/geojson/vocab#> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix ns1: <https://w3id.org/linkml/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sdm: <https://smartdatamodels.org/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://joinedcontext.com/models/sdm/extensions/BudgetLine> ns1:generator_version "linkml-1.11.1" .
+
+jc:BudgetLine a sh:NodeShape ;
+    rdfs:comment "One line of a city budget in the national budget classification, with the approved and the adjusted amount." ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) ;
+    sh:property [ sh:datatype xsd:dateTime ;
+            sh:description "When the observation the entity reports was made." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 13 ;
+            sh:path ngsi-ld:observedAt ],
+        [ sh:datatype xsd:float ;
+            sh:description "The amount after the year's budget changes so far, in the same unit as the approved one." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 2 ;
+            sh:path jc:adjustedAmount ],
+        [ sh:datatype xsd:string ;
+            sh:description "The earmark of the line (účelový znak), code and name." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 7 ;
+            sh:path jc:budgetPurpose ],
+        [ sh:datatype xsd:integer ;
+            sh:description "The budget year." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 8 ;
+            sh:path jc:fiscalYear ],
+        [ sh:description "The service the row was read from." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:IRI ;
+            sh:order 1 ;
+            sh:path sdm:source ],
+        [ sh:datatype xsd:string ;
+            sh:description "The item of the national budget classification (položka), code and name. Items 1xxx to 4xxx are revenue, 5xxx and 6xxx expenditure, 8xxx financing." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 6 ;
+            sh:path jc:budgetItem ],
+        [ sh:datatype xsd:string ;
+            sh:description "The city's own area of the line (oblast), its code and name joined, such as 09 Školství; absent on a correction line the city files under none." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 4 ;
+            sh:path jc:budgetArea ],
+        [ sh:datatype xsd:string ;
+            sh:description "The budget line's own key, the year and its codes of area, function, item and purpose (`mhmp-2026-00-612100-5011-000000000`), the identifier the BudgetLine extension requires." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 9 ;
+            sh:path <https://smartdatamodels.org/dataModel.CPSV-AP/identifier> ],
+        [ sh:datatype xsd:string ;
+            sh:description "Who published the row, with the credit its licence asks for." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 0 ;
+            sh:path sdm:dataProvider ],
+        [ sh:datatype xsd:string ;
+            sh:description "The section of the national budget classification (paragraf, ODPA), code and name." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 5 ;
+            sh:path jc:budgetFunction ],
+        [ sh:datatype xsd:string ;
+            sh:description "Where the entity is, as GeoJSON geometry." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 12 ;
+            sh:path geojson:geometry ],
+        [ sh:datatype xsd:float ;
+            sh:description "The amount the council approved, as the city publishes it. The city's documentation names no unit; the 2026 expenditure lines add up to 119 054 085, which is the size of Prague's budget in thousands of CZK." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 3 ;
+            sh:path jc:approvedAmount ] ;
+    sh:targetClass jc:BudgetLine .
+
+ngsi-ld:Entity a sh:NodeShape ;
+    rdfs:comment "The root every NGSI-LD entity class specialises." ;
+    sh:closed true ;
+    sh:ignoredProperties ( sdm:dataProvider jc:budgetItem jc:fiscalYear sdm:source jc:budgetFunction jc:budgetArea jc:approvedAmount jc:adjustedAmount rdf:type jc:budgetPurpose <https://smartdatamodels.org/dataModel.CPSV-AP/identifier> ) ;
+    sh:property [ sh:datatype xsd:dateTime ;
+            sh:description "When the observation the entity reports was made." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 3 ;
+            sh:path ngsi-ld:observedAt ],
+        [ sh:datatype xsd:string ;
+            sh:description "Where the entity is, as GeoJSON geometry." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 2 ;
+            sh:path geojson:geometry ] ;
+    sh:targetClass ngsi-ld:Entity .
+

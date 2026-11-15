@@ -1,0 +1,30 @@
+# The mapping of the resident-parking-zones pipeline (PL-03): one OnStreetParking (forResidents, T-4329) per resident and
+# business parking zone of the city, from the open WFS layer
+# `Asukas_ja_yrityspysakointivyohykkeet_alue`, keyed by the permit letter the signs show.
+
+pipeline:
+  processors:
+    - mapping: |
+        # The WFS writes a field it has no value for as the string "None"; a link comes without
+        # its scheme.
+        map text {
+          root = if this == null || this.string().trim() == "" || this.string() == "None" { null } else { this.string().trim() }
+        }
+        root = this.features.or([]).filter(f -> f.geometry.or(null) != null && f.properties.asukaspysakointitunnus.or("").string().re_match("^[0-9A-Za-z]{1,3}$")).map_each(f -> {
+          "code": f.properties.asukaspysakointitunnus.string(),
+          "name": f.properties.alueen_nimi.apply("text"),
+          "link": f.properties.linkki.apply("text"),
+          "geometry": f.geometry
+        }).map_each(z -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:resident-zone-%v".format("OnStreetParking", env("JC_ORG_DOMAIN"), env("JC_SPACE"), z.code.lowercase()),
+          "type": "OnStreetParking",
+          "name": if z.name == null { null } else { { "type": "LanguageProperty", "languageMap": { "fi": z.name } } },
+          "category": { "type": "Property", "value": ["forResidents"] },
+          "zoneCode": { "type": "Property", "value": z.code },
+          # One address or none: a register value with two links or a space is no IRI, and the
+          # broker refuses the whole zone over it (F-BNT3-018, the T-4011 culture rule).
+          "url": z.link.or("").string().trim().(l -> if l.has_prefix("http") { l } else { "https://" + l }).(u -> if u.re_match("^https?://[^\\s/]+\\.[^\\s]+$") { { "type": "Property", "value": u } } else { null }),
+          "location": { "type": "GeoProperty", "value": z.geometry },
+          "dataProvider": { "type": "Property", "value": "City of Helsinki, parking" },
+          "source": { "type": "Property", "value": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:Asukas_ja_yrityspysakointivyohykkeet_alue" }
+        }.filter(entry -> entry.value != null))

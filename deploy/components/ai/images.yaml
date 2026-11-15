@@ -1,0 +1,10 @@
+---
+# Re-pin a digest with (the manifest list, so every architecture keeps its image):
+#   curl -s "https://hub.docker.com/v2/repositories/<repo>/tags/<tag>" | jq -r .digest
+ai:
+  app:
+    # Static files only, as uid 101, writing /tmp and its cache: basemap's pinned nginx.
+    server:
+      repository: 'docker.io/nginxinc/nginx-unprivileged'
+      tag: '1.30.6-alpine-slim'
+      digest: 'sha256:5d8bb9437d74a600ec5dbf90c035451c724dc33eac8d3a71078f6f8612c345f6'

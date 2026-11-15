@@ -1,0 +1,39 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: barcelona
+  namespace: barcelona
+  title:
+    ca: Barcelona — dades obertes
+    es: Barcelona — datos abiertos
+    en: Barcelona, open data
+spec:
+  contextSpaceRef: barcelona
+  linkml: ./barcelona.linkml.yaml
+  version: 1.6.0
+  lifecycle: published
+  classes:
+    - AirQualityObserved
+    - WeatherObserved
+    - WeatherForecast
+    - PhreaticObserved
+    - TrafficFlowObserved
+    - OnStreetParking
+    - EVChargingStation
+    - Event
+    - PointOfInterest
+    - AdministrativeArea
+    - CityWork
+    - PedestrianCrossing
+    - StreetFurniture
+    - TouristRental
+    - KeyPerformanceIndicator
+    - BikeLane
+    - RoadAccident
+  # A published model commits all four artifacts (DM-02); the gateway serves schema/v1 from them
+  # (DM-22, EP-49). Regenerate as ../zilina/README.md shows.
+  artifacts:
+    jsonSchema: ./barcelona.v1.schema.json
+    context: ./barcelona.v1.context.jsonld
+    docs: ./barcelona.v1.md
+    example: ./barcelona.v1.example.jsonld

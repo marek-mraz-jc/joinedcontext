@@ -1,0 +1,16 @@
+# Stage reads prod's public Endpoint banskabystrica-kataster for what stage does not hold yet (T-6545).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSourceRegistration
+metadata:
+  name: prod-banskabystrica-kataster
+  namespace: banskabystrica
+  title: Prod banskabystrica-kataster
+spec:
+  contextSpaceRef: banskabystrica-verejne
+  endpoint: https://api.smartcity.joinedcontext.com/api/endpoint/c223begxsfspzmdaq5ij4aayw6vyucjl
+  information:
+    - entities:
+        - type: CadastralParcel
+  mode: auxiliary
+  operations: [retrieveOps]
+  federation: { identity: anonymous }

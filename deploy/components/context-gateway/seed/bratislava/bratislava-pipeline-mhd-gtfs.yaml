@@ -1,0 +1,19 @@
+# One GtfsAgency, one GtfsRoute per line and one GtfsStop per platform of `dpb-gtfs` (T-5273).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: mhd-gtfs
+  namespace: bratislava
+  title: { sk: Zastávky a linky MHD z GTFS, en: Public transport stops and lines from GTFS }
+spec:
+  class: auto
+  # DPB republishes the zip with each timetable change (2026-10-22 the last); a nightly read keeps up.
+  period: 24h
+  schedule: '45 3 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: dpb-gtfs }
+  targetEndpoint: urn:ngsi-ld:Endpoint:bratislava.sk:bratislava:bratislava
+  output: { type: GtfsStop, mode: upsert }
+  # 111 kB of CSV at most per message. Measured in the runner's Bento over the 22 Oct 2026 zip
+  # (T-5766): one run of the three members is killed at 64 MiB and passes at 96 MiB.
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

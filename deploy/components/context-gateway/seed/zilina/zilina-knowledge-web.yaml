@@ -1,0 +1,20 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: KnowledgeSource
+metadata:
+  name: web
+  namespace: zilina
+spec:
+  # The city of Žilina's website for its public assistant (T-4281). Decided (worker-5, owner may
+  # override): www.zilina.sk, bounded like the other bodies' sites for the one dev node (three
+  # links deep, 500 pages, PDFs of at most 20 MB), read weekly; options: no website (datasets
+  # and catalogue only), the university's site as well.
+  source: website
+  startUrls:
+    - https://www.zilina.sk/
+  sitemap: true
+  maxDepth: 3
+  maxPages: 500
+  pdf: { policy: include, maxBytes: 20971520, maxPages: 200 }
+  schedule: '15 3 * * 0'
+  languages: [sk]
+  visibility: public

@@ -1,0 +1,16 @@
+# Stage reads prod's public Endpoint susr-kz for what stage does not hold yet (T-6545).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSourceRegistration
+metadata:
+  name: prod-susr-kz
+  namespace: slovensko
+  title: Prod susr-kz
+spec:
+  contextSpaceRef: susr-kz
+  endpoint: https://api.smartcity.joinedcontext.com/api/endpoint/6icyuts7sj2fvg53hcgrq4s7nw5qs2jo
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator
+  mode: auxiliary
+  operations: [retrieveOps]
+  federation: { identity: anonymous }

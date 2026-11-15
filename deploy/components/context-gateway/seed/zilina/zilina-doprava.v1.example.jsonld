@@ -1,0 +1,21 @@
+{
+  "availableSpotNumber": 0,
+  "dataProvider": "dataProvider",
+  "dateObserved": "2026-01-01T00:00:00Z",
+  "id": "urn:ngsi-ld:OffStreetParking:joinedcontext.com:example:1",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "name": {
+    "en": "name"
+  },
+  "observedAt": "2026-01-01T00:00:00Z",
+  "occupiedSpotNumber": 0,
+  "source": "source",
+  "totalSpotNumber": 0,
+  "type": "OffStreetParking"
+}

@@ -1,0 +1,17 @@
+# Hub item 17725f8c (Okresy BBK – hranice), 13 districts from ZBGIS, 60 kB with 6-decimal coordinates. Read from the region's own ArcGIS FeatureServer, the service behind its open-data portal (opendata.bbsk.sk): the query asks for the columns the mapping reads, in WGS 84 (outSR=4326). No key. CC BY-SA 4.0, read from the Hub DCAT feed (opendata.bbsk.sk/api/feed/dcat-us/1.1.json) and the item's licenseInfo on arcgis.com.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bbsk-okresy
+  namespace: bbsk
+  title:
+    sk: Okresy BBK – hranice (BBSK)
+    en: Districts of the region, outlines (BBSK)
+spec:
+  type: http
+  http:
+    url: https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Okres3_WebMercator/FeatureServer/0/query?where=1%3D1&outFields=NM3,VYMERA,NUTS3_CODE,LAU1_CODE&returnGeometry=true&f=geojson&outSR=4326&geometryPrecision=6
+    verb: GET
+    headers:
+      Accept: application/geo+json, application/json
+    timeout: 60s

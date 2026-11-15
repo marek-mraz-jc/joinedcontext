@@ -1,0 +1,172 @@
+# What images/decidim/site.rb puts on the site (T-6453). Titles, states, phases, dates, venues,
+# amounts and vote counts are the city's public record on tvormespolu.banskabystrica.sk, read
+# 2026-11-02. Descriptions are written here in short: the public texts open with the proposer's
+# name, e-mail and telephone, and none of that is copied. Authors are the organization.
+organization:
+  name: { sk: Spoločne tvorme Banskú Bystricu, en: Shaping Banská Bystrica Together }
+  description:
+    sk: Participatívna platforma mesta Banská Bystrica. Navrhujte, diskutujte a rozhodujte o tom, ako sa mení vaše okolie.
+    en: The participation platform of the city of Banská Bystrica. Propose, discuss and decide how your neighbourhood changes.
+  demo_notice:
+    sk: Toto je demo kópia na testovacom prostredí, nie oficiálny web mesta. Obsah je prevzatý z verejného záznamu a slúži na ukážku.
+    en: This is a demo copy on a test environment, not the city's official site. The content comes from the public record and is shown as a sample.
+  demo_banner:
+    sk: Demo kópia na testovacom prostredí, nie oficiálny web mesta.
+    en: Demo copy on a test environment, not the city's official site.
+  # The public site's primary colour; a darker shade carries links (7:1 on white); its grey.
+  colors: { primary: "#d62426", secondary: "#a81c1e", tertiary: "#d1d1d1" }
+  official_url: https://www.banskabystrica.sk
+  time_zone: Bratislava
+home:
+  welcome_text: { sk: Spoločne tvorme Banskú Bystricu, en: Shaping Banská Bystrica Together }
+  cta_text: { sk: Zapojte sa do participatívneho rozpočtu, en: Join the participatory budget }
+  cta_process: participatorybudget20262027
+privacy:
+  slug: ochrana-osobnych-udajov
+  title: { sk: Ochrana osobných údajov, en: Privacy }
+  content:
+    sk: <p>Prihlásenie zabezpečuje prihlasovacia služba platformy; samostatná registrácia tu nie je. Platforma ukladá len údaje potrebné na vaše príspevky a nastavenia účtu. Meno ani e-mail sa nezverejňujú v otvorených dátach a príspevky sa do dátového katalógu prenášajú bez osobných údajov.</p><p>Otázky k spracovaniu osobných údajov posielajte správcovi platformy mesta.</p>
+    en: <p>Sign-in goes through the platform's sign-in service; there is no separate registration here. The platform stores only what your contributions and account settings need. Your name and e-mail are not published in open data, and contributions reach the data catalogue without personal data.</p><p>Send questions about personal data to the city's platform administrator.</p>
+step_titles_en:
+  Prvé diskusné fórum a vyhlásenie participatívneho rozpočtu: First discussion forum and launch of the budget
+  Konzultačné stretnutia s predkladateľmi: Consultations with proposers
+  Podávanie návrhov: Submitting proposals
+  Formálna kontrola návrhov: Formal check of proposals
+  Druhé diskusné fórum: Second discussion forum
+  Hlasovanie: Voting
+  Realizácia projektov: Delivering the projects
+  Ročník ukončený: Round finished
+processes:
+- slug: participatorybudget20262027
+  image: process-open.jpg
+  promoted: false
+  title: { sk: Participatívny rozpočet 2026/2027, en: Participatory budget 2026/2027 }
+  subtitle: { sk: Podávanie návrhov je otvorené, en: Proposals are open }
+  short_description:
+    sk: <p>Zapojte sa do participatívneho rozpočtu a zmeňte svoju komunitu a okolie podľa vašich predstáv!</p>
+    en: <p>Join the participatory budget and change your community and neighbourhood the way you want it!</p>
+  description:
+    sk: <p>Občania navrhujú projekty pre svoje okolie, mesto ich formálne skontroluje a o tých, ktoré postúpia, rozhodnú obyvatelia v online hlasovaní. Vyčlenená suma je 40 000 €, jeden projekt môže získať najviac 10 000 €.</p>
+    en: <p>Residents propose projects for their neighbourhood, the city checks them formally, and residents decide on those that pass in an online vote. The allocation is EUR 40,000, with at most EUR 10,000 per project.</p>
+  start_date: 2026-05-01
+  end_date: 2027-12-30
+  budget_total: 40000
+  budget_votes: disabled
+  steps:
+  - { title: "Prvé diskusné fórum a vyhlásenie participatívneho rozpočtu" }
+  - { title: "Konzultačné stretnutia s predkladateľmi", start: 2026-06-01, end: 2026-07-31 }
+  - { title: "Podávanie návrhov", start: 2026-04-02, end: 2027-10-01, active: true }
+  - { title: "Formálna kontrola návrhov", start: 2026-10-01, end: 2026-10-31 }
+  - { title: "Druhé diskusné fórum", start: 2026-11-18, end: 2026-11-19 }
+  - { title: "Hlasovanie", start: 2027-01-12, end: 2027-01-31 }
+  - { title: "Realizácia projektov", start: 2027-03-01, end: 2027-12-31 }
+  proposals:
+  - { title: "Revitalizácia zelene a vodozádržné opatrenia v okolí bytového domu Partizánska 14-20", state: "evaluating", body: "Zachytávanie dažďovej vody zo strechy bytového domu do podzemnej a dekoratívnej nádrže a obnova predzáhradiek, trávnatých plôch a mobilnej zelene." }
+  - { title: "Realizácia letného integračného táboru pre handikepovaných mladých ľudí", state: "rejected", body: "Štyri týždne denného integračného tábora v júli a auguste pre mladých ľudí so zdravotným postihnutím a ich rovesníkov." }
+  - { title: "Komunitný altánok", state: "evaluating", body: "Drevený bezbariérový altánok s mobiliárom a solárnym osvetlením vo vnútrobloku ulíc Moskovská a Oremburská na stretávanie susedov a generácií." }
+  - { title: "Vybavenie priestoru osvetového projektu PROSVITA", state: "evaluating", body: "Trvalé vybavenie priestoru na Tatranskej ulici na vzdelávanie a stretávanie ukrajinských a slovenských detí a rodín." }
+  - { title: "Revitalizácia multifunkčného športovo-voľnočasového areálu na Rudohorskej ulici v Sásovej", state: "evaluating", body: "Obnova povrchu a vybavenia areálu, ktorý obyvatelia využívajú na šport, pohyb a stretávanie." }
+  - { title: "Moderný street workout priestor na Slnečnej", state: "evaluating", body: "Verejné street workout ihrisko pre mládež, dospelých a seniorov zo sídliska, doplnok k existujúcemu detskému ihrisku." }
+  - { title: "Workout ihrisko s detskými prvkami Šalková – priestor pre pohyb a šport pre všetkých", state: "evaluating", body: "Verejne prístupná workoutová zostava s detskými hernými prvkami a bezpečnými dopadovými plochami v areáli futbalového ihriska." }
+  meetings:
+  - { title: "Participatívny rozpočet 2026 – 2027: stretnutie s občanmi v Radvani", title_en: "Participatory budget 2026–2027: residents' meeting in Radvaň", location: "Zasadačka pri mestskom mládežníckom štadióne", address: "Sládkovičova 34, Banská Bystrica", start: "2026-06-23T17:00:00+02:00", end: "2026-06-23T19:00:00+02:00", description: "Predstavenie pravidiel ročníka a konzultácia námetov obyvateľov mestskej časti Radvaň." }
+  - { title: "Druhé diskusné fórum participatívneho rozpočtu", title_en: "Second discussion forum of the participatory budget", location: "Veľká sieň MsÚ", address: "Československej armády 26, Banská Bystrica", start: "2026-11-18T17:00:00+01:00", end: "2026-11-18T19:00:00+01:00", description: "Predkladatelia predstavia svoje návrhy a odborníci mestského úradu k nim povedia svoje stanovisko." }
+  projects:
+  - { title: "Komunitný altánok", amount: 10000, description: "Návrh vo formálnej kontrole; suma je strop pravidiel ročníka." }
+  - { title: "Moderný street workout priestor na Slnečnej", amount: 10000, description: "Návrh vo formálnej kontrole; suma je strop pravidiel ročníka." }
+  - { title: "Vybavenie priestoru osvetového projektu PROSVITA", amount: 10000, description: "Návrh vo formálnej kontrole; suma je strop pravidiel ročníka." }
+  results:
+  - { title: "Formálna kontrola predložených návrhov", progress: 40, status: "running", start: 2026-10-01, end: 2026-10-31, description: "Mesto kontroluje, či návrhy spĺňajú podmienky ročníka." }
+  - { title: "Príprava online hlasovania", progress: 0, status: "planned", start: 2027-01-12, end: 2027-01-31, description: "Hlasovanie o návrhoch, ktoré postúpia." }
+- slug: participatorybudget2026
+  image: process-evaluation.jpg
+  promoted: false
+  title: { sk: Participatívny rozpočet 2025/2026, en: Participatory budget 2025/2026 }
+  subtitle: { sk: Vyhodnotenie a realizácia, en: Evaluation and delivery }
+  short_description:
+    sk: <p>Hlasovanie sa skončilo, mesto vyhodnocuje a realizuje podporené projekty.</p>
+    en: <p>Voting has ended; the city is evaluating and delivering the supported projects.</p>
+  description:
+    sk: <p>Online hlasovanie prebiehalo od 12. do 31. januára 2026. Zapojilo sa 1 145 obyvateľov, ktorí pridelili 2 290 hlasov 12 projektom. Vyčlenená suma bola 40 000 €.</p>
+    en: <p>Online voting ran from 12 to 31 January 2026. 1,145 residents cast 2,290 votes for 12 projects. The allocation was EUR 40,000.</p>
+  start_date: 2024-03-01
+  end_date: 2026-12-31
+  budget_total: 40000
+  budget_votes: finished
+  steps:
+  - { title: "Prvé diskusné fórum a vyhlásenie participatívneho rozpočtu", start: 2025-03-26, end: 2025-03-27 }
+  - { title: "Konzultačné stretnutia s predkladateľmi", start: 2025-05-01, end: 2025-06-23 }
+  - { title: "Podávanie návrhov", start: 2025-05-01, end: 2025-09-30 }
+  - { title: "Formálna kontrola návrhov", start: 2025-10-01, end: 2025-10-31 }
+  - { title: "Druhé diskusné fórum", start: 2025-11-18, end: 2025-11-19 }
+  - { title: "Hlasovanie", start: 2026-01-12, end: 2026-01-31 }
+  - { title: "Realizácia projektov", start: 2026-03-01, end: 2026-12-31, active: true }
+  proposals:
+  - { title: "Revitalizácia oddychovej zóny pred cintorínom v Šalkovej", state: "to_vote", body: "Premena zanedbaného priestoru pred cintorínom na dôstojnú a príjemnú oddychovú zónu pre obyvateľov aj návštevníkov." }
+  - { title: "Malý Kulturák na Sídlisku SNP", state: "to_vote", body: "Vyvýšené bezbariérové pódium s kvetinovou výsadbou, ktoré z centrálnej časti Triedy SNP urobí komunitné a kultúrne srdce sídliska." }
+  - { title: "Medzi Čerešňami", state: "to_vote", body: "Herná zóna pre deti ako prvá etapa premeny plochy zelene na Uhlisku na miesto, ktoré slúži obyvateľom." }
+  - { title: "Petangový areál na sídlisku Sásová", state: "to_vote", body: "Nové petangové ihriská s lavičkami, stolmi a altánkom na Tatranskej ulici pre obyvateľov od 5 do 95 rokov." }
+  - { title: "Amfik v Sásovej", state: "to_vote", body: "Lavičky na lúke pri križovatke Starohorskej a Rudohorskej, kde sa konajú hromadné podujatia, pre deti, seniorov a ľudí so zdravotným postihnutím." }
+  - { title: "Pri jednom stole – spájanie generácií", state: "to_vote", body: "Kruhový zastrešený altánok so stolom a lavicami na mieste bývalého detského ihriska na Triede Hradca Králové, doplnený o trvalky a bylinky." }
+  meetings:
+  - { title: "1. diskusné fórum participatívneho rozpočtu", title_en: "First discussion forum of the participatory budget", location: "Mestský úrad, druhé poschodie", address: "Československej armády 26, 974 01 Banská Bystrica", start: "2025-03-26T16:00:00+01:00", end: "2025-03-26T18:00:00+01:00", description: "Vyhlásenie ročníka a diskusia o jeho podmienkach." }
+  - { title: "Predstavenie participatívneho rozpočtu 2025/2026 – Centrum", title_en: "Introducing the participatory budget 2025/2026: city centre", location: "Terasa baru U francúza", address: "Horná 12, 974 11 Banská Bystrica", start: "2025-06-25T17:00:00+02:00", end: "2025-06-25T19:00:00+02:00", description: "Stretnutie s obyvateľmi centra o tom, ako predložiť návrh." }
+  projects:
+  - { title: "Detské dopravné ihrisko – 2. etapa", amount: 10000, selected: true, description: "307 hlasov." }
+  - { title: "Mini Pumptrack", amount: 10000, selected: true, description: "275 hlasov." }
+  - { title: "Pri jednom stole – spájanie generácií", amount: 10000, selected: true, description: "214 hlasov." }
+  - { title: "Literárne záhradky", amount: 6000, selected: true, description: "210 hlasov." }
+  - { title: "Revitalizácia oddychovej zóny pred cintorínom v Šalkovej", amount: 4000, selected: true, description: "203 hlasov; podpora zo zvyšnej alokácie 4 000 € podľa štatútu." }
+  - { title: "Amfik v Sásovej", amount: 10000, description: "196 hlasov." }
+  results:
+  - { title: "Detské dopravné ihrisko – 2. etapa", progress: 50, status: "running", start: 2026-03-01, end: 2026-12-31, description: "Podporený projekt: 307 hlasov, 10 000 €." }
+  - { title: "Mini Pumptrack", progress: 50, status: "running", start: 2026-03-01, end: 2026-12-31, description: "Podporený projekt: 275 hlasov, 10 000 €." }
+  - { title: "Pri jednom stole – spájanie generácií", progress: 25, status: "running", start: 2026-03-01, end: 2026-12-31, description: "Podporený projekt: 214 hlasov, 10 000 €." }
+  - { title: "Literárne záhradky", progress: 25, status: "running", start: 2026-03-01, end: 2026-12-31, description: "Podporený projekt: 210 hlasov, 6 000 €." }
+  - { title: "Revitalizácia oddychovej zóny pred cintorínom v Šalkovej", progress: 0, status: "planned", start: 2026-03-01, end: 2026-12-31, description: "Podporený projekt: 203 hlasov, 4 000 €." }
+- slug: participatorybudget2025
+  image: process-finished.jpg
+  promoted: false
+  title: { sk: Participatívny rozpočet 2024/2025, en: Participatory budget 2024/2025 }
+  subtitle: { sk: Ukončený ročník s výsledkami, en: Finished, with results }
+  short_description:
+    sk: "<p>Ukončený ročník: 1 050 hlasujúcich, 2 100 hlasov a štyri podporené projekty.</p>"
+    en: "<p>Finished round: 1,050 voters, 2,100 votes and four supported projects.</p>"
+  description:
+    sk: <p>Hlasovanie prebiehalo od 15. do 29. januára 2025. Zúčastnilo sa 1 050 obyvateľov, ktorí odovzdali 2 100 hlasov. Celkový rozpočet bol 40 000 €.</p>
+    en: <p>Voting ran from 15 to 29 January 2025. 1,050 residents cast 2,100 votes. The total budget was EUR 40,000.</p>
+  start_date: 2024-03-26
+  end_date: 2025-12-31
+  budget_total: 40000
+  budget_votes: finished
+  steps:
+  - { title: "Prvé diskusné fórum a vyhlásenie participatívneho rozpočtu", start: 2024-03-26, end: 2024-03-27 }
+  - { title: "Konzultačné stretnutia s predkladateľmi", start: 2024-05-01, end: 2024-06-23 }
+  - { title: "Podávanie návrhov", start: 2024-05-01, end: 2024-06-30 }
+  - { title: "Formálna kontrola návrhov", start: 2024-07-01, end: 2024-07-31 }
+  - { title: "Druhé diskusné fórum", start: 2024-11-18, end: 2024-11-19 }
+  - { title: "Hlasovanie", start: 2025-01-15, end: 2025-01-29 }
+  - { title: "Realizácia projektov", start: 2025-03-01, end: 2025-12-31 }
+  - { title: "Ročník ukončený", start: 2026-01-01, active: true }
+  proposals:
+  - { title: "RelaxPark Sásová", state: "accepted", body: "Moderný verejný priestor na relax, šport a voľný čas pre všetky vekové kategórie, vznikajúci v spolupráci s Komunitným centrom Sásová." }
+  - { title: "Multifunkčný priestor pre skautov a komunitu", state: "accepted", body: "Obnova časti starej budovy na Kalinčiakovej ulici na skautský sklad a spoločenský priestor." }
+  - { title: "Dopravné ihrisko pre najmenších", state: "accepted", body: "Premena zanedbanej betónovej plochy vo vnútrobloku Oremburská – Moskovská na detské dopravné ihrisko." }
+  - { title: "Radvanská letná obývačka pri občianskom centre", state: "accepted", body: "Oživenie mestského pozemku na Námestí Ľudovíta Štúra na spoločensko-oddychový priestor." }
+  - { title: "Radvanská záhrada pri kostole", state: "accepted", body: "Záhrada s edukačnými prvkami na výučbu žiakov základných škôl: slnečné hodiny, zrážkomer a smerovník vetra." }
+  - { title: "Komunitná záhrada Poľná - Malachovská cesta", state: "accepted", body: "Komunitná záhrada s bylinkami a relaxačnými prvkami, ktorá buduje vzťahy medzi susedmi." }
+  meetings:
+  - { title: "Predstavenie projektových návrhov a diskusia s odborníkmi MsÚ", title_en: "Project proposals presented and discussed with city experts", location: "Mestský úrad, zasadačka 290", address: "Československej armády 26, 974 01 Banská Bystrica", start: "2024-06-24T17:00:00+02:00", end: "2024-06-24T19:00:00+02:00", description: "Predkladatelia predstavili návrhy, odborníci mestského úradu k nim dali spätnú väzbu." }
+  - { title: "2. diskusné fórum participatívneho rozpočtu 2024", title_en: "Second discussion forum of the participatory budget 2024", location: "Veľká sieň MsÚ", address: "Československej armády 26, Banská Bystrica", start: "2024-11-19T17:00:00+01:00", end: "2024-11-19T19:00:00+01:00", description: "Diskusia o návrhoch pred online hlasovaním." }
+  projects:
+  - { title: "Sakury na Fončorde", amount: 9000, selected: true, description: "281 hlasov. Výsadba okrasných čerešní v lokalite Na Stráni." }
+  - { title: "RelaxPark Sásová", amount: 10000, selected: true, description: "275 hlasov." }
+  - { title: "Dopravné ihrisko pre najmenších", amount: 10000, selected: true, description: "252 hlasov." }
+  - { title: "Radvanská letná obývačka pri občianskom centre", amount: 10000, selected: true, description: "235 hlasov." }
+  - { title: "Outdoorová lezecká stena", amount: 10000, description: "Nepodporený projekt." }
+  - { title: "Multifunkčný priestor pre skautov a komunitu", amount: 10000, description: "Nepodporený projekt." }
+  results:
+  - { title: "Sakury na Fončorde", progress: 100, status: "done", start: 2025-03-01, end: 2025-12-31, description: "Obyvatelia lokality Na Stráni skrášlili svoje okolie výsadbou okrasných čerešní. 281 hlasov." }
+  - { title: "RelaxPark Sásová", progress: 100, status: "done", start: 2025-03-01, end: 2025-12-31, description: "Verejný priestor na relax, šport a voľnočasové aktivity. 275 hlasov." }
+  - { title: "Dopravné ihrisko pre najmenších", progress: 100, status: "done", start: 2025-03-01, end: 2025-12-31, description: "Detské dopravné ihrisko vo vnútrobloku Oremburská – Moskovská. 252 hlasov." }
+  - { title: "Radvanská letná obývačka", progress: 100, status: "done", start: 2025-03-01, end: 2025-12-31, description: "Spoločensko-oddychový priestor na Námestí Ľudovíta Štúra. 235 hlasov." }

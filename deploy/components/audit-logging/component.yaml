@@ -1,0 +1,4 @@
+---
+component: audit-logging
+parts:
+  - name: collector

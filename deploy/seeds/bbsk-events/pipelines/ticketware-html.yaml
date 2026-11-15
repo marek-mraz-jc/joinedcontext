@@ -1,0 +1,62 @@
+# Ticketware (cinemaware.eu), the ticket shop of a town's culture centre (Banská Štiavnica, Tornaľa; T-5354): the home
+# page lists each upcoming event as `/event/<id>/<slug>`; the event's page lists each show it plays (`<span
+# class="date">Sobota, 24. 10. o 19:00</span>`, no year) with its hall and address (`<td class="miesto">`). Each show
+# is one record. A date without a year is the next one on or after yesterday. One page of the source's own host at a
+# time, a second apart; an event whose page lists no show writes nothing.
+- mapping: |
+    let found = content().string().re_find_all_object("href=\"(?:__HOST_RE__)?(?P<p>/event/(?P<id>[0-9]{1,9})/[a-z0-9-]{0,200})\"")
+    let events = $found.unique(m -> m.id)
+    root = $events.slice(0, [$events.length(), 50].min()).map_each(m -> { "url": "__HOST__" + m.p, "path": m.p, "sourceId": "/event/" + m.id + "/" })
+- unarchive:
+    format: json_array
+- branch:
+    # Only a page of the source's own host: the path is checked before the request and the host is fixed in
+    # the url below, so an item can never send the run to another host.
+    request_map: |
+      root = if this.path.contains("..") { deleted() } else { "" }
+      meta event_path = this.path.trim_prefix("/")
+    processors:
+      - sleep:
+          duration: 1s
+      - http:
+          url: __HOST__/${! @event_path }
+          verb: GET
+          headers:
+            User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public events)
+            Accept: text/html
+          timeout: 20s
+          retries: 1
+    result_map: |
+      # "24. 10. o 19:00" is Bratislava's wall time in the next year it has not passed in.
+      map at {
+        let m = this.text.re_find_object("(?P<d>[0-9]{1,2})\\.\\s*(?P<m>[0-9]{1,2})\\.(?:\\s*(?P<y>[0-9]{4}))?(?:\\s*o\\s*(?P<h>[0-9]{1,2}):(?P<i>[0-9]{2}))?")
+        let year = this.now.ts_format("2006", "Europe/Bratislava").number().int64()
+        let month = $m.m.or("").(v -> if v == "" { 0 } else { v.number().int64() })
+        let dom = $m.d.or("").(v -> if v == "" { 0 } else { v.number().int64() })
+        let guess = "%04d-%02d-%02d".format($year, $month, $dom)
+        let passed = $guess.ts_parse("2006-01-02").ts_unix().catch(this.now) < this.now - 86400
+        let y = if $m.y.or("") != "" { $m.y.number().int64() } else if $passed { $year + 1 } else { $year }
+        let day = if $month < 1 || $month > 12 || $dom < 1 { null } else { "%04d-%02d-%02d".format($y, $month, $dom) }
+        let local = if $day != null && $m.h.or("") != "" { "%sT%02d:%s:00".format($day, $m.h.number().int64(), $m.i) } else { null }
+        root = if $local != null { $local + ($local + "Z").ts_format("-07:00", "Europe/Bratislava") } else { $day }
+      }
+      let now = timestamp_unix()
+      let page = content().string().replace_all("&nbsp;", " ")
+      let name = $page.re_find_object("<h2 class=\"left\">(?P<v>[^<]{1,500})</h2>").v.or("")
+      let shows = $page.re_find_all_object("<span class=\"date\">(?P<d>[^<]{1,80})</span>[\\s\\S]*?<td class=\"miesto\">\\s*<span class=\"miesto-btn[^\"]*\">(?P<v>[^<]{1,300})<[\\s\\S]*?<div class=\"miesto-content\">\\s*<span>(?P<a>[^<]{0,200})<br>(?P<z>[^<]{0,200})<br>")
+      root.name = if $name == "" { null } else { $name }
+      root.shows = $shows.map_each(s -> {
+        "start": { "text": s.d, "now": $now }.apply("at"),
+        "venue": s.v,
+        "streetAddress": s.a,
+        "postalCode": s.z.unescape_html().re_find_object("^\\s*(?P<v>[0-9]{3} ?[0-9]{2})").v.or(null),
+        "locality": s.z.unescape_html().re_find_object("^\\s*[0-9]{3} ?[0-9]{2}\\s+(?P<v>.+?)\\s*$").v.or(null)
+      })
+# One record per show.
+- mapping: |
+    let event = this.without("shows", "path")
+    root = this.shows.or([]).map_each(s -> $event.merge(s))
+- unarchive:
+    format: json_array
+- archive:
+    format: json_array

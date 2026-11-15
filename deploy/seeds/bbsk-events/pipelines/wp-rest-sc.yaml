@@ -1,0 +1,28 @@
+# Banská Bystrica's WordPress events (custom post type `events`, Meta Box fields), REST
+# /wp-json/wp/v2/events: the date, time, address and GPS of each event are fields of its own.
+# Organiser e-mail and phone stay out (data.gov.sk flags them as personal data, T-4894).
+- mapping: |
+    # An answer that is no list is the site failing: the run fails where it is seen.
+    root = if this.type() != "array" { throw("the events API answered no list") } else { this }
+- mapping: |
+    # Local wall time in Europe/Bratislava with the offset that holds on that day.
+    map at {
+      let t = this.time.or("").string().re_find_all("[0-9]{1,2}:[0-9]{2}").index(0).catch(null)
+      let hm = if $t != null { $t.split(":").map_each(x -> x.number().int64()) } else { null }
+      let local = if $hm != null { "%sT%02d:%02d:00".format(this.date, $hm.index(0), $hm.index(1)) } else { null }
+      root = if this.date == null || !this.date.string().re_match("^[0-9]{4}-[0-9]{2}-[0-9]{2}$") { null } else if $local == null { this.date } else { $local + ($local + "Z").ts_format("-07:00", "Europe/Bratislava") }
+    }
+    root = this.map_each(e -> {
+      "name": e.title.rendered.or(null),
+      "start": { "date": e.meta_box.date_start.or(null), "time": e.meta_box.time_start.or(null) }.apply("at"),
+      "end": { "date": e.meta_box.date_end.or(null), "time": e.meta_box.time_end.or(null) }.apply("at"),
+      "venue": null,
+      "streetAddress": [e.meta_box.address_street.or(""), e.meta_box.address_number.or("")].join(" ").trim().(s -> if s == "" { null } else { s }),
+      "locality": e.meta_box.address_locality.or(null),
+      "lat": e.meta_box.coordinates.latitude.or(null),
+      "lon": e.meta_box.coordinates.longitude.or(null),
+      "url": e.link.or(null),
+      "description": e.content.rendered.or(null),
+      "sourceId": e.id.or(null),
+      "modified": e.modified_gmt.or(null).(m -> if m != null { m + "Z" } else { null })
+    })

@@ -1,0 +1,16 @@
+# Stage reads prod's public Endpoint helsinki-transport for what stage does not hold yet (T-6545).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSourceRegistration
+metadata:
+  name: prod-helsinki-transport
+  namespace: helsinki
+  title: Prod helsinki-transport
+spec:
+  contextSpaceRef: helsinki
+  endpoint: https://api.smartcity.joinedcontext.com/api/endpoint/ajaezssvx3bwqgejgepmq4ig3frgan4e
+  information:
+    - entities:
+        - type: GtfsRoute
+  mode: auxiliary
+  operations: [retrieveOps]
+  federation: { identity: anonymous }

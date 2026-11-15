@@ -1,0 +1,216 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "Grant": {
+      "@id": "jc:Grant"
+    },
+    "akcia": {
+      "@id": "jc:akcia"
+    },
+    "cDodavatela": {
+      "@id": "jc:cDodavatela"
+    },
+    "cZmluvy": {
+      "@id": "jc:cZmluvy"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "datumDoruceniaVyuctovania": {
+      "@id": "jc:datumDoruceniaVyuctovania",
+      "@type": "xsd:date"
+    },
+    "datumRealizacieProjektu": {
+      "@id": "jc:datumRealizacieProjektu"
+    },
+    "datumUhradyDotacie": {
+      "@id": "jc:datumUhradyDotacie",
+      "@type": "xsd:date"
+    },
+    "datumZverejneniaZmluvy": {
+      "@id": "jc:datumZverejneniaZmluvy",
+      "@type": "xsd:date"
+    },
+    "denneTabory": {
+      "@id": "jc:denneTabory"
+    },
+    "dotacnyTitul": {
+      "@id": "jc:dotacnyTitul"
+    },
+    "druh": {
+      "@id": "jc:druh"
+    },
+    "ePFRVSucet": {
+      "@id": "jc:ePFRVSucet",
+      "@type": "xsd:float"
+    },
+    "ePZFSucet": {
+      "@id": "jc:ePZFSucet",
+      "@type": "xsd:float"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "iCO": {
+      "@id": "jc:iCO"
+    },
+    "iCOZiadatela": {
+      "@id": "jc:iCOZiadatela"
+    },
+    "iD": {
+      "@id": "jc:iD",
+      "@type": "xsd:integer"
+    },
+    "id": "@id",
+    "identifier": {
+      "@id": "sdm:dataModel.CPSV-AP/identifier"
+    },
+    "isPartOf": {
+      "@id": "jc:isPartOf",
+      "@type": "xsd:anyURI"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "kampan": {
+      "@id": "jc:kampan"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "mena": {
+      "@id": "jc:mena"
+    },
+    "name": {
+      "@id": "sdm:name"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "obecPO": {
+      "@id": "jc:obecPO"
+    },
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "okres": {
+      "@id": "jc:okres"
+    },
+    "opravneneSpolu": {
+      "@id": "jc:opravneneSpolu",
+      "@type": "xsd:integer"
+    },
+    "pSC": {
+      "@id": "jc:pSC"
+    },
+    "pobytoveTabory": {
+      "@id": "jc:pobytoveTabory"
+    },
+    "pocetDeti": {
+      "@id": "jc:pocetDeti"
+    },
+    "pocetDni": {
+      "@id": "jc:pocetDni"
+    },
+    "popisDotacnehoTitulu": {
+      "@id": "jc:popisDotacnehoTitulu"
+    },
+    "pozadovanaDotacia": {
+      "@id": "jc:pozadovanaDotacia",
+      "@type": "xsd:integer"
+    },
+    "pozadovaneProstriedky": {
+      "@id": "jc:pozadovaneProstriedky"
+    },
+    "poznamky": {
+      "@id": "jc:poznamky"
+    },
+    "pravnaForma": {
+      "@id": "jc:pravnaForma"
+    },
+    "prveDorucenie": {
+      "@id": "jc:prveDorucenie",
+      "@type": "xsd:date"
+    },
+    "rok": {
+      "@id": "jc:rok"
+    },
+    "rokDotacie": {
+      "@id": "jc:rokDotacie",
+      "@type": "xsd:integer"
+    },
+    "rokKampan": {
+      "@id": "jc:rokKampan",
+      "@type": "xsd:integer"
+    },
+    "rozdielNaVratenie": {
+      "@id": "jc:rozdielNaVratenie",
+      "@type": "xsd:float"
+    },
+    "rozpocet": {
+      "@id": "jc:rozpocet",
+      "@type": "xsd:float"
+    },
+    "sRSRSucet": {
+      "@id": "jc:sRSRSucet",
+      "@type": "xsd:float"
+    },
+    "schema": "http://schema.org/",
+    "schvProstr": {
+      "@id": "jc:schvProstr"
+    },
+    "schvalenaVyskaDotacie": {
+      "@id": "jc:schvalenaVyskaDotacie",
+      "@type": "xsd:float"
+    },
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "sidlo": {
+      "@id": "jc:sidlo"
+    },
+    "skutocneCerpanie": {
+      "@id": "jc:skutocneCerpanie",
+      "@type": "xsd:float"
+    },
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "stavFinanVyuctovania": {
+      "@id": "jc:stavFinanVyuctovania"
+    },
+    "stavVybav": {
+      "@id": "jc:stavVybav"
+    },
+    "stavZiadosti": {
+      "@id": "jc:stavZiadosti"
+    },
+    "typ": {
+      "@id": "jc:typ"
+    },
+    "typDotacie": {
+      "@id": "jc:typDotacie"
+    },
+    "typTabora": {
+      "@id": "jc:typTabora"
+    },
+    "type": "@type",
+    "vSuladeSPrioritamiPoskytovaniaDotacii": {
+      "@id": "jc:vSuladeSPrioritamiPoskytovaniaDotacii"
+    },
+    "vZN": {
+      "@id": "jc:vZN"
+    },
+    "vratenaNedocerpanaCastDotacieDna": {
+      "@id": "jc:vratenaNedocerpanaCastDotacieDna"
+    },
+    "vyplatenaSumaSpoluSucet": {
+      "@id": "jc:vyplatenaSumaSpoluSucet",
+      "@type": "xsd:float"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "ziadatel": {
+      "@id": "jc:ziadatel"
+    }
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

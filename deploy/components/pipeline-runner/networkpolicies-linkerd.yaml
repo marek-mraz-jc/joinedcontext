@@ -1,0 +1,151 @@
+---
+pipeline-runner-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: pipeline-runner-runner
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+# A meshed pod under an egress policy must still reach the control plane: identity
+# (8080), destination (8086) and policy (8090). Without it the proxy never learns the
+# inbound policy for its own admin port, answers the kubelet startup probe with 403 and
+# the pod loops in Init forever — the app's own egress rules never get a chance to matter.
+pipeline-runner-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: pipeline-runner-runner
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pipeline-runner-tokens
+          componentNamespace: pipeline-runner.tokens
+      ports:
+        - protocol: TCP
+          port: 4143
+
+# The same two rules for the scheduled pods. A meshed CronJob pod that cannot reach the
+# control plane never becomes ready and the run is lost with it, once a minute.
+pipeline-scheduled-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/instance: pipeline-runner-scheduled
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+pipeline-scheduled-linkerd-control:
+  podSelector:
+    app.kubernetes.io/instance: pipeline-runner-scheduled
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+      ports:
+        - protocol: TCP
+          port: 4143
+
+portal-linkerd-from-pipeline-runner:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pipeline-runner-runner
+          componentNamespace: pipeline-runner
+      ports:
+        - port: 4143
+          protocol: TCP
+
+# The token service's two mesh rules (T-1508): the proxy's inbound ports, and the control plane.
+pipeline-tokens-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: pipeline-runner-tokens
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+pipeline-tokens-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: pipeline-runner-tokens
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090

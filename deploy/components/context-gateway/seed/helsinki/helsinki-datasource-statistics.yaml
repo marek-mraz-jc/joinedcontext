@@ -1,0 +1,17 @@
+# The description of one Aluesarjat table (alu_vaerak_004r: its variables, areas and years), the
+# first read of the statistics pipeline (T-5258, T-5667): an answer that names no variable means
+# stat.hel.fi is not serving its API, so the run fails before it asks the tables. 15 KB, no key.
+# CC-BY-4.0, City of Helsinki Urban Research and Statistics (stat.hel.fi PXWEB).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-statistics-table
+  namespace: helsinki
+  title: { en: Helsinki area statistics table description, fi: Aluesarjat-taulukon kuvaus }
+spec:
+  type: http
+  http:
+    url: https://stat.hel.fi/api/v1/fi/Aluesarjat/vrm/vaerak/alu_vaerak_004r.px
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

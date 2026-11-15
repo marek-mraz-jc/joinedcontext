@@ -1,0 +1,17 @@
+---
+# Re-pin a digest with:
+#   T=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/nats:pull" | jq -r .token)
+#   curl -sI -H "Authorization: Bearer $T" \
+#     -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
+#     https://registry-1.docker.io/v2/library/nats/manifests/<tag> | grep -i docker-content-digest
+demo-feeds:
+  nats:
+    # The NATS project's official image; the scratch variant is a static binary.
+    repository: 'docker.io/library/nats'
+    tag: '2.14.6-scratch'
+    digest: 'sha256:54eac64d71b1b04360c2bba312a6b652ff7da0b7e7328865c977518aa5e29d11'
+  feed:
+    # The runner's own Bento pin (components/pipeline-runner/images.yaml).
+    repository: 'ghcr.io/warpstreamlabs/bento'
+    tag: '1.22.0'
+    digest: 'sha256:ef674bebae45793c982c350d8f37c2c7661133c1dc65a5517fb977b36dc09841'

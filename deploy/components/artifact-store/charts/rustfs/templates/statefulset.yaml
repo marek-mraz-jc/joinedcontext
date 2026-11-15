@@ -1,0 +1,122 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "rustfs.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rustfs.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "rustfs.fullname" . }}
+  # One node with one volume: durability comes from the storage class behind the claim, not
+  # from erasure coding, and the store logs `storage_class_zero_redundancy` to say so. A
+  # multi-node erasure-coded pool is a sizing decision, not a default (Architecture/17 §4).
+  replicas: 1
+  # Explicit rather than the API default, so the single Pod holding the volume is replaced and
+  # not left behind: a partition would pin it at the old revision and the store would quietly
+  # never take an upgrade.
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      {{- include "rustfs.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: store
+  template:
+    metadata:
+      labels:
+        {{- include "rustfs.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: store
+      {{- if .Values.serviceMesh.enabled }}
+      annotations:
+        linkerd.io/inject: enabled
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "rustfs.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      enableServiceLinks: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: rustfs
+          image: {{ include "rustfs.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: s3
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+            {{- if .Values.console.enabled }}
+            - name: console
+              containerPort: {{ .Values.console.port }}
+              protocol: TCP
+            {{- end }}
+          env:
+            - name: RUSTFS_VOLUMES
+              value: /data/rustfs0
+            - name: RUSTFS_ADDRESS
+              value: 0.0.0.0:{{ .Values.service.port }}
+            - name: RUSTFS_CONSOLE_ENABLE
+              value: {{ .Values.console.enabled | quote }}
+            {{- if .Values.console.enabled }}
+            - name: RUSTFS_CONSOLE_ADDRESS
+              value: 0.0.0.0:{{ .Values.console.port }}
+            {{- end }}
+            # Without this an identity allowed to write an object may encrypt it under any KMS
+            # key it names, and one allowed to read it has it decrypted; the store warns about
+            # exactly that at start-up. The platform uses no SSE-KMS keys, so enforcing costs
+            # nothing and closes the hole before the first one exists.
+            - name: RUSTFS_KMS_ENFORCE_SSE_KEY_POLICY
+              value: "true"
+            - name: RUSTFS_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.credentialsSecret | quote }}
+                  key: {{ .Values.accessKeyIdKey | quote }}
+            - name: RUSTFS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.credentialsSecret | quote }}
+                  key: {{ .Values.secretAccessKeyKey | quote }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: s3
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: s3
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+            initialDelaySeconds: 15
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            # The entrypoint initializes a log directory and the process buffers in /tmp;
+            # both are outside the read-only root filesystem.
+            - name: logs
+              mountPath: /logs
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: logs
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- if .Values.storage.storageClass }}
+        storageClassName: {{ .Values.storage.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.size | quote }}

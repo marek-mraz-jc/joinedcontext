@@ -1,0 +1,10 @@
+---
+# Rendering a dashboard is a burst of range queries against Prometheus and a burst of JSON;
+# the memory is what the query results and the browser session cost, not stored state.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: '1'
+    memory: 512Mi

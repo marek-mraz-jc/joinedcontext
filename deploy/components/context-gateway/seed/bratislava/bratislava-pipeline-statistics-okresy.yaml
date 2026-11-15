@@ -1,0 +1,23 @@
+# The hub's tables of the okresy Bratislava I to V as KeyPerformanceIndicator, one entity per figure, breakdown, area
+# and period (T-5274), with the same mapping text as the statistics pipeline. The tables change once a
+# year at most; a weekly run shows a new year within a week. 75 tables, 10,257 figures on 2026-10-24;
+# on 2026-10-25 T-5435 added 6 tables (795 figures), T-5671 2 (3,292), T-5672 5 (280) and T-5675 1:
+# 89 tables, about 14,700 figures. Each batch alone fitted 256 MiB (docker --memory: killed at 192);
+# the merged list (T-5693) holds 40 % more figures, so 320 MiB until a run of it is measured.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: statistics-okresy
+  namespace: bratislava
+  title:
+    sk: Štatistiky okresov Bratislava I až V
+    en: Statistics of the okresy Bratislava I to V
+spec:
+  class: auto
+  period: 168h
+  schedule: '15 4 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: bratislava-hub }
+  targetEndpoint: urn:ngsi-ld:Endpoint:bratislava.sk:bratislava:bratislava
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 320, cpuMillicores: 100 }

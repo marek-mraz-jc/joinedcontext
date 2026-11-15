@@ -1,0 +1,19 @@
+{{- /*
+  T-3989, ADR-N-046 §2.5: every name in global.contextBrokers becomes a release, a database, a
+  Secret and a Keycloak client of its own (context-broker-{name}, ...-db, db-antares-{name},
+  secrets-context-broker-{name}-admin-token), so a bad entry stops here, before any of those
+  renders half-named. `main` is the implicit broker and `broker` would take its pods' label.
+  Sixteen characters keep the longest of those names inside Helm's 53.
+*/}}
+{{- $seen := dict }}
+{{- range $b := .Values.global.contextBrokers | default list }}
+{{- $name := (index $b "name") | default "" | toString }}
+{{- if or (not (regexMatch "^[a-z]([a-z0-9-]{0,14}[a-z0-9])?$" $name)) (has $name (list "main" "broker")) (hasKey $seen $name) }}
+{{- fail (printf "global.contextBrokers: %q is not a broker name: a DNS label of at most 16 characters, unique, neither main nor broker (T-3989)" $name) }}
+{{- end }}
+{{- $_ := set $seen $name true }}
+{{- if not (has ((index $b "size") | default "small") (list "small" "medium" "large")) }}
+{{- fail (printf "global.contextBrokers: %s: size %q is none of small, medium, large (components/context-broker/sizes.yaml)" $name (index $b "size")) }}
+{{- end }}
+{{- end }}
+{}

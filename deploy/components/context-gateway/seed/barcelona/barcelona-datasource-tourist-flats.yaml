@@ -1,0 +1,21 @@
+# Open Data BCN's register of licensed tourist flats (dataset habitatges-us-turistic, CC BY 4.0),
+# its DataStore resource hut_comunicacio_opendata.csv: one row per licence with its places, its
+# Generalitat register number, the address down to the door and the building's point. About
+# 1.4 MB (10,719 rows on 2026-10-23); the mapping refuses more than 4 MiB and never writes the
+# floor, door, staircase or block.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-tourist-flats
+  namespace: barcelona
+  title:
+    ca: Habitatges d'ús turístic de Barcelona (Open Data BCN)
+    es: Viviendas de uso turístico de Barcelona (Open Data BCN)
+    en: Barcelona licensed tourist flats (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/data/dataset/c748799e-1079-44b1-9e60-88d936a3fe70/resource/b32fa7f6-d464-403b-8a02-0292a64883bf/download
+    verb: GET
+    headers: { Accept: text/csv }
+    timeout: 60s

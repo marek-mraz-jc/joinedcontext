@@ -1,0 +1,16 @@
+# Visitors and overnight stays in all accommodation, per month, the kraj and its 13 okresy, 2017 on. Monthly, published with about two months' delay. No key, CC-BY-4.0 (NKOD record of ŠÚ SR).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: susr-cr3802mr
+  namespace: bbsk
+  title:
+    sk: Návštevnosť ubytovacích zariadení – okresy (ŠÚ SR, cr3802mr)
+    en: Visitors to accommodation, districts (ŠÚ SR, cr3802mr)
+spec:
+  type: http
+  http:
+    url: https://data.statistics.sk/api/v2/dataset/cr3802mr/SK032,SK0321,SK0322,SK0323,SK0324,SK0325,SK0326,SK0327,SK0328,SK0329,SK032A,SK032B,SK032C,SK032D/*/1.,2.,3.,4.,5.,6.,7.,8.,9.,10.,11.,12./U_CR_0005,U_CR_0008/ACCSK_TOTAL?lang=sk&type=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

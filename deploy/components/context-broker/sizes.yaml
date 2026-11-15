@@ -1,0 +1,35 @@
+---
+# The size presets of a further ContextBroker (ADR-N-046 §2.1, §2.7, T-3989): a broker names
+# one in `global.contextBrokers[].size`, never raw resources, so a manifest cannot ask the node
+# for more than an operator sized here. `broker` is the Antares pod, `db` its CloudNativePG
+# cluster. small is today's development broker (values/broker/development-values.yaml.gotmpl)
+# beside an apps-db sized instance: what the dev node fits once more. medium is today's
+# production broker on one database instance; large needs its own nodes.
+small:
+  broker:
+    # 448Mi: the dev broker's request since T-4473 (median 368, peak 591Mi).
+    requests: {cpu: 100m, memory: 448Mi}
+    limits: {cpu: '1', memory: 1536Mi}
+  db:
+    instances: 1
+    storage: 2Gi
+    requests: {cpu: 50m, memory: 256Mi}
+    limits: {cpu: '1', memory: 768Mi}
+medium:
+  broker:
+    requests: {cpu: 200m, memory: 256Mi}
+    limits: {cpu: '2', memory: 1Gi}
+  db:
+    instances: 1
+    storage: 20Gi
+    requests: {cpu: 250m, memory: 1Gi}
+    limits: {cpu: '2', memory: 2Gi}
+large:
+  broker:
+    requests: {cpu: '1', memory: 2Gi}
+    limits: {cpu: '4', memory: 4Gi}
+  db:
+    instances: 3
+    storage: 50Gi
+    requests: {cpu: '1', memory: 4Gi}
+    limits: {cpu: '2', memory: 4Gi}

@@ -1,0 +1,33 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-weather
+  namespace: barcelona
+  title:
+    ca: Lectura pública de les estacions meteorològiques
+    es: Lectura pública de las estaciones meteorológicas
+    en: Public read of the weather stations
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: barcelona }
+  assigner: did:web:barcelona.cat
+  assignee: { kind: role, id: public }
+  # The slice the Endpoint weather publishes: the stations and their daily values, read only, with
+  # the discovery a client needs first (T-4258, EP-116) and the history the space keeps (T-4372).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+    - queryTemporal
+    - retrieveTemporal
+  temporalQ: timerel=after;timeAt=P-30D
+  information:
+    - entities:
+        - type: WeatherObserved

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: portal-access
+description: The Portal's Role in the WASM host's namespace, for each shard's placement and store key (AP-157, AP-158)
+type: application
+version: 0.1.0

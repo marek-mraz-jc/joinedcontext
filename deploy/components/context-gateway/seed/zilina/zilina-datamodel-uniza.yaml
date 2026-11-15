@@ -1,0 +1,19 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: zilina-uniza
+  namespace: zilina
+  title: { sk: Otvorený výskum UNIZA, en: Open research of UNIZA }
+spec:
+  contextSpaceRef: zilina-uniza
+  linkml: ./zilina-uniza.linkml.yaml
+  version: 1.0.0
+  lifecycle: published
+  classes: [Article]
+  # A published model commits all four artifacts (DM-02); the gateway serves schema/v1 from them
+  # (DM-22, EP-49). Regenerate: see README.md.
+  artifacts:
+    jsonSchema: ./zilina-uniza.v1.schema.json
+    context: ./zilina-uniza.v1.context.jsonld
+    docs: ./zilina-uniza.v1.md
+    example: ./zilina-uniza.v1.example.jsonld

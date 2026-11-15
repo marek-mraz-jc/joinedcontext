@@ -1,0 +1,65 @@
+# Helsinki environment and sustainable development statistics (T-5258): the KeyPerformanceIndicator
+# entities of the statistics pipeline whose id carries the theme `environment`, read from the city's
+# environment database (Ymparistotilasto) and its sustainable development indicators (SDG, the
+# Voluntary Local Review). City-wide unless the table has an area. Newest period as the value.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-statistics-environment
+  namespace: helsinki
+  title:
+    fi: Ympäristö ja kestävä kehitys — Helsingin tilastot
+    sv: Miljö och hållbar utveckling — Helsingfors statistik
+    en: Environment and sustainable development — Helsinki statistics
+  description:
+    fi: 'Helsingin ympäristötilasto ja kestävän kehityksen indikaattorit: kasvihuonekaasupäästöt, energiankulutus, ilmanlaatu, vedet, luonto, jätteet ja YK:n Agenda 2030 -tavoitteiden mittarit. Yksi Smart Data Models KeyPerformanceIndicator kutakin tunnuslukua kohden. Lähde: Helsingin kaupunki, ympäristöpalvelut ja kaupunkitutkimus ja -tilastot, CC BY 4.0.'
+    sv: 'Helsingfors miljöstatistik och indikatorer för hållbar utveckling: växthusgasutsläpp, energiförbrukning, luftkvalitet, vatten, natur, avfall och mätarna för FN:s Agenda 2030. En Smart Data Models KeyPerformanceIndicator per nyckeltal. Källa: Helsingfors stad, miljötjänster samt stadsforskning och statistik, CC BY 4.0.'
+    en: 'Helsinki environment statistics and sustainable development indicators: greenhouse gas emissions, energy use, air quality, waters, nature, waste and the measures of the UN Agenda 2030 goals (the Voluntary Local Review). One Smart Data Models KeyPerformanceIndicator per indicator, the newest period as kpiValue and the earlier periods in its history. Properties beyond the model: districtCode (0910000000 for the whole city), divisionLevel (city), statisticsTable and dimensionKey (the source table and cell). Sources: City of Helsinki, Environmental Services (Ymparistotilasto) and Urban Research and Statistics (SDG), CC BY 4.0.'
+spec:
+  contextSpaceRef: helsinki
+  slug: 6u27vozaruni2uaxbfk2ij3k57yutwfk
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-statistics-environment
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Helsingin kaupunki, ympäristöpalvelut (Ymparistotilasto) ja kaupunkitutkimus ja -tilastot (SDG), CC BY 4.0'
+      sv: 'Källa: Helsingfors stad, miljötjänster (Ymparistotilasto) samt stadsforskning och statistik (SDG), CC BY 4.0'
+      en: 'Source: City of Helsinki, Environmental Services (Ymparistotilasto) and Urban Research and Statistics (SDG), CC BY 4.0'
+    themes: [ENVI, ENER, SOCI]
+    keywords:
+      fi: [ympäristö, päästöt, energia, kestävä kehitys]
+      sv: [miljö, utsläpp, energi, hållbar utveckling]
+      en: [environment, emissions, energy, sustainable development]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: ANNUAL
+    source:
+      - url: https://stat.hel.fi/pxweb/fi/Ymparistotilasto/
+        title: { fi: Ymparistotilasto, en: Environment statistics database }
+        description:
+          fi: Helsingin ympäristötilasto (77 taulua)
+          en: Helsinki environment statistics (77 tables)
+      - url: https://stat.hel.fi/pxweb/fi/SDG/SDG__SDG/
+        title: { fi: SDG 037b, en: Sustainable development indicators }
+        description:
+          fi: Helsingin kestävän kehityksen indikaattorit
+          en: Helsinki sustainable development indicators
+      - url: https://hri.fi/data/fi/dataset/helsingin-ymparistotilasto
+        title: { fi: Helsingin ympäristötilasto, en: Helsinki environmental statistics (HRI) }
+        description: { fi: HRI-aineisto, en: HRI dataset }
+      - url: https://hri.fi/data/fi/dataset/helsingin-kestavan-kehityksen-indikaattorit
+        title:
+          fi: Helsingin kestävän kehityksen indikaattorit
+          en: Helsinki sustainable development indicators (HRI)
+        description: { fi: HRI-aineisto, en: HRI dataset }
+    pipelineRef: { kind: Pipeline, name: statistics }

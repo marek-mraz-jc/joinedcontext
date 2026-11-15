@@ -1,0 +1,16 @@
+# Invoiced drinking water for the city LAU code SK031B517402, every year the cube carries. The underlying data is Výskumný ústav vodného hospodárstva's, as the cube's own note says. No key, CC-BY-SA-4.0.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: susr-vh5003rr
+  namespace: zilina
+  title:
+    sk: Spotreba pitnej vody (ŠÚ SR, vh5003rr)
+    en: Drinking water consumption (ŠÚ SR, vh5003rr)
+spec:
+  type: http
+  http:
+    url: https://data.statistics.sk/api/v2/dataset/vh5003rr/SK031B517402/*/U03084?lang=sk&type=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

@@ -1,0 +1,440 @@
+{
+ "head": {
+  "vars": [
+   "item",
+   "ipac",
+   "coord",
+   "ca",
+   "es",
+   "en",
+   "street",
+   "heritage"
+  ]
+ },
+ "results": {
+  "bindings": [
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/Q116186180"
+    },
+    "ipac": {
+     "type": "literal",
+     "value": "50914"
+    },
+    "coord": {
+     "datatype": "http://www.opengis.net/ont/geosparql#wktLiteral",
+     "type": "literal",
+     "value": "Point(2.15353 41.38267)"
+    },
+    "ca": {
+     "xml:lang": "ca",
+     "type": "literal",
+     "value": "Casa Pere Carrera II"
+    },
+    "en": {
+     "xml:lang": "en",
+     "type": "literal",
+     "value": "Casa Pere Carrera II"
+    },
+    "heritage": {
+     "type": "literal",
+     "value": "Q28034408"
+    }
+   },
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/Q116270544"
+    },
+    "ipac": {
+     "type": "literal",
+     "value": "50962"
+    },
+    "coord": {
+     "datatype": "http://www.opengis.net/ont/geosparql#wktLiteral",
+     "type": "literal",
+     "value": "Point(2.15139 41.38224)"
+    },
+    "ca": {
+     "xml:lang": "ca",
+     "type": "literal",
+     "value": "edifici d'habitatges al carrer d'Aragó, 99"
+    },
+    "en": {
+     "xml:lang": "en",
+     "type": "literal",
+     "value": "Building in carrer d'Aragó, 99"
+    },
+    "heritage": {
+     "type": "literal",
+     "value": "Q28034408"
+    }
+   },
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/Q116186183"
+    },
+    "ipac": {
+     "type": "literal",
+     "value": "50931"
+    },
+    "coord": {
+     "datatype": "http://www.opengis.net/ont/geosparql#wktLiteral",
+     "type": "literal",
+     "value": "Point(2.15462 41.37988)"
+    },
+    "ca": {
+     "xml:lang": "ca",
+     "type": "literal",
+     "value": "Casa Xavier de Fontcuberta i Casa Joan Contijoch"
+    },
+    "en": {
+     "xml:lang": "en",
+     "type": "literal",
+     "value": "Casa Xavier de Fontcuberta i Casa Joan Contijoch"
+    },
+    "heritage": {
+     "type": "literal",
+     "value": "Q28034408"
+    }
+   },
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/Q116186179"
+    },
+    "ipac": {
+     "type": "literal",
+     "value": "50913"
+    },
+    "coord": {
+     "datatype": "http://www.opengis.net/ont/geosparql#wktLiteral",
+     "type": "literal",
+     "value": "Point(2.15004 41.38164)"
+    },
+    "ca": {
+     "xml:lang": "ca",
+     "type": "literal",
+     "value": "Casa Pere Carrera I"
+    },
+    "en": {
+     "xml:lang": "en",
+     "type": "literal",
+     "value": "Casa Pere Carrera I"
+    },
+    "heritage": {
+     "type": "literal",
+     "value": "Q28034408"
+    }
+   },
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/Q47170494"
+    },
+    "ipac": {
+     "type": "literal",
+     "value": "41268"
+    },
+    "coord": {
+     "datatype": "http://www.opengis.net/ont/geosparql#wktLiteral",
+     "type": "literal",
+     "value": "Point(2.154467 41.379504)"
+    },
+    "ca": {
+     "xml:lang": "ca",
+     "type": "literal",
+     "value": "casa Ignasi Coll i Portabella II"
+    },
+    "en": {
+     "xml:lang": "en",
+     "type": "literal",
+     "value": "Casa Ignasi Coll i Portabella II"
+    },
+    "heritage": {
+     "type": "literal",
+     "value": "Q28034408"
+    },
+    "street": {
+     "xml:lang": "ca",
+     "type": "literal",
+     "value": "Gran Via de les Corts Catalanes, 461"
+    }
+   },
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/Q17594001"
+    },
+    "ipac": {
+     "type": "literal",
+     "value": "40356"
+    },
+    "coord": {
+     "datatype": "http://www.opengis.net/ont/geosparql#wktLiteral",
+     "type": "literal",
+     "value": "Point(2.155437 41.380119)"
+    },
+    "ca": {
+     "xml:lang": "ca",
+     "type": "literal",
+     "value": "Casa de la Lactància"
+    },
+    "en": {
+     "xml:lang": "en",
+     "type": "literal",
+     "value": "Casa de la Lactància"
+    },
+    "heritage": {
+     "type": "literal",
+     "value": "Q11910250"
+    },
+    "street": {
+     "xml:lang": "ca",
+     "type": "literal",
+     "value": "Gran Via de les Corts Catalanes, 475-477"
+    }
+   },
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/Q47170501"
+    },
+    "ipac": {
+     "type": "literal",
+     "value": "41270"
+    },
+    "coord": {
+     "datatype": "http://www.opengis.net/ont/geosparql#wktLiteral",
+     "type": "literal",
+     "value": "Point(2.155658 41.380289)"
+    },
+    "ca": {
+     "xml:lang": "ca",
+     "type": "literal",
+     "value": "casa Joana Coll i Portabella"
+    },
+    "en": {
+     "xml:lang": "en",
+     "type": "literal",
+     "value": "Casa Joana Coll i Portabella"
+    },
+    "heritage": {
+     "type": "literal",
+     "value": "Q28034408"
+    },
+    "street": {
+     "xml:lang": "ca",
+     "type": "literal",
+     "value": "Gran Via de les Corts Catalanes, 481"
+    }
+   },
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/Q116340161"
+    },
+    "ipac": {
+     "type": "literal",
+     "value": "51086"
+    },
+    "coord": {
+     "datatype": "http://www.opengis.net/ont/geosparql#wktLiteral",
+     "type": "literal",
+     "value": "Point(2.1498 41.38182)"
+    },
+    "ca": {
+     "xml:lang": "ca",
+     "type": "literal",
+     "value": "Cases Antoni Amills"
+    },
+    "en": {
+     "xml:lang": "en",
+     "type": "literal",
+     "value": "Cases Antoni Amills"
+    },
+    "heritage": {
+     "type": "literal",
+     "value": "Q28034408"
+    }
+   },
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/Q47170491"
+    },
+    "ipac": {
+     "type": "literal",
+     "value": "41267"
+    },
+    "coord": {
+     "datatype": "http://www.opengis.net/ont/geosparql#wktLiteral",
+     "type": "literal",
+     "value": "Point(2.153796 41.379129)"
+    },
+    "ca": {
+     "xml:lang": "ca",
+     "type": "literal",
+     "value": "Casa Ignasi Coll i Portabella"
+    },
+    "en": {
+     "xml:lang": "en",
+     "type": "literal",
+     "value": "Casa Ignasi Coll i Portabella"
+    },
+    "heritage": {
+     "type": "literal",
+     "value": "Q28034408"
+    },
+    "street": {
+     "xml:lang": "ca",
+     "type": "literal",
+     "value": "Gran Via de les Corts Catalanes, 449-451 / Rocafort, 72-74"
+    }
+   },
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/Q11912729"
+    },
+    "ipac": {
+     "type": "literal",
+     "value": "40357"
+    },
+    "coord": {
+     "datatype": "http://www.opengis.net/ont/geosparql#wktLiteral",
+     "type": "literal",
+     "value": "Point(2.156199 41.380739)"
+    },
+    "ca": {
+     "xml:lang": "ca",
+     "type": "literal",
+     "value": "Casa Golferichs"
+    },
+    "en": {
+     "xml:lang": "en",
+     "type": "literal",
+     "value": "Casa Golferichs"
+    },
+    "heritage": {
+     "type": "literal",
+     "value": "Q11910250"
+    },
+    "street": {
+     "xml:lang": "ca",
+     "type": "literal",
+     "value": "Viladomat, 120 i Gran Via de les Corts Catalanes, 491"
+    },
+    "es": {
+     "xml:lang": "es",
+     "type": "literal",
+     "value": "Casa Golferichs"
+    }
+   },
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/Q48435"
+    },
+    "ipac": {
+     "type": "literal",
+     "value": "57"
+    },
+    "coord": {
+     "datatype": "http://www.opengis.net/ont/geosparql#wktLiteral",
+     "type": "literal",
+     "value": "Point(2.17433 41.40369)"
+    },
+    "ca": {
+     "xml:lang": "ca",
+     "type": "literal",
+     "value": "Temple Expiatori de la Sagrada Família"
+    },
+    "en": {
+     "xml:lang": "en",
+     "type": "literal",
+     "value": "Basilica and Expiatory Church of the Holy Family"
+    },
+    "heritage": {
+     "type": "literal",
+     "value": "Q9259 Q23712 Q1019352"
+    },
+    "street": {
+     "xml:lang": "ca",
+     "type": "literal",
+     "value": "Mallorca, 401, Marina, 253, Provença, 450 i Sardenya, 314-318"
+    },
+    "es": {
+     "xml:lang": "es",
+     "type": "literal",
+     "value": "Templo Expiatorio de la Sagrada Familia"
+    }
+   },
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/Q47504074"
+    },
+    "ipac": {
+     "type": "literal",
+     "value": "42299"
+    },
+    "coord": {
+     "datatype": "http://www.opengis.net/ont/geosparql#wktLiteral",
+     "type": "literal",
+     "value": "Point(2.1875068 41.3871567)"
+    },
+    "ca": {
+     "xml:lang": "ca",
+     "type": "literal",
+     "value": "Capella de la Ciutadella"
+    },
+    "en": {
+     "xml:lang": "en",
+     "type": "literal",
+     "value": "Military Parish Church of Barcelona"
+    },
+    "heritage": {
+     "type": "literal",
+     "value": "Q1019352"
+    },
+    "es": {
+     "xml:lang": "es",
+     "type": "literal",
+     "value": "Iglesia castrense de Barcelona"
+    }
+   },
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/Q98756028"
+    },
+    "ipac": {
+     "type": "literal",
+     "value": "50909"
+    },
+    "coord": {
+     "datatype": "http://www.opengis.net/ont/geosparql#wktLiteral",
+     "type": "literal",
+     "value": "Point(2.14326919 41.442204413)"
+    },
+    "ca": {
+     "xml:lang": "ca",
+     "type": "literal",
+     "value": "Castell del Fortí"
+    },
+    "en": {
+     "xml:lang": "en",
+     "type": "literal",
+     "value": "Castell del Fortí"
+    },
+    "heritage": {
+     "type": "literal",
+     "value": "Q112668687 Q28034408"
+    }
+   }
+  ]
+ }
+}

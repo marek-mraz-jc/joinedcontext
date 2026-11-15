@@ -1,0 +1,20 @@
+# One ServiceRequest per report the city published in its feedback system (T-5257).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: feedback-requests
+  namespace: helsinki
+  title:
+    en: City feedback reports from the Open311 Issue Reporting API, every hour
+spec:
+  class: auto
+  # About 115 reports a week reach the public list (2026-10-15..22); an hour keeps a status change
+  # current without asking the city for more than two windows an hour.
+  period: 1h
+  schedule: '17 * * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-feedback }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: ServiceRequest, mode: upsert }
+  # At most 200 reports of a few kB per window, one window at a time.
+  quotas: { maxMemoryMb: 64, cpuMillicores: 100 }

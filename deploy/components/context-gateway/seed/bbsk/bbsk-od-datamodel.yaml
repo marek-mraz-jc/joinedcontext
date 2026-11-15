@@ -1,0 +1,44 @@
+# The one model of the space (DM-61), generated with it.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: bbsk-otvorene-data
+  namespace: bbsk
+  title:
+    sk: Banskobystrický kraj — tabuľky katalógu
+    en: Banská Bystrica Region, catalogue tables
+spec:
+  contextSpaceRef: bbsk-otvorene-data
+  linkml: ./bbsk-otvorene-data.linkml.yaml
+  version: 1.0.0
+  lifecycle: published
+  classes:
+  - AdministrativeArea
+  - Bridge
+  - CommitteeSeat
+  - Contract
+  - CouncilMeeting
+  - CouncilVote
+  - CycleRoute
+  - Grant
+  - Invoice
+  - KeyPerformanceIndicator
+  - OfficeHours
+  - Organization
+  - Person
+  - Petition
+  - PointOfInterest
+  - PublicInvestment
+  - PublicOrganization
+  - PublicProcurement
+  - PurchaseOrder
+  - RiverBasin
+  - RoadAccident
+  - RoadStructure
+  - Rule
+  - WaterBodyStatus
+  artifacts:
+    jsonSchema: ./bbsk-otvorene-data.v1.schema.json
+    context: ./bbsk-otvorene-data.v1.context.jsonld
+    docs: ./bbsk-otvorene-data.v1.md
+    example: ./bbsk-otvorene-data.v1.example.jsonld

@@ -1,0 +1,11 @@
+---
+# One replica and small limits: on a single node the collector carries the telemetry of a
+# demonstration, not of a city.
+replicaCount: 1
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: '500m'
+    memory: 512Mi

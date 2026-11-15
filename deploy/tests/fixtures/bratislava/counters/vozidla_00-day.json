@@ -1,0 +1,415 @@
+{
+ "objectIdFieldName": "ObjectId",
+ "uniqueIdField": {
+  "name": "ObjectId",
+  "isSystemMaintained": true
+ },
+ "globalIdFieldName": "",
+ "fields": [
+  {
+   "name": "towards",
+   "type": "esriFieldTypeDouble",
+   "alias": "towards",
+   "sqlType": "sqlTypeFloat",
+   "domain": null,
+   "defaultValue": null
+  },
+  {
+   "name": "away",
+   "type": "esriFieldTypeDouble",
+   "alias": "away",
+   "sqlType": "sqlTypeFloat",
+   "domain": null,
+   "defaultValue": null
+  },
+  {
+   "name": "towardsMin",
+   "type": "esriFieldTypeInteger",
+   "alias": "towardsMin",
+   "sqlType": "sqlTypeInteger",
+   "domain": null,
+   "defaultValue": null
+  },
+  {
+   "name": "towardsMax",
+   "type": "esriFieldTypeInteger",
+   "alias": "towardsMax",
+   "sqlType": "sqlTypeInteger",
+   "domain": null,
+   "defaultValue": null
+  },
+  {
+   "name": "awayMin",
+   "type": "esriFieldTypeInteger",
+   "alias": "awayMin",
+   "sqlType": "sqlTypeInteger",
+   "domain": null,
+   "defaultValue": null
+  },
+  {
+   "name": "awayMax",
+   "type": "esriFieldTypeInteger",
+   "alias": "awayMax",
+   "sqlType": "sqlTypeInteger",
+   "domain": null,
+   "defaultValue": null
+  },
+  {
+   "name": "rows",
+   "type": "esriFieldTypeInteger",
+   "alias": "rows",
+   "sqlType": "sqlTypeInteger",
+   "domain": null,
+   "defaultValue": null
+  },
+  {
+   "name": "NAZOV",
+   "type": "esriFieldTypeString",
+   "alias": "NAZOV",
+   "sqlType": "sqlTypeNVarchar",
+   "length": 4000,
+   "domain": null,
+   "defaultValue": null
+  },
+  {
+   "name": "ZEMEPISNA_SIRKA",
+   "type": "esriFieldTypeDouble",
+   "alias": "ZEMEPISNA_SIRKA",
+   "sqlType": "sqlTypeFloat",
+   "domain": null,
+   "defaultValue": null
+  },
+  {
+   "name": "ZEMEPISNA_DLZKA",
+   "type": "esriFieldTypeDouble",
+   "alias": "ZEMEPISNA_DLZKA",
+   "sqlType": "sqlTypeFloat",
+   "domain": null,
+   "defaultValue": null
+  },
+  {
+   "name": "SMER_DO",
+   "type": "esriFieldTypeString",
+   "alias": "SMER_DO",
+   "sqlType": "sqlTypeNVarchar",
+   "length": 4000,
+   "domain": null,
+   "defaultValue": null
+  },
+  {
+   "name": "SMER_Z",
+   "type": "esriFieldTypeString",
+   "alias": "SMER_Z",
+   "sqlType": "sqlTypeNVarchar",
+   "length": 4000,
+   "domain": null,
+   "defaultValue": null
+  }
+ ],
+ "features": [
+  {
+   "attributes": {
+    "towards": 0,
+    "away": 0,
+    "towardsMin": 0,
+    "towardsMax": 0,
+    "awayMin": 0,
+    "awayMax": 0,
+    "rows": 24,
+    "NAZOV": "#1 - Starý Most",
+    "ZEMEPISNA_SIRKA": 48.110442,
+    "ZEMEPISNA_DLZKA": 17.127512,
+    "SMER_DO": "Centrum",
+    "SMER_Z": "Petržalka"
+   }
+  },
+  {
+   "attributes": {
+    "towards": 1828,
+    "away": 323,
+    "towardsMin": 3,
+    "towardsMax": 160,
+    "awayMin": 0,
+    "awayMax": 50,
+    "rows": 24,
+    "NAZOV": "#10 - Dunajská",
+    "ZEMEPISNA_SIRKA": 48.144847,
+    "ZEMEPISNA_DLZKA": 17.116058,
+    "SMER_DO": "Centrum (Kamenné námestie)",
+    "SMER_Z": "Mlynské nivy"
+   }
+  },
+  {
+   "attributes": {
+    "towards": 0,
+    "away": 0,
+    "towardsMin": 0,
+    "towardsMax": 0,
+    "awayMin": 0,
+    "awayMax": 0,
+    "rows": 24,
+    "NAZOV": "#11 - Most Apollo",
+    "ZEMEPISNA_SIRKA": 48.1346613,
+    "ZEMEPISNA_DLZKA": 17.1279278,
+    "SMER_DO": "Centrum",
+    "SMER_Z": "Petržalka"
+   }
+  },
+  {
+   "attributes": {
+    "towards": 0,
+    "away": 0,
+    "towardsMin": 0,
+    "towardsMax": 0,
+    "awayMin": 0,
+    "awayMax": 0,
+    "rows": 24,
+    "NAZOV": "#12 - Železná studnička",
+    "ZEMEPISNA_SIRKA": 48.176254,
+    "ZEMEPISNA_DLZKA": 17.073272,
+    "SMER_DO": "Ku studničke",
+    "SMER_Z": "Od studničky"
+   }
+  },
+  {
+   "attributes": {
+    "towards": 9848,
+    "away": 142,
+    "towardsMin": 43,
+    "towardsMax": 835,
+    "awayMin": 0,
+    "awayMax": 13,
+    "rows": 24,
+    "NAZOV": "#13 - Vajanského 1",
+    "ZEMEPISNA_SIRKA": 48.140819,
+    "ZEMEPISNA_DLZKA": 17.114909,
+    "SMER_DO": "Most SNP",
+    "SMER_Z": "NIE JE - v mieste je jednosmerná premávka\n"
+   }
+  },
+  {
+   "attributes": {
+    "towards": 0,
+    "away": 0,
+    "towardsMin": 0,
+    "towardsMax": 0,
+    "awayMin": 0,
+    "awayMax": 0,
+    "rows": 24,
+    "NAZOV": "#14 - Vajanského 2",
+    "ZEMEPISNA_SIRKA": 48.1403381,
+    "ZEMEPISNA_DLZKA": 17.1134376,
+    "SMER_DO": "Šafárikovo námestie\n",
+    "SMER_Z": "NIE JE - v mieste je jednosmerná premávka\n"
+   }
+  },
+  {
+   "attributes": {
+    "towards": 0,
+    "away": 0,
+    "towardsMin": 0,
+    "towardsMax": 0,
+    "awayMin": 0,
+    "awayMax": 0,
+    "rows": 24,
+    "NAZOV": "#15 - Incheba Einsteinova",
+    "ZEMEPISNA_SIRKA": 48.132484,
+    "ZEMEPISNA_DLZKA": 17.103304,
+    "SMER_DO": "Einsteinova",
+    "SMER_Z": "Centrum"
+   }
+  },
+  {
+   "attributes": {
+    "towards": 0,
+    "away": 0,
+    "towardsMin": 0,
+    "towardsMax": 0,
+    "awayMin": 0,
+    "awayMax": 0,
+    "rows": 24,
+    "NAZOV": "#16 - Trenčianska",
+    "ZEMEPISNA_SIRKA": 48.151117,
+    "ZEMEPISNA_DLZKA": 17.138556,
+    "SMER_DO": "Miletičova",
+    "SMER_Z": "Dulovo Námestie"
+   }
+  },
+  {
+   "attributes": {
+    "towards": 83,
+    "away": 5827,
+    "towardsMin": 0,
+    "towardsMax": 13,
+    "awayMin": 0,
+    "awayMax": 508,
+    "rows": 24,
+    "NAZOV": "#17 - Dunajská/Lazaretská",
+    "ZEMEPISNA_SIRKA": 48.145995,
+    "ZEMEPISNA_DLZKA": 17.119804,
+    "SMER_DO": "Centrum",
+    "SMER_Z": "Mlynské nivy"
+   }
+  },
+  {
+   "attributes": {
+    "towards": 0,
+    "away": 0,
+    "towardsMin": 0,
+    "towardsMax": 0,
+    "awayMin": 0,
+    "awayMax": 0,
+    "rows": 24,
+    "NAZOV": "#18 - Južné mesto / Centrum",
+    "ZEMEPISNA_SIRKA": 48.1230904,
+    "ZEMEPISNA_DLZKA": 17.1140315,
+    "SMER_DO": "Centrum",
+    "SMER_Z": "Južné mesto"
+   }
+  },
+  {
+   "attributes": {
+    "towards": 0,
+    "away": 0,
+    "towardsMin": 0,
+    "towardsMax": 0,
+    "awayMin": 0,
+    "awayMax": 0,
+    "rows": 24,
+    "NAZOV": "#19 - R48 Starohájska / Rusovská cesta",
+    "ZEMEPISNA_SIRKA": 48.1230904,
+    "ZEMEPISNA_DLZKA": 17.1140315,
+    "SMER_DO": "Rusovská cesta",
+    "SMER_Z": "Starohájska"
+   }
+  },
+  {
+   "attributes": {
+    "towards": 0,
+    "away": 0,
+    "towardsMin": 0,
+    "towardsMax": 0,
+    "awayMin": 0,
+    "awayMax": 0,
+    "rows": 24,
+    "NAZOV": "#2 - Starý most 2",
+    "ZEMEPISNA_SIRKA": 48.140042,
+    "ZEMEPISNA_DLZKA": 17.117292,
+    "SMER_DO": "Petržalka",
+    "SMER_Z": "Centrum"
+   }
+  },
+  {
+   "attributes": {
+    "towards": 0,
+    "away": 0,
+    "towardsMin": 0,
+    "towardsMax": 0,
+    "awayMin": 0,
+    "awayMax": 0,
+    "rows": 24,
+    "NAZOV": "#3 - River Park",
+    "ZEMEPISNA_SIRKA": 48.13956,
+    "ZEMEPISNA_DLZKA": 17.117371,
+    "SMER_DO": "Centrum",
+    "SMER_Z": "Most Lanfranconi"
+   }
+  },
+  {
+   "attributes": {
+    "towards": 0,
+    "away": 0,
+    "towardsMin": 0,
+    "towardsMax": 0,
+    "awayMin": 0,
+    "awayMax": 0,
+    "rows": 24,
+    "NAZOV": "#4 - Dolnozemská",
+    "ZEMEPISNA_SIRKA": 48.112534,
+    "ZEMEPISNA_DLZKA": 17.128937,
+    "SMER_DO": "Dunajská hrázda",
+    "SMER_Z": "Petržalka"
+   }
+  },
+  {
+   "attributes": {
+    "towards": 3201,
+    "away": 3020,
+    "towardsMin": 0,
+    "towardsMax": 549,
+    "awayMin": 2,
+    "awayMax": 357,
+    "rows": 24,
+    "NAZOV": "#5 - Devínska cesta",
+    "ZEMEPISNA_SIRKA": 48.1632527,
+    "ZEMEPISNA_DLZKA": 16.9999581,
+    "SMER_DO": "Centrum",
+    "SMER_Z": "Devín"
+   }
+  },
+  {
+   "attributes": {
+    "towards": 0,
+    "away": 0,
+    "towardsMin": 0,
+    "towardsMax": 0,
+    "awayMin": 0,
+    "awayMax": 0,
+    "rows": 24,
+    "NAZOV": "#6 - Vajnorská",
+    "ZEMEPISNA_SIRKA": 48.162144,
+    "ZEMEPISNA_DLZKA": 17.131644,
+    "SMER_DO": "Kuchajda",
+    "SMER_Z": "Trnavské mýto (Centrum)"
+   }
+  },
+  {
+   "attributes": {
+    "towards": 0,
+    "away": 0,
+    "towardsMin": 0,
+    "towardsMax": 0,
+    "awayMin": 0,
+    "awayMax": 0,
+    "rows": 24,
+    "NAZOV": "#7 - Vajnorská > NTC",
+    "ZEMEPISNA_SIRKA": 48.162144,
+    "ZEMEPISNA_DLZKA": 17.131644,
+    "SMER_DO": "Trnavské mýto (Centrum)",
+    "SMER_Z": "Kuchajda"
+   }
+  },
+  {
+   "attributes": {
+    "towards": 0,
+    "away": 0,
+    "towardsMin": 0,
+    "towardsMax": 0,
+    "awayMin": 0,
+    "awayMax": 0,
+    "rows": 24,
+    "NAZOV": "#8 - Most SNP",
+    "ZEMEPISNA_SIRKA": 48.140495,
+    "ZEMEPISNA_DLZKA": 17.104856,
+    "SMER_DO": "Petržalka",
+    "SMER_Z": "Centrum"
+   }
+  },
+  {
+   "attributes": {
+    "towards": 0,
+    "away": 0,
+    "towardsMin": 0,
+    "towardsMax": 0,
+    "awayMin": 0,
+    "awayMax": 0,
+    "rows": 24,
+    "NAZOV": "#9 - Páričkova",
+    "ZEMEPISNA_SIRKA": 48.14807,
+    "ZEMEPISNA_DLZKA": 17.128182,
+    "SMER_DO": "Dulovo námestie",
+    "SMER_Z": "Mlynské nivy (Centrum)"
+   }
+  }
+ ]
+}

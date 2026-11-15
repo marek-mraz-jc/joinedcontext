@@ -1,0 +1,24 @@
+# One Organization per row of "Základné školy v Banskobystrickom kraji" (T-4255); schools as schema.org organizations.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-zakladne-skoly-v-banskobystrickom-kraji
+  namespace: bbsk
+  title:
+    sk: Základné školy v Banskobystrickom kraji
+    en: Základné školy v Banskobystrickom kraji
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 52 4 * * 6
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-zakladne-skoly-v-banskobystrickom-kraji
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: Organization
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

@@ -1,0 +1,7 @@
+---
+component: probes
+parts:
+  # T-5103: synthetic probes of every public surface through the public hosts, every minute.
+  - name: probe
+  # T-5102: the public status page on status.{domain}, from the probe's results.
+  - name: status

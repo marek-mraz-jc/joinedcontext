@@ -1,0 +1,123 @@
+---
+# The catalogue on its own host. `subDomain` also puts opendata.{domain} on the edge Ingress
+# and in the certificate SAN list, both derived from this map.
+ckan:
+  name: ckan
+  description: Open-data catalogue (CKAN)
+  upstream: ckan.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "ckan") }}.svc.cluster.local:5000 # yamllint disable-line rule:line-length
+  subDomain: opendata
+  uri: '/*'
+  # Harvesting a large resource and rendering a dataset page with fifty resources are both
+  # slower than a portal page; the platform defaults would cut them off mid-response.
+  timeout:
+    connect: 6
+    send: 60
+    read: 60
+
+# T-4201: CKAN's webassets carry a content hash in their names (`51d427fe_main.css`) yet CKAN
+# serves them `no-cache`, so every page revalidated each stylesheet and script against the
+# per-address limit. The browser keeps them a year, set only on a 200 or 304 so an error is
+# never cached. A route's `serverless-post-function` replaces its plugin config's, so the
+# config's CSP baseline comes first, word for word (tests/test_edge_asset_cache.py).
+ckan-webassets:
+  name: ckan-webassets
+  description: CKAN's fingerprinted stylesheets and scripts, cached for a year
+  upstream: ckan.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "ckan") }}.svc.cluster.local:5000 # yamllint disable-line rule:line-length
+  subDomain: opendata
+  uri: '/webassets/*'
+  priority: 5
+  pluginConfig: ckan
+  plugins:
+    serverless-post-function:
+      phase: header_filter
+      functions:
+        - >-
+          return function()
+            if ngx.header["Content-Security-Policy"] == nil then
+              ngx.header["Content-Security-Policy"] =
+                "frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
+            end
+          end
+        - >-
+          return function()
+            if ngx.status == 200 or ngx.status == 304 then
+              ngx.header["Cache-Control"] = "public, max-age=31536000, immutable"
+            end
+          end
+    # A page load fetches a dozen of these and a carrier's CGNAT puts many people behind one
+    # address, so they count in a bucket of their own, far above any page rate (T-4717).
+    limit-count:
+      count: 3000
+      time_window: 60
+      key_type: var
+      key: remote_addr
+      rejected_code: 429
+      policy: local
+      show_limit_quota_header: true
+
+# T-4639: the dataset map a site may frame, /map/{dataset}[/{resource}] with CKAN's language
+# prefix or without; its own plugin config drops X-Frame-Options and the cookie.
+ckan-map:
+  name: ckan-map
+  description: The framable dataset map
+  upstream: ckan.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "ckan") }}.svc.cluster.local:5000 # yamllint disable-line rule:line-length
+  subDomain: opendata
+  uri: '/*'
+  vars: [["uri", "~~", "^/([a-z]{2}(_[A-Z]{2})?/)?map/[^/]+(/[^/]+)?$"]]
+  priority: 5
+
+# One stable path on the primary host that leads to the catalogue, for the people who only
+# ever learn one hostname. It answers a redirect and never proxies (see apisix-plugins.yaml),
+# because CKAN renders every link from its site URL and would emit opendata.{domain} links from
+# a /ckan page anyway.
+ckan-redirect:
+  name: ckan-redirect
+  description: /ckan on the primary host redirects to the catalogue host
+  upstream: ckan.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "ckan") }}.svc.cluster.local:5000 # yamllint disable-line rule:line-length
+  host: '{{ .Values.global.domain }}'
+  uri: '/ckan*'
+  # Above the portal UI's `/*` at priority 1, below its API routes.
+  priority: 5
+
+# T-4679 (owner 2026-10-18): the catalogue moved from data.{domain} to opendata.{domain}; the old
+# host stays on the Ingress and its certificate and answers 301 to the same path on the new one.
+ckan-old-host:
+  name: ckan-old-host
+  description: data.{domain} answers 301 to opendata.{domain}
+  upstream: ckan.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "ckan") }}.svc.cluster.local:5000 # yamllint disable-line rule:line-length
+  subDomain: data
+  uri: '/*'
+
+# T-4717 step 4: an anonymous action API read (package_show, organization_show, package_search,
+# datastore_search) is kept 60 s at the edge, so a bot walking the catalogue reaches CKAN and
+# Postgres once a minute per URL. CKAN answers it `public, max-age=60` (CKAN__CACHE_EXPIRES);
+# nginx stores nothing CKAN marks private or answers with a Set-Cookie, and a request with any
+# cookie, an Authorization or an X-CKAN-API-Key header (CKAN reads a token from both) neither
+# reads nor fills the cache: a person's session and a token's private datasets never reach it
+# (tests/test_edge_ckan_cache.py runs the pinned image). CKAN answers Access-Control-Allow-Origin
+# only to an Origin on its allow list, so the key holds the Origin: an Origin-less read kept first
+# was served to the viz renderer without the header (stage smoke 2026-11-03).
+ckan-action-cache:
+  name: ckan-action-cache
+  description: CKAN's anonymous action API reads, cached 60 s
+  upstream: ckan.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "ckan") }}.svc.cluster.local:5000 # yamllint disable-line rule:line-length
+  subDomain: opendata
+  uri: '/api/3/action/*'
+  priority: 5
+  methods: [GET, HEAD]
+  pluginConfig: ckan
+  timeout:
+    connect: 6
+    send: 60
+    read: 60
+  plugins:
+    proxy-cache:
+      cache_strategy: disk
+      cache_zone: disk_cache_one
+      cache_key: ["$host", "$request_uri", "$http_origin"]
+      cache_bypass: ["$http_cookie", "$http_authorization", "$http_x_ckan_api_key"]
+      no_cache: ["$http_cookie", "$http_authorization", "$http_x_ckan_api_key"]
+      cache_method: ["GET", "HEAD"]
+      cache_http_status: [200]
+      cache_ttl: 60
+      hide_cache_headers: false

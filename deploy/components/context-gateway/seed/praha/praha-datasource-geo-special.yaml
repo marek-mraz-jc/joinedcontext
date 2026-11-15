@@ -1,0 +1,15 @@
+# IPR Praha's geoportal item 720a5804b9ef4c73af2d85f5605c1dc6 (Vyhrazené stání speciální, TSK hl. m. Prahy), 1,026 records on 2026-10-24, served
+# by its ArcGIS Hub download as GeoJSON in WGS 84. No key. CC BY 4.0, "datový podklad © IPR Praha" (T-5424).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-geo-special
+  namespace: praha
+  title: { en: Special reserved bays (IPR Praha), cs: Vyhrazené stání speciální (IPR Praha) }
+spec:
+  type: http
+  http:
+    url: https://hub.arcgis.com/api/v3/datasets/720a5804b9ef4c73af2d85f5605c1dc6_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 120s

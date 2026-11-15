@@ -1,0 +1,15 @@
+{{- /*
+  The base of the standalone APISIX rule file: the platform's shared routes, and no secret (the
+  shared client's secrets are `${{ENV}}` references). The Portal's reconciler reads it every
+  tick, adds each published App's routes and writes the file APISIX serves, the Secret
+  `apisix-standalone-config` (ADR-N-030, AP-112).
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: apisix-standalone-base
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "configuration.labels" . | nindent 4 }}
+data:
+  apisix.yaml: |{{ include "configuration.standalone" . }}

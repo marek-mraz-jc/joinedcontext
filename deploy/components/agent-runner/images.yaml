@@ -1,0 +1,70 @@
+---
+agent-runner:
+  proxy:
+    # The platform image carries jc-agent-proxy beside context-gateway and jcctl; the
+    # entrypoint is the gateway, so the values name the proxy binary as `command`.
+    repository: 'ghcr.io/marek-mraz-jc/joinedcontext-platform'
+    tag: 'main'
+    # platform b73d19a: a write under a grant that draws an area is decided against the stored
+    # entity and a state-dependent batch is refused whole (T-0807), a paging offset cannot ask
+    # the broker for an unbounded history (T-0809), a workbook is refused past the file ceiling
+    # (T-0810), a space's own surface is counted per caller (T-0813), a space nobody granted
+    # answers what a space that never existed answers (T-0814), one request-body ceiling on
+    # every proxy route (T-0811), the builder reads documentation through one allow-listed and
+    # counted door (T-0557), jcctl resolves a secret from a real OpenBao (T-0423), and jc-core
+    # defines kind Subscription (T-0913). On top of 09c96ae (T-0805, T-0806, T-0782, T-0817).
+    # One image for the gateway, the proxy and jc-functions, so a token is never minted and
+    # verified by two builds. Digest read from the registry for the tag named after the commit;
+    # the `main` tag moves.
+    # platform 7694c99: the agent proxy refuses any path that would leave its upstream base
+    # (encoded, backslash, dot segment; T-1300, T-1301), and a service-account client id two
+    # accounts derive, or a platform client's, resolves to nobody (T-1454). On top of 2276b1f.
+    # platform 666bc7c: a notification endpoint inside the platform's networks is refused at
+    # creation and at delivery (T-1302), and a Pipeline may be v1alpha2, sources, steps and
+    # outputs (T-1468). On top of 7694c99.
+    # platform 5454593: only the run's own mesh identity passes the second factor of this proxy
+    # (T-1477, AG-52), and `jcctl export`/`import` stay inside the tree they were given
+    # (T-1478, CC-08). This pin jumps from 666bc7c: the gateway, the proxy and jc-functions are
+    # one image on purpose, and the three pins had drifted apart, so a check the proxy performs
+    # was fixed in the gateway's build and not in its own.
+    # platform 83c5750: jc-core carries the grid configuration as one shared type, so a
+    # Dashboard widget may be the entity grid (T-1440, SDK-30, UI-71). Nothing this workload
+    # runs changes; the pin moves because the gateway, the proxy and jc-functions are one
+    # image and their three pins are kept equal (T-2270).
+    # platform c0195bc: the gateway asks the realm for its own token where the deployment says
+    # (JC_OIDC_TOKEN_URL), not at the issuer a browser uses — a pod cannot dial this node's own
+    # ingress hostname, so no workspace preview was served at all (T-2272, PF-46, AG-52).
+    # platform ae5053a: the credential proxy presents a token of its own client on the Portal's
+    # internal listener instead of the bearer both sides held, and the pipeline-test harness
+    # mints the runner's own for the capture (T-2271, AG-52, PF-46). Applied together with the
+    # Portal image that requires it, and with the two audience mappers of this commit.
+    # platform 18585b0: the gateway refuses a notification whose `data` is not a list of entities,
+    # so a forged delivery cannot carry an entity of an unserved type past the per-type filter
+    # (T-2284); the agent proxy answers every refused credential with one sentence, so a pair of
+    # 401s no longer tells a caller which run ids are live (T-2285); and the edge cases of the
+    # identity table, the API keys, run authentication and the proxy's router came with them
+    # (T-1890 to T-1894, T-1872, T-1873).
+    # platform 387cbc0: the first image from marek-mraz-jc/joinedcontext-platform, where the
+    # repository moved (T-2301), jc-core v0.7.46. Since 18585b0: the Data MCP tools and the REST
+    # surface share one read parameter table, get_entity and batch_query take its selectors, the
+    # registry reads and the two POST query forms have tools, total and nextCursor (T-1857, AG-84,
+    # AG-85).
+    # platform b2aab3f: the pipeline test names the step a message failed at — the harness stamps
+    # each step's index into the message metadata before the step runs and keeps it at the first
+    # failure, so a trace says which processor threw rather than which ran last (T-1130, PL-43,
+    # PL-52, PL-56). jc-core v0.7.47. On top of 387cbc0.
+    # platform 0b6bd13: 1682 lines of edge-case suites over the ten deciding functions of the
+    # edge and the PDP (T-1905..T-1914) — tests only, no behaviour change — on top of the image
+    # lane that now queues instead of cancelling itself (T-2318). On top of b2aab3f.
+    # platform 462a1ba: the space record's children are all served (T-2373, T-2382), a polygon
+    # accounts for the other's holes and a contested agreement id serves nobody (T-2327, T-2355),
+    # idle rate-limit buckets are evicted (T-2356), every image attests a CycloneDX bill of
+    # materials (T-2412), a SyncSource carries its own inbound webhook secret (T-2297), and the
+    # proxy answers 503 for a failure of the platform's own instead of blaming the caller
+    # (T-2418). 61 commits on top of 0b6bd13.
+    # platform 12b32e8: the agent proxy pins every forge write to the run's branch or refuses it,
+    # refuses its own `usage` kind from a workspace, and never hands a run an internal address
+    # (T-2362, T-2363, T-2364). On top of 462a1ba.
+    # platform 6c2e439: an Endpoint's publish.ckan carries the licence the organization chose, and
+    # jcctl publishes in the space's language under the instance's title (T-2465). On top of 12b32e8.
+    digest: 'sha256:a43cb1a1dca5a1e2de60f586341b2b66a8d9d07c66af6ea50e5a52510cd5dbe8'

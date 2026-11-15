@@ -1,0 +1,7 @@
+---
+apiVersion: v2
+name: ckan
+description: CKAN open-data catalogue with its Solr index and Redis, themed from global.branding
+type: application
+version: 0.1.0
+appVersion: '2.11'

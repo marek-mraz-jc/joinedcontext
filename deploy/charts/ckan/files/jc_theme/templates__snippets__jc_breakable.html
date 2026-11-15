@@ -1,0 +1,2 @@
+{#- A command or address that breaks only between its pieces (h.jc_pieces, T-4333). -#}
+{%- for piece in h.jc_pieces(text) -%}{%- if piece.space -%}{{ piece.text }}{%- else -%}<span class="jc-nb">{{ piece.text }}</span><wbr>{%- endif -%}{%- endfor -%}

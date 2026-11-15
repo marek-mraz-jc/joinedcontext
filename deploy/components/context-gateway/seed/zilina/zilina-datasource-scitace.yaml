@@ -1,0 +1,21 @@
+# The city's open data portal's parking summary (dataset 173), about 40 bytes: the pipeline
+# scitace reads it as the portal's health check and then asks the portal itself for the traffic
+# counters and each counter's last hour, because those two calls need a JSON body and a DataSource
+# carries none (Architecture/08 section 6). ODbL, credited "Mesto Žilina" (T-5232).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: zilina-opendata-portal
+  namespace: zilina
+  title:
+    sk: Otvorené dáta mesta Žilina (opendata.zilina.sk)
+    en: Open data of the City of Žilina (opendata.zilina.sk)
+spec:
+  type: http
+  http:
+    url: https://opendata.zilina.sk/api/datasets/v1/parking/statistics/parking-occupancy-summary
+    verb: POST
+    headers:
+      Accept: application/json
+      User-Agent: joinedcontext-zilina/1.0 (+https://dev.joinedcontext.com)
+    timeout: 30s

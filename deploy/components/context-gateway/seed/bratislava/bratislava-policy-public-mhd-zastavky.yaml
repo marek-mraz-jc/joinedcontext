@@ -1,0 +1,27 @@
+# Public read of the Endpoint bratislava-mhd-zastavky (T-5273): these types only; the space's other types stay with their own datasets.
+# No history: the space keeps the current network only.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-mhd-zastavky
+  namespace: bratislava
+  title: { sk: 'Verejné čítanie: zastávky MHD', en: 'Public read: public transport stops' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bratislava }
+  assigner: did:web:bratislava.sk
+  assignee: { kind: role, id: public }
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: GtfsStop

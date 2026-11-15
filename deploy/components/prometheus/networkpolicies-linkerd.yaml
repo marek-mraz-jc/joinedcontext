@@ -1,0 +1,122 @@
+---
+# Meshed traffic lands on a pod's inbound proxy on 4143, and every meshed pod's proxy reaches
+# the control plane for identity (8080), destination (8086) and policy (8090). Prometheus'
+# outbound scrapes of meshed targets leave on its egress in networkpolicies.yaml.gotmpl.
+prometheus-operator-linkerd-cp:
+  podSelector:
+    app: kube-prometheus-stack-operator
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+
+kube-state-metrics-linkerd-cp:
+  podSelector:
+    app.kubernetes.io/name: kube-state-metrics
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+
+# The operator writes the Prometheus and Alertmanager pods without the release's instance label.
+prometheus-server-linkerd-cp:
+  podSelector:
+    app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+
+alertmanager-linkerd-cp:
+  podSelector:
+    app.kubernetes.io/name: alertmanager
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+
+prometheus-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+          componentNamespace: grafana
+      ports:
+        - port: 4143
+          protocol: TCP
+
+# Prometheus' scrapes of the stack's own meshed pods.
+prometheus-stack-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/instance: prometheus-stack
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+          componentNamespace: prometheus
+      ports:
+        - port: 4143
+          protocol: TCP
+
+alertmanager-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: alertmanager
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+          componentNamespace: prometheus
+      ports:
+        - port: 4143
+          protocol: TCP

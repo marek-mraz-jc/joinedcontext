@@ -1,0 +1,11 @@
+---
+{{ '{{' }}- $this := .Values.{{ componentVariableName }}.{{ release }} {{ '}}' }}
+{%- raw %}
+{{- $global := .Values.global }}
+{%- endraw %}
+# Checklist:
+# - [ ] Minimal Resources
+# - [ ] Minimal storage
+# - [ ] 1 Replica
+
+# TODO: set helm values for {{ release }} here

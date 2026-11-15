@@ -1,0 +1,56 @@
+# The mapping of the fare-zones pipeline (PL-03, T-5254): one AdministrativeArea per HSL fare zone, A to D,
+# with `divisionLevel` fareZone and its letter as `fareZone`, the same model as the city's districts. A ticket
+# names its zones by these letters, and HSL's GtfsStation and sales points carry the letter they lie in.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a zone without a polygon, with a corner outside HSL's area plus
+# its regional lines' ends (23.9..25.75 E, 59.85..60.65 N), a code other than A to D, or a second record of
+# one letter is dropped and counted by reason in a WARN line of the run. An answer with no zone fails the
+# run, so the stored zones stay.
+
+pipeline:
+  processors:
+    # One `try`: a refused answer stops at its throw, so no later step writes over it (Bento runs later
+    # processors on an errored message otherwise).
+    - try:
+        - mapping: |
+            root = if content().length() > 8388608 { throw("the HSL fare zones answer is %d bytes, more than the 8 MiB read".format(content().length())) } else { this }
+        - mapping: |
+            root = if this.features.or([]).length() == 0 { throw("the HSL fare zones answer holds no zone: the run fails and the stored zones stay") } else { this }
+        - mapping: |
+            let rows = this.features.map_each(f -> {
+              "f": f,
+              "points": if f.geometry.type.or("") == "Polygon" { f.geometry.coordinates.flatten() }
+                else if f.geometry.type.or("") == "MultiPolygon" { f.geometry.coordinates.flatten().flatten() }
+                else { [] }
+            }).map_each(r -> r.merge({
+              "reason": if r.points.length() < 4 { "noLocation" }
+                else if r.points.any(p -> p.index(0).number().catch(0) < 23.9 || p.index(0).number().catch(0) > 25.75 || p.index(1).number().catch(0) < 59.85 || p.index(1).number().catch(0) > 60.65) { "outOfArea" }
+                else if !r.f.properties.Zone.or("").string().re_match("^[A-D]$") { "unknownCode" }
+                else { null }
+            }))
+            let valid = $rows.filter(r -> r.reason == null)
+            let kept = $valid.unique(r -> r.f.properties.Zone.string())
+            let reasons = $rows.filter(r -> r.reason != null).map_each(r -> r.reason)
+            root.dropped = {
+              "noLocation": $reasons.filter(x -> x == "noLocation").length(),
+              "outOfArea": $reasons.filter(x -> x == "outOfArea").length(),
+              "unknownCode": $reasons.filter(x -> x == "unknownCode").length(),
+              "duplicate": $valid.length() - $kept.length()
+            }
+            root.entities = $kept.map_each(r -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:hsl-zone-%v".format("AdministrativeArea", env("JC_ORG_DOMAIN"), env("JC_SPACE"), r.f.properties.Zone.string()),
+              "type": "AdministrativeArea",
+              "name": { "type": "LanguageProperty", "languageMap": { "fi": "HSL-vyöhyke %v".format(r.f.properties.Zone), "sv": "HRT-zon %v".format(r.f.properties.Zone), "en": "HSL zone %v".format(r.f.properties.Zone) } },
+              "fareZone": { "type": "Property", "value": r.f.properties.Zone.string() },
+              "divisionLevel": { "type": "Property", "value": "fareZone" },
+              "location": { "type": "GeoProperty", "value": r.f.geometry },
+              "dataProvider": { "type": "Property", "value": "Helsinki Region Transport (HSL)" },
+              "source": { "type": "Property", "value": "https://hri.fi/data/en_GB/dataset/hsl-n-taksavyohykkeet" }
+            })
+        - switch:
+            - check: this.dropped.values().sum() > 0
+              processors:
+                - log:
+                    level: WARN
+                    message: 'fare-zones: ${! json("entities").length() } zones written, dropped by reason ${! json("dropped").format_json(no_indent: true) }'
+        - mapping: root = this.entities

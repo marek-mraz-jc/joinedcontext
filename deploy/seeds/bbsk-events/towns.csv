@@ -1,0 +1,276 @@
+town,name,region,unique,lat,lon,precision,osm,checked_on,checked_by
+babin,Babín,ZA,y,49.3323183,19.3794596,office,node/2188316011,2026-10-22,overpass
+banska-bystrica,Banská Bystrica,BBSK,y,48.7354290,19.1457338,centre,node/26037873,2026-10-22,overpass
+banska-stiavnica,Banská Štiavnica,BBSK,y,48.4588761,18.8924814,office,node/274921006,2026-10-22,overpass
+belusa,Beluša,TN,y,49.0645686,18.3291220,office,way/58973628,2026-10-22,overpass
+benadovo,Beňadovo,ZA,y,49.4313735,19.3390939,office,node/11813215340,2026-10-22,overpass
+bobot,Bobot,TN,y,48.8054921,18.1929164,office,node/2491489609,2026-10-22,overpass
+bobrov,Bobrov,ZA,y,49.4281862,19.5439943,office,node/970954529,2026-10-22,overpass
+bobrovec,Bobrovec,ZA,y,49.1184590,19.6137205,centre,node/26036138,2026-10-22,overpass
+boleraz,Boleráz,TT,y,48.4658970,17.4929795,office,way/61514242,2026-10-22,overpass
+borcany,Borčany,TN,y,48.6563788,18.2193755,centre,node/26037985,2026-10-22,overpass
+breziny,Breziny,BBSK,y,48.5096999,19.0828774,office,way/255910491,2026-10-22,overpass
+brvniste,Brvnište,TN,y,49.2143630,18.4272371,office,way/179573168,2026-10-22,overpass
+budimir,Budimír,KE,y,48.7971057,21.3048402,office,node/6100698438,2026-10-22,overpass
+binovce,Bíňovce,TT,y,48.5045791,17.4802292,office,node/4017108581,2026-10-22,overpass
+chocholna-velcice,Chocholná-Velčice,TN,y,48.8658213,17.9443287,office,node/9933124289,2026-10-22,overpass
+cifer,Cífer,TT,y,48.3134786,17.4906917,office,node/13876818768,2026-10-22,overpass
+demanovska-dolina,Demänovská Dolina,ZA,y,48.9770529,19.5939292,office,node/2499524481,2026-10-22,overpass
+detva,Detva,BBSK,y,48.5448490,19.4152085,office,way/46879676,2026-10-22,overpass
+devicany,Devičany,NR,y,48.3240744,18.7064333,office,node/1327993849,2026-10-22,overpass
+dezerice,Dežerice,TN,y,48.7617060,18.2133311,centre,node/26036925,2026-10-22,overpass
+dlha-nad-vahom,Dlhá nad Váhom,NR,y,48.1702772,17.8605180,office,node/13888421594,2026-10-22,overpass
+dobra-niva,Dobrá Niva,BBSK,y,48.4701697,19.1055249,office,way/71431450,2026-10-22,overpass
+dolna-krupa,Dolná Krupá,TT,y,48.4828309,17.5518518,office,node/4369753289,2026-10-22,overpass
+dolna-suca,Dolná Súča,TN,y,48.9567036,18.0319101,office,node/12854752878,2026-10-22,overpass
+dolne-srnie,Dolné Srnie,TN,y,48.8031481,17.8197476,office,node/11633697621,2026-10-22,overpass
+dolny-chotar,Dolný Chotár,TT,y,48.0004529,17.8678199,office,way/441770496,2026-10-22,overpass
+drahovce,Drahovce,TT,y,48.5170179,17.8003507,office,node/13881035078,2026-10-22,overpass
+dravce,Dravce,PO,y,49.0192835,20.4859795,office,node/6336694254,2026-10-22,overpass
+drazice,Dražice,BBSK,y,48.4365511,20.0643738,office,node/13902175957,2026-10-22,overpass
+dubnica-nad-vahom,Dubnica nad Váhom,BA,y,48.9575818,18.1656642,office,way/323147994,2026-10-22,overpass
+dudince,Dudince,BBSK,y,48.1694638,18.8895471,office,way/58996279,2026-10-22,overpass
+filakovo,Fiľakovo,BBSK,y,48.2706716,19.8217877,office,node/481204979,2026-10-22,overpass
+galanta,Galanta,TT,y,48.1899071,17.7258342,office,node/4873410042,2026-10-22,overpass
+gbely,Gbely,TT,y,48.7189658,17.1183053,office,node/2971966198,2026-10-22,overpass
+gbelany,Gbeľany,ZA,y,49.2141754,18.8485002,office,node/5745724322,2026-10-22,overpass
+gan,Gáň,TT,y,48.2308007,17.7188712,office,node/5393668535,2026-10-22,overpass
+halic,Halič,BBSK,y,48.3544888,19.5739915,office,node/1929019064,2026-10-22,overpass
+harmanec,Harmanec,BBSK,y,48.7955681,19.0763826,office,node/2989659769,2026-10-22,overpass
+hertnik,Hertník,PO,y,49.2066427,21.2393742,office,node/1418414376,2026-10-22,overpass
+hontianske-moravce,Hontianske Moravce,BBSK,y,48.1872910,18.8448099,centre,node/1831956404,2026-10-22,overpass
+hontianske-tesare,Hontianske Tesáre,BBSK,y,48.2061127,18.9218996,office,node/11738971339,2026-10-22,overpass
+horna-krupa,Horná Krupá,TT,y,48.5121002,17.5274219,office,node/13922366451,2026-10-22,overpass
+horne-myto,Horné Mýto,TT,y,48.0103611,17.7520622,office,node/14087575899,2026-10-22,overpass
+horne-srnie,Horné Srnie,TN,y,48.9901745,18.1035343,office,way/770983912,2026-10-22,overpass
+hostie,Hostie,NR,y,48.4539434,18.4375220,office,node/2138306582,2026-10-22,overpass
+hranovnica,Hranovnica,PO,y,48.9875458,20.3096329,office,node/2902369171,2026-10-22,overpass
+hrinova,Hriňová,BBSK,y,48.5751504,19.5239317,office,way/61748025,2026-10-22,overpass
+hrnciarovce-nad-parnou,Hrnčiarovce nad Parnou,TT,y,48.3409184,17.5722374,office,node/11379385523,2026-10-22,overpass
+hradok,Hrádok,TN,y,48.6983810,17.8835869,office,node/491466761,2026-10-22,overpass
+hubice,Hubice,TT,y,48.0945348,17.3962746,office,way/120649986,2026-10-22,overpass
+humenne,Humenné,PO,y,48.9355538,21.9070618,office,way/904288255,2026-10-22,overpass
+horky,Hôrky,ZA,y,49.2058694,18.6921788,office,node/727589957,2026-10-22,overpass
+ilava,Ilava,TN,y,48.9995242,18.2361525,office,way/58500587,2026-10-22,overpass
+jablonec,Jablonec,BA,y,48.3324160,17.4480986,office,node/5221149475,2026-10-22,overpass
+jaklovce,Jaklovce,KE,y,48.8747932,20.9966353,office,node/13888371369,2026-10-22,overpass
+jasenie,Jasenie,BBSK,y,48.8362472,19.4581779,centre,node/26036836,2026-10-22,overpass
+jaslovske-bohunice,Jaslovské Bohunice,TT,y,48.4769346,17.6458682,office,node/13891081098,2026-10-22,overpass
+jedlove-kostolany,Jedľové Kostoľany,NR,y,48.4713418,18.4974566,office,way/118492382,2026-10-22,overpass
+jelenec,Jelenec,NR,y,48.3793381,18.2220126,office,way/58770559,2026-10-22,overpass
+jelsava,Jelšava,BBSK,y,48.6308730,20.2360300,office,way/71759557,2026-10-22,overpass
+kamenica-nad-hronom,Kamenica nad Hronom,NR,y,47.8313650,18.7255004,centre,node/26037821,2026-10-22,overpass
+koksov-baksa,Kokšov-Bakša,KE,y,48.6479116,21.3236877,office,node/6176888468,2026-10-22,overpass
+kolarovo,Kolárovo,NR,y,47.9179266,17.9966716,office,node/1304548498,2026-10-22,overpass
+kopcany,Kopčany,TT,y,48.7876654,17.1175139,office,way/51484705,2026-10-22,overpass
+kostolna-pri-dunaji,Kostolná pri Dunaji,BA,y,48.1847188,17.4360249,office,way/230357413,2026-10-22,overpass
+kocin-lancar,Kočín-Lančár,TT,y,48.6000876,17.6600517,office,node/13922394651,2026-10-22,overpass
+kraskovo,Kraskovo,BBSK,y,48.5012231,19.9895046,office,node/14019581137,2026-10-22,overpass
+kravany-nad-dunajom,Kravany nad Dunajom,NR,y,47.7620120,18.4828188,centre,node/26036607,2026-10-22,overpass
+kremnica,Kremnica,BBSK,y,48.7047514,18.9178084,office,node/9672188595,2026-10-22,overpass
+krivan,Kriváň,BBSK,y,48.5305207,19.4472759,office,node/11738820147,2026-10-22,overpass
+krizovany,Krížovany,PO,y,48.9811177,21.0501182,office,node/14101349651,2026-10-22,overpass
+kuchyna,Kuchyňa,BA,y,48.4073394,17.1597316,office,way/245082791,2026-10-22,overpass
+kalnica,Kálnica,TN,y,48.7645803,17.9234421,office,node/11116277618,2026-10-22,overpass
+katlovce,Kátlovce,TT,y,48.5266020,17.6094739,office,node/1417430947,2026-10-22,overpass
+lehota,Lehota,NR,y,48.3125768,17.9938867,office,node/4092568634,2026-10-22,overpass
+levice,Levice,NR,y,48.2163194,18.6000869,centre,node/530544378,2026-10-22,overpass
+lietavska-svinna-babkov,Lietavská Svinná-Babkov,ZA,y,49.1524945,18.6763072,office,node/3646367974,2026-10-22,overpass
+liptovska-kokava,Liptovská Kokava,ZA,y,49.0857441,19.8142947,office,node/11826394570,2026-10-22,overpass
+liptovska-teplicka,Liptovská Teplička,PO,y,48.9674913,20.0888295,office,way/69711639,2026-10-22,overpass
+liptovske-klacany,Liptovské Kľačany,ZA,y,49.0322049,19.4746788,office,node/7029560579,2026-10-22,overpass
+lomna,Lomná,ZA,y,49.3626517,19.3070696,office,node/979749079,2026-10-22,overpass
+lula,Lula,NR,y,48.1783335,18.3612206,office,way/58891088,2026-10-22,overpass
+lucenec,Lučenec,BBSK,y,48.3302964,19.6642927,office,way/54950406,2026-10-22,overpass
+luzany,Lužany,NR,y,48.5152531,18.0122164,office,node/13881638090,2026-10-22,overpass
+mad,Mad,TT,y,47.9517078,17.6606043,office,node/14064065932,2026-10-22,overpass
+malinovo,Malinovo,BA,y,48.1565522,17.2979249,office,node/2623343125,2026-10-22,overpass
+male-krstenany,Malé Kršteňany,TN,y,48.6378045,18.4289032,office,way/210249888,2026-10-22,overpass
+marianka,Marianka,BA,y,48.2495040,17.0576528,office,way/480566494,2026-10-22,overpass
+martin,Martin,ZA,y,49.0683865,18.9256921,office,node/3207154487,2026-10-22,overpass
+matuskovo,Matúškovo,TT,y,48.1663940,17.7345652,office,way/73261816,2026-10-22,overpass
+medzibrod,Medzibrod,BBSK,y,48.7921843,19.3521331,office,way/73265471,2026-10-22,overpass
+michalova,Michalová,BBSK,y,48.7624742,19.7782414,office,way/966112103,2026-10-22,overpass
+mnisek-nad-hnilcom,Mníšek nad Hnilcom,KE,y,48.8061124,20.8065279,office,node/945361431,2026-10-22,overpass
+moldava-nad-bodvou,Moldava nad Bodvou,KE,y,48.6131205,21.0005871,office,way/375706840,2026-10-22,overpass
+mostenica,Moštenica,BBSK,y,48.8076127,19.2923174,office,node/836263526,2026-10-22,overpass
+nimnica,Nimnica,TN,y,49.1389873,18.3546458,centre,node/26037652,2026-10-22,overpass
+nitra,Nitra,BA,y,48.3056319,18.0837709,office,way/84599101,2026-10-22,overpass
+nova-bosaca,Nová Bošáca,TN,y,48.8797589,17.7974226,office,node/2217341563,2026-10-22,overpass
+oravska-polhora,Oravská Polhora,ZA,y,49.5206188,19.4474188,office,node/971014576,2026-10-22,overpass
+osikov,Osikov,PO,y,49.1727021,21.2652781,office,node/1295437130,2026-10-22,overpass
+oldza,Oľdza,TT,y,48.0847076,17.4224724,office,way/262550152,2026-10-22,overpass
+pastina-zavada,Paština Závada,ZA,y,49.2113154,18.6383972,office,node/13932043365,2026-10-22,overpass
+pazit,Pažiť,TN,y,48.6320694,18.4334949,office,node/3072314594,2026-10-22,overpass
+pernek,Pernek,BA,y,48.3677757,17.1438201,office,node/7413595649,2026-10-22,overpass
+petrova-ves,Petrova Ves,TT,y,48.7204195,17.1603777,office,node/8126614466,2026-10-22,overpass
+piestany,Piešťany,TT,y,48.5917528,17.8316176,office,node/724252162,2026-10-22,overpass
+plavecky-peter,Plavecký Peter,TT,y,48.5382204,17.3233674,office,node/13908938994,2026-10-22,overpass
+plave-vozokany,Plavé Vozokany,NR,y,48.0704802,18.4643864,office,node/4013899393,2026-10-22,overpass
+plevnik-drienove,Plevník-Drienové,TN,y,49.1667513,18.5000137,office,node/12880278800,2026-10-22,overpass
+pliesovce,Pliešovce,BBSK,y,48.4245250,19.1560412,office,way/288589979,2026-10-22,overpass
+plastovce,Plášťovce,NR,y,48.1591925,18.9787375,office,way/54941490,2026-10-22,overpass
+podbiel,Podbiel,ZA,y,49.3081975,19.4848090,office,node/836268349,2026-10-22,overpass
+polomka,Polomka,BBSK,y,48.8519478,19.8523895,office,way/57920338,2026-10-22,overpass
+poltar,Poltár,BBSK,y,48.4326603,19.7938318,office,node/836263843,2026-10-22,overpass
+poniky,Poniky,BBSK,y,48.7097417,19.2898686,office,way/85611382,2026-10-22,overpass
+poprad,Poprad,PO,y,49.0561882,20.3032469,office,node/9455022988,2026-10-22,overpass
+potoky,Potoky,PO,y,49.2587929,21.6253966,office,node/836263943,2026-10-22,overpass
+posa,Poša,PO,y,48.8381611,21.7548767,office,node/836268283,2026-10-22,overpass
+prasnik,Prašník,TT,y,48.6506332,17.6884926,office,node/451634818,2026-10-22,overpass
+predajna,Predajná,BBSK,y,48.8144554,19.4627969,office,node/549362193,2026-10-22,overpass
+presov,Prešov,BA,y,49.0000074,21.2392122,centre,node/26037569,2026-10-22,overpass
+prsa,Prša,BBSK,y,48.3000502,19.7917208,office,node/11649090950,2026-10-22,overpass
+puste-sady,Pusté Sady,TT,y,48.3134072,17.8286259,office,node/13876155199,2026-10-22,overpass
+radatice,Radatice,PO,y,48.9318736,21.1890399,office,node/2470777936,2026-10-22,overpass
+rakovec-nad-ondavou,Rakovec nad Ondavou,KE,y,48.7680191,21.7827059,office,node/1107845272,2026-10-22,overpass
+rakovice,Rakovice,TT,y,48.5578204,17.7388686,office,way/240226524,2026-10-22,overpass
+ratkovo,Ratkovo,ZA,y,49.1358546,19.0862842,office,node/13876798917,2026-10-22,overpass
+raznany,Ražňany,PO,y,49.0807178,21.0835169,office,way/73482114,2026-10-22,overpass
+reca,Reca,BA,y,48.2300975,17.4583177,office,way/63405820,2026-10-22,overpass
+revuca,Revúca,BBSK,y,48.6831886,20.1136543,office,node/12002120933,2026-10-22,overpass
+rimavska-sobota,Rimavská Sobota,BBSK,y,48.3840699,20.0182749,office,way/31852339,2026-10-22,overpass
+rosina,Rosina,ZA,y,49.1797076,18.7687419,office,node/3822634278,2026-10-22,overpass
+ruzindol,Ružindol,TT,y,48.3728395,17.4909281,office,way/59011639,2026-10-22,overpass
+sap,Sap,TT,y,47.8208288,17.6150173,office,node/2689998180,2026-10-22,overpass
+seniakovce,Seniakovce,PO,y,48.8249078,21.3003435,centre,node/26036900,2026-10-22,overpass
+senica,Senica,TT,y,48.6809246,17.3701344,office,node/11752697466,2026-10-22,overpass
+sered,Sereď,TT,y,48.2869201,17.7380273,office,way/61391836,2026-10-22,overpass
+skalka-nad-vahom,Skalka nad Váhom,TN,y,48.9254706,18.0706242,office,node/7194192915,2026-10-22,overpass
+sklabina,Sklabiňa,ZA,y,49.0453106,19.0035489,office,node/836268087,2026-10-22,overpass
+sladkovicovo,Sládkovičovo,TT,y,48.2072144,17.6473291,office,node/3361195665,2026-10-22,overpass
+soblahov,Soblahov,TN,y,48.8636236,18.0777276,office,node/11107083720,2026-10-22,overpass
+sobotiste,Sobotište,TT,y,48.7313367,17.4058172,office,node/6634207363,2026-10-22,overpass
+spisska-nova-ves,Spišská Nová Ves,KE,y,48.9435344,20.5629640,centre,node/26037190,2026-10-22,overpass
+spisska-teplica,Spišská Teplica,PO,y,49.0465452,20.2490179,office,node/2066757726,2026-10-22,overpass
+spisske-hanusovce,Spišské Hanušovce,PO,y,49.3303426,20.3433973,office,node/12971351827,2026-10-22,overpass
+strelniky,Strelníky,BBSK,y,48.7227280,19.3935746,office,node/836268186,2026-10-22,overpass
+strezenice,Streženice,TN,y,49.1082253,18.3062832,centre,node/26036179,2026-10-22,overpass
+stranavy,Stráňavy,ZA,y,49.1709609,18.8193025,office,node/13956099120,2026-10-22,overpass
+sucany,Sučany,ZA,y,49.1004729,18.9909364,office,node/1612159785,2026-10-22,overpass
+svit,Svit,PO,y,49.0562814,20.2009400,office,node/4305924550,2026-10-22,overpass
+svrcinovec,Svrčinovec,ZA,y,49.4811463,18.7940143,office,way/331483562,2026-10-22,overpass
+svaty-anton,Svätý Anton,BBSK,y,48.4236791,18.9400233,office,node/1422753024,2026-10-22,overpass
+svaty-peter,Svätý Peter,NR,y,47.8463849,18.2632293,centre,node/26036639,2026-10-22,overpass
+sulov-hradna,Súľov-Hradná,ZA,y,49.1650731,18.5878453,office,node/12035294318,2026-10-22,overpass
+tekovske-nemce,Tekovské Nemce,NR,y,48.3559358,18.5291822,office,node/616136281,2026-10-22,overpass
+teplicka-nad-vahom,Teplička nad Váhom,ZA,y,49.2237992,18.7988625,office,way/205994830,2026-10-22,overpass
+tesedikovo,Tešedíkovo,NR,y,48.1014360,17.8512447,centre,node/1831956513,2026-10-22,overpass
+tisovec,Tisovec,BBSK,y,48.6811733,19.9420708,office,node/6002606859,2026-10-22,overpass
+tomasov,Tomášov,BA,y,48.1425187,17.3365953,office,way/556713067,2026-10-22,overpass
+topolnica,Topoľnica,TT,y,48.1709031,17.7952785,office,node/4472847145,2026-10-22,overpass
+tornala,Tornaľa,BBSK,y,48.4221380,20.3223728,office,node/2511279860,2026-10-22,overpass
+trencianska-turna,Trenčianska Turná,TN,y,48.8499987,18.0222381,office,node/5215873860,2026-10-22,overpass
+trencianske-stankovce,Trenčianske Stankovce,TN,y,48.8410127,17.9854480,office,node/1082560501,2026-10-22,overpass
+trencin,Trenčín,BA,y,48.8943467,18.0405761,office,node/11240945933,2026-10-22,overpass
+trstice,Trstice,TT,y,48.0158466,17.8045595,centre,node/26036572,2026-10-22,overpass
+trstin,Trstín,TT,y,48.5251424,17.4651669,office,node/2154184911,2026-10-22,overpass
+tuhar,Tuhár,BBSK,y,48.4286631,19.5063747,centre,node/26037625,2026-10-22,overpass
+turany,Turany,ZA,y,49.1165672,19.0352604,office,node/4307003595,2026-10-22,overpass
+turen,Tureň,BA,y,48.1919733,17.3895167,office,way/254912219,2026-10-22,overpass
+turzovka,Turzovka,ZA,y,49.4039446,18.6247070,office,node/2384140598,2026-10-22,overpass
+tvarozna,Tvarožná,PO,y,49.0859807,20.4770289,office,node/2517507704,2026-10-22,overpass
+uzovsky-salgov,Uzovský Šalgov,PO,y,49.0919439,21.0606687,office,node/10314676341,2026-10-22,overpass
+vavrecka,Vavrečka,ZA,y,49.3859222,19.4683369,office,node/970781227,2026-10-22,overpass
+vavrisovo,Vavrišovo,ZA,y,49.0702901,19.7589125,office,node/13893749668,2026-10-22,overpass
+velke-ludince,Veľké Ludince,NR,y,47.9637003,18.5099166,centre,node/26036875,2026-10-22,overpass
+velke-ozorovce,Veľké Ozorovce,KE,y,48.6616510,21.6105338,office,node/4139332432,2026-10-22,overpass
+velke-zaluzie,Veľké Zálužie,NR,y,48.3081098,17.9407936,office,node/12880722347,2026-10-22,overpass
+velke-ulany,Veľké Úľany,TT,y,48.1636072,17.5743829,office,way/266812726,2026-10-22,overpass
+velky-biel,Veľký Biel,BA,y,48.2130574,17.3597013,office,way/61361118,2026-10-22,overpass
+velky-cetin,Veľký Cetín,NR,y,48.2172451,18.1871670,office,way/316514074,2026-10-22,overpass
+velky-folkmar,Veľký Folkmar,KE,y,48.8562314,21.0148079,office,node/13888361493,2026-10-22,overpass
+velky-krtis,Veľký Krtíš,BBSK,y,48.2089130,19.3491320,office,node/2650365887,2026-10-22,overpass
+vinohrady-nad-vahom,Vinohrady nad Váhom,TT,y,48.3204716,17.7606031,office,node/13888402851,2026-10-22,overpass
+vitanova,Vitanová,ZA,y,49.3547321,19.7269788,office,node/5089988263,2026-10-22,overpass
+vistuk,Vištuk,BA,y,48.3349432,17.3963101,office,node/14061888389,2026-10-22,overpass
+vlachy,Vlachy,ZA,y,49.0929933,19.4741812,office,node/9027980798,2026-10-22,overpass
+vysny-slavkov,Vyšný Slavkov,PO,y,49.0715160,20.8542688,office,node/1480359674,2026-10-22,overpass
+viglasska-huta-kalinka,Vígľašská Huta-Kalinka,BBSK,y,48.4937655,19.2798755,office,node/836268321,2026-10-22,overpass
+vycapy-opatovce,Výčapy-Opatovce,NR,y,48.4111826,18.0832359,office,node/11523029713,2026-10-22,overpass
+zbynov,Zbyňov,ZA,y,49.1206066,18.6460773,office,node/1792277310,2026-10-22,overpass
+zelenec,Zeleneč,TT,y,48.3304067,17.5965858,office,way/100109287,2026-10-22,overpass
+zemianske-kostolany,Zemianske Kostoľany,TN,y,48.6864730,18.5261312,office,way/289504640,2026-10-22,overpass
+zemianske-sady,Zemianske Sady,TT,y,48.3271015,17.8190933,office,node/13872077031,2026-10-22,overpass
+zlatniky,Zlatníky,TN,y,48.7108401,18.1231982,office,node/6497655991,2026-10-22,overpass
+zuberec,Zuberec,ZA,y,49.2599770,19.6143079,office,node/1916886214,2026-10-22,overpass
+zvolen,Zvolen,BBSK,y,48.5782821,19.1235398,office,node/1709872011,2026-10-22,overpass
+casta,Častá,BA,y,48.3941314,17.3526375,office,node/2628759221,2026-10-22,overpass
+cataj,Čataj,BA,y,48.2723134,17.4751249,office,way/61274345,2026-10-22,overpass
+cerhov,Čerhov,KE,y,48.4640049,21.6479962,office,way/71613228,2026-10-22,overpass
+cerveny-kamen,Červený Kameň,TN,y,49.0881621,18.1804700,office,node/10137327209,2026-10-22,overpass
+durkov,Ďurkov,KE,y,48.7076135,21.4430327,office,way/61237563,2026-10-22,overpass
+durcina,Ďurčiná,ZA,y,49.0629313,18.6544311,office,node/14020555485,2026-10-22,overpass
+lubela,Ľubeľa,ZA,y,49.0522092,19.4813248,office,node/3270355568,2026-10-22,overpass
+lubietova,Ľubietová,BBSK,y,48.7459388,19.3621751,office,way/180460822,2026-10-22,overpass
+salgocka,Šalgočka,TT,y,48.3352944,17.8139153,office,node/13888408217,2026-10-22,overpass
+samorin,Šamorín,TT,y,48.0279742,17.3089816,office,way/61630694,2026-10-22,overpass
+sandal,Šandal,PO,y,49.1864685,21.6189298,office,node/836263982,2026-10-22,overpass
+sarisske-bohdanovce,Šarišské Bohdanovce,PO,y,48.8465775,21.3173449,office,node/12846793628,2026-10-22,overpass
+sastin-straze,Šaštín-Stráže,TT,y,48.6397220,17.1442327,office,node/665048567,2026-10-22,overpass
+selpice,Šelpice,TT,y,48.4314116,17.5315541,office,node/11694272994,2026-10-22,overpass
+spania-dolina,Špania Dolina,BBSK,y,48.8075377,19.1322048,office,node/12582637717,2026-10-22,overpass
+stitare,Štitáre,NR,y,48.3501986,18.1591505,office,node/13891016973,2026-10-22,overpass
+sunava,Šuňava,PO,y,49.0293922,20.0875513,office,way/151869383,2026-10-22,overpass
+tapesovo,Ťapešovo,ZA,y,49.3734981,19.4466410,office,node/970636834,2026-10-22,overpass
+zabokreky-nad-nitrou,Žabokreky nad Nitrou,TN,y,48.6236330,18.3008857,office,way/132822433,2026-10-22,overpass
+zarnovica,Žarnovica,BBSK,y,48.4836713,18.7184058,office,node/12484521308,2026-10-22,overpass
+zikava,Žikava,NR,y,48.4445941,18.3821695,office,node/14233107612,2026-10-22,overpass
+zirany,Žirany,NR,y,48.3781200,18.1752377,office,node/6798375922,2026-10-22,overpass
+zitavany,Žitavany,NR,y,48.3999204,18.4188607,centre,node/1831956575,2026-10-22,overpass
+kosice,Košice,KE,y,48.7216900,21.2579270,office,way/48911086,2026-10-22,hand
+bratislava,Bratislava,BA,y,48.1441840,17.1094200,office,way/38539536,2026-10-22,hand
+jesenske,Jesenské,BBSK,n,48.3053402,20.0749598,office,node/13945547447,2026-10-22,home
+bukova,Buková,TT,y,48.5427400,17.3972684,office,node/7022993053,2026-10-22,overpass
+banov,Bánov,NR,y,48.0488525,18.1922261,office,node/11492321429,2026-10-22,overpass
+dolany,Doľany,BA,y,48.4159996,17.3759306,office,node/4277172864,2026-10-22,overpass
+jasenov,Jasenov,PO,y,48.9077318,21.9027460,office,way/791683853,2026-10-22,overpass
+kamenna-poruba,Kamenná Poruba,ZA,y,49.0890021,18.6874094,office,node/846207820,2026-10-22,overpass
+lieskovec,Lieskovec,BBSK,y,48.5788146,19.1913237,office,way/543005570,2026-10-22,overpass
+myjava,Myjava,TN,y,48.7525858,17.5659048,office,node/14019764174,2026-10-22,overpass
+nizna,Nižná,ZA,y,49.3090041,19.5190295,office,node/2337852500,2026-10-22,overpass
+trnava,Trnava,TT,y,48.3767652,17.5858175,centre,node/26037632,2026-10-22,overpass
+visnove,Višňové,ZA,y,49.1613235,18.7765683,office,way/51344781,2026-10-22,overpass
+brezno,Brezno,BBSK,y,48.8066549,19.6422964,office,node/4439437403,2026-10-23,overpass
+krupina,Krupina,BBSK,y,48.3540220,19.0663084,office,node/12598664308,2026-10-23,overpass
+sliac,Sliač,BBSK,y,48.6164528,19.1357664,office,way/302640073,2026-10-23,overpass
+prievidza,Prievidza,TN,y,48.7712966,18.6241537,office,way/50341683,2026-10-24,overpass
+ruzomberok,Ružomberok,ZA,y,49.0815123,19.3034404,office,way/73311287,2026-10-24,overpass
+senec,Senec,BA,y,48.2197987,17.3973213,office,way/61384876,2026-10-24,overpass
+vysoke-tatry,Vysoké Tatry,PO,y,49.1408562,20.2236436,office,way/64795025,2026-10-24,overpass
+cadca,Čadca,ZA,y,49.4381793,18.7902321,office,node/369895457,2026-10-24,overpass
+betliar,Betliar,KE,y,48.7025539,20.5062837,office,way/66707296,2026-10-24,overpass
+borsky-mikulas,Borský Mikuláš,TT,y,48.6278397,17.2128645,office,node/7394170475,2026-10-24,overpass
+brhlovce,Brhlovce,NR,y,48.2149156,18.7398817,office,way/68914302,2026-10-24,overpass
+budmerice,Budmerice,BA,y,48.3565281,17.4078251,office,way/323477251,2026-10-24,overpass
+banovce-nad-bebravou,Bánovce nad Bebravou,TN,y,48.7185768,18.2580036,office,way/74729778,2026-10-24,overpass
+gelnica,Gelnica,KE,y,48.8520963,20.9331867,office,way/62052651,2026-10-24,overpass
+giraltovce,Giraltovce,PO,y,49.1154665,21.5209792,office,node/1648790005,2026-10-24,overpass
+hurbanovo,Hurbanovo,NR,y,47.8761227,18.1983130,centre,node/26037934,2026-10-24,overpass
+ivanka-pri-dunaji,Ivanka pri Dunaji,BA,y,48.1901709,17.2571886,office,way/48870861,2026-10-24,overpass
+kysucke-nove-mesto,Kysucké Nové Mesto,ZA,y,49.3055482,18.7878904,office,node/13898865463,2026-10-24,overpass
+liesek,Liesek,ZA,y,49.3605754,19.6758641,office,node/836268245,2026-10-24,overpass
+liptovsky-hradok,Liptovský Hrádok,ZA,y,49.0372392,19.7208928,office,way/143816839,2026-10-24,overpass
+liskova,Lisková,ZA,y,49.0886755,19.3520480,office,node/4569592111,2026-10-24,overpass
+martin-nad-zitavou,Martin nad Žitavou,NR,y,48.3967914,18.3511202,office,node/14233104336,2026-10-24,overpass
+mojmirovce,Mojmírovce,NR,y,48.2072227,18.0640002,centre,node/26037030,2026-10-24,overpass
+nitrianske-pravno,Nitrianske Pravno,TN,y,48.8714909,18.6339678,office,way/52664618,2026-10-24,overpass
+pohronska-polhora,Pohronská Polhora,BBSK,y,48.7548510,19.7987245,office,node/13888521019,2026-10-24,overpass
+povazska-bystrica,Považská Bystrica,TN,y,49.1161982,18.4473529,office,way/158925616,2026-10-24,overpass
+preselany,Preseľany,NR,y,48.4491673,18.1017313,office,way/65199220,2026-10-24,overpass
+puchov,Púchov,TN,y,49.1240630,18.3232319,office,node/5102066030,2026-10-24,overpass
+solcany,Solčany,NR,y,48.5358035,18.1993691,office,way/65203205,2026-10-24,overpass
+svidnik,Svidník,PO,y,49.3085082,21.5733508,centre,node/26038362,2026-10-24,overpass
+trencianske-teplice,Trenčianske Teplice,TN,y,48.9104822,18.1657726,office,way/58935019,2026-10-24,overpass
+turcianske-teplice,Turčianske Teplice,ZA,y,48.8618485,18.8601942,office,node/5701432630,2026-10-24,overpass
+tvrdosovce,Tvrdošovce,NR,y,48.0949773,18.0647212,office,way/189338343,2026-10-24,overpass
+velke-uherce,Veľké Uherce,TN,y,48.6042366,18.4407736,office,node/2316220198,2026-10-24,overpass
+velky-saris,Veľký Šariš,PO,y,49.0406385,21.1972706,centre,node/26035900,2026-10-24,overpass
+vrable,Vráble,NR,y,48.2438616,18.3032679,office,node/347455745,2026-10-24,overpass
+vrutky,Vrútky,ZA,y,49.1138074,18.9201684,office,way/189346981,2026-10-24,overpass
+zlate-moravce,Zlaté Moravce,NR,y,48.3833333,18.4000000,centre,node/26037381,2026-10-24,overpass
+cierny-balog,Čierny Balog,BBSK,y,48.7461551,19.6545916,office,node/3055718314,2026-10-24,overpass
+lubica,Ľubica,PO,y,49.1208815,20.4480699,office,node/2517562982,2026-10-24,overpass
+senkvice,Šenkvice,BA,y,48.2965341,17.3467228,office,way/258662605,2026-10-24,overpass
+strba,Štrba,PO,y,49.0522839,20.0827679,office,node/6525497854,2026-10-24,overpass
+hlavni-mesto-praha,Hlavní město Praha,PHA,y,50.0871073,14.4178281,office,node/296677370,2026-10-25,hand

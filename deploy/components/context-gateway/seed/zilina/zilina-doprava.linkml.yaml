@@ -1,0 +1,376 @@
+id: https://joinedcontext.com/models/zilina/zilina-doprava
+name: zilina-doprava
+title: Mobility of Žilina, live
+description: "What the city's own open data portal (opendata.zilina.sk, Invipo) publishes about moving and parking in Žilina: the occupancy of its car parks, its buses and trolleybuses with their delay, the hourly counts of its traffic counters and its street lights. One model, one space; Smart Data Models classes where they exist (DM-04, DM-16). Licence of the data: ODbL, credited as \"Mesto Žilina\". Sources: seeds/zilina-opendata/inventory.csv."
+license: https://joinedcontext.com/licenses/cc-by-4.0
+prefixes:
+  linkml: https://w3id.org/linkml/
+  jc: https://joinedcontext.com/models/
+  sdm: https://smartdatamodels.org/
+  ngsi-ld: https://uri.etsi.org/ngsi-ld/
+default_prefix: sdm
+default_range: string
+imports:
+  - linkml:types
+  - ngsi-ld-core
+slots:
+  name:
+    slot_uri: schema:name
+    description: The name, per language, as the city's open data portal writes it.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Názov
+          cs: Název
+          en: Name
+          de: Name
+        annotations: { generated: cs de }
+      ngsi_ld_kind: LanguageProperty
+      upstream_source: https://schema.org/name
+  dataProvider:
+    slot_uri: sdm:dataProvider
+    description: 'Who publishes the data and the credit its licence asks for: "Mesto Žilina, ODbL".'
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Poskytovateľ údajov
+          cs: Poskytovatel dat
+          en: Data provider
+          de: Datenanbieter
+        annotations: { generated: cs de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  source:
+    slot_uri: sdm:source
+    description: The portal API the entity was read from.
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Zdroj
+          cs: Zdroj
+          en: Source
+          de: Quelle
+        annotations: { generated: cs de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  availableSpotNumber:
+    slot_uri: sdm:availableSpotNumber
+    description: Free spaces at the car park when the portal last counted them.
+    range: integer
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Voľné miesta
+          cs: Volná místa
+          en: Free spaces
+          de: Freie Stellplätze
+        annotations: { generated: cs de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Parking
+  totalSpotNumber:
+    slot_uri: sdm:totalSpotNumber
+    description: Spaces the car park counts in total.
+    range: integer
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Miesta spolu
+          cs: Počet míst
+          en: Spaces in total
+          de: Stellplätze gesamt
+        annotations: { generated: cs de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Parking
+  occupiedSpotNumber:
+    slot_uri: sdm:occupiedSpotNumber
+    description: Taken spaces at the car park, total minus free.
+    range: integer
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Obsadené miesta
+          cs: Obsazená místa
+          en: Taken spaces
+          de: Belegte Stellplätze
+        annotations: { generated: cs de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Parking
+  vehicleType:
+    slot_uri: sdm:vehicleType
+    description: The kind of vehicle, as the portal names it (Bus, Trolleybus).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Druh vozidla
+          cs: Typ vozidla
+          en: Vehicle type
+          de: Fahrzeugtyp
+        annotations: { generated: cs de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  lineName:
+    slot_uri: jc:lineName
+    description: The line the vehicle runs, its short name (3, 24).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Linka
+          cs: Linka
+          en: Line
+          de: Linie
+        annotations: { generated: cs de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  direction:
+    slot_uri: jc:direction
+    description: The last stop the vehicle heads for.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Smer
+          cs: Směr
+          en: Direction
+          de: Richtung
+        annotations: { generated: cs de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  nextStop:
+    slot_uri: jc:nextStop
+    description: The name of the stop the vehicle reaches next.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Nasledujúca zastávka
+          cs: Následující zastávka
+          en: Next stop
+          de: Nächste Haltestelle
+        annotations: { generated: cs de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  delay:
+    slot_uri: jc:delay
+    description: Seconds behind the timetable, negative when ahead (the portal's deviation in minutes times 60, rounded).
+    range: integer
+    unit: { ucum_code: s }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Meškanie
+          cs: Zpoždění (s)
+          en: Delay
+          de: Verspätung (s)
+        annotations: { generated: cs de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  heading:
+    slot_uri: sdm:heading
+    description: Where the vehicle points, degrees clockwise from north.
+    range: integer
+    minimum_value: 0
+    maximum_value: 360
+    unit: { ucum_code: deg }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Smer jazdy
+          cs: Směr jízdy (°)
+          en: Heading
+          de: Fahrtrichtung (°)
+        annotations: { generated: cs de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  occupancy:
+    slot_uri: jc:occupancy
+    description: How full the vehicle is, in percent, as the portal estimates it.
+    range: integer
+    minimum_value: 0
+    maximum_value: 100
+    unit: { ucum_code: '%' }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Obsadenosť
+          cs: Obsazenost (%)
+          en: Occupancy
+          de: Auslastung (%)
+        annotations: { generated: cs de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  dateObserved:
+    slot_uri: sdm:dateObserved
+    description: When the portal last reported the vehicle or the car park.
+    range: datetime
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Čas merania
+          cs: Čas měření
+          en: Observed
+          de: Messzeitpunkt
+        annotations: { generated: cs de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  intensity:
+    slot_uri: sdm:intensity
+    description: Vehicles the counter saw in the hour.
+    range: integer
+    minimum_value: 0
+    unit: { ucum_code: /h }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Počet vozidiel
+          cs: Intenzita (počet za den)
+          en: Vehicles
+          de: Verkehrsstärke (pro Tag)
+        annotations: { generated: cs de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  averageVehicleSpeed:
+    slot_uri: sdm:averageVehicleSpeed
+    description: The mean speed of the vehicles counted in the hour.
+    range: float
+    minimum_value: 0
+    unit: { ucum_code: km/h }
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Priemerná rýchlosť
+          cs: Průměrná rychlost
+          en: Mean speed
+          de: Durchschnittsgeschwindigkeit
+        annotations: { generated: cs de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  dateObservedFrom:
+    slot_uri: sdm:dateObservedFrom
+    description: The start of the hour the count covers.
+    range: datetime
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Od
+          cs: Období od
+          en: From
+          de: Zeitraum ab
+        annotations: { generated: cs de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+  dateObservedTo:
+    slot_uri: sdm:dateObservedTo
+    description: The end of the hour the count covers.
+    range: datetime
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Do
+          cs: Období do
+          en: To
+          de: Zeitraum bis
+        annotations: { generated: cs de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+classes:
+  OffStreetParking:
+    class_uri: sdm:OffStreetParking
+    description: One car park of the city with its spaces and how many are free now.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Parking
+      label:
+        tag: label
+        value:
+          sk: Parkovisko
+          cs: Parkoviště
+          en: Car park
+          de: Parkplatz
+    slots:
+      - name
+      - availableSpotNumber
+      - totalSpotNumber
+      - occupiedSpotNumber
+      - dateObserved
+      - dataProvider
+      - source
+  Vehicle:
+    class_uri: sdm:Vehicle
+    description: 'One bus or trolleybus of DPMŽ in service: where it is, its line and how late it runs.'
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+      label:
+        tag: label
+        value:
+          sk: Vozidlo
+          cs: Vozidlo
+          en: Vehicle
+          de: Fahrzeug
+    slots:
+      - name
+      - vehicleType
+      - lineName
+      - direction
+      - nextStop
+      - delay
+      - heading
+      - occupancy
+      - dateObserved
+      - dataProvider
+      - source
+  TrafficFlowObserved:
+    class_uri: sdm:TrafficFlowObserved
+    description: One traffic counter of the city and what it counted in the last full hour.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Transportation
+      label:
+        tag: label
+        value:
+          sk: Sčítanie dopravy
+          cs: Sčítání dopravy
+          en: Traffic count
+          de: Verkehrszählung
+    slots:
+      - name
+      - intensity
+      - averageVehicleSpeed
+      - dateObservedFrom
+      - dateObservedTo
+      - dataProvider
+      - source
+  Streetlight:
+    class_uri: sdm:Streetlight
+    description: One street light of the city, its name and place.
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/smart-data-models/dataModel.Streetlighting
+      label:
+        tag: label
+        value:
+          sk: Pouličné osvetlenie
+          cs: Pouliční osvětlení
+          en: Streetlight
+          de: Straßenlaterne
+    slots: [name, dataProvider, source]

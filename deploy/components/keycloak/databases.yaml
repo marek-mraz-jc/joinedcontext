@@ -1,0 +1,11 @@
+---
+keycloak:
+  name: 'keycloak'
+  embedded: true
+  user: 'keycloak'
+  secret:
+    name: 'db-keycloak'
+    key: 'password'
+    generate: true
+  hostServiceName: 'postgres-cluster-rw'
+  port: 5432

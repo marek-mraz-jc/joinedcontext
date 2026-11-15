@@ -1,0 +1,44 @@
+# Tourism in Bratislava: overnight stays: one public dataset of the hub (T-5274), item abc9a9309f864a0b812cf281d77b8467, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-vykony-cestovneho-ruchu-pocet-prenocovani
+  namespace: bratislava
+  title:
+    sk: Výkony cestovného ruchu v Bratislave - počet prenocovaní
+    en: 'Tourism in Bratislava: overnight stays'
+  description:
+    sk: 'Ukazovatele tabuľky „Výkony cestovného ruchu v Bratislave - počet prenocovaní“ z data.bratislava.sk, za mesto ako celok, jeden na obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Tourism in Bratislava: overnight stays”, for the city as a whole, one per period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: 2at67o3wd6wx5p2h2jvk37wcllahdybd
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-vykony-cestovneho-ruchu-pocet-prenocovani
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [ECON]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/abc9a9309f864a0b812cf281d77b8467
+        title:
+          sk: Výkony cestovného ruchu v Bratislave - počet prenocovaní
+          en: 'Tourism in Bratislava: overnight stays'
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Výkony cestovného ruchu v Bratislave - počet prenocovaní. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Tourism in Bratislava: overnight stays. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

@@ -1,0 +1,21 @@
+# Open Data BCN `informacio-punts-recarrega-electric` (T-5262): every public charging point of the
+# Endolla Barcelona network (B:SM), its ports and each port's live state, one JSON file of about
+# 630 kB rewritten as the ports change (134 points, 1,366 ports on 2026-10-23). It carries the same
+# port states as `estat-ports-recarrega-electric` (0 of 1,366 differed on 2026-10-23T06:00Z), so
+# one read serves both datasets. No key. CC BY 4.0, Ajuntament de Barcelona.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-ev-charging
+  namespace: barcelona
+  title:
+    ca: Punts de recàrrega de vehicles elèctrics (Open Data BCN)
+    es: Puntos de recarga de vehículos eléctricos (Open Data BCN)
+    en: Electric vehicle charging points (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/data/dataset/8cdafa08-d378-4bf1-aad4-fafffe815940/resource/9febc26f-d6a7-45f2-8f73-f529ba4da930/download
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

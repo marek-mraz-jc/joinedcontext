@@ -1,0 +1,33 @@
+[package]
+name = "alerts-heatmap"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Where and when Helsinki's alerts happen: hex bins, repeat places and the hour of the week, computed in the browser (T-3333)"
+license = "EUPL-1.2"
+
+# Its own workspace: the app's repository holds this crate alone, and the portal's root workspace
+# leaves the app out.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Only the browser's module exports through wasm-bindgen; the server component (server/, T-3351)
+# reuses the analysis without it.
+wasm-bindgen = { version = "=0.2.129", optional = true }
+
+[features]
+default = ["browser"]
+browser = ["dep:wasm-bindgen"]
+
+[profile.release]
+# The module is downloaded by every visitor: small over fast, one codegen unit, no unwinding.
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

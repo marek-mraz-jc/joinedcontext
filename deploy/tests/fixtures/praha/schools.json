@@ -1,0 +1,105 @@
+{
+ "type": "FeatureCollection",
+ "name": "fsv_cur_ov_skolstvi_b_fsv_cur_ov_skolstvi_b",
+ "crs": {
+  "type": "name",
+  "properties": {
+   "name": "urn:ogc:def:crs:OGC:1.3:CRS84"
+  }
+ },
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "objectid": 7007,
+    "nazev_zar": "Mateřská škola sv. Voršily v Praze",
+    "ulice": "Ostrovní",
+    "cpop": 139,
+    "cor": 11,
+    "pism_cor": null,
+    "adresa_zar": "OSTROVNÍ 139/11",
+    "kod_typu": "A00",
+    "typ_txt": "Mateřská škola",
+    "kapacita": 54,
+    "pocet_zaku": 52,
+    "druh_uap": 1,
+    "poskyt": "HMP-SMS",
+    "id_poskyt": 384,
+    "zrizovatel_uap": 4,
+    "typ_uap": "01_01",
+    "zdroj_pov": 0,
+    "kapacita_real": null,
+    "globalid": "{3201594C-4F61-4E7F-B6C9-11A3B39EB235}"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     14.415788491000058,
+     50.08063429900005
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "objectid": 7010,
+    "nazev_zar": "Modrý klíč - základní škola speciální a mateřská škola speciální, o.p.s.",
+    "ulice": "Smolkova",
+    "cpop": 567,
+    "cor": 2,
+    "pism_cor": null,
+    "adresa_zar": "SMOLKOVA 567/2",
+    "kod_typu": "B00",
+    "typ_txt": "Základní škola",
+    "kapacita": 18,
+    "pocet_zaku": 14,
+    "druh_uap": 1,
+    "poskyt": "HMP-SMS",
+    "id_poskyt": 384,
+    "zrizovatel_uap": 5,
+    "typ_uap": "01_02",
+    "zdroj_pov": 0,
+    "kapacita_real": null,
+    "globalid": "{0BCBC0B9-EEF6-4CC5-B3FD-53AD205A3CAA}"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     14.448987616000068,
+     50.00853355400005
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "objectid": 7020,
+    "nazev_zar": "Základní škola sv. Voršily v Praze",
+    "ulice": "Ostrovní",
+    "cpop": 2070,
+    "cor": 9,
+    "pism_cor": null,
+    "adresa_zar": "OSTROVNÍ 2070/9",
+    "kod_typu": "G21",
+    "typ_txt": "Školní družina",
+    "kapacita": 200,
+    "pocet_zaku": 137,
+    "druh_uap": 1,
+    "poskyt": "HMP-SMS",
+    "id_poskyt": 384,
+    "zrizovatel_uap": 4,
+    "typ_uap": "01_06",
+    "zdroj_pov": 0,
+    "kapacita_real": null,
+    "globalid": "{76C1E2F2-C6CB-4EE0-BEE9-BBB2D9B6B8C1}"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     14.41521607900006,
+     50.08043682300007
+    ]
+   }
+  }
+ ]
+}

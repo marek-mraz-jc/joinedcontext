@@ -1,0 +1,44 @@
+# Events and participants of the sports activities of the leisure centres (CVČ): one public dataset of the hub (T-5672), item 569586b3c9b840ed8a1e67ba2107774e, written by the statistics-okresy pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-pocet-podujati-a-ucastnikov
+  namespace: bratislava
+  title:
+    sk: Počet podujatí a účastníkov príležitostnej záujmovej činnosti CVČ so športovým zameraním
+    en: Events and participants of the sports activities of the leisure centres (CVČ)
+  description:
+    sk: 'Ukazovatele tabuľky „Počet podujatí a účastníkov príležitostnej záujmovej činnosti CVČ so športovým zameraním“ z data.bratislava.sk, jeden na okres Bratislava I až V, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Events and participants of the sports activities of the leisure centres (CVČ)”, one per okres Bratislava I to V, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: ts3pt4ocyxayzgccus63tpc3di77g33e
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-pocet-podujati-a-ucastnikov
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [EDUC]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/569586b3c9b840ed8a1e67ba2107774e
+        title:
+          sk: Počet podujatí a účastníkov príležitostnej záujmovej činnosti CVČ so športovým zameraním
+          en: Events and participants of the sports activities of the leisure centres (CVČ)
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet podujatí a účastníkov príležitostnej záujmovej činnosti CVČ so športovým zameraním. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Events and participants of the sports activities of the leisure centres (CVČ). Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-okresy }

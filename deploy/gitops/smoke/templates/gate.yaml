@@ -1,0 +1,120 @@
+{{- range $key := list "revision" "image" "environment" "domain" "realm" }}
+{{- if not (index $.Values $key) }}{{ fail (printf "gitops smoke: %s is required" $key) }}{{ end }}
+{{- end }}
+# The revision this gate runs for: a new commit changes it, so the smoke Application syncs and
+# its PostSync Job runs after every commit (ADR-N-056 §2.6).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gitops-smoke
+  namespace: {{ .Release.Namespace }}
+data:
+  revision: {{ .Values.revision | quote }}
+  {{- $names := list }}
+  {{- range .Values.components }}{{ $names = append $names .component }}{{ end }}
+  {{- $d := .Values.domain }}
+  # Each line: the status a public surface answers, its URL. Only the components deployed.
+  checks: |
+    200 https://idm.{{ $d }}/realms/{{ .Values.realm }}/.well-known/openid-configuration
+    {{- if has "portal" $names }}
+    200 https://portal.{{ $d }}/api/v1/health
+    401 https://portal.{{ $d }}/api/v1/auth/me
+    {{- end }}
+    {{- if has "gitea" $names }}
+    200 https://{{ $d }}/git/api/healthz
+    {{- end }}
+    {{- if has "ckan" $names }}
+    200 https://opendata.{{ $d }}/api/3/action/status_show
+    301 https://data.{{ $d }}/api/3/action/status_show
+    {{- end }}
+    {{- if has "viz" $names }}
+    200 https://viz.{{ $d }}/render.html
+    {{- end }}
+  gate.sh: |
+    {{- .Files.Get "files/gate.sh" | nindent 4 }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gitops-smoke
+  namespace: {{ .Release.Namespace }}
+---
+# Reading the Applications is all the gate does in the cluster.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gitops-smoke
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [applications]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gitops-smoke
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: gitops-smoke
+subjects:
+  - kind: ServiceAccount
+    name: gitops-smoke
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gitops-smoke
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    # The last run stays for its log until the next one replaces it.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ add .Values.waitSeconds 300 }}
+  template:
+    metadata:
+      labels:
+        # Argo CD's NetworkPolicy: DNS, the Kubernetes API and public HTTPS.
+        app.kubernetes.io/part-of: argocd
+        app.kubernetes.io/name: gitops-smoke
+    spec:
+      serviceAccountName: gitops-smoke
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: gate
+          image: {{ .Values.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: [bash, /gate/gate.sh]
+          env:
+            - {name: REVISION, value: {{ .Values.revision | quote }}}
+            - {name: SELF, value: {{ printf "%s-smoke" .Values.environment | quote }}}
+            - {name: WAIT_SECONDS, value: {{ .Values.waitSeconds | quote }}}
+            - {name: NAMESPACE, value: {{ .Release.Namespace | quote }}}
+            - {name: HOME, value: /tmp}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 200m, memory: 128Mi}
+          volumeMounts:
+            - {name: gate, mountPath: /gate, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: gate
+          configMap:
+            name: gitops-smoke
+        - name: tmp
+          emptyDir: {}

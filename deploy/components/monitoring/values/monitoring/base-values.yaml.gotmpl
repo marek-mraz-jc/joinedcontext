@@ -1,0 +1,482 @@
+---
+{{- $root := .Values }}
+{{- $components := $root.components | default list }}
+# Checklist:
+# - [x] No workload of its own -> the chart renders Prometheus Operator custom resources only
+# - [x] Metrics ports stay inside the cluster -> no APISIX route, no ingress, no egress
+# - [x] Named service ports -> a renamed port breaks the monitor instead of scraping the wrong one
+# - [x] One scrape interval for the whole platform (OPS-16)
+#
+# Every entry is guarded by the component it scrapes: an instance that does not deploy the
+# pipeline runner must not carry a monitor for a Service that will never exist, because a
+# monitor with no target is a silent gap in the dashboards rather than a visible failure.
+
+interval: 15s
+scrapeTimeout: 10s
+
+serviceMonitors:
+  {{- if has "context-gateway" $components }}
+  - name: context-gateway
+    namespace: {{ index $root "context-gateway" "gateway" "namespace" }}
+    selector:
+      app.kubernetes.io/name: context-gateway-gateway
+    port: http
+  {{- end }}
+  {{- if has "context-broker" $components }}
+  - name: context-broker
+    namespace: {{ index $root "context-broker" "broker" "namespace" }}
+    selector:
+      app.kubernetes.io/name: context-broker-broker
+    # Antares serves its Prometheus text at /q/metrics, not at the root /metrics this template
+    # defaults to (T-0463), and on its own port (ANTARES_METRICS_PORT, T-5095): the API port
+    # answers /q/metrics 404. The recorder is armed by ANTARES_TELEMETRY in
+    # components/context-broker; without it this path answers 404 as well.
+    port: metrics
+    path: /q/metrics
+  {{- range $b := $root.global.contextBrokers | default list }}
+  - name: context-broker-{{ $b.name }}
+    namespace: {{ index $root "context-broker" "broker" "namespace" }}
+    selector:
+      app.kubernetes.io/name: context-broker-{{ $b.name }}
+    port: metrics
+    path: /q/metrics
+  {{- end }}
+  {{- end }}
+  {{- if has "probes" $components }}
+  # The synthetic probes' results (T-5103): jc_probe_up per target, Endpoint and surface.
+  - name: probe
+    namespace: {{ index $root "probes" "probe" "namespace" }}
+    selector:
+      app.kubernetes.io/name: probes-probe
+    port: metrics
+  {{- end }}
+  {{- if has "portal" $components }}
+  - name: portal
+    namespace: {{ index $root "portal" "portal" "namespace" }}
+    selector:
+      app.kubernetes.io/name: portal-portal
+    port: http
+  {{- end }}
+  {{- if has "observability" $components }}
+  - name: observability-collector
+    namespace: {{ index $root "observability" "collector" "namespace" }}
+    selector:
+      app.kubernetes.io/name: observability-collector
+    # The collector's own telemetry, on its own port: how much it received, dropped and
+    # failed to export is the only way to see that the Activity stream has gone quiet
+    # because nothing happened rather than because the pipeline broke (OPS-16).
+    port: metrics
+  {{- end }}
+  {{- if has "pipeline-runner" $components }}
+  - name: pipeline-runner
+    namespace: {{ index $root "pipeline-runner" "runner" "namespace" }}
+    selector:
+      app.kubernetes.io/name: pipeline-runner-runner
+    # Bento serves its Prometheus text on the same port as its API (PL-24).
+    port: http
+  {{- end }}
+  {{- if has "jc" $components }}
+  # jc's admin listener: every module's series (gateway, Antares, Portal, assistant) in one
+  # /metrics, behind the admin token (components/jc secrets.yaml jc-admin-token).
+  - name: jc
+    namespace: {{ index $root "jc" "server" "namespace" }}
+    selector:
+      app.kubernetes.io/name: jc-server
+      app.kubernetes.io/instance: jc-server
+    port: admin
+    bearerTokenSecret:
+      name: jc-admin-token
+      key: token
+    # The gateway's latency summary has one series per Endpoint, route and quantile: 37,394 of one
+    # jc's 56,574 series in the prod rehearsal (jc-prod-metrics), and no dashboard reads it (they
+    # ask for _bucket). Its _count and _sum stay.
+    metricRelabelings:
+      - sourceLabels: [__name__, quantile]
+        regex: jc_gateway_request_duration_seconds;.+
+        action: drop
+  {{- end }}
+  {{- if dig "monitoring" "monitoring" "certManagerMonitor" false $root }}
+  # The cluster's cert-manager controller (the kit's, namespace cert-manager): every Certificate's
+  # expiry and readiness, read by JcProdCertificateExpiresSoon (T-6727). One instance per cluster
+  # turns it on, or the series would be scraped twice.
+  - name: cert-manager
+    namespace: cert-manager
+    selector:
+      app.kubernetes.io/name: cert-manager
+      app.kubernetes.io/component: controller
+    port: http-metrics
+  {{- end }}
+  {{- if has "gitops" $components }}
+  # Argo CD's sync and health of every Application (ADR-N-056 §2.9).
+  - name: argocd-application-controller
+    namespace: {{ index $root "gitops" "argocd" "namespace" }}
+    selector:
+      app.kubernetes.io/name: argocd-metrics
+    port: http-metrics
+  {{- end }}
+
+# The CloudNativePG instances' exporter (:9187, named `metrics`), read by the cnpg/cluster chart's
+# rules, CNPGClusterHighConnectionsWarning at 80 % of max_connections among them (T-5125). The
+# chart's own PodMonitor has no interval, so it is off there and rendered here.
+podMonitors:
+  {{- range $c := list "postgres" "apps-db" }}
+  {{- if has $c $components }}
+  - name: {{ index $root $c "cluster" "name" }}
+    namespace: {{ index $root $c "cluster" "namespace" }}
+    selector:
+      cnpg.io/cluster: {{ index $root $c "cluster" "name" }}
+      cnpg.io/podRole: instance
+    port: metrics
+  {{- end }}
+  {{- end }}
+
+# APISIX is deliberately absent: its own chart renders a ServiceMonitor for port 9091
+# (/apisix/prometheus/metrics) as soon as global.metrics.enabled is set, on the same 15s
+# interval. A second monitor here would scrape the edge twice and double every counter.
+
+alertGroups:
+  {{- if has "apisix" $components }}
+  # Copied from the runbook in docs Deployment/10 section 7, unchanged: the two failures that
+  # make the edge stop serving without the pods ever going unready.
+  - name: apisix-edge
+    rules:
+      - alert: APISIXConfigReloadFailed
+        # A standalone APISIX silently keeps its last good configuration when the new
+        # apisix.yaml is invalid (a missing #END marker is the usual cause), so nothing else
+        # reports it: routes simply stay stale.
+        expr: apisix_yaml_configuration_load_status == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'APISIX standalone failed to reload apisix.yaml (check the #END marker)'
+      - alert: APISIXHigh5xxRate
+        expr: sum(rate(apisix_http_status{code=~"5.."}[5m])) / sum(rate(apisix_http_status[5m])) > 0.01
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'APISIX edge 5xx error rate exceeded 1%'
+  {{- end }}
+  {{- if has "probes" $components }}
+  # T-5103: what a visitor sees through the public hosts. A surface failing everywhere is red in
+  # the probe's first minute, so `for: 1m` turns it red within two.
+  - name: synthetic-probes
+    rules:
+      - alert: ProbeSurfaceDown
+        expr: jc_probe_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{`{{ $labels.surface }}`}} of {{`{{ $labels.endpoint }}`}} on {{`{{ $labels.target }}`}} fails its synthetic probe (GET /results.json on the probe pod names the reason)'
+      - alert: ProbeStalled
+        expr: time() - jc_probe_round_timestamp_seconds > 180
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'The synthetic probe of {{`{{ $labels.target }}`}} finished no round for three minutes'
+  # T-5104: the objectives of each public surface over 30 days, measured by the synthetic probe
+  # from outside: 99.5 % of probes hold their check, and 95 % answer within 500 ms (p95 < 500 ms).
+  # Multiwindow burn rates (Google SRE workbook ch. 5): 14.4x over 1h and 6x over 6h page, each
+  # confirmed by a short window so the alert resolves minutes after the fault; 1x over 3 days is a ticket.
+  - name: slo-public-surfaces
+    rules:
+      - record: jc:probe_failure:ratio_rate5m
+        expr: sum by (target, surface) (rate(jc_probe_failures_total[5m])) / sum by (target, surface) (rate(jc_probe_request_duration_seconds_count[5m]))
+      - record: jc:probe_slow:ratio_rate5m
+        expr: 1 - sum by (target, surface) (rate(jc_probe_request_duration_seconds_bucket{le="0.5"}[5m])) / sum by (target, surface) (rate(jc_probe_request_duration_seconds_count[5m]))
+      - record: jc:probe_failure:ratio_rate30m
+        expr: sum by (target, surface) (rate(jc_probe_failures_total[30m])) / sum by (target, surface) (rate(jc_probe_request_duration_seconds_count[30m]))
+      - record: jc:probe_slow:ratio_rate30m
+        expr: 1 - sum by (target, surface) (rate(jc_probe_request_duration_seconds_bucket{le="0.5"}[30m])) / sum by (target, surface) (rate(jc_probe_request_duration_seconds_count[30m]))
+      - record: jc:probe_failure:ratio_rate1h
+        expr: sum by (target, surface) (rate(jc_probe_failures_total[1h])) / sum by (target, surface) (rate(jc_probe_request_duration_seconds_count[1h]))
+      - record: jc:probe_slow:ratio_rate1h
+        expr: 1 - sum by (target, surface) (rate(jc_probe_request_duration_seconds_bucket{le="0.5"}[1h])) / sum by (target, surface) (rate(jc_probe_request_duration_seconds_count[1h]))
+      - record: jc:probe_failure:ratio_rate6h
+        expr: sum by (target, surface) (rate(jc_probe_failures_total[6h])) / sum by (target, surface) (rate(jc_probe_request_duration_seconds_count[6h]))
+      - record: jc:probe_slow:ratio_rate6h
+        expr: 1 - sum by (target, surface) (rate(jc_probe_request_duration_seconds_bucket{le="0.5"}[6h])) / sum by (target, surface) (rate(jc_probe_request_duration_seconds_count[6h]))
+      - record: jc:probe_failure:ratio_rate3d
+        expr: sum by (target, surface) (rate(jc_probe_failures_total[3d])) / sum by (target, surface) (rate(jc_probe_request_duration_seconds_count[3d]))
+      - record: jc:probe_slow:ratio_rate3d
+        expr: 1 - sum by (target, surface) (rate(jc_probe_request_duration_seconds_bucket{le="0.5"}[3d])) / sum by (target, surface) (rate(jc_probe_request_duration_seconds_count[3d]))
+      - record: jc:probe_failure:ratio_rate30d
+        expr: sum by (target, surface) (rate(jc_probe_failures_total[30d])) / sum by (target, surface) (rate(jc_probe_request_duration_seconds_count[30d]))
+      - record: jc:probe_slow:ratio_rate30d
+        expr: 1 - sum by (target, surface) (rate(jc_probe_request_duration_seconds_bucket{le="0.5"}[30d])) / sum by (target, surface) (rate(jc_probe_request_duration_seconds_count[30d]))
+      - record: jc:probe_availability:ratio30d
+        expr: 1 - jc:probe_failure:ratio_rate30d
+      - record: jc:probe_latency:p95_30d
+        expr: histogram_quantile(0.95, sum by (target, surface, le) (rate(jc_probe_request_duration_seconds_bucket[30d])))
+      - alert: SurfaceAvailabilityBudgetBurnFast
+        expr: |
+          (jc:probe_failure:ratio_rate1h > (14.4 * 0.005) and jc:probe_failure:ratio_rate5m > (14.4 * 0.005))
+          or
+          (jc:probe_failure:ratio_rate6h > (6 * 0.005) and jc:probe_failure:ratio_rate30m > (6 * 0.005))
+        for: 2m
+        labels:
+          severity: critical
+          slo: failure
+        annotations:
+          summary: '{{`{{ $labels.surface }}`}} on {{`{{ $labels.target }}`}} spends its 30-day availability (99.5 %) budget at 6x or more: at this rate it is gone in under five days (GET /results.json on the probe pod names the failing Endpoints)'
+      - alert: SurfaceAvailabilityBudgetBurnSlow
+        expr: jc:probe_failure:ratio_rate3d > 0.005 and jc:probe_failure:ratio_rate6h > 0.005
+        for: 1h
+        labels:
+          severity: warning
+          slo: failure
+        annotations:
+          summary: '{{`{{ $labels.surface }}`}} on {{`{{ $labels.target }}`}} has spent its availability (99.5 %) budget faster than 30 days allow for three days'
+      - alert: SurfaceLatencyBudgetBurnFast
+        expr: |
+          (jc:probe_slow:ratio_rate1h > (14.4 * 0.05) and jc:probe_slow:ratio_rate5m > (14.4 * 0.05))
+          or
+          (jc:probe_slow:ratio_rate6h > (6 * 0.05) and jc:probe_slow:ratio_rate30m > (6 * 0.05))
+        for: 2m
+        labels:
+          severity: critical
+          slo: slow
+        annotations:
+          summary: '{{`{{ $labels.surface }}`}} on {{`{{ $labels.target }}`}} spends its 30-day latency (p95 < 500 ms) budget at 6x or more: at this rate it is gone in under five days (GET /results.json on the probe pod names the failing Endpoints)'
+      - alert: SurfaceLatencyBudgetBurnSlow
+        expr: jc:probe_slow:ratio_rate3d > 0.05 and jc:probe_slow:ratio_rate6h > 0.05
+        for: 1h
+        labels:
+          severity: warning
+          slo: slow
+        annotations:
+          summary: '{{`{{ $labels.surface }}`}} on {{`{{ $labels.target }}`}} has spent its latency (p95 < 500 ms) budget faster than 30 days allow for three days'
+  # T-5104: the outside view of what lapses on a date. cert-manager renews 30 days ahead, so
+  # 14 days left means renewal has failed for two weeks; 0 is a certificate that fails verification.
+  - name: expiry
+    rules:
+      - alert: TLSCertificateExpiresSoon
+        expr: jc_probe_tls_cert_expiry_timestamp_seconds - time() < 14 * 86400
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'The certificate {{`{{ $labels.host }}`}} serves expires within 14 days or fails verification: check its cert-manager Certificate and the HTTP-01 challenge'
+      - alert: DomainExpiresSoon
+        expr: jc_probe_domain_expiry_timestamp_seconds - time() < 30 * 86400
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'The registration of {{`{{ $labels.domain }}`}} expires within 30 days: renew it at the registrar'
+  {{- end }}
+  # T-5104: node and volume capacity, from node-exporter and the kubelet as the Prometheus
+  # Operator's stack (kube-prometheus-stack) scrapes them; local-path volumes live on the node disk.
+  - name: capacity
+    rules:
+      - alert: NodeDiskAlmostFull
+        expr: 1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs"} > 0.85
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{`{{ $labels.mountpoint }}`}} on {{`{{ $labels.instance }}`}} is more than 85 % full: Postgres and local-path volumes stop at 100 %'
+          runbook_url: https://github.com/marek-mraz-jc/joinedcontext-deployment/blob/main/components/monitoring/RUNBOOK.md#nodediskalmostfull
+      - alert: VolumeAlmostFull
+        expr: kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes > 0.85
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Volume {{`{{ $labels.namespace }}`}}/{{`{{ $labels.persistentvolumeclaim }}`}} is more than 85 % full'
+          runbook_url: https://github.com/marek-mraz-jc/joinedcontext-deployment/blob/main/components/monitoring/RUNBOOK.md#volumealmostfull
+      - alert: NodeMemoryHigh
+        expr: 1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes > 0.90
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{`{{ $labels.instance }}`}} has used more than 90 % of its memory for 10 minutes: the next pod to grow gets OOM-killed'
+          runbook_url: https://github.com/marek-mraz-jc/joinedcontext-deployment/blob/main/components/monitoring/RUNBOOK.md#nodememoryhigh
+  {{- if has "postgres" $components }}
+  # T-5104: a nightly backup older than 26 h missed a night. The local pg_dumpall CronJob
+  # (`<cluster>-local-backup`, through kube-state-metrics) and CNPG's own backups where enabled.
+  - name: postgres-backup
+    rules:
+      - alert: PostgresBackupStale
+        expr: |
+          time() - max by (namespace, cronjob) (kube_cronjob_status_last_successful_time{cronjob=~".*-local-backup"}) > 26 * 3600
+          or
+          time() - max by (namespace, cluster) (cnpg_collector_last_available_backup_timestamp > 0) > 26 * 3600
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'The newest Postgres backup in {{`{{ $labels.namespace }}`}} is older than 26 hours: check the backup job and its volume'
+          runbook_url: https://github.com/marek-mraz-jc/joinedcontext-deployment/blob/main/components/monitoring/RUNBOOK.md#postgresbackupstale
+      # T-5662: a base backup that failed after the last good one, within minutes rather than after
+      # the 26 h of PostgresBackupStale (dev's nightly failed on 10-23 and 10-25 and the page said only "stale").
+      - alert: PostgresBackupFailed
+        expr: |
+          max by (namespace, cluster) (cnpg_collector_last_failed_backup_timestamp)
+            > max by (namespace, cluster) (cnpg_collector_last_available_backup_timestamp)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'The newest base backup of {{`{{ $labels.cluster }}`}} in {{`{{ $labels.namespace }}`}} failed: read kubectl get backups and the instance log (barman-cloud-backup), then start one with kubectl cnpg backup'
+      # T-5289: the monthly restore drill, as the probe reads it from configmap/<cluster>-dr-drill.
+      - alert: PostgresRestoreDrillStale
+        expr: |
+          time() - max(jc_probe_restore_drill_timestamp_seconds) > 35 * 86400
+          or
+          max(jc_probe_restore_drill_passed) == 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'The newest Postgres restore drill is older than 35 days or did not pass: start it with kubectl create job --from=cronjob/postgres-cluster-dr-drill and read configmap/postgres-cluster-dr-drill'
+  {{- end }}
+  {{- if has "context-gateway" $components }}
+  # T-4873, API/07 §3: the WebSocket limits at work. Each fires on a client held to its share,
+  # which is the limit doing its job once, and a pattern worth a look when it repeats.
+  - name: context-gateway-websocket
+    rules:
+      - alert: GatewayWebSocketFanoutFull
+        # Every fan-out hub has a client: new Endpoints' WebSockets answer 503 until one leaves.
+        expr: sum(increase(jc_gateway_ws_refused_total{reason="fan-out-full"}[10m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: 'The gateway refused WebSockets: every fan-out hub is in use (raise JC_GATEWAY_WS_HUBS or add a replica)'
+      - alert: GatewayWebSocketClientsOverRate
+        # Clients closed with 1008 for sending more frames than API/07 §3 allows.
+        expr: sum(increase(jc_gateway_ws_closed_total{reason="rate"}[10m])) > 10
+        labels:
+          severity: warning
+        annotations:
+          summary: 'More than 10 WebSockets closed in 10 minutes for flooding messages'
+  {{- end }}
+  {{- if has "apisix" $components }}
+  - name: apisix-websocket
+    rules:
+      - alert: EdgeWebSocketAddressAtItsShare
+        # One client address holds 50 open Endpoint WebSockets and is refused more (T-4873);
+        # the APISIX access log names the address.
+        expr: sum by (route) (increase(apisix_http_status{code="429",route=~"(api-)?context-endpoint(-portal)?-ws"}[10m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: 'A client address reached its 50 open WebSockets on {{`{{ $labels.route }}`}}'
+  {{- end }}
+  {{- if has "gitops" $components }}
+  # ADR-N-056 §2.9 (T-4674): Argo CD keeps the environment on main; an Application that stays
+  # out of sync or degraded, or a sync that failed (the smoke gate's included), is the deployer's
+  # next job. Never rolled back by itself (OPS-58).
+  - name: gitops
+    rules:
+      - alert: ArgoCDApplicationOutOfSync
+        expr: max by (name) (argocd_app_info{sync_status!="Synced"}) == 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Argo CD Application {{`{{ $labels.name }}`}} has not been in sync for 15 minutes'
+      - alert: ArgoCDApplicationDegraded
+        expr: max by (name) (argocd_app_info{health_status=~"Degraded|Missing"}) == 1
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Argo CD Application {{`{{ $labels.name }}`}} has been degraded for 15 minutes'
+      - alert: ArgoCDSyncFailed
+        expr: sum by (name) (increase(argocd_app_sync_total{phase=~"Error|Failed"}[15m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: 'An Argo CD sync of {{`{{ $labels.name }}`}} failed: fix forward on main or revert the commit'
+  {{- end }}
+  {{- if has "context-broker" $components }}
+  # T-4298: the broker's database pool ran dry on dev for over half an hour and every Endpoint
+  # read answered 503 before anyone looked. A pool timeout is never normal: each one is a read or
+  # write that waited 5 s for a connection and was refused.
+  - name: context-broker
+    rules:
+      - alert: ContextBrokerPoolExhausted
+        expr: sum(increase(antares_pg_pool_timeouts_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'The context broker refuses requests: its database pool hands out no connection (antares_pg_pool_timeouts_total rising)'
+  {{- end }}
+  {{- if has "portal" $components }}
+  # docs Deployment/05 section 4 (T-2771): the assistant's answer budget and its failures.
+  - name: assistant
+    rules:
+      - alert: AssistantSlowAnswers
+        expr: histogram_quantile(0.95, sum(rate(jc_agent_answer_duration_seconds_bucket[15m])) by (le)) > 10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Assistant answers p95 above 10 s for 15 minutes'
+      - alert: AssistantRunsFailing
+        expr: sum(increase(jc_agent_runs_finished_total{status=~"failed|expired"}[1h])) / sum(increase(jc_agent_runs_finished_total[1h])) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'More than 20% of assistant runs failed or expired in the last hour'
+      # AG-96 (T-3065): the model key, as the agent proxy reports it to the Portal. A dead key
+      # stopped the assistant and the app builder for ten days in September 2026 unnoticed.
+      - alert: ModelKeyInvalid
+        expr: max(jc_model_key_valid) == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'The model key is refused or out of credit: the assistant and the app builder cannot answer'
+      - alert: ModelKeyCreditLow
+        expr: max(jc_model_key_remaining / jc_model_key_limit) < 0.2
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Less than 20% of the model key credit is left'
+      # T-4892 (PL-97, PL-100): a snapshot pipeline's source vs space, as its last complete run
+      # left it. Orphans go after `misses` nightly runs, so three days of them mean the deletes
+      # stall (a held run, a refused grant); refused records mean the space lacks what the source has.
+      - alert: PipelineOrphansStuck
+        expr: max by (project, pipeline) (jc_pipeline_orphans) > 0
+        for: 72h
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Pipeline {{`{{ $labels.pipeline }}`}} in {{`{{ $labels.project }}`}} keeps {{`{{ $value }}`}} entities its source dropped: open its Source vs space panel'
+      - alert: PipelineRecordsMissing
+        expr: max by (project, pipeline) (jc_pipeline_missing) > 10
+        for: 24h
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Pipeline {{`{{ $labels.pipeline }}`}} in {{`{{ $labels.project }}`}} could not write {{`{{ $value }}`}} records its source lists: see its rejected records'
+      # T-5020 (DM-74): the daily quality run found a running pipeline's newest entity older than
+      # its freshness target, the interval plus max(interval/12, 10 min): 2x a 10-min schedule.
+      # Dev's road weather read five weeks old before anyone looked.
+      - alert: PipelineDataStale
+        expr: max by (project, pipeline) (jc_pipeline_stale) == 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Pipeline {{`{{ $labels.pipeline }}`}} in {{`{{ $labels.project }}`}} has written nothing newer than its freshness target allows: check its runs and its source'
+      # T-5291: a running pipeline that loses records is neither stale nor missing. The Portal's
+      # hourly health read sets the ratio of failed and rejected records over the last hour of runs;
+      # past 5 % it also marks the pipeline failing and tells its followers.
+      - alert: PipelineErrorRatio
+        expr: max by (project, pipeline) (jc_pipeline_error_ratio) > 0.05
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Pipeline {{`{{ $labels.pipeline }}`}} in {{`{{ $labels.project }}`}} lost {{`{{ $value | humanizePercentage }}`}} of the last hour''s records: open its Source health and log'
+  {{- end }}

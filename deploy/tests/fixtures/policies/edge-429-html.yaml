@@ -1,0 +1,10 @@
+# The edge as it was: `limit-count` rejects with 429 and nothing shapes the answer, so APISIX
+# serves `<h1>429 Too Many Requests</h1><hr>openresty`.
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: apisix }
+data:
+  config.yaml: |
+    nginx_config:
+      http_server_configuration_snippet: |
+        client_max_body_size 16m;

@@ -1,0 +1,8 @@
+---
+# Changes here will be overwritten by Copier.
+_commit: 331b26b
+_src_path: ..
+componentName: Gitea
+componentSlug: gitea
+releases: forge
+shortDescription: In-cluster Git forge holding the configuration repositories

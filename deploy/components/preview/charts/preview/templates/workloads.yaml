@@ -1,0 +1,107 @@
+{{- $ns := include "preview.namespace" . }}
+{{- $db := include "preview.db" . }}
+{{- $host := include "preview.host" . }}
+{{- /*
+  The Portal and its UI bundle, one replica each, from the images the recipe names by digest.
+  No ServiceAccount token, no Secret but `preview-credentials`, which the recipe writes in this
+  namespace: the preview holds nothing of dev's (Deployment/17 section 1, isolation property 4).
+*/}}
+{{- range $name, $spec := dict
+    "portal" (dict "image" $.Values.images.portal "user" 1000 "ready" "/api/v1/ready" "live" "/api/v1/health" "request" "576Mi" "limit" "1Gi")
+    "portal-ui" (dict "image" $.Values.images.portalUi "user" 101 "ready" "/" "live" "/" "request" "32Mi" "limit" "128Mi") }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "preview.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ $name }}
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: {{ $name }} }
+  template:
+    metadata:
+      labels:
+        {{- include "preview.labels" $ | nindent 8 }}
+        app.kubernetes.io/name: {{ $name }}
+      {{- if eq $name "portal" }}
+      annotations:
+        # The issuer's host is the node's public address, outside the mesh; the Portal's own TLS
+        # carries that hop, as in dev (components/portal/values/portal/base-values.yaml.gotmpl).
+        config.linkerd.io/skip-outbound-ports: "443"
+        # The ingress controller is outside the mesh on dev (allowUnauthenticatedIngress there);
+        # the NetworkPolicy keeps this port to it and to the preview's own pods.
+        config.linkerd.io/default-inbound-policy: all-unauthenticated
+      {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ $spec.user }}
+        runAsGroup: {{ $spec.user }}
+        fsGroup: {{ $spec.user }}
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: {{ $name }}
+          image: {{ required (printf "images of %s: repository@sha256:<digest>" $name) $spec.image | quote }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 8080 }
+          {{- if eq $name "portal" }}
+          env:
+            - { name: JC_PORTAL_PUBLIC_URL, value: "https://{{ $host }}" }
+            - { name: JC_PORTAL_UI_URL, value: "http://portal-ui:8080" }
+            - { name: JC_OIDC_ISSUER, value: "https://idm.{{ $.Values.domain }}/realms/preview" }
+            - { name: JC_OIDC_CLIENT_ID, value: "{{ $ns }}-portal" }
+            - { name: JC_KEYCLOAK_ADMIN_URL, value: "http://keycloak-app-keycloakx-http.{{ $.Values.devNamespace }}.svc.cluster.local:80" }
+            - name: JC_OIDC_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: preview-credentials, key: oidc-client-secret } }
+            - name: JC_PORTAL_COOKIE_KEY
+              valueFrom: { secretKeyRef: { name: preview-credentials, key: cookie-key } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: preview-credentials, key: pgpassword } }
+            - { name: JC_PORTAL_DATABASE_URL, value: "postgresql://{{ $db }}:$(PGPASSWORD)@postgres-cluster-rw.{{ $.Values.devNamespace }}.svc.cluster.local:5432/{{ $db }}" }
+          {{- end }}
+          readinessProbe:
+            httpGet: { path: {{ $spec.ready }}, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: { path: {{ $spec.live }}, port: http }
+            periodSeconds: 15
+            timeoutSeconds: 3
+            initialDelaySeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: {{ $spec.request }} }
+            limits: { cpu: "1", memory: {{ $spec.limit }} }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            {{- if eq $name "portal-ui" }}
+            - { name: tmp, mountPath: /var/cache/nginx, subPath: nginx }
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "preview.labels" $ | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector: { app.kubernetes.io/name: {{ $name }} }
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+{{- end }}

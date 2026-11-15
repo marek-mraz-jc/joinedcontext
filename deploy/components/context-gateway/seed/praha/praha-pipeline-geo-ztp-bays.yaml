@@ -1,0 +1,19 @@
+# One OnStreetParking per record of the IPR layer Vyhrazená parkovací stání pro držitele průkazu ZTP/P bez vazby na registrační značku vozidla into the city space (T-5424).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: geo-ztp-bays
+  namespace: praha
+  title:
+    en: Reserved bays for ZTP/P card holders, any vehicle
+    cs: Vyhrazená parkovací stání pro držitele průkazu ZTP/P bez vazby na registrační značku vozidla
+spec:
+  class: auto
+  # TSK republishes its parking layers every few weeks; one read a week keeps up.
+  period: 168h
+  schedule: '20 3 * * 2'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-geo-ztp-bays }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: OnStreetParking, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 200 }

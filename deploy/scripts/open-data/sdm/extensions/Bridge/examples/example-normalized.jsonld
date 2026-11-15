@@ -1,0 +1,142 @@
+{
+  "id": "urn:ngsi-ld:Bridge:joinedcontext.com:example:1",
+  "type": "Bridge",
+  "aktualnyStavebnotechnickyStav": {
+    "type": "Property",
+    "value": "aktualnyStavebnotechnickyStav"
+  },
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "dlzkaPremosteniaM": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "docasnostMosta": {
+    "type": "Property",
+    "value": "docasnostMosta"
+  },
+  "druhNosnejKonstrukcie": {
+    "type": "Property",
+    "value": "druhNosnejKonstrukcie"
+  },
+  "hodnotenie": {
+    "type": "Property",
+    "value": "hodnotenie"
+  },
+  "identifikacneCislo": {
+    "type": "Property",
+    "value": "identifikacneCislo"
+  },
+  "isPartOf": {
+    "type": "Property",
+    "value": "https://example.org/isPartOf"
+  },
+  "komunikacia": {
+    "type": "Property",
+    "value": "komunikacia"
+  },
+  "legislativnyStav": {
+    "type": "Property",
+    "value": "legislativnyStav"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "materialNosnejKonstrukcie": {
+    "type": "Property",
+    "value": "materialNosnejKonstrukcie"
+  },
+  "name": {
+    "type": "Property",
+    "value": "name"
+  },
+  "normalnaZatazitelnostT": {
+    "type": "Property",
+    "value": "normalnaZatazitelnostT"
+  },
+  "obec": {
+    "type": "Property",
+    "value": "obec"
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "ojedinelaZatazitelnostT": {
+    "type": "Property",
+    "value": "ojedinelaZatazitelnostT"
+  },
+  "okres": {
+    "type": "Property",
+    "value": "okres"
+  },
+  "pocetDilCelkov": {
+    "type": "Property",
+    "value": 0
+  },
+  "predmetPremostenia": {
+    "type": "Property",
+    "value": "predmetPremostenia"
+  },
+  "rokKonstrukcie": {
+    "type": "Property",
+    "value": 0
+  },
+  "rokZasadnejRekonstrukcie": {
+    "type": "Property",
+    "value": 0
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "spravca": {
+    "type": "Property",
+    "value": "spravca"
+  },
+  "triedaCesty": {
+    "type": "Property",
+    "value": "triedaCesty"
+  },
+  "typKomunikacie": {
+    "type": "Property",
+    "value": "typKomunikacie"
+  },
+  "typPamiatky": {
+    "type": "Property",
+    "value": "typPamiatky"
+  },
+  "ulica": {
+    "type": "Property",
+    "value": "ulica"
+  },
+  "vlastnik": {
+    "type": "Property",
+    "value": "vlastnik"
+  },
+  "vyhradnaZatazitelnostT": {
+    "type": "Property",
+    "value": "vyhradnaZatazitelnostT"
+  },
+  "vynimocnaZatazitelnostT": {
+    "type": "Property",
+    "value": "vynimocnaZatazitelnostT"
+  },
+  "zatazitelnostNaJednuNapravu": {
+    "type": "Property",
+    "value": "zatazitelnostNaJednuNapravu"
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/Bridge/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

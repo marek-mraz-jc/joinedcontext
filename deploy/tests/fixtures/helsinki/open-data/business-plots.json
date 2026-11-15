@@ -1,0 +1,96 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "id": "Vapaat_yritystontit.17812",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.900202,
+     60.206267
+    ]
+   },
+   "geometry_name": "geom",
+   "properties": {
+    "id": 17812,
+    "jhs_tunnus": "091-016-0748-0004",
+    "osoite": "Mannerheimintie 111",
+    "pinta_ala": "3414",
+    "rakennusoikeus": "10500",
+    "kayttotarkoitusmerkinta": "KT",
+    "kayttotarkoitus_selite": "Toimistorakennusten korttelialue",
+    "lisatietoja": null,
+    "luokka": "K",
+    "e": "25494466",
+    "n": "6677058",
+    "paivitetty_tietopalveluun": "2026-10-23",
+    "datanomistaja": "Helskinki/MAKA"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "Vapaat_yritystontit.17883",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.9789,
+     60.180014
+    ]
+   },
+   "geometry_name": "geom",
+   "properties": {
+    "id": 17883,
+    "jhs_tunnus": "091-010-0647-0001",
+    "osoite": "Aallonhalkoja 8",
+    "pinta_ala": "1300",
+    "rakennusoikeus": "0",
+    "kayttotarkoitusmerkinta": "W/KL-1",
+    "kayttotarkoitus_selite": "Vesialueella sijaitseva korttelialue, jolle saa sijoittaa toimisto ja ravintolalaivoja",
+    "lisatietoja": "Asemakaavan mukaan vain laivoille Neuvottelut käynnissä, ei vuokrata pitkäaikaisesti.",
+    "luokka": "K",
+    "e": "25498829",
+    "n": "6674129",
+    "paivitetty_tietopalveluun": "2026-10-23",
+    "datanomistaja": "Helskinki/MAKA"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "Vapaat_yritystontit.17897",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.924682,
+     60.179024
+    ]
+   },
+   "geometry_name": "geom",
+   "properties": {
+    "id": 17897,
+    "jhs_tunnus": "91-14-9902-1",
+    "osoite": "Töölöntori",
+    "pinta_ala": "noin 640",
+    "rakennusoikeus": "625",
+    "kayttotarkoitusmerkinta": "kl-1",
+    "kayttotarkoitus_selite": "Liikerakennuksen rakennusala",
+    "lisatietoja": null,
+    "luokka": "K",
+    "e": "25495820",
+    "n": "6674021",
+    "paivitetty_tietopalveluun": "2026-10-23",
+    "datanomistaja": "Helskinki/MAKA"
+   }
+  }
+ ],
+ "totalFeatures": 86,
+ "numberMatched": 86,
+ "numberReturned": 3,
+ "timeStamp": "2026-10-27T00:42:53.845Z",
+ "crs": {
+  "type": "name",
+  "properties": {
+   "name": "urn:ogc:def:crs:EPSG::4326"
+  }
+ }
+}

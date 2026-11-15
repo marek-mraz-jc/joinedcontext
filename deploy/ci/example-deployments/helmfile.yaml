@@ -1,0 +1,56 @@
+---
+environments:
+  # empty environments must exist. When no environments are defined and one is set via CLI,
+  # helmfile will error out.
+  testing:
+    values: []
+  local:
+    values: []
+  production:
+    values: []
+  staging:
+    values: []
+  smoke-test:
+    values: []
+  dev:
+    values: []
+  # The production instance smartcity.joinedcontext.com (T-4678).
+  smartcity:
+    values: []
+  # The stage instance stage.joinedcontext.com (T-6443).
+  stage:
+    values: []
+  recovery-test:
+    values: []
+  # The render surface of the optional add-ons; see environments/addons/global.yaml.gotmpl.
+  addons:
+    values: []
+  # The two small component profiles (T-4856); see environments/minimal and broker-only.
+  minimal:
+    values: []
+  broker-only:
+    values: []
+  # The two jc instances on the dev cluster (owner 2026-11-09, GOAL-jc-dev 'Dev cluster rebuild').
+  jc-dev:
+    values: []
+  jc-prod:
+    values: []
+---
+helmfiles:
+  - path: '../helmfile-root.yaml.gotmpl'
+    values:
+      - environments:
+          - testing
+          - local
+          - production
+          - staging
+          - smoke-test
+          - dev
+          - smartcity
+          - stage
+          - recovery-test
+          - addons
+          - minimal
+          - broker-only
+          - jc-dev
+          - jc-prod

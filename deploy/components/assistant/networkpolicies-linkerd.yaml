@@ -1,0 +1,206 @@
+---
+# Meshed: the worker's proxy needs the Linkerd control plane, and meshed calls land on the
+# peer's inbound proxy (4143), not on the service port, both ways.
+assistant-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: assistant-worker
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+assistant-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: assistant-worker
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-runner-proxy
+          componentNamespace: agent-runner
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+          componentNamespace: keycloak
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: functions-runtime
+          componentNamespace: functions
+      ports:
+        - protocol: TCP
+          port: 4143
+
+postgres-linkerd-from-assistant:
+  componentNamespace: postgres
+  podSelector:
+    cnpg.io/cluster: postgres-cluster
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: assistant-worker
+          componentNamespace: assistant
+      ports:
+        - port: 4143
+          protocol: TCP
+
+gitea-linkerd-from-assistant:
+  componentNamespace: gitea
+  podSelector:
+    app.kubernetes.io/name: gitea
+    app.kubernetes.io/instance: gitea-forge
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: assistant-worker
+          componentNamespace: assistant
+      ports:
+        - port: 4143
+          protocol: TCP
+
+apisix-linkerd-egress-to-assistant:
+  componentNamespace: apisix
+  podSelector:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/instance: apisix-apisix
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: assistant-worker
+          componentNamespace: assistant
+      ports:
+        - protocol: TCP
+          port: 4143
+
+agent-proxy-linkerd-from-assistant:
+  componentNamespace: agent-runner
+  podSelector:
+    app.kubernetes.io/name: agent-runner-proxy
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: assistant-worker
+          componentNamespace: assistant
+      ports:
+        - port: 4143
+          protocol: TCP
+
+gateway-linkerd-from-assistant:
+  componentNamespace: context-gateway
+  podSelector:
+    app.kubernetes.io/name: context-gateway-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: assistant-worker
+          componentNamespace: assistant
+      ports:
+        - port: 4143
+          protocol: TCP
+
+keycloak-linkerd-from-assistant:
+  componentNamespace: keycloak
+  podSelector:
+    app.kubernetes.io/instance: keycloak-app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: assistant-worker
+          componentNamespace: assistant
+      ports:
+        - port: 4143
+          protocol: TCP
+
+functions-linkerd-from-assistant:
+  componentNamespace: functions
+  podSelector:
+    app.kubernetes.io/name: functions-runtime
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: assistant-worker
+          componentNamespace: assistant
+      ports:
+        - port: 4143
+          protocol: TCP
+
+portal-linkerd-to-assistant:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: assistant-worker
+          componentNamespace: assistant
+      ports:
+        - protocol: TCP
+          port: 4143

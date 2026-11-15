@@ -1,0 +1,33 @@
+# Public read of the autumn traffic volumes' TrafficFlowObserved (T-5669): the autumn- entities of the
+# traffic-volumes pipeline only, so the catalogue datasets of one type stay apart.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-traffic-volumes
+  namespace: helsinki
+  title: { en: 'Public read: autumn traffic volumes' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: role, id: public }
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+    - queryTemporal
+    - retrieveTemporal
+  # History reads through the same door as the space's other public counts (T-4372); the
+  # observations are older than the space keeps history, so the window answers what it holds.
+  temporalQ: timerel=after;timeAt=P-30D
+  information:
+    - entities:
+        - type: TrafficFlowObserved
+          idPattern: ^urn:ngsi-ld:TrafficFlowObserved:[a-z0-9.-]+:helsinki:autumn-[a-z][0-9]{2}-(1|2|both)-[0-9]{4}$

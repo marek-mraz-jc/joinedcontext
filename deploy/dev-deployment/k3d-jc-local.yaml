@@ -1,0 +1,56 @@
+---
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: jc-local
+servers: 1 # Number of server nodes (control plane)
+agents: 2 # Number of agent nodes (worker nodes)
+kubeAPI:
+  host: 'localhost'
+ports:
+  - port: 80:80
+    nodeFilters:
+      - loadbalancer
+  - port: 443:443
+    nodeFilters:
+      - loadbalancer
+options:
+  k3d: # k3d runtime settings
+    wait: true
+    timeout: '60s'
+  k3s:
+    extraArgs:
+      - arg: '--disable=traefik'
+        nodeFilters:
+          - server:*
+  kubeconfig:
+    updateDefaultKubeconfig: true # Updates the default kubeconfig file
+    switchCurrentContext: true # Switches kubectl context to this cluster by default
+
+# Optional local pull-through image caches (see dev-deployment/registry-cache.sh).
+# Each upstream is mirrored to a host-side cache reachable via host.k3d.internal.
+# The real upstream is listed as a second endpoint, so the cluster still pulls
+# directly when the caches are not running — this block is safe to keep always.
+registries:
+  config: |
+    mirrors:
+      docker.io:
+        endpoint:
+          - "http://host.k3d.internal:5001"
+          - "https://registry-1.docker.io"
+      ghcr.io:
+        endpoint:
+          - "http://host.k3d.internal:5002"
+          - "https://ghcr.io"
+      quay.io:
+        endpoint:
+          - "http://host.k3d.internal:5003"
+          - "https://quay.io"
+      registry.k8s.io:
+        endpoint:
+          - "http://host.k3d.internal:5004"
+          - "https://registry.k8s.io"
+      registry.gitlab.com:
+        endpoint:
+          - "http://host.k3d.internal:5005"
+          - "https://registry.gitlab.com"

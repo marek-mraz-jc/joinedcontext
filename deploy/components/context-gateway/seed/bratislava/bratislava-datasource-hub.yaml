@@ -1,0 +1,16 @@
+# The hub's list of its Feature Services (data.bratislava.sk, CC BY 4.0, about 670 services, 260 kB):
+# the places and statistics pipelines check each table they read is still listed and read it by its
+# path; no credential. T-5274.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bratislava-hub
+  namespace: bratislava
+  title: { sk: Zoznam služieb data.bratislava.sk, en: The data.bratislava.sk list of services }
+spec:
+  type: http
+  http:
+    url: https://services8.arcgis.com/pRlN1m0su5BYaFAS/arcgis/rest/services?f=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

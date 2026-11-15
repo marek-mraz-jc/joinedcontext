@@ -1,0 +1,20 @@
+# Every public dataset of data.dev for the catalogue's general assistant (T-4342, owner
+# 2026-10-16): the CKAN source with no `organizations`, so all five bodies' datasets, read
+# anonymously, so no private one reaches the index. It reads catalogue records, never a website:
+# titles, descriptions, publishers, keywords, licences, frequencies and distributions. Read
+# nightly after the harvest (charts/ckan harvest.schedule, 03:23).
+apiVersion: joinedcontext.com/v1alpha1
+kind: KnowledgeSource
+metadata:
+  name: portal
+  namespace: bbsk
+  title:
+    sk: Všetky datasety katalógu opendata.dev
+    en: Every dataset of the opendata.dev catalogue
+spec:
+  source: ckan
+  ckanInstanceRef: bbsk
+  schedule: '50 3 * * *'
+  maxPages: 2000
+  languages: [sk, cs, en, fi]
+  visibility: public

@@ -1,0 +1,17 @@
+# One KeyPerformanceIndicator per record of `mhmp-budget-drawing`, written into the city space (T-5428).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: budget-drawing
+  namespace: praha
+  title: { en: Budget execution 2026, cs: Čerpání rozpočtu 2026 }
+spec:
+  class: auto
+  # The city updates the drawing monthly; a nightly read keeps the page current, as the budget's.
+  period: 24h
+  schedule: '0 4 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: mhmp-budget-drawing }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

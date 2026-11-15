@@ -1,0 +1,44 @@
+# Animal breeding and veterinary facilities in Bratislava: one public dataset of the hub (T-5444), item 48b4110561f54105906f6ac11e225fd1, written by the places pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-veterinarne-zariadenia
+  namespace: bratislava
+  title:
+    sk: Chovné a veterinárne zariadenia v Bratislave
+    en: Animal breeding and veterinary facilities in Bratislava
+  description:
+    sk: 'Veterinárne ambulancie a nemocnice, útulky, chovy a ďalšie zariadenia pre zvieratá s druhom zariadenia a zvierat. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'Veterinary clinics and hospitals, animal shelters, breeders and other animal facilities, with the kind of facility and of animals. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: xzulyusyiynwlmnwlpz7ctzjljmqby4o
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-veterinarne-zariadenia
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [AGRI, HEAL]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: WEEKLY
+    source:
+      - url: https://data.bratislava.sk/datasets/48b4110561f54105906f6ac11e225fd1
+        title:
+          sk: Chovné a veterinárne zariadenia v Bratislave
+          en: Animal breeding and veterinary facilities in Bratislava
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Chovné a veterinárne zariadenia v Bratislave. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Animal breeding and veterinary facilities in Bratislava. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: places }

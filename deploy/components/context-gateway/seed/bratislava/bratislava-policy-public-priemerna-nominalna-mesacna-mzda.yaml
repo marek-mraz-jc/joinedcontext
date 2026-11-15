@@ -1,0 +1,30 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-priemerna-nominalna-mesacna-mzda
+  namespace: bratislava
+  title:
+    sk: 'Verejné čítanie: Priemerná nominálna mesačná mzda zamestnanca (v eurách) v stavebných podnikoch s 20 a viac zamestn.'
+    en: 'Public read: Average nominal monthly wage in construction companies with 20 or more employees (EUR)'
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bratislava }
+  assigner: did:web:bratislava.sk
+  assignee: { kind: role, id: public }
+  # Read only, the rows of this one hub dataset (CC BY 4.0, nothing about a person); discovery
+  # beside the reads (T-4258, EP-116).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator
+          idPattern: ^urn:ngsi-ld:KeyPerformanceIndicator:[a-z0-9.-]+:bratislava:priemerna-nominalna-mesacna-mzda[.][a-z0-9.-]+$

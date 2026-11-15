@@ -1,0 +1,211 @@
+/* The BBSK demo's landing page (T-4740, owner 2026-10-19T12:55Z): a snapshot of the www.bbsk.sk
+   home page, its layout, colours, type, header and footer, rebuilt in our own CSS. No file, font,
+   photo or logo of theirs: a photo or a pictogram is a colour block with its caption. */
+:root {
+  --blue: #264a96;
+  --blue-dark: #1d3871;
+  --blue-mid: #203f80;
+  --blue-light: #d5dceb;
+  --red: #da2125;
+  --ink: #21252b;
+  --muted: #56595d;
+  --ground: #f4f6fa;
+  --line: #d3d3d5;
+  --white: #fff;
+  --ribbon: 2.25rem;
+  --sans: "Roboto", "Helvetica Neue", Arial, system-ui, sans-serif;
+  --display: "Manrope", "Segoe UI", "Helvetica Neue", Arial, system-ui, sans-serif;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html { scroll-padding-top: calc(var(--ribbon) + 1rem); }
+body { margin: 0; padding-top: var(--ribbon); font: 300 1rem/1.7 var(--sans); color: var(--ink); background: var(--white); }
+a { color: var(--blue); text-decoration: none; }
+a:hover { color: var(--blue-dark); text-decoration: underline; }
+/* T-4996: a link inside running text is underlined, so it reads as a link without its colour (WCAG 1.4.1). */
+p a { text-decoration: underline; text-underline-offset: .15em; }
+a:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px solid var(--red); outline-offset: 2px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.2; color: var(--ink); }
+ul { list-style: none; margin: 0; padding: 0; }
+.wrap { max-width: 1296px; margin: 0 auto; padding: 0 1.5rem; }
+.skip { position: absolute; left: -9999px; }
+.skip:focus { left: 1rem; top: calc(var(--ribbon) + .5rem); z-index: 30; background: var(--white); padding: .5rem 1rem; }
+.lead { max-width: 52rem; margin: -.5rem 0 2rem; font-size: 1.0625rem; }
+
+/* DEMO on every width, above everything but the open assistant. */
+.ribbon { position: fixed; inset: 0 0 auto; z-index: 20; min-height: var(--ribbon); display: flex; align-items: center; justify-content: center; padding: .25rem 1rem; background: var(--red); color: var(--white); font: 600 .875rem/1.3 var(--sans); text-align: center; }
+
+/* Header: the grey utility bar, the white bar with the name, the dark search and the blue menu
+   block that runs to the right edge, then the blue band of three banners. */
+.header__top { background: var(--ground); font-size: .875rem; }
+.header__top .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .25rem 1.5rem; min-height: 2.75rem; }
+.header__top ul { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; }
+.header__top a { color: var(--muted); }
+.header__top .lang span { color: var(--blue); font-weight: 700; }
+.header__main { background: linear-gradient(90deg, var(--white) 50%, var(--blue) 50%); }
+.header__main .wrap { display: flex; justify-content: space-between; align-items: stretch; min-height: 6.25rem; background: var(--white); padding-right: 0; }
+.wordmark { align-self: center; color: var(--blue); font: 800 1.25rem/1.2 var(--display); text-transform: uppercase; max-width: 22rem; padding: .75rem 0; }
+.wordmark b { color: var(--red); }
+.wordmark:hover { text-decoration: none; color: var(--blue-dark); }
+.header__functions { display: flex; flex: 0 1 55%; }
+.header__functions .search, .menu > summary { display: flex; align-items: center; gap: .6rem; color: var(--white); font-weight: 400; padding: 0 2.25rem; min-height: 100%; }
+.header__functions .search { background: var(--ink); }
+.menu { flex: 1; display: flex; background: var(--blue); }
+.menu > summary { list-style: none; cursor: pointer; flex: 1; }
+.menu > summary::-webkit-details-marker { display: none; }
+.header__functions svg { width: 1.25rem; height: 1.25rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.header__functions .search:hover { text-decoration: none; background: #000; }
+.menu__panel { position: absolute; left: 0; right: 0; top: 100%; z-index: 12; background: var(--blue); color: var(--white); padding: 2rem 0; box-shadow: 0 12px 24px rgba(0, 0, 0, .2); }
+.menu__panel .wrap { background: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 1.5rem; min-height: 0; padding-right: 1.5rem; }
+.menu__panel h2 { font-size: 1.25rem; margin: 0 0 .75rem; }
+.menu__panel a { color: var(--white); }
+.menu__panel li { padding: .2rem 0; }
+.header__main { position: relative; }
+
+.banners { background: var(--blue); color: var(--white); }
+.banners ul { display: grid; grid-template-columns: repeat(3, 1fr); padding-block: 1.25rem; }
+.banners li + li { border-left: 1px solid rgba(255, 255, 255, .25); padding-left: 2rem; }
+.banners a { color: var(--white); display: block; }
+.banners a:hover { text-decoration: none; }
+.banners strong { font: 600 1.375rem/1.3 var(--display); display: block; }
+.banners strong::after { content: " ›"; }
+.banners small { font-size: .8125rem; opacity: .85; }
+
+/* The hero: where bbsk.sk has its photo, a solid band in the page's blue with the assistant's
+   invitation, then the three white lists (owner 13:50Z item 7). */
+.hero { padding: 4rem 0 6rem; background: var(--blue-mid); color: var(--white); }
+.hero__ai { margin-bottom: 3.5rem; }
+.hero__ai h1 { color: var(--white); font-size: clamp(1.75rem, 3.5vw, 2.75rem); max-width: 40rem; margin: .25rem 0 1.75rem; }
+.hero__ask, .jc-assistant > summary { display: inline-flex; align-items: center; gap: .6rem; border: 0; border-radius: 999px; font: 600 1rem/1.2 var(--sans); cursor: pointer; }
+.hero__ask { background: var(--white); color: var(--blue); padding: .9rem 1.6rem; }
+.hero__ask:hover { background: var(--blue-light); }
+.hero__ask svg, .jc-assistant > summary svg { width: 1.35rem; height: 1.35rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
+.hero__lists { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4.5rem; }
+.hero__list { background: var(--white); padding: 2rem 1.75rem 2.5rem; box-shadow: 0 6px 20px rgba(29, 56, 113, .12); }
+.hero__list h2 { font-size: 1.75rem; margin: 0 0 1.25rem; }
+.hero__list li { padding: .4rem 0; font-size: 1.0625rem; font-weight: 400; }
+
+section.section { padding: 4.5rem 0 1rem; }
+section.section h2 { font-size: clamp(2rem, 3.4vw, 2.75rem); margin: 0 0 2rem; }
+section.grey { background: var(--ground); padding-bottom: 4.5rem; margin-top: 3.5rem; }
+
+/* The assistant, our addition: its own band so nobody takes it for bbsk.sk's. */
+.ai { background: var(--ground); padding: 4rem 0; border-top: 4px solid var(--red); }
+.ai h2 { font-size: clamp(1.75rem, 3vw, 2.5rem); margin: 0 0 1rem; color: var(--blue); }
+.ai__tag { display: inline-block; margin: 0 0 .75rem; padding: .2rem .6rem; background: var(--red); color: var(--white); font: 700 .75rem/1.4 var(--sans); letter-spacing: .06em; text-transform: uppercase; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr)); gap: 1.5rem; }
+.cards li { display: flex; }
+.cards button { flex: 1; display: flex; flex-direction: column; text-align: left; padding: 0; border: 0; background: var(--white); cursor: pointer; font: inherit; color: inherit; }
+.cards .head { display: flex; align-items: center; justify-content: center; height: 6.5rem; width: 100%; background: var(--blue); color: var(--white); }
+.cards .head svg { width: 3rem; height: 3rem; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.cards strong { display: block; padding: 1.25rem 1.25rem .25rem; font: 600 1.25rem/1.35 var(--display); color: var(--blue); }
+.cards strong::after { content: " ›"; }
+.cards small { display: block; padding: 0 1.25rem 1.25rem; color: var(--muted); font-size: .875rem; }
+.cards button:hover strong { color: var(--blue-dark); text-decoration: underline; }
+
+/* Služby: bbsk.sk's grid of eight, the pictogram strip a blue block with its caption. */
+.services { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr)); gap: 1.75rem; }
+.service { background: var(--ground); height: 100%; padding-bottom: 1.5rem; }
+.service__image { margin: 0; height: 8.5rem; display: flex; align-items: center; justify-content: center; padding: 1rem; background: var(--blue); color: var(--blue-light); font-size: .8125rem; text-align: center; }
+.service h3 { margin: 0; padding: 1.5rem 1.5rem .75rem; font-size: 1.375rem; font-weight: 600; }
+.service h3 a::after { content: " ›"; }
+.service ul { padding: 0 1.5rem; }
+.service li { padding: .35rem 0; }
+.service li a { color: var(--ink); }
+.service li a:hover { color: var(--blue); }
+
+.calendar { display: grid; grid-template-columns: 1fr 1fr; min-height: 22rem; border-radius: 4px; overflow: hidden; color: var(--white); }
+.calendar:hover { text-decoration: none; color: var(--white); }
+.calendar__image { display: flex; align-items: flex-end; padding: 1rem 1.25rem; font-size: .8125rem; background: linear-gradient(180deg, #e8b88a 0%, #c9d6ec 45%, #6f8f6a 100%); }
+.calendar__text { display: flex; flex-direction: column; justify-content: center; padding: 3rem 6rem; background: var(--blue); }
+.calendar__text .ai__tag { align-self: flex-start; }
+.calendar__text strong { font: 600 2.75rem/1.2 var(--display); margin-bottom: 1rem; }
+.calendar__text strong::after { content: " ›"; }
+
+.next { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); gap: 2rem; }
+.next a { display: block; color: var(--muted); }
+.next a:hover { text-decoration: none; }
+.next strong { display: block; font: 600 1.5rem/1.3 var(--display); color: var(--blue); margin-bottom: .75rem; }
+.next strong::after { content: " ›"; }
+.next a:hover strong { text-decoration: underline; }
+
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1.5rem; }
+.panel { background: var(--white); padding: 1.5rem; }
+.panel h3 { margin: 0 0 .5rem; font-size: 1.25rem; }
+.panel ol { padding-left: 1.25rem; margin: .5rem 0 0; }
+code, pre { font: 400 .875rem/1.5 SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+pre { background: var(--ink); color: var(--white); padding: 1rem; overflow-x: auto; margin: .75rem 0 0; white-space: pre-wrap; word-break: break-all; }
+.url { display: block; background: var(--white); border: 1px solid var(--line); padding: .75rem 1rem; word-break: break-all; font-size: 1rem; margin-top: .25rem; }
+.notice-title { margin: 2.5rem 0 .5rem; font-size: 1.25rem; }
+.notice { max-width: 52rem; margin: 0; }
+
+.footer { background: var(--ink); color: var(--white); padding: 4rem 0 3rem; font-size: .875rem; }
+.footer a { color: var(--white); }
+.footer__demo { font-weight: 600; font-size: 1rem; margin: 0 0 2.5rem; padding: .75rem 1rem; border-left: 4px solid var(--red); background: rgba(255, 255, 255, .06); }
+.footer__nav { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: 1.5rem; }
+.footer__nav h2 { color: var(--white); font-size: 1.375rem; font-weight: 600; margin: 0 0 1rem; }
+.footer__nav li { border-bottom: 1px solid rgba(255, 255, 255, .15); padding: .55rem 0; }
+.footer__bottom { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: 1rem 2rem; margin-top: 3.5rem; padding-top: 3rem; border-top: 10px solid rgba(255, 255, 255, .08); font-size: 1rem; }
+.footer__bottom p { margin: 0; }
+.footer__wordmark { font: 800 1rem/1.2 var(--display); text-transform: uppercase; }
+.footer__copy { margin: 3rem 0 0; color: #b9bcc2; font-size: .8125rem; }
+
+/* The assistant (T-4685): a button until opened; open, a panel at the corner, docked to the right
+   edge on a wide screen with the page beside it, the whole screen on a phone. jc-assistant.js,
+   the catalogue's own, moves it between those and keeps it open across reloads in this tab. */
+.jc-assistant { position: fixed; right: 1.25rem; bottom: 1.25rem; z-index: 15; }
+/* The launcher: a pill in the page's blue, not the ribbon's red, which reads as a warning. */
+.jc-assistant > summary { list-style: none; background: var(--blue); color: var(--white); padding: .85rem 1.4rem; box-shadow: 0 6px 18px rgba(29, 56, 113, .35); }
+.jc-assistant > summary:hover { background: var(--blue-dark); }
+/* Its focus ring is white with a dark blue edge, seen on the white page and on the blue hero; never
+   the ribbon's red, which read as an error after the panel closed and gave focus back (T-4761). */
+.jc-assistant > summary:focus-visible { outline: 3px solid var(--white); outline-offset: 2px; box-shadow: 0 0 0 7px var(--blue-dark), 0 6px 18px rgba(29, 56, 113, .35); }
+.jc-assistant > summary::-webkit-details-marker { display: none; }
+.jc-assistant[open] > summary { display: none; }
+.jc-assistant > iframe { position: fixed; right: 1rem; bottom: max(1rem, env(safe-area-inset-bottom)); width: min(26rem, calc(100vw - 2rem)); height: min(760px, calc(100vh - var(--ribbon) - 2rem)); height: min(760px, calc(100dvh - var(--ribbon) - 2rem)); border: 1px solid var(--line); border-radius: 6px; background: var(--white); box-shadow: 0 8px 30px rgba(0, 0, 0, .25); }
+.jc-assistant.jc-full > iframe { right: max(1rem, calc((100vw - 60rem) / 2)); top: calc(var(--ribbon) + 1rem); width: min(60rem, calc(100vw - 2rem)); height: calc(100vh - var(--ribbon) - 2rem); height: calc(100dvh - var(--ribbon) - 2rem); }
+body:has(.jc-assistant.jc-full[open]) { overflow: hidden; }
+.jc-dock-edge { display: none; }
+@media (min-width: 1100px) {
+  /* Docked, the page scrolls in its body beside the frame, not the window behind it: one bar at the
+     screen's edge, the chat's (T-4767). */
+  html.jc-docked { --jc-dock-w: clamp(360px, var(--jc-dock, 34vw), 50vw); overflow: hidden; }
+  html.jc-docked body { margin-right: var(--jc-dock-w); height: 100vh; height: 100dvh; overflow-y: auto; scroll-padding-top: calc(var(--ribbon) + 1rem); }
+  html.jc-docked .ribbon { right: var(--jc-dock-w); }
+  html.jc-docked .jc-assistant[open]:not(.jc-full) > iframe { top: var(--ribbon); bottom: auto; right: 0; width: var(--jc-dock-w); height: calc(100vh - var(--ribbon)); height: calc(100dvh - var(--ribbon)); border-width: 0 0 0 1px; border-radius: 0; box-shadow: none; }
+  html.jc-docked .jc-assistant[open]:not(.jc-full) > .jc-dock-edge { display: block; position: fixed; top: var(--ribbon); bottom: 0; right: calc(var(--jc-dock-w) - 4px); width: 8px; cursor: col-resize; touch-action: none; z-index: 1; }
+  .jc-dock-edge:focus-visible { outline: 3px solid var(--blue); outline-offset: -3px; }
+  html.jc-dragging .jc-assistant > iframe { pointer-events: none; }
+}
+
+@media (max-width: 1000px) {
+  .hero__lists { grid-template-columns: 1fr; gap: 1.5rem; }
+  .hero { padding: 3rem 0; }
+  .banners ul { grid-template-columns: 1fr; gap: 1rem; }
+  .banners li + li { border-left: 0; padding-left: 0; border-top: 1px solid rgba(255, 255, 255, .25); padding-top: 1rem; }
+  .calendar { grid-template-columns: 1fr; }
+  .calendar__image { min-height: 10rem; }
+  .calendar__text { padding: 2rem 1.5rem; }
+  .header__functions .search, .menu > summary { padding: 0 1.25rem; }
+}
+@media (max-width: 640px) {
+  /* One line of DEMO on a phone; the launcher shrinks to its icon and keeps clear of the text. */
+  .ribbon__long { display: none; }
+  .hero { padding: 2.5rem 0 3rem; }
+  .hero__ai { margin-bottom: 2rem; }
+  .jc-assistant { right: 1rem; bottom: max(1rem, env(safe-area-inset-bottom)); }
+  .jc-assistant > summary { padding: .9rem; }
+  .jc-assistant > summary span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .footer { padding-bottom: 5rem; }
+  .wrap { padding: 0 1rem; }
+  .header__main { background: var(--white); }
+  .header__main .wrap { flex-wrap: wrap; padding-right: 1rem; }
+  .header__functions { flex: 1 0 100%; }
+  .header__functions > * { flex: 1; justify-content: center; min-height: 3rem; }
+  section.section { padding-top: 3rem; }
+  .ai { padding: 2.5rem 0; }
+  body:has(.jc-assistant[open]) { overflow: hidden; }
+  .jc-assistant[open] { inset: 0; z-index: 25; }
+  .jc-assistant[open] > iframe { inset: 0; width: 100%; height: 100vh; height: 100dvh; border: 0; border-radius: 0; }
+}
+@media (prefers-reduced-motion: no-preference) { .cards button, .header__functions .search { transition: background-color .15s; } }

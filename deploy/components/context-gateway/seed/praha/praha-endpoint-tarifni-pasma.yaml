@@ -1,0 +1,44 @@
+# The PID fare zones of the IPR Praha geoportal (T-5423), FareZone of the space praha-mesto read
+# through its own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-tarifni-pasma
+  namespace: praha
+  title: { cs: Tarifní pásma PID — Praha, en: PID fare zones — Prague }
+  description:
+    cs: 'Tarifní pásma Pražské integrované dopravy (P, 0, B a 1 až 12), podle kterých se počítá cena jízdenky: označení a hranice. Zdroj: IPR Praha, CC BY 4.0.'
+    en: 'The Prague Integrated Transport fare zones (P, 0, B and 1 to 12) a ticket price is counted by: code and outline. Source: IPR Praha, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: 3epgisltrn3it76hwdj4ylwpnqjf2erk
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-tarifni-pasma
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # The public transport network; no record names a person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha (CC BY 4.0)'
+      en: 'Source: data © IPR Praha (CC BY 4.0)'
+    themes: [TRAN]
+    keywords:
+      cs: [Praha, PID, tarifní pásma, jízdné]
+      en: [Prague, PID, fare zones, fares]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: WEEKLY
+    source:
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/DOP_CUR_DOP_PID_TARIFPASMA_P/FeatureServer/0/query?where=1%3D1&outFields=id,popis,globalid&outSR=4326&f=geojson&maxAllowableOffset=0.00005&geometryPrecision=6
+        title: { cs: Tarifní pásma PID (IPR Praha), en: PID fare zones (IPR Praha) }
+        description:
+          cs: Tarifní pásma Pražské integrované dopravy z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The Prague Integrated Transport fare zones from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.

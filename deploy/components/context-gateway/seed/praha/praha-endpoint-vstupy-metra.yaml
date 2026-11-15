@@ -1,0 +1,44 @@
+# The Prague metro entrances of the IPR Praha geoportal (T-5423), GtfsAccessPoint of the space
+# praha-mesto read through its own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-vstupy-metra
+  namespace: praha
+  title: { cs: Vstupy do metra — Praha, en: Metro entrances — Prague }
+  description:
+    cs: 'Vstupy do stanic pražského metra: stanice, označení vstupu, kam vede a linky metra. Zdroj: IPR Praha, CC BY 4.0.'
+    en: 'The entrances of the Prague metro stations: station, entrance sign, where it leads and the metro lines. Source: IPR Praha, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: 2e22ecsyt6i5qha6uk24fpxjaulys2vy
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-vstupy-metra
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # The public transport network; no record names a person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha (CC BY 4.0)'
+      en: 'Source: data © IPR Praha (CC BY 4.0)'
+    themes: [TRAN]
+    keywords:
+      cs: [Praha, PID, metro, vstupy]
+      en: [Prague, PID, metro, entrances]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: WEEKLY
+    source:
+      - url: https://hub.arcgis.com/api/v3/datasets/62106cae6acf4507b988c0e745f55bba_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Vstupy do metra (IPR Praha), en: Metro entrances (IPR Praha) }
+        description:
+          cs: Vstupy do metra Pražské integrované dopravy z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The Prague Integrated Transport metro entrances from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.

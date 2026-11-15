@@ -1,0 +1,16 @@
+# The mapping of the bike-stations pipeline (PL-03): one BikeHireDockingStation per station of
+# nextbike's Prague system (GBFS 2.3 `station_information`), its name, position and docks. What
+# a station holds right now is the bike-availability pipeline's, written onto the same entity.
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this.data.stations.or([]).filter(s -> s.station_id.or("").string().re_match("^[0-9]+$") && s.lat.or(null) != null && s.lon.or(null) != null).map_each(s -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:nextbike-%v".format("BikeHireDockingStation", env("JC_ORG_DOMAIN"), env("JC_SPACE"), s.station_id),
+          "type": "BikeHireDockingStation",
+          "name": if s.name.or("").trim() == "" { null } else { { "type": "LanguageProperty", "languageMap": { "cs": s.name.trim() } } },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [s.lon, s.lat] } },
+          "totalSlotNumber": if s.capacity.or(null) == null { null } else { { "type": "Property", "value": s.capacity } },
+          "dataProvider": { "type": "Property", "value": "nextbike Czech Republic (CC0 1.0)" },
+          "source": { "type": "Property", "value": "https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_tg/gbfs.json" }
+        }.filter(entry -> entry.value != null))

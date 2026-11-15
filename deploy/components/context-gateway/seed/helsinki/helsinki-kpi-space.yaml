@@ -1,0 +1,37 @@
+# The project's indicator space (PF-54): every KPI a pipeline or the assistant computes for
+# helsinki is one KeyPerformanceIndicator entity here, never in the data space it reads.
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: helsinki-kpi
+  namespace: helsinki
+  title: { en: Helsinki indicators }
+  description:
+    en: 'Key performance indicators computed from the city context: one entity per indicator, with its formula and its sources'
+spec:
+  # Pinned so no entity id changes: the space predates rendered segments (PF-84).
+  urnSegment: helsinki-kpi
+  isSandbox: false
+  # The one model of this space: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: helsinki-kpi }
+  defaultLocale: en
+  # History per type (DM-82, ADR-N-046 2.3, T-4275): a measurement series keeps 30 days, every
+  # other type keeps its current state only. Owners change it on the space's Retention tab.
+  retention:
+    - entityType: KeyPerformanceIndicator
+      history: P30D
+      # A row when a value moves, and one a month for an indicator that stands still, such as HSL's
+      # November 2016 boardings (T-5254), which a daily read rewrites unchanged; `updatedAt` is the
+      # run's own clock and no measurement.
+      record: onChange
+      heartbeat: P30D
+      attributes:
+        updatedAt: { record: never }
+  # The space's place (T-4525): the catalogue's Dataset carries it, so georel=near finds the space.
+  # the HSL area with a margin; a KeyPerformanceIndicator outside it is flagged, never refused (DM-87).
+  quality:
+    - name: in-area
+      entityType: KeyPerformanceIndicator
+      kind: area
+      attribute: location
+      bbox: [23.9, 59.85, 25.6, 60.8]

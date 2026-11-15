@@ -1,0 +1,15 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: pipelines-write
+  namespace: helsinki
+  title: { en: The ingestion pipelines write the space }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: serviceAccount, id: pipelines }
+  # Upsert is what a feed poll does; create and query are what a stream needs to start from
+  # nothing and to check itself. No delete: a bus and a Digitraffic Alert carry their own lifetime
+  # (`expiresAt`, NGSI-LD 4.22) and the broker removes them (T-4823); the one pipeline that
+  # deletes has its own Policy over Alerts only (pipelines-delete-alerts).
+  operations: [upsertBatch, createBatch, queryBatch]

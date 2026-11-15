@@ -1,0 +1,20 @@
+# HSL's stops by line (HSL:n pysäkit linjoittain), one row per stop of each line variant, 32679
+# rows of 1121 variants on 2026-10-08. The feature service answers at most 16000 records a
+# request, so this is the open-data hub's export of the whole layer in WGS84, one 21 MB file
+# behind a redirect to a signed download. No key. CC-BY-4.0, read from the HRI catalogue (package
+# hsl-n-pysakit-linjoittain). T-3356.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hsl-routes
+  namespace: helsinki
+  title:
+    en: HSL lines and their stops
+    fi: HSL:n pysäkit linjoittain
+spec:
+  type: http
+  http:
+    url: https://hub.arcgis.com/api/download/v1/items/eaf5c38b82664bc28c8a60e9be69696c/geojson?redirect=true&layers=0&spatialRefId=4326
+    verb: GET
+    headers: { Accept: application/geo+json }
+    timeout: 120s

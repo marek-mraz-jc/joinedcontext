@@ -789,7 +789,7 @@ mod remote_url_tests {
         for url in [
             "https://git.example.org/r.git",
             "https://Git.Example.org./r.git",
-            "https://116.203.134.249/r.git",
+            "https://9.9.9.9/r.git",
             "https://[2606:4700::1111]/r.git",
             "ssh://git@git.example.org:2222/r.git",
             "git@github.com:o/r.git",

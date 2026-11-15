@@ -1,0 +1,24 @@
+---
+gitops:
+  argocd:
+    # An add-on (docs Deployment/04 §2): an installation turns it on by listing `gitops` in
+    # its components; nothing else does.
+    enabled: true
+    # Its own namespace, never the instance's: Argo CD holds cluster-wide write, and the
+    # instance namespace's policies and roles stay about the instance.
+    namespace: argocd
+    # The UI's host, argocd.{domain}, behind Keycloak only (ADR-N-056 §2.8).
+    subDomain: argocd
+    # The realm role that gets role:admin, the one Grafana's Admin reads too; every other
+    # login reads. The owner grants it.
+    adminRole: platform-admin
+    # The repository Argo CD reads and the branch it follows. Public, so no key (§2.4).
+    repoURL: https://github.com/marek-mraz-jc/joinedcontext-deployment.git
+    targetRevision: main
+    # Off until a Keycloak login of an adminGroup member has synced (§2.8); then false.
+    localAdmin: true
+  root:
+    # The root Application. Off: installing Argo CD changes nothing until an operator turns
+    # this on, which is the switch-over (docs Deployment/15-gitops.md).
+    enabled: false
+    namespace: argocd

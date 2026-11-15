@@ -1,0 +1,28 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-air-weather-explorer
+  namespace: helsinki
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+  title:
+    en: Air quality and weather
+    fi: Ilmanlaatu ja sää
+spec:
+  audience: public
+  callerRole: true
+  contextSpaceRef:
+    kind: ContextSpace
+    name: helsinki
+  enabledRepresentations:
+  - ngsi-ld
+  - mcp
+  - ogc-features
+  roles:
+  - name: viewer
+    subjects:
+    - group: air-weather-explorer-viewer
+  - name: steward
+    subjects:
+    - group: air-weather-explorer-steward
+  slug: pdqvdmqvit32on6sswimb7w7a5

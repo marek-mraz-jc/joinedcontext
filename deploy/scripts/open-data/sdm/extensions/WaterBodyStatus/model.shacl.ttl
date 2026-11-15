@@ -1,0 +1,238 @@
+@prefix geojson: <https://purl.org/geojson/vocab#> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix ns1: <https://w3id.org/linkml/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sdm: <https://smartdatamodels.org/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://joinedcontext.com/models/sdm/extensions/WaterBodyStatus> ns1:generator_version "linkml-1.11.1" .
+
+jc:WaterBodyStatus a sh:NodeShape ;
+    rdfs:comment "A water body with its ecological status or potential class." ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) ;
+    sh:property [ sh:datatype xsd:dateTime ;
+            sh:description "When the observation the entity reports was made." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 35 ;
+            sh:path ngsi-ld:observedAt ],
+        [ sh:datatype xsd:integer ;
+            sh:description "The source column `SOI`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 27 ;
+            sh:path jc:sOI ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `NAZOV_VU_D`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 17 ;
+            sh:path jc:nAZOVVUD ],
+        [ sh:datatype xsd:integer ;
+            sh:description "The source column `AUT`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 4 ;
+            sh:path jc:aUT ],
+        [ sh:datatype xsd:float ;
+            sh:description "The source column `rkm_do_1`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 25 ;
+            sh:path jc:rkmDo1 ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `NAZOV_VU`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 19 ;
+            sh:path sdm:name ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `charakter_1`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 7 ;
+            sh:path jc:charakter1 ],
+        [ sh:datatype xsd:float ;
+            sh:description "The source column `skupina`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 29 ;
+            sh:path jc:skupina ],
+        [ sh:datatype xsd:integer ;
+            sh:description "The source column `IDN2`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 14 ;
+            sh:path jc:iDN2 ],
+        [ sh:datatype xsd:integer ;
+            sh:description "The source column `FID_kraj_0`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 12 ;
+            sh:path jc:fIDKraj0 ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `FACC`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 11 ;
+            sh:path jc:fACC ],
+        [ sh:description "The service the row was read from." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:IRI ;
+            sh:order 1 ;
+            sh:path sdm:source ],
+        [ sh:datatype xsd:integer ;
+            sh:description "The source column `FID_rieky_bbsk_join`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 13 ;
+            sh:path jc:fIDRiekyBbskJoin ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `SUB_UNIT`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 28 ;
+            sh:path jc:sUBUNIT ],
+        [ sh:datatype xsd:integer ;
+            sh:description "The source column `ACH`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 3 ;
+            sh:path jc:aCH ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `potencial`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 24 ;
+            sh:path jc:potencial ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `kod`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 16 ;
+            sh:path jc:kod ],
+        [ sh:datatype xsd:dateTime ;
+            sh:description "The source column `DOW`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 8 ;
+            sh:path jc:dOW ],
+        [ sh:datatype xsd:float ;
+            sh:description "The source column `dlzka_VU_1`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 9 ;
+            sh:path jc:dlzkaVU1 ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `POZNAMKA`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 23 ;
+            sh:path jc:pOZNAMKA ],
+        [ sh:description "The catalogue dataset the row belongs to, where its licence and its other rows are." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:IRI ;
+            sh:order 2 ;
+            sh:path jc:isPartOf ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `POZN_1`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 22 ;
+            sh:path jc:pOZN1 ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `KOD_VU_202`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 15 ;
+            sh:path jc:kODVU202 ],
+        [ sh:datatype xsd:string ;
+            sh:description "Who published the row, with the credit its licence asks for." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 0 ;
+            sh:path sdm:dataProvider ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `NM2`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 18 ;
+            sh:path jc:nM2 ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `nazov_VU_1`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 20 ;
+            sh:path jc:nazovVU1 ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `celk_chem_stav`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 5 ;
+            sh:path jc:celkChemStav ],
+        [ sh:datatype xsd:float ;
+            sh:description "The source column `rkm_od_1`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 26 ;
+            sh:path jc:rkmOd1 ],
+        [ sh:datatype xsd:float ;
+            sh:description "The source column `VYMERA`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 31 ;
+            sh:path jc:vYMERA ],
+        [ sh:datatype xsd:float ;
+            sh:description "The source column `ekologicky_stav`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 10 ;
+            sh:path jc:ekologickyStav ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `typ`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 30 ;
+            sh:path jc:typ ],
+        [ sh:datatype xsd:string ;
+            sh:description "Where the entity is, as GeoJSON geometry." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 34 ;
+            sh:path geojson:geometry ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `POVODIE`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 21 ;
+            sh:path jc:pOVODIE ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `charakter`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 6 ;
+            sh:path jc:charakter ] ;
+    sh:targetClass jc:WaterBodyStatus .
+
+ngsi-ld:Entity a sh:NodeShape ;
+    rdfs:comment "The root every NGSI-LD entity class specialises." ;
+    sh:closed true ;
+    sh:ignoredProperties ( sdm:name sdm:source jc:celkChemStav jc:dOW jc:sUBUNIT jc:charakter1 jc:rkmDo1 jc:nM2 jc:nazovVU1 jc:typ jc:rkmOd1 jc:pOZN1 jc:aCH jc:dlzkaVU1 jc:charakter jc:nAZOVVUD jc:iDN2 jc:skupina jc:pOVODIE rdf:type jc:potencial jc:ekologickyStav jc:pOZNAMKA jc:aUT jc:isPartOf sdm:dataProvider jc:fIDKraj0 jc:kODVU202 jc:sOI jc:fIDRiekyBbskJoin jc:kod jc:fACC jc:vYMERA ) ;
+    sh:property [ sh:datatype xsd:dateTime ;
+            sh:description "When the observation the entity reports was made." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 3 ;
+            sh:path ngsi-ld:observedAt ],
+        [ sh:datatype xsd:string ;
+            sh:description "Where the entity is, as GeoJSON geometry." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 2 ;
+            sh:path geojson:geometry ] ;
+    sh:targetClass ngsi-ld:Entity .
+

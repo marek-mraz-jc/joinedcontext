@@ -1,0 +1,56 @@
+# The stationary air pollution sources of the Prague emission register REZZO 1 and REZZO 2 (T-5429),
+# EmissionSource of the space praha-mesto read through its own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-zdroje-znecisteni
+  namespace: praha
+  title:
+    cs: Zdroje znečišťování ovzduší (REZZO) — Praha
+    en: Air pollution sources (REZZO) — Prague
+  description:
+    cs: 'Vyjmenované stacionární zdroje znečišťování ovzduší REZZO 1 a REZZO 2: poloha, adresa, převládající palivo a roční emise PM10, PM2,5, SO2, NOx, CO a VOC v tunách. Provozovatel se nečte. Zdroj: IPR Praha, CC BY 4.0.'
+    en: 'The stationary air pollution sources of the registers REZZO 1 and REZZO 2: location, address, dominant fuel and yearly emissions of PM10, PM2.5, SO2, NOx, CO and VOC in tonnes. The operator is not read. Source: IPR Praha, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: 7dsa6hegkwyvbry43o4uc4alu4jbqqci
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-zdroje-znecisteni
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Sources by address; the operator, its company number and the source's name are not read: some
+    # operators are sole traders, private persons (T-5429).
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha (CC BY 4.0)'
+      en: 'Source: data © IPR Praha (CC BY 4.0)'
+    themes: [ENVI, HEAL]
+    keywords:
+      cs: [Praha, znečištění ovzduší, emise, REZZO, zdroje znečištění]
+      en: [Prague, air pollution, emissions, REZZO, pollution sources]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: ANNUAL
+    source:
+      - url: https://hub.arcgis.com/api/v3/datasets/d2382afbf9454951ab71a0a89c762d15_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Stacionární zdroje znečišťování ovzduší REZZO 1 (IPR Praha)
+          en: Stationary air pollution sources REZZO 1 (IPR Praha)
+        description:
+          cs: Velké stacionární zdroje (REZZO 1) z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Large stationary sources (REZZO 1) from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/8f600add6b104be9810b23c1bf212b78_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Stacionární zdroje znečišťování ovzduší REZZO 2 (IPR Praha)
+          en: Stationary air pollution sources REZZO 2 (IPR Praha)
+        description:
+          cs: Střední stacionární zdroje (REZZO 2) z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Medium stationary sources (REZZO 2) from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.

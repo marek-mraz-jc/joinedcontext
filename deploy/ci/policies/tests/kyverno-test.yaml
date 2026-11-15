@@ -1,0 +1,346 @@
+---
+# Regression tests for the CI policies, run with `kyverno test ci/policies`.
+# Every rule is exercised with at least one compliant and one violating
+# resource, so a broken JMESPath expression (silently passing everything)
+# fails this suite instead of going unnoticed in the scan job.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: jc-policy-tests
+policies:
+  - ../base/disallow-capabilities-strict.yaml
+  - ../base/disallow-host-namespaces.yaml
+  - ../base/disallow-host-path.yaml
+  - ../base/disallow-host-ports.yaml
+  - ../base/disallow-host-process.yaml
+  - ../base/disallow-privilege-escalation.yaml
+  - ../base/disallow-privileged-containers.yaml
+  - ../base/disallow-proc-mount.yaml
+  - ../base/disallow-selinux.yaml
+  - ../base/probes.yaml
+  - ../base/require-ingress-class.yaml
+  - ../base/require-image-checksum.yaml
+  - ../base/require-ro-rootfs.yaml
+  - ../base/require-run-as-non-root-user.yaml
+  - ../base/require-run-as-nonroot.yaml
+  - ../base/restrict-apparmor-profiles.yaml
+  - ../base/restrict-seccomp-strict.yaml
+  - ../base/restrict-sysctls.yaml
+  - ../base/restrict-volume-types.yaml
+  - ../production/require-pdb.yaml
+  - ../production/require-replicas-or-hpa.yaml
+  - ../production/require-resources.yaml
+  - ../production/require-rolling-update.yaml
+resources:
+  - resources/good.yaml
+  - resources/bad.yaml
+results:
+  # --- base: PSS baseline + restricted (vendored) ---
+  - policy: disallow-capabilities-strict
+    rule: require-drop-all
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: disallow-capabilities-strict
+    rule: require-drop-all
+    kind: Pod
+    resources: [bad-pod]
+    result: fail
+  - policy: disallow-capabilities-strict
+    rule: adding-capabilities-strict
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: disallow-capabilities-strict
+    rule: adding-capabilities-strict
+    kind: Pod
+    resources: [bad-pss-pod]
+    result: fail
+  - policy: disallow-host-namespaces
+    rule: host-namespaces
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: disallow-host-namespaces
+    rule: host-namespaces
+    kind: Pod
+    resources: [bad-host-pod]
+    result: fail
+  - policy: disallow-host-path
+    rule: host-path
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: disallow-host-path
+    rule: host-path
+    kind: Pod
+    resources: [bad-host-pod]
+    result: fail
+  - policy: disallow-host-ports
+    rule: host-ports-none
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: disallow-host-ports
+    rule: host-ports-none
+    kind: Pod
+    resources: [bad-host-pod]
+    result: fail
+  - policy: disallow-host-process
+    rule: host-process-containers
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: disallow-host-process
+    rule: host-process-containers
+    kind: Pod
+    resources: [bad-pss-pod]
+    result: fail
+  - policy: disallow-privilege-escalation
+    rule: privilege-escalation
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: disallow-privilege-escalation
+    rule: privilege-escalation
+    kind: Pod
+    resources: [bad-pod]
+    result: fail
+  - policy: disallow-privileged-containers
+    rule: privileged-containers
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: disallow-privileged-containers
+    rule: privileged-containers
+    kind: Pod
+    resources: [bad-host-pod]
+    result: fail
+  - policy: disallow-proc-mount
+    rule: check-proc-mount
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: disallow-proc-mount
+    rule: check-proc-mount
+    kind: Pod
+    resources: [bad-pss-pod]
+    result: fail
+  - policy: disallow-selinux
+    rule: selinux-type
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: disallow-selinux
+    rule: selinux-type
+    kind: Pod
+    resources: [bad-pss-pod]
+    result: fail
+  - policy: disallow-selinux
+    rule: selinux-user-role
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: disallow-selinux
+    rule: selinux-user-role
+    kind: Pod
+    resources: [bad-pss-pod]
+    result: fail
+  - policy: restrict-apparmor-profiles
+    rule: app-armor
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: restrict-apparmor-profiles
+    rule: app-armor
+    kind: Pod
+    resources: [bad-pss-pod]
+    result: fail
+  - policy: require-run-as-non-root-user
+    rule: run-as-non-root-user
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: require-run-as-non-root-user
+    rule: run-as-non-root-user
+    kind: Pod
+    resources: [bad-pss-pod]
+    result: fail
+  - policy: require-run-as-nonroot
+    rule: run-as-non-root
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: require-run-as-nonroot
+    rule: run-as-non-root
+    kind: Pod
+    resources: [bad-pod]
+    result: fail
+  - policy: restrict-seccomp-strict
+    rule: check-seccomp-strict
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  # restricted requires an explicit profile: unset (bad-pod) fails just like
+  # an explicit Unconfined (bad-pss-pod).
+  - policy: restrict-seccomp-strict
+    rule: check-seccomp-strict
+    kind: Pod
+    resources: [bad-pod]
+    result: fail
+  - policy: restrict-seccomp-strict
+    rule: check-seccomp-strict
+    kind: Pod
+    resources: [bad-pss-pod]
+    result: fail
+  - policy: restrict-sysctls
+    rule: check-sysctls
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: restrict-sysctls
+    rule: check-sysctls
+    kind: Pod
+    resources: [bad-pss-pod]
+    result: fail
+  - policy: restrict-volume-types
+    rule: restricted-volumes
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: restrict-volume-types
+    rule: restricted-volumes
+    kind: Pod
+    resources: [bad-host-pod]
+    result: fail
+
+  # --- base: validate-probes ---
+  - policy: validate-probes
+    rule: require-at-least-one-probe
+    kind: Deployment
+    resources: [good-deployment]
+    result: pass
+  - policy: validate-probes
+    rule: require-at-least-one-probe
+    kind: Deployment
+    resources: [bad-deployment]
+    result: fail
+  - policy: validate-probes
+    rule: require-different-probes
+    kind: Deployment
+    resources: [good-deployment]
+    result: pass
+  - policy: validate-probes
+    rule: require-different-probes
+    kind: Deployment
+    resources: [identical-probes-deployment]
+    result: fail
+
+  # --- base: require-ro-rootfs (vendored) ---
+  - policy: require-ro-rootfs
+    rule: validate-readOnlyRootFilesystem
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: require-ro-rootfs
+    rule: validate-readOnlyRootFilesystem
+    kind: Pod
+    resources: [bad-pod]
+    result: fail
+  # Known upstream gap: the vendored policy only checks spec.containers, so a
+  # violating initContainer passes. If this expectation ever flips to "fail",
+  # upstream closed the gap - update the fixture comment, keep the stricter check.
+  - policy: require-ro-rootfs
+    rule: validate-readOnlyRootFilesystem
+    kind: Pod
+    resources: [bad-init-pod]
+    result: pass
+
+  # --- base: require-image-checksum (vendored) ---
+  # The upstream pattern is `*@*`: any digest, not only sha256. Every reference this
+  # deployment renders carries one (T-0262, BSI TR-03187 AR-4).
+  - policy: require-image-checksum
+    rule: require-image-checksum
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: require-image-checksum
+    rule: require-image-checksum
+    kind: Pod
+    resources: [bad-pod]
+    result: fail
+  - policy: require-image-checksum
+    rule: require-image-checksum
+    kind: Pod
+    resources: [bad-init-pod]
+    result: fail
+  # --- base: require-ingress-class ---
+  - policy: require-ingress-class
+    rule: require-ingress-class-name
+    kind: Ingress
+    resources: [good-ingress]
+    result: pass
+  - policy: require-ingress-class
+    rule: require-ingress-class-name
+    kind: Ingress
+    resources: [bad-ingress]
+    result: fail
+
+  # --- production: require-pdb ---
+  - policy: require-pdb
+    rule: require-pdb-min-available-or-max-unavailable
+    kind: PodDisruptionBudget
+    resources: [good-pdb]
+    result: pass
+  - policy: require-pdb
+    rule: require-pdb-min-available-or-max-unavailable
+    kind: PodDisruptionBudget
+    resources: [bad-pdb]
+    result: fail
+
+  # --- production: require-minimum-replicas ---
+  - policy: require-minimum-replicas
+    rule: require-minimum-replicas
+    kind: Deployment
+    resources: [good-deployment]
+    result: pass
+  # scored: 'false' downgrades the violation to a warning by design (HPA case)
+  - policy: require-minimum-replicas
+    rule: require-minimum-replicas
+    kind: Deployment
+    resources: [bad-deployment]
+    result: warn
+
+  # --- production: require-resources ---
+  - policy: require-resources
+    rule: validate-resources
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: require-resources
+    rule: validate-resources
+    kind: Pod
+    resources: [bad-pod]
+    result: fail
+
+  # --- production: require-rolling-update ---
+  - policy: require-rolling-update
+    rule: require-rolling-update-deployment
+    kind: Deployment
+    resources: [good-deployment]
+    result: pass
+  - policy: require-rolling-update
+    rule: require-rolling-update-deployment
+    kind: Deployment
+    resources: [bad-deployment]
+    result: fail
+  - policy: require-rolling-update
+    rule: require-rolling-update-statefulset
+    kind: StatefulSet
+    resources: [good-statefulset]
+    result: pass
+  - policy: require-rolling-update
+    rule: require-rolling-update-statefulset
+    kind: StatefulSet
+    resources: [bad-statefulset, bad-statefulset-partition]
+    result: fail

@@ -1,0 +1,17 @@
+# Stage reads prod's public Endpoint slovensko-participacia for what stage does not hold yet (T-6545).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSourceRegistration
+metadata:
+  name: prod-slovensko-participacia
+  namespace: slovensko
+  title: Prod slovensko-participacia
+spec:
+  contextSpaceRef: slovensko-participacia
+  endpoint: https://api.smartcity.joinedcontext.com/api/endpoint/nak2jyucmfc6k72hvcltngzerhcc3kfv
+  information:
+    - entities:
+        - type: Debate
+        - type: Survey
+  mode: auxiliary
+  operations: [retrieveOps]
+  federation: { identity: anonymous }

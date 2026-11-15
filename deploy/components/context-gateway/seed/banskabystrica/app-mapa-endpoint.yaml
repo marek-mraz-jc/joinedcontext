@@ -1,0 +1,13 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-banskabystrica-mapa
+  namespace: banskabystrica
+  title: { en: Map of Banská Bystrica, sk: Mapa mesta Banská Bystrica }
+  annotations: { joinedcontext.com/generated-by: portal/app-reconciler }
+spec:
+  audience: public
+  callerRole: true
+  contextSpaceRef: { kind: ContextSpace, name: banskabystrica-verejne }
+  enabledRepresentations: [ngsi-ld, mcp, ogc-features, odata]
+  slug: kz3c7bq2mxa6wdr4tnyh5pje7f

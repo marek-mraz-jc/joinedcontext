@@ -1,0 +1,16 @@
+{#
+  The live explorer (T-5059): the Endpoint's entities as a table with search, filters and a map,
+  drawn by viz.{domain}, which reads the Endpoint anonymously; the catalogue holds no rows of it.
+  jc-viz.js sets the frame's height from the frame's own message. `clipboard-write` lets the
+  explorer's Embed dialog copy its code (T-5129); the frame reads nothing of this page.
+#}
+{% if explorer %}
+  <section class="jc-preview jc-explorer" aria-labelledby="jc-explorer-title">
+    <div class="jc-preview-head">
+      <h2 id="jc-explorer-title">{{ explorer.title }}</h2>
+    </div>
+    <p class="jc-lead">{{ h.jc_t('explorer_lead') }}</p>
+    <iframe class="jc-viz-frame jc-explorer-frame" title="{{ explorer.title }}" src="{{ explorer.src }}" data-jc-viz="{{ explorer.origin }}"
+            referrerpolicy="no-referrer" allow="clipboard-write" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"></iframe>
+  </section>
+{% endif %}

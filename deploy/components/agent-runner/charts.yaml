@@ -1,0 +1,4 @@
+---
+agent-runner:
+  proxy:
+    chart: ../../charts/workload

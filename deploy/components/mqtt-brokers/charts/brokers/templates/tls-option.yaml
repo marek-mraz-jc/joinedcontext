@@ -1,0 +1,28 @@
+{{- /*
+  The TLS of every broker's mqtts route (T-5562): BSI TR-02102-2, the spec of the HTTP edge's
+  TLSOption (components/apisix edge-tls.yaml), here in the brokers' namespace because Traefik
+  reads a TLSOption of another namespace only with allowCrossNamespace; named apart from the
+  edge's, which shares the namespace on dev.
+  tests/test_mqtt_brokers.py holds the two specs equal. Gated like the edge's: a cluster
+  without Traefik has no TLSOption kind, and helm refuses the whole release over it (T-4709).
+*/}}
+{{- if eq .Values.ingress.className "traefik" }}
+apiVersion: traefik.io/v1alpha1
+kind: TLSOption
+metadata:
+  name: mqtt-bsi-tr-02102
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "brokers.labels" (dict "root" . "managedBy" .Release.Service) | nindent 4 }}
+spec:
+  minVersion: VersionTLS12
+  maxVersion: VersionTLS13
+  cipherSuites:
+    - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+    - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+    - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+    - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+  curvePreferences:
+    - CurveP384
+    - CurveP256
+{{- end }}

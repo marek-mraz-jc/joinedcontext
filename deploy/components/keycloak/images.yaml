@@ -1,0 +1,26 @@
+---
+# Re-pin a digest with: docker buildx imagetools inspect <repository>:<tag>
+# and copy the Digest of the image index.
+keycloak:
+  db:
+  app:
+    repository: 'quay.io/keycloak/keycloak'
+    # 26.8.1 (the 26.8.1-1 rebuild of 2026-10-23) ships ca-certificates 2026.2.92, which
+    # fixes CRITICAL CVE-2026-114406 of 26.8.0 and 26.8.1-0 (T-5484). Quay republishes a tag
+    # as -0, -1, ...: a base fix lands only in the newest -N, so pin the digest of that one.
+    # A patch release; still dump the database before the apply, as for 26.8.0 (T-4124).
+    tag: '26.8.1'
+    # The keycloakx chart drops the tag when it is given a digest, so the values file
+    # keeps both by hand: `repository:tag@sha256:...` (BSI TR-03187 AR-4).
+    digest: 'sha256:a78d6b79572168cb25886b80a8b5b8d4ed4390743e3eecb810538683e209dd6b'
+  # adorsys/keycloak-config-cli 6.5.1-26 with the Ubuntu archive's fixes (libbrotli1 for
+  # CVE-2026-111497, T-6114): images/patched-keycloak-config-cli, signed by image-patched.yml
+  # run 40958311324 at b92a8aa0. Back to docker.io/adorsys/keycloak-config-cli once a tag scans clean.
+  configCli:
+    repository: 'ghcr.io/marek-mraz-jc/joinedcontext-keycloak-config-cli'
+    tag: '6.5.1-26'
+    digest: 'sha256:f8701faa62110ca8693049b4c1e887550a05f715dd8b09a8a90939d56453c9ec'
+  dbchecker:
+    repository: 'docker.io/busybox'
+    tag: '1.38'
+    digest: 'sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616'

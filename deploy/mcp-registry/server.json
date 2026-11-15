@@ -1,0 +1,32 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.joinedcontext/open-data",
+  "title": "joinedcontext open data",
+  "description": "Public open data of Slovak cities (air, events, parking, budgets), read-only NGSI-LD, no account",
+  "version": "1.0.0",
+  "websiteUrl": "https://opendata.smartcity.joinedcontext.com/connector",
+  "repository": {
+    "url": "https://github.com/marek-mraz-jc/joinedcontext-platform",
+    "source": "github"
+  },
+  "icons": [
+    {
+      "src": "https://opendata.smartcity.joinedcontext.com/jc-connector-icon-light.svg",
+      "mimeType": "image/svg+xml",
+      "sizes": ["any"],
+      "theme": "light"
+    },
+    {
+      "src": "https://opendata.smartcity.joinedcontext.com/jc-connector-icon-dark.svg",
+      "mimeType": "image/svg+xml",
+      "sizes": ["any"],
+      "theme": "dark"
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://api.smartcity.joinedcontext.com/api/mcp"
+    }
+  ]
+}

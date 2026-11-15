@@ -1,0 +1,32 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Project
+metadata:
+  name: praha
+  namespace: org
+  title: { cs: Hlavní město Praha, en: City of Prague }
+  description:
+    cs: 'Otevřená data Prahy: kola, ovzduší, městské části, školy, kultura, odpad, P+R, prodej jízdenek a rozpočet.'
+    en: "Prague's open data: bikes, air, districts, schools, culture, waste, park and ride, ticket points and the budget."
+spec:
+  organizationRef: hel
+  # Who publishes this data, the did:web assigner of its Apps' Policies (PF-108); describes, grants nothing.
+  domain: praha.eu
+  # The body that publishes the project's catalogue /catalog/praha.jsonld, by its registry IRI
+  # (EP-127, API/08 section 6). The desk is the installation's own, so no address is invented (T-4596).
+  catalog:
+    publisher:
+      name: { cs: Hlavní město Praha, en: City of Prague }
+      uri: https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/00064581
+    contactPoint: { name: joinedcontext platform, email: hello@joinedcontext.com }
+  # Owner, 2026-09-25 (T-2873): no demo work and no city dataset is refused by a quota, so every
+  # project allows 100 of each countable kind and runtime ceilings nobody reaches (PF-73). The
+  # quota stays as the mechanism; what the node holds is the operator's bounds file (PF-97).
+  quotas:
+    contextSpaces: 100
+    residentPipelines: 100
+    publicEndpoints: 100
+    apps: 100
+    ingestEventsPerSecond: 500
+    agentRunsPerDay: 2000
+    entitiesPerSpace: 1000000
+    requestsPerMinute: 6000

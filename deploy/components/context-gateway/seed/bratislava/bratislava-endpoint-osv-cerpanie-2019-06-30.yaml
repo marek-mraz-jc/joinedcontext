@@ -1,0 +1,44 @@
+# Spending of the budget of the social affairs department on 30 June 2019: one public dataset of the hub (T-5676), item 11b7cdd27d9f446ca97c1c2913cc169a, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-osv-cerpanie-2019-06-30
+  namespace: bratislava
+  title:
+    sk: Čerpanie rozpočtu oddelenia sociálnych vecí k 30. 6. 2019
+    en: Spending of the budget of the social affairs department on 30 June 2019
+  description:
+    sk: 'Ukazovatele tabuľky „Čerpanie rozpočtu oddelenia sociálnych vecí k 30. 6. 2019“ z data.bratislava.sk, jeden na údaj, členenie a obdobie, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table "Spending of the budget of the social affairs department on 30 June 2019", one per figure, breakdown and period, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: gc5ur7jiqumgvssjeqe5abwp5yuwagb3
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-osv-cerpanie-2019-06-30
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [GOVE]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/11b7cdd27d9f446ca97c1c2913cc169a
+        title:
+          sk: Čerpanie rozpočtu oddelenia sociálnych vecí k 30. 6. 2019
+          en: Spending of the budget of the social affairs department on 30 June 2019
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Čerpanie rozpočtu oddelenia sociálnych vecí k 30. 6. 2019. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Spending of the budget of the social affairs department on 30 June 2019. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

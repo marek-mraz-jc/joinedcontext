@@ -1,0 +1,19 @@
+# The city's 2022 noise survey, layer
+#   Meluselvitys_2022_Helsinki_kadut_ja_maantiet_LAeq_22-7_NPM
+# Only the records where db_lo>=55, as an open WFS answer in WGS84 (T-5378).
+# No key. CC-BY-4.0, read from the HRI catalogue (helsingin-kaupungin-meluselvitys-2017, whose 2022 update the layers are).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-noise-roads-night-2
+  namespace: helsinki
+  title:
+    en: Road traffic noise, night 22-7, bands from 55 dB
+    fi: Katu- ja tieliikennemelu, yö 22-7, vähintään 55 dB
+spec:
+  type: http
+  http:
+    url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Meluselvitys_2022_Helsinki_kadut_ja_maantiet_LAeq_22-7_NPM&CQL_FILTER=db_lo%3E%3D55
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

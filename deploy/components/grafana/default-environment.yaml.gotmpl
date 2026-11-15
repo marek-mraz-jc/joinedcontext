@@ -1,0 +1,45 @@
+---
+grafana:
+  # The committed dashboards, as one ConfigMap the Grafana release mounts by name.
+  dashboards:
+    enabled: false
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "grafana") }}
+    configMapName: grafana-dashboards
+    provider: platform
+    projectsConfigMapName: grafana-projects
+
+  grafana:
+    # Off until a Prometheus is named. The component's whole purpose is drawing a time series
+    # somebody already collects; an addon with an empty datasource is a login page in front of
+    # four panels that all say "No data" (OPS-16).
+    enabled: false
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "grafana") }}
+
+    # The Prometheus that scrapes this installation, as a URL reachable from inside the
+    # cluster. This repository deploys no Prometheus: the monitoring component renders the
+    # scrape configuration and the alert rules for an Operator that is already there
+    # (components/monitoring/README.md), and this is the same Prometheus read back.
+    # With the prometheus component in the list, it is that component's Prometheus (T-5154).
+    {{- $prometheusNamespace := include "jc.namespace" (dict "global" .Values.global "suffix" "prometheus") }}
+    {{- $deployed := has "prometheus" .Values.components }}
+    prometheusUrl: {{ ternary (printf "http://prometheus-operated.%s.svc.cluster.local:9090" $prometheusNamespace) "" $deployed | quote }}
+
+    # The namespace the Prometheus above runs in, for the egress policy. A URL is a name the
+    # policy cannot read, so the one hop out of this namespace is named separately.
+    prometheusNamespace: {{ ternary $prometheusNamespace "monitoring" $deployed | quote }}
+    prometheusPort: 9090
+
+    # A project's own organization, dashboard and datasources (T-6504, README "Project
+    # dashboards"). Empty is the operational dashboards alone. Each entry:
+    #   name: the project; title: its folder's name; groups: the realm groups that open it, by
+    #   full path; endpoints: {name, slug} of each Endpoint its charts/dashboards/projects/
+    #   <name>.json reads. Every slug also needs its audience in keycloak-clients.yaml.
+    projects: []
+    # The gateway the datasources read; the only address of this component's project dashboards.
+    gatewayUrl: "http://context-gateway.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}.svc.cluster.local:8080"
+
+    # Grafana keeps its own state — the session of a logged-in operator, the starred
+    # dashboards — in an embedded database. Everything this component provisions comes from
+    # ConfigMaps at start-up, so the state that is lost with the pod is the state nobody
+    # authored, and a volume is one more thing to back up for nothing.
+    persistence: false

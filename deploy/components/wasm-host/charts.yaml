@@ -1,0 +1,12 @@
+---
+wasm-host:
+  shard-0:
+    chart: ../../charts/workload
+  shard-1:
+    chart: ../../charts/workload
+  portal-access:
+    chart: ./charts/portal-access
+  tokens:
+    chart: ../../charts/workload
+  identities:
+    chart: ../pipeline-runner/charts/identities

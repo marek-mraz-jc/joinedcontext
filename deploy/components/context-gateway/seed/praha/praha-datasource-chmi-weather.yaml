@@ -1,0 +1,18 @@
+# ČHMÚ's open data, the directory of 10-minute weather observations (meteorology/climate/now/data):
+# the listing names one JSON file per station and UTC day; the chmi-weather mapping reads the files
+# of the eight Prague stations (T-5429). No key. CC BY 4.0, Český hydrometeorologický ústav.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: chmi-weather
+  namespace: praha
+  title:
+    en: Weather, 10-minute observations (ČHMÚ)
+    cs: Počasí, desetiminutová pozorování (ČHMÚ)
+spec:
+  type: http
+  http:
+    url: https://opendata.chmi.cz/meteorology/climate/now/data/
+    verb: GET
+    headers: { Accept: text/html }
+    timeout: 30s

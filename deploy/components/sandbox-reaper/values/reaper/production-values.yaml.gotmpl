@@ -1,0 +1,10 @@
+---
+# Same job, same ceiling. Production differs only in that a run must not be starved by a busy
+# node, so the request is high enough to be scheduled promptly.
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi

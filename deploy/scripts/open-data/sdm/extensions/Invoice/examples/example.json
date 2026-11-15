@@ -1,0 +1,26 @@
+{
+  "cisloObjednavky": "cisloObjednavky",
+  "cisloZmluvy": "cisloZmluvy",
+  "dIC": "dIC",
+  "dataProvider": "dataProvider",
+  "datumDorucenia": "2026-01-01",
+  "datumSplatnosti": "2026-01-01",
+  "dodavatel": "dodavatel",
+  "iCO": "iCO",
+  "id": "urn:ngsi-ld:Invoice:joinedcontext.com:example:1",
+  "identifier": "identifier",
+  "isPartOf": "https://example.org/isPartOf",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "observedAt": "2026-01-01T00:00:00Z",
+  "predmetFaktury": "predmetFaktury",
+  "rok": "rok",
+  "source": "https://example.org/source",
+  "suma": 0.0,
+  "type": "Invoice"
+}

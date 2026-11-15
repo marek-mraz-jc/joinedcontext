@@ -1,0 +1,16 @@
+# The outlines of the First World War land fortifications of Helsinki as an open WFS layer, in WGS84. No key.
+# CC-BY-4.0, read from the HRI catalogue (package helsingin-ensimmaisen-maailmansodan-aikaiset-maalinnoitukset).
+# 427 outlines on 2026-10-26, 27 of them a strongpoint (tukikohta); the whole layer is 0.2 MB.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-fortifications
+  namespace: helsinki
+  title: { en: First World War fortifications, fi: Ensimmäisen maailmansodan maalinnoitukset }
+spec:
+  type: http
+  http:
+    url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Maalinnoitus_rajaukset
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

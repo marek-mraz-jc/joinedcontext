@@ -1,0 +1,17 @@
+# The hub's tables of places as PointOfInterest (T-5274, T-5444). The tables
+# change a few times a year; a weekly run shows a change within a week.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: places
+  namespace: bratislava
+  title: { sk: Miesta a služby, en: Places and services }
+spec:
+  class: auto
+  period: 168h
+  schedule: '35 3 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: bratislava-hub }
+  targetEndpoint: urn:ngsi-ld:Endpoint:bratislava.sk:bratislava:bratislava
+  output: { type: PointOfInterest, mode: upsert }
+  quotas: { maxMemoryMb: 192, cpuMillicores: 100 }

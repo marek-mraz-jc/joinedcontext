@@ -1,0 +1,315 @@
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix linkml: <https://w3id.org/linkml/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+jc:Article a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "Article" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:url ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:name ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dateGmt ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dataProvider ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:modifiedGmt ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:identifier ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:content ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:source ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:isPartOf ],
+        jc:Entity ;
+    skos:definition "A news article the publisher posted." ;
+    skos:exactMatch jc:Article ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Article> ;
+    jc:upstream_source "https://smart-data-models.github.io/dataModel.CPSV-AP/Evidence/schema.json" .
+
+jc:Entity a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "Entity" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:observedAt ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:id ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:type ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:location ] ;
+    skos:definition "The root every NGSI-LD entity class specialises." ;
+    skos:exactMatch ngsi-ld:Entity ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Article> ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:boolean a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:boolean ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:content a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "content" ;
+    skos:definition "The source column `content`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Article> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:curie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:curie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:dataProvider a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dataProvider" ;
+    skos:definition "Who published the row, with the credit its licence asks for." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Article> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" .
+
+jc:date a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:date ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:dateGmt a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dateGmt" ;
+    rdfs:range jc:datetime ;
+    skos:definition "The source column `date_gmt`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Article> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:date_or_datetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:date_or_datetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:decimal a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:decimal ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:double a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:double ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:float a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:float ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:id a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "id" ;
+    skos:definition "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Article> ;
+    jc:jsonld_keyword "@id" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:identifier a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "identifier" ;
+    skos:definition "The source column `id`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Article> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" .
+
+jc:integer a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:integer ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:isPartOf a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "isPartOf" ;
+    rdfs:range jc:uri ;
+    skos:definition "The catalogue dataset the row belongs to, where its licence and its other rows are." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Article> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:jsonpath a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:jsonpath ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:jsonpointer a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:jsonpointer ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:location a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "location" ;
+    rdfs:range jc:string ;
+    skos:definition "Where the entity is, as GeoJSON geometry." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Article> ;
+    jc:ngsi_ld_kind "GeoProperty" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:modifiedGmt a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "modifiedGmt" ;
+    rdfs:range jc:datetime ;
+    skos:definition "The source column `modified_gmt`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Article> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:name a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "name" ;
+    skos:definition "The source column `title`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Article> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" .
+
+jc:ncname a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:ncname ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:nodeidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:nodeidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:objectidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:objectidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:observedAt a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "observedAt" ;
+    rdfs:range jc:datetime ;
+    skos:definition "When the observation the entity reports was made." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Article> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:source a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "source" ;
+    rdfs:range jc:uri ;
+    skos:definition "The service the row was read from." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Article> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" .
+
+jc:sparqlpath a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:sparqlpath ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:time a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:time ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:type a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "type" ;
+    skos:definition "The entity type, one class of a published data model." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Article> ;
+    jc:jsonld_keyword "@type" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:uriorcurie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:uriorcurie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:url a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "url" ;
+    rdfs:range jc:uri ;
+    skos:definition "The source column `link`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/Article> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:string a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:string ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:datetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:datetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:uri a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:uri ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+<https://joinedcontext.com/models/sdm/extensions/Article> a owl:Ontology ;
+    rdfs:label "Article" ;
+    dcterms:license "https://joinedcontext.com/licenses/cc-by-4.0" ;
+    dcterms:title "Article, an extension of dataModel.CPSV-AP/Evidence" ;
+    skos:definition "A news article the publisher posted. Extends dataModel.CPSV-AP/Evidence: CPSV-AP Evidence is the official model of a document a public body issues (identifier, name, relatedDocumentation); no subject holds news." .
+
+linkml:topValue a owl:DatatypeProperty ;
+    rdfs:label "value" .
+

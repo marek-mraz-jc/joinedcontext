@@ -1,0 +1,278 @@
+---
+portal:
+  portal:
+    # Distroless, entrypoint /usr/local/bin/joinedcontext-portal, listens on 8080.
+    repository: 'ghcr.io/marek-mraz-jc/joinedcontext-portal'
+    tag: 'main'
+    # portal 946b8c9: the drift surface — the reconciler scans a space's seed entities on its
+    # tick and the API serves what it found with the two resolutions UI-26 names (T-0453), with
+    # the modal in front of it (T-0213). On top of cc49376: a hub's ContextSourceRegistrations are written into its tenant by the
+    # reconciler (T-0345), an exported bundle is imported after showing what it would do
+    # (T-0217), a retiring session key and webhook secret are accepted while a rotation runs
+    # (T-0973, T-0982), a logout mark survives a restart (T-0980), and the model editor draws
+    # the class graph (T-1111). On top of f81c198.
+    # Digest read from the registry for the tag named after the commit.
+    # portal 905a766: every read of a project answers 404 to a caller who may not read it and a
+    # draft is read where its manifest is (T-1340, T-1361, T-1367, T-1368, T-1401, T-1407,
+    # T-1455), activity ingest is the collector's client alone (T-1402), flows, imports and
+    # project deletions can be approved (T-1400), a space steward approves its own deletions
+    # (T-1404), a conversation counts against the day's runs (T-1403), the endpoint form's
+    # check proposes its own projection as an update (T-1227). On top of 946b8c9.
+    # portal b4f2b02: every door refuses a proposal whose manifest has no fresh green check of
+    # its own (T-0956, PF-57), every page checks before it proposes (T-1459), an export keeps a
+    # native file with its owner (T-1405). On top of 905a766.
+    # portal a3e01e4: a preview's Save reaches its application (allow-forms, T-1219), the import
+    # door needs its own check (T-1460), jc_ask picks from the person's resources and question
+    # cards take several answers (T-1451, T-1452), create/edit/delete stay disabled with the
+    # reason (T-1383), Reject asks why (T-1387, T-1423), a refused write is dropped, not
+    # retried for ever (T-1465). On top of b4f2b02.
+    # portal bf29195: the space form checks before it proposes (T-1380), an approver reads each
+    # file's own field diff (T-1397), the approval page says deploying then applied with a link
+    # (T-1386), the Approvals entry counts what waits for this person (T-1391), lists poll while
+    # a change lands (T-1392), the template summary function reads the endpoint it is named
+    # (T-1466). On top of a3e01e4.
+    # portal 56a7990: Pipelines are written at v1alpha2 and several sources, steps and outputs
+    # render as one stream (T-1468), the approval page's banner and the Approvals count
+    # (T-1386, T-1391), one ResourceList with empty-state actions (T-1381, T-1382), the plan
+    # diff in words (T-1385), a11y fixes (T-1393..T-1395), prompts by role (T-1390). On top of bf29195.
+    # portal 04a9514: identity by space segment (T-1445..T-1448), import needs (T-1449),
+    # workspaces with REST, MCP operations, compare, update from main and bring back
+    # (T-1232..T-1237), Save as (T-1243, T-1441), a live endpointRef reference no longer listed
+    # as orphaned (T-1472). On top of 56a7990.
+    # portal ae8fd7d: the workspace pages, bar, compare and bring back (T-1245..T-1251), the
+    # assistant changes a second resource only inside a copy (T-1244), workspace previews with
+    # Try it and the person's own bounded data copy (T-1239..T-1241, T-1247), a workspace Change
+    # in Approvals (T-1250), the SDK entity grid (T-1427, T-1428, T-1438). On top of 04a9514.
+    # portal 1b32775: the workspace operations are a project's own, kind *, so a profile can
+    # name them (T-1475), New role and New group start without a name (T-1492), a dialog hands
+    # focus back to its opener and a form opens in its first field (T-1490, T-1501). On top of
+    # ae8fd7d.
+    # portal 9871972: the check resolves the resources a manifest names, so a space pointing at a
+    # model that does not exist is refused by the field instead of passing green (T-2233); live
+    # journeys for the role rules, the copy sweep, the node's preview slots, one open change per
+    # resource and the verdict gate. On top of 1b32775.
+    # portal 4f03b8c: a credential pasted into "Secret name" is refused by the field instead of
+    # being checked green and committed (T-2238, jc-core v0.7.43), an OAuth access token in a
+    # runner input is refused by its key and the catalog calls those fields secrets so the form
+    # asks for a reference (T-2239), the assistant page's write controls carry the refusal a
+    # viewer can read (T-1584), and the roles test proposes into a project that holds what its
+    # manifests name (T-2242). On top of 9871972.
+    # portal c602705: the docked assistant no longer proposes a Change by itself — it drafts a
+    # new context space, data source or pipeline, the kind's form opens on that draft and the
+    # person proposes it (T-2246, AG-77); the pipelines and endpoints pages say which quota is
+    # used up before the form (T-1594); the catalogue's propose control carries the refusal a
+    # viewer can read (T-2243); a refused model call names the upstream's own reason in the chat
+    # and in the log (T-2247). On top of 4f03b8c.
+    # portal edd87ca: a new resource whose drafted test comes back red still opens its form with
+    # the finding and no verdict, so the strict gate asks the person to finish it (T-2246, PF-57);
+    # a dashboard is created on the dashboards page like every other kind, and the Assistant page
+    # is for applications only; the draft list answers a line per draft and a tool result is cut
+    # before it reaches the model (T-2248); every live journey sweeps its own drafts with the CSRF
+    # header (T-2249). On top of c602705.
+    # portal cd75c03: every form field explains itself with a translated sentence and an example
+    # that fills it, long forms open on what matters and count the required fields still empty,
+    # a create form says what its kind is for before it asks anything, and a field with an example
+    # keeps the caret (T-1607, T-1608, T-1612, T-1613, T-1614, T-1617, T-2250, T-2251); an empty
+    # page says what lives there and what the first step is (T-1610); a question asked from a form
+    # is answered about that form and the form can be filled from a sentence (T-1611, UI-61,
+    # AG-77); the assistant reads the approval queue where it lives (T-1603). On top of edd87ca.
+    # portal 93d695b: the docked assistant can read the approval queue — `jc_change_list` and
+    # `jc_change_get` named a kind `access.kinds` may never name (MF-40), so no profile could ever
+    # be offered them and a run answered "jc_change_list is unavailable" (T-1475); the endpoints
+    # page's golden screenshots carry the quota notice and the empty state's sentence (T-2255).
+    # On top of cd75c03.
+    # portal dfe5b1e: an agent may not throw a copy away either, so neither way out of a copy is
+    # offered to one and naming the operation anyway is refused (AG-82, T-1259); an expired copy
+    # loses its preview, its branch and its record within the minute, and frees its name and its
+    # slot on the node, whichever of the three is already gone (CC-81, PF-83, T-1260, T-2232).
+    # On top of 93d695b.
+    # portal 4b1d5db: Pause, Resume and Publish check the manifest they write, so the click lands
+    # instead of being refused with "The manifest has not been checked" — the verdict gate wants a
+    # green check for exactly that manifest, whatever door it comes through (PF-57, T-2264).
+    # On top of dfe5b1e.
+    # portal 6aa7346: a copy shows the copy. Gitea answers 404 for the tree of a branch whose name
+    # has a slash, which every workspace branch has, so every read of a copy fell back to the
+    # project's own files without saying so: an edit committed to the copy's branch read back
+    # unchanged and its comparison was empty (CC-76, CC-79, T-2266). Also: a write inside a copy
+    # keeps its method and its length instead of being streamed (T-2265). On top of 4b1d5db.
+    # portal 8398bca: the data explorer and the pages beside it render the SDK grid instead of a
+    # table of their own, an endpoint and a context space show what they answer from their own row
+    # (T-1432, T-1433, T-1434), and a steward reads the space beside one endpoint with what the
+    # projection hides and the policy leaves out marked on the space's side (T-1435, EP-61). Also:
+    # a draft made inside a copy is listed, read, written and dropped in that copy instead of
+    # overwriting the project's draft of the same name (CC-76, PF-58, T-2267). On top of 6aa7346.
+    # portal 4086b27: the assistant opens one endpoint's grid already narrowed by the question —
+    # the page kind `entities` with an endpoint, a type and an optional filter, and the explorer
+    # seeds its query from the route and finds the endpoint's own space (T-1437, UI-59, UI-64).
+    # Also: a refused `jc_ui_navigate` counts as one correction, so a model repeating the same
+    # broken call no longer asks the proxy again without end. Before that, on top of 8398bca: a
+    # check that rejects a manifest answers the red verdict that says why, at all three doors, and
+    # keeps no draft of the manifest it refused (T-2234, T-2268); the reference check names the
+    # fields the specs actually carry, so a pipeline pointing at a data source that is not there
+    # is refused instead of passing green; a drafted space's write grant names an account that
+    # exists (T-1494); a list that could not be loaded is not an empty project and a refused
+    # export is not a file (T-1486, T-1487).
+    # portal 88e43f6: the preview list on the internal listener answers the Context Gateway's own
+    # ServiceAccount token and nobody else — audience `portal-internal`, `azp` matched against
+    # JC_PORTAL_GATEWAY_CLIENT_ID, and a Portal told neither refuses every call (T-1500, PF-46,
+    # AG-52). This image must be applied together with the gateway that presents that token and the
+    # Keycloak client that mints it, which is this same apply. Also: the entity grid is a view of an
+    # application spec (T-1440), and the explorer derives a handed-over endpoint's space.
+    # portal 10fd935: a Dashboard widget may be the entity grid, offered by the form and drawn
+    # on the page from the manifest's own configuration (T-1440, SDK-30, UI-71).
+    # portal 2342fe7: every route of the internal listener names the workload it belongs to, so
+    # the run callbacks and the pipeline-test capture each answer one client's own token
+    # (T-2271, AG-52, PF-46). Needs the platform image above and the mappers of this commit.
+    # portal 8ca9a76: the Portal builds the pipeline-test harness from a jcctl that mints the
+    # runner's own credential, so a proposed pipeline can be tested from the UI again — the pinned
+    # tag hid the contract and 2342fe7 shipped the route that requires the token without the side
+    # that sends it (T-2274, jc-core v0.7.45). Also: the entity grid's map panel — rows and shapes
+    # select each other, a drawn box filters the query, and a geometry is written as a GeoProperty
+    # instead of a Property, which would have changed the attribute's type at the broker for good
+    # (T-1443, UI-72, UI-66, UI-67). On top of 2342fe7.
+    # portal 09fffa5: a list row keeps one control in the open and the rest behind one menu at its
+    # end, with the reason on an action the role cannot take (T-2279); editing a context space opens
+    # the kind's own form filled from its manifest instead of the manifest as text (T-2278); an
+    # endpoint's representations fold into one line with a true count (T-2280); and the form's own
+    # check marks the field while the server is still asked (T-1491). On top of 8ca9a76.
+    # portal 7859014: two security fixes and the edge-case suites that found them. A login return
+    # target is a path and nothing else, so the backslash form of a protocol-relative URL
+    # (`/\evil.example`) can no longer leave the Portal after login (T-2290, PF-50); only a minted
+    # token can reach the CSRF cookie, so no value can become a second cookie attribute (T-2289);
+    # and an MCP elicitation answer that carries no `action` no longer counts as the person's
+    # consent — the question stays open and the client is told to send the answer again (T-2293,
+    # AG-63). With them: an endpoint has its own page with the filter, the area and the match count
+    # (T-2281, T-2283), every kind's row carries one menu (T-2287), and the edge cases of the
+    # session, the CSRF lock, the realm client, the operation gate, the verdict gate, the change
+    # lane and the MCP task handles (T-2091..T-2128). On top of 09fffa5.
+    # portal e0a7e38: the first image from marek-mraz-jc/joinedcontext-portal, where the repository
+    # moved (T-2301); jc-core and jcctl come from the moved platform at jc-core-v0.7.46. A full
+    # preview node no longer names other projects' workspaces (T-2129, T-2294); the Smart Data
+    # Models catalogue is a bounded list with the wait announced (T-1851); the models page, the
+    # LinkML editor and the SDM import share one Tabs and one Checkbox with the keyboard wired
+    # (T-1781). The rest since 7859014 is edge-case suites (T-1963..T-2080). On top of 7859014.
+    # portal 4a27397: the pipeline studio draws one lane — the runner's processors as steps with a
+    # palette grouped by category, each step's own Bento block as editable YAML, several sources on
+    # the left that the runner merges, and the test trace painted on the step that failed
+    # (T-1126..T-1128, T-1130, PL-52, PL-53, PL-56). jc-core at 0.7.47, whose pipeline test names
+    # that step. On top of e0a7e38.
+    # portal 3da8cc4: the SDK is a real package with its own library build (T-0682); a preview
+    # address the workspace wrote is checked before it becomes a link (T-2312); the six layout
+    # components and the shared ExternalLink/ConfirmDialog/RadioGroup land, ui_rules.test.ts is the
+    # gate that keeps them (T-1726..T-1728, T-1736..T-1748); a list that failed is no longer drawn
+    # as "you have nothing" (T-1763, T-1764); the e2e lane keeps its evidence when it fails
+    # (T-2311). On top of 4a27397.
+    # portal b9bb5d1: the ui-forms and ui-pages checklists land — LinkML source/structure/mappings,
+    # the pipeline dialog and studio, complete-a-space, Access, Activity, AgentRun, App, the
+    # approvals queue and the change under review, dashboards, workspaces and the resource list,
+    # each against the UI contract with its test (T-1769..T-1796). The pipeline canvas stands
+    # between its two palettes again and the four 400px/zoom goldens carry the shared-control
+    # layout (T-2311). The Vite 8 `server.fs.allow` fix, without which 86 of 142 UI test files
+    # did not collect (T-1777). On top of 3da8cc4.
+    # portal f3342c2: the rest of the ui-parts and ui-pages sweep — the rjsf theme and its three
+    # widgets, the Shell and the workspace bar, the dashboards and export parts, the access lists,
+    # the map's palette read from the theme's own tokens instead of eight literals (T-1797..T-1836).
+    # The pipeline canvas is a group rather than an image, so a screen reader announces the nodes
+    # in it. Two test cases corrected to the aria-disabled contract they were asserting against
+    # (T-2317, T-2320). On top of b9bb5d1.
+    # portal d04988a: the dashboard header, the sync card, the app cards and the SDK map panel
+    # keep one control in the open and put the rest, with their refusals, in the menu (T-2288);
+    # the bbsk-ukazovatele application and its live journey (T-2308, T-2309); five serious axe
+    # findings answered, including the info and primary-soft tones now being the brand pulled
+    # halfway to the ink — a pale brand measured 1.6:1 on its own soft background (T-1493).
+    # On top of f3342c2.
+    # portal a12297a: the streams reconciler tells a dead stream from a live one. It kept only the
+    # names from the runner's `GET /streams` and dropped each stream's `active` flag, so a stream
+    # whose writes were all refused stayed `Live` for ever and was never sent again — which is why
+    # the city's `voda` pipeline survived three applies dead while its siblings were re-created
+    # (T-2336, PL-18, OPS-27). An inactive stream is now re-sent, which restarts it and mints a
+    # fresh output token, bounded by whether its input is one that ends by itself so a file or
+    # `select` pipeline that legitimately finished is not re-ingested every pass. With it: an
+    # endpoint names the policies the gateway will evaluate for it and expands each CIM 009 group
+    # into the operations it covers (T-2282, GW34), the ui-parts sweep (T-1837..T-1846), and the
+    # spaces golden at 1920x1080 zoom 1.5 carrying the one-control row (T-2348). On top of d04988a.
+    # portal b6da73c: a Policy is authored through a form like every other kind — the five CIM 009
+    # groups first, their members read from the shared vocabulary rather than retyped, a
+    # prohibition that reads louder than a permission, four locales, axe and the keyboard
+    # (T-2326, R8, GW34, UI-44). With it: the ops routes and the agent access rules keep their
+    # refusals under attack (T-1689, T-1690, T-2081..T-2090), and the bento processor catalogue
+    # loses `file` in step with the platform (T-1701). On top of a12297a.
+    # portal b284f73: the assistant panel rebuilt — the composer is last and stays there, the
+    # example prompts and the app builder are reachable inside a conversation, a refused model
+    # call says what to do instead of printing a problem document (T-2419, T-2421, T-2423,
+    # T-2424); the workspace bar and the conflict chooser are a real radio group with a notice
+    # that is announced (T-1254, T-1255, T-2409); the focus ring and every link carry a readable
+    # contrast in both themes (T-2323, T-2324); a Role and a Group are authored through their
+    # fields (T-2400); and the T-2136 gates hold every module, control and route. On top of
+    # b6da73c.
+    # portal 4cafa0b: the stream renderer writes the source space where a mapping reads
+    # `env("JC_SOURCE_SPACE")` (T-2445). Without it an indicator pipeline's `derivedFrom` rendered
+    # `urn:ngsi-ld:Endpoint:hel.fi:<nil>:<nil>`, the broker refused every indicator with "object
+    # must be a URI" while the stream reported a 2xx for the batch, and both Slovak indicator
+    # spaces stayed empty with no failure to read anywhere. With it: the whole worker sweep of
+    # 2026-09-20 (T-1254, T-1759..T-1766, T-2422) and the fast lane's `ui` budget (T-2447). On
+    # top of b284f73.
+    # portal 3d0e085: a space's types are read from the DataModels that name it, not from the
+    # optional `dataModelRef` no seeded space sets, so the look-inside view lists what a space
+    # holds instead of reading as empty over hundreds of entities (T-2450); a page with no model
+    # says `untyped` rather than claiming `text`, so a numeric endpoint condition is not quoted
+    # into matching nothing (T-2448). On top of 4cafa0b.
+    # portal 15dabf1: an answered conversation takes the next question, the stall notice waits
+    # only while the agent owes the answer and offers 'Ask again' beside Stop, and an ended or hung
+    # run never holds the dock: 'New conversation' under it and in the header (T-2461, T-2463).
+    # On top of 3d0e085.
+    # portal 48718f8: a static app is served with its bundle, its integrity map and a #jc-config
+    # naming its endpoints (T-2457); the assistant says only what it read, reads the whole set and
+    # fails a silent turn at 90 s (T-2459, T-2460, T-2462); the share refuses a malformed endpoint
+    # and dedups (T-2349, T-2350); the manifest dialog and the dock on the UI contract (T-1749,
+    # T-1753); jc-core v0.7.48 with the SyncSource webhook block (T-2399). On top of 15dabf1.
+    # portal e50de9b: an app edit is patched by the editing agent in small steps with a ceiling of
+    # 12 calls / 500k input tokens a message (T-2466, T-2467); ServiceAccount and Subscription forms
+    # (T-2342, T-2344); jc-core v0.7.49, the CKAN licence field (T-2465). On top of 48718f8.
+    # portal 8209b8c: every static application is its own private forge repository and publish
+    # merges it at the approved commit (T-2468); edit forms keep the stored title, description and
+    # labels (T-2470); the ContextSourceRegistration form (T-2345). On top of e50de9b.
+    # portal 7107fe9: Mapping and DataModel edit forms (T-2354, T-2357), the CSR form keeps stored
+    # metadata (T-2472), the kit-pass tests follow the edit loop (T-2471). On top of 8209b8c.
+    # portal 090772b: an application repository can be copied to GitHub when the environment names
+    # an owner, off on dev until one is given (T-2475); a webhook SyncSource fixture (T-2473). On top
+    # of 7107fe9.
+    # portal cd2c1cf: an app is never served on the Portal's own origin (308 to the apps origin) and
+    # a run's preview carries a CSP sandbox without allow-same-origin (T-2476). On top of 090772b.
+    # portal 9990ac9: main since cd2c1cf, carrying T-1523 T-1526 T-1527 T-1528 T-1529 T-1535 T-1645
+    # T-1656 T-1658 T-1706 T-1713 T-1714 T-1715 T-1716 T-2309 T-2343 T-2474 T-2482.
+    # portal ce936a5: each wasm App with jobs gets its appjob ServiceAccount and federated client
+    # (T-3539). portal 85ff8a3: the builder image drops git checkouts' own Cargo.lock, so trivy is
+    # green again and the builders move with it (T-3567); auth_tests fixed (T-3568). portal ccc23a87:
+    # the SDK's entity panel writes a number as the grid does (T-3600).
+    # portal dfd0b23: jc-core of platform 2883bd0 reads a space's `quality` and `retention`
+    # (T-3899), so the Helsinki seed that carries them comes back in the same apply (T-4054).
+    # portal f311196: a failed forge build no longer flags the App's catalog card (owner, 2026-10-13).
+    digest: 'sha256:d44303c9397f7a23114708bedc7f0fd951d4287fd20751cbbcacdda2ce7d8b87'
+    # The Portal commit this digest is the image of, and the docs commit its /docs pages are
+    # (public-docs/COMMIT at that commit): scripts/pin-portal.sh writes both with the digest, and
+    # scripts/check-docs-pin.sh holds those docs to the code this release runs (T-4483).
+    commit: '370a56ed938f28a2778651c7a93cbf483b943f54'
+    docs: '898791c92267ff34d1c66c314c3c39f13edfa8c4'
+    # The platform commit the image's jc-core is built from (the portal's Cargo.toml `rev`): a
+    # seed field this jc-core does not know makes the Portal drop the whole manifest, so
+    # tests/test_portal_pin_reads_the_seed.py holds every seed to it (T-4054).
+    # The platform commit the pinned Portal's jc-core is built from: portal f49d6e3's Cargo.toml rev 967e8d3;
+    # it carries 9358512 (T-5295's datacube step, which the susr-* pipelines use since T-5382).
+    platform: '491749d62330105c07824e42fe5c7e8bbb0d678f'
+  # The UI bundle the Portal reads its pages from (T-2485): nginx-unprivileged with ui/dist, uid
+  # 101 on 8080. image.yml builds it only for a push that changes ui/ or sdk/, and the binary
+  # only for one that changes anything outside ui/ (T-6158), so `commit` and portal.commit may
+  # differ either way: scripts/pin-portal.sh pins each from the newest commit that built it and
+  # refuses a pair whose ui/ and sdk/ files differ (T-5297); a ui/-only commit moves this block alone.
+  ui:
+    repository: 'ghcr.io/marek-mraz-jc/joinedcontext-portal-ui'
+    tag: 'main'
+    digest: 'sha256:a18cd77f32fd2626eb393e265ed9c441c6089d53e4f02b897e4f2ca1dd624ccd'
+    commit: '370a56ed938f28a2778651c7a93cbf483b943f54'
+  # Mailpit, the mail catcher of an installation without a relay (T-3583). Re-pin with the
+  # registry query in components/sandbox-reaper/images.yaml, repository axllent/mailpit.
+  mail-catcher:
+    repository: 'axllent/mailpit'
+    tag: 'v1.31.5'
+    digest: 'sha256:94f6b70c1436defae6799d9ac7ff0eeff9540465b842026d5cdb018f1c0234ea'

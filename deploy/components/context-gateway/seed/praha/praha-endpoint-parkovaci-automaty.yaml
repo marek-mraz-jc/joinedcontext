@@ -1,0 +1,44 @@
+# The parking machines of Prague's paid parking zones that TSK hl. m. Prahy maps on the IPR geoportal
+# (T-5424), read through their own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-parkovaci-automaty
+  namespace: praha
+  title: { cs: Parkovací automaty — Praha, en: Parking machines — Prague }
+  description:
+    cs: 'Parkovací automaty zón placeného stání s číslem a ulicí: body na mapě. Zdroj: TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0.'
+    en: 'The parking machines of the paid parking zones with their number and street: points on the map. Source: TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: gteh32doq2d6bvvod2hvyw3n7y5rrenf
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-parkovaci-automaty
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Machines by number and street; no record names a person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha, TSK hl. m. Prahy (CC BY 4.0)'
+      en: 'Source: data © IPR Praha, TSK hl. m. Prahy (CC BY 4.0)'
+    themes: [TRAN, REGI]
+    keywords:
+      cs: [Praha, parkování, parkovací automaty]
+      en: [Prague, parking, parking machines]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: WEEKLY
+    source:
+      - url: https://hub.arcgis.com/api/v3/datasets/2b49ad1ad0bb4892bcb54acfb978456a_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Parkovací automaty (IPR Praha), en: Parking machines (IPR Praha) }
+        description:
+          cs: Parkovací automaty zón placeného stání s číslem a ulicí, TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: The parking machines of the paid parking zones with their number and street, TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.

@@ -1,0 +1,54 @@
+# One catalogue dataset (T-4344, T-5273): the cycle- entities of TrafficFlowObserved of the space bratislava, read through
+# its own Policy, which narrows the space's public read to them.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-cyklisti
+  namespace: bratislava
+  title: { sk: Cyklisti podľa sčítačov — Bratislava, en: Cyclist counts — Bratislava }
+  description:
+    sk: >-
+      Cyklisti, ktorých mestské sčítače dopravy napočítali za uplynulý deň, podľa sčítača a smeru; každý deň zostáva v histórii entity. Typ Smart Data Models TrafficFlowObserved (vehicleType bicycle, laneDirection forward k prvému menovanému smeru). Vynechané sú sčítače bez polohy, mimo Bratislavy, zopakované, s nulou celý deň (sčítač bez daného senzora) a hodiny mimo rozsahu. Zdroj: Hlavné mesto SR Bratislava, CC BY 4.0.
+    en: >-
+      The cyclists the city's counter sites counted the day before, per site and direction; each day stays in the entity's history. Smart Data Models type TrafficFlowObserved (vehicleType bicycle, laneDirection forward towards the first named direction). Left out: sites without a position, outside Bratislava, repeated ones, sites at 0 all day (a site without that sensor) and hours out of range. Source: City of Bratislava, CC BY 4.0.
+spec:
+  contextSpaceRef: bratislava
+  slug: oyf2p4gebtvnc5lf73punaajzjqyyjcf
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-cyklisti
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+      license: cc-by
+  catalog:
+    # The publisher is the Project's spec.catalog (T-4596). Counts and stations: no record names a person.
+    personalData: does-not-contain
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [TRAN]
+    keywords:
+      sk: [Bratislava, cyklistika, sčítanie dopravy]
+      en: [Bratislava, cycling, cyclist counts]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: DAILY
+    source:
+      - url: https://services8.arcgis.com/pRlN1m0su5BYaFAS/arcgis/rest/services/cyklisti2_0/FeatureServer/0
+        title:
+          sk: Počet prejazdov cyklistov podľa sčítačov za hodinu
+          en: Cyclists per counter site and hour
+        description:
+          sk: 'Vrstva ArcGIS Feature Service, ktorú data.bratislava.sk publikuje ako dataset: Počet prejazdov cyklistov podľa sčítačov za hodinu. Licencia CC BY 4.0.'
+          en: 'The ArcGIS Feature Service layer data.bratislava.sk publishes as the dataset: Cyclists per counter site and hour. Licence CC BY 4.0.'
+      - url: https://data.bratislava.sk/datasets/097b7c8bc4b94560a7e34c9e64139a5e
+        title:
+          sk: Počet prejazdov cyklistov podľa sčítačov za hodinu (data.bratislava.sk)
+          en: Cyclists per counter site and hour (data.bratislava.sk)
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet prejazdov cyklistov podľa sčítačov za hodinu. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Cyclists per counter site and hour. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: counters }

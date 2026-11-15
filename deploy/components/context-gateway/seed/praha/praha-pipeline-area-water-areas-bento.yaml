@@ -1,0 +1,123 @@
+# The mapping of an IPR place layer drawn as areas or lines (T-5426, PL-03): one PointOfInterest per record
+# of the layer Oázy chladu – vodní plochy a toky (3,524 areas on 2026-10-25).
+# The cemeteries, nature trails, water areas, dog zones, planning balance units and cycle routes
+# share this mapping; only the lets of the second step differ: the layer, the class, the service
+# category, the shapes the layer draws, the fields that name a record and the words around that name
+# (label), the code list IPR publishes for the field
+# that says what kind of area it is (its words fill facilityType and name an unnamed record), and
+# the street and web fields where the layer has them.
+#
+# Ids: urn:ngsi-ld:PointOfInterest:{org}:{space}:area-water-areas-{globalid}. The area- prefix keeps them apart from the
+# geo- points of praha-vybavenost; the Policy public-vodni-plochy names them.
+#
+# Read: the name, the outline or line (a third, height coordinate dropped, every coordinate rounded to
+# 6 decimals, about 0.1 m), the coded kind, the street and the web page (left out unless it is an
+# http(s) URL of printable ASCII). Nothing else of the layer is read: id_poskyt, poskyt and the shape
+# lengths and areas are IPR's bookkeeping.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a record without a GUID, with a code outside its list, with
+# a geometry the layer does not draw or that is not valid (a ring of fewer than 4 points or not
+# closed, a line of fewer than 2), or with a vertex outside Prague's box (the city plus about 1 km)
+# is dropped, and so is a second record of one GUID; the log line counts each reason. An answer that
+# is not a feature list, an empty one, or one where fewer than half the records survive (a projection
+# or schema change) fails the run, so the areas already written stay.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 16777216 { throw("IPR answered %v bytes; more than 16 MiB is not an area layer".format(content().length())) } else { this }
+        - mapping: |
+            let set = "water-areas"
+            let item = "e01b4bb6d148496abff4f065686290ff"
+            let kind = "PointOfInterest"
+            let category = "waterArea"
+            let shapes = ["Polygon", "MultiPolygon"]
+            let names = ["nazev"]
+            let label = "%v"
+            let coded = {"field": "typ", "codes": {"T": "Vodní tok", "P": "Vodní plocha"}}
+            let fallback = ""
+            let street = ""
+            let web = ""
+            map round {
+              root = if this.type() == "array" && this.length() > 0 && this.index(0).type() == "number" { this.slice(0, 2).map_each(n -> if n.type() == "number" { (n * 1000000).round() / 1000000 } else { null }) } else if this.type() == "array" { this.map_each(c -> c.apply("round")) } else { null }
+            }
+            map flat {
+              root = if this.type() != "array" || this.length() == 0 { [null] } else if this.index(0).type() == "number" { [this.slice(0, 2)] } else { this.map_each(c -> c.apply("flat")).flatten() }
+            }
+            map ring {
+              root = this.type() == "array" && this.length() >= 4 && this.index(0) == this.index(-1)
+            }
+            map polygon {
+              root = this.type() == "array" && this.length() > 0 && this.all(r -> r.apply("ring"))
+            }
+            map line {
+              root = this.type() == "array" && this.length() >= 2
+            }
+            map valid {
+              root = match {
+                this.t == "Polygon" => this.c.apply("polygon"),
+                this.t == "MultiPolygon" => this.c.type() == "array" && this.c.length() > 0 && this.c.all(p -> p.apply("polygon")),
+                this.t == "LineString" => this.c.apply("line"),
+                this.t == "MultiLineString" => this.c.type() == "array" && this.c.length() > 0 && this.c.all(l -> l.apply("line")),
+                _ => false
+              }
+            }
+            map words {
+              root = if this.type() == "string" { this.trim().re_replace_all("\\s+", " ") } else { "" }
+            }
+            let features = this.features.catch(null)
+            root = if $features.type() != "array" {
+              throw("IPR layer %v did not answer a feature list".format($item))
+            } else if $features.length() == 0 {
+              throw("IPR layer %v listed no record; the layer is never empty, so the download failed".format($item))
+            } else {
+              { "set": $set, "kind": $kind, "category": $category, "fallback": $fallback, "item": $item, "rows": $features.map_each(f -> {
+                "shapeType": f.geometry.type.catch(""),
+                "outline": f.geometry.coordinates.catch(null).apply("round"),
+                "key": f.properties.globalid.catch("").string().re_replace_all("[{}]", "").lowercase(),
+                "name": $names.map_each(n -> f.properties.get(n).catch(null).apply("words")).filter(n -> n != "").map_each(n -> $label.format(n)).append("").index(0),
+                "code": if $coded == null { null } else { f.properties.get($coded.field).catch(null) },
+                "street": if $street == "" { "" } else { f.properties.get($street).catch(null).apply("words") },
+                "web": if $web == "" { "" } else { f.properties.get($web).catch(null).apply("words") }
+              }).map_each(r -> r.assign({
+                "kindWords": if r.code == null || r.code.string().trim() == "" { "" } else { $coded.codes.get(r.code.string().re_replace_all("\\.0$", "")).catch(null) },
+                "valid": $shapes.contains(r.shapeType) && {"t": r.shapeType, "c": r.outline}.apply("valid"),
+                "points": r.outline.apply("flat")
+              })) }
+            }
+        - mapping: |
+            let rows = this.rows
+            let usable = $rows.filter(r -> r.key.re_match("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$") && r.kindWords != null)
+            let located = $usable.filter(r -> r.valid && r.points.all(c -> c.type() == "array" && c.length() == 2 && c.index(0).type() == "number" && c.index(1).type() == "number"))
+            let inside = $located.filter(r -> r.points.all(c -> c.index(0) >= 14.2 && c.index(0) <= 14.75 && c.index(1) >= 49.9 && c.index(1) <= 50.2))
+            let unique = $inside.unique(r -> r.key)
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $usable.length()
+            meta invalid = $usable.length() - $located.length()
+            meta outside = $located.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            meta set = this.set
+            root = if $unique.length() * 2 < $rows.length() {
+              throw("IPR layer %v: only %v of %v records have a GUID, known codes and a valid outline in Prague".format(this.item, $unique.length(), $rows.length()))
+            } else { this.assign({ "rows": $unique.map_each(r -> r.without("points", "valid")) }) }
+        - log:
+            level: INFO
+            message: 'area-${! meta("set") }: read ${! meta("read") }, dropped ${! meta("unusable") } without GUID or with an unknown code, ${! meta("invalid") } with an invalid outline, ${! meta("outside") } outside Prague, ${! meta("duplicate") } duplicates'
+        - mapping: |
+            let set = this.set
+            let kind = this.kind
+            let category = this.category
+            let fallback = this.fallback
+            let source = "https://geoportalpraha.cz/data-a-sluzby/" + this.item
+            root = this.rows.map_each(r -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:area-%v-%v".format($kind, env("JC_ORG_DOMAIN"), env("JC_SPACE"), $set, r.key),
+              "type": $kind,
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": [r.name, r.kindWords, $fallback].filter(n -> n != "").index(0) } },
+              "serviceCategory": if $category != null { { "type": "Property", "value": $category } } else { null },
+              "facilityType": if r.kindWords != "" { { "type": "Property", "value": r.kindWords } } else { null },
+              "address": if r.street != "" { { "type": "Property", "value": { "streetAddress": r.street, "addressLocality": "Praha", "addressCountry": "CZ" } } } else { null },
+              "url": if r.web.re_match("^https?://[^\\s/]+\\.[\\x21-\\x7e]+$") { { "type": "Property", "value": r.web } } else { null },
+              "location": { "type": "GeoProperty", "value": { "type": r.shapeType, "coordinates": r.outline } },
+              "dataProvider": { "type": "Property", "value": "datový podklad © IPR Praha (CC BY 4.0)" },
+              "source": { "type": "Property", "value": $source }
+            }.filter(kv -> kv.value != null))

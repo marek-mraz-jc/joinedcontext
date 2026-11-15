@@ -1,0 +1,22 @@
+# One WasteContainer per container without a sensor at the city's sorted-waste collection points,
+# with its next collection day (T-5427).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: waste-containers
+  namespace: praha
+  title:
+    en: Sorted-waste containers and their next collection
+    cs: Kontejnery na tříděný odpad a jejich příští svoz
+spec:
+  class: auto
+  # The register moves each container's next collection day once it is emptied, at most daily.
+  period: 24h
+  schedule: '40 4 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: golemio-waste-all-containers }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: WasteContainer, mode: upsert }
+  # Measured with docker run --memory over the whole answer of 2026-10-25 (11.4 MB, 20 587
+  # containers written): 288 MiB is killed, 320 MiB runs it in 3 s.
+  quotas: { maxMemoryMb: 320, cpuMillicores: 100 }

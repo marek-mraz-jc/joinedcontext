@@ -1,0 +1,17 @@
+# The city's street and park tree register (Puurekisteri_piste), the records where id<30000, as an open WFS answer in WGS84 (T-5378).
+# No key. CC-BY-4.0, read from the HRI catalogue (helsingin-kaupungin-puurekisteri).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-trees-0
+  namespace: helsinki
+  title:
+    en: Street and park trees, register ids under 30000
+    fi: Katu- ja puistopuut, rekisterin tunnisteet alle 30000
+spec:
+  type: http
+  http:
+    url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Puurekisteri_piste&CQL_FILTER=id%3C30000
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

@@ -1,0 +1,19 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: statistical-observation
+  namespace: zilina
+  title: { sk: Štatistické pozorovanie, en: Statistical observation }
+spec:
+  contextSpaceRef: zilina-mesto
+  linkml: ./statistical-observation.linkml.yaml
+  version: 1.1.0
+  lifecycle: published
+  classes: [KeyPerformanceIndicator]
+  # A published model commits all four artifacts (DM-02); the gateway serves schema/v1 from them
+  # (DM-22, EP-49). Regenerate: see README.md.
+  artifacts:
+    jsonSchema: ./statistical-observation.v1.schema.json
+    context: ./statistical-observation.v1.context.jsonld
+    docs: ./statistical-observation.v1.md
+    example: ./statistical-observation.v1.example.jsonld

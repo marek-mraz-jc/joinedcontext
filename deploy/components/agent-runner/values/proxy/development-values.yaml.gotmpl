@@ -1,0 +1,18 @@
+---
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Minimal Resources -> a Rust proxy that streams; the model's answers pass through
+# - [x] Minimal storage -> stateless
+# - [x] 1 Replica: held at 0 from the owner's spend guard (2026-10-08 17:50Z, OpenRouter usage $9.74
+#   over the $6 limit) until the owner's "proxy on" (T-4170); the renewed key carries a 5 USD/day cap
+#   and the proxy its own per-deployment caps. This line merges only on the owner's word.
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi

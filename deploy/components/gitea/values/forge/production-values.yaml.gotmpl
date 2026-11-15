@@ -1,0 +1,26 @@
+---
+# Checklist:
+# - [x] Resources (requests and limits)
+# - [x] Larger Storage -> the repositories fit the same 20Gi volume; grow the PVC, the
+#       forge has nowhere else to put them
+# - [ ] 2+ Replicas -> impossible and deliberate: one ReadWriteOnce volume holds the bare
+#       repositories, so the forge fails over rather than scaling out. OPS-06's floor
+#       covers the stateless core (docs Architecture/14). Kyverno reports this as a
+#       `require-minimum-replicas` warning in production, which is the warning working.
+# - [x] Rolling updates -> Recreate, for the same reason: two pods cannot hold the volume
+# - [ ] PodDisruptionBudget -> none, deliberately. The only budget a one-replica workload
+#       can express is `minAvailable: 1`, which does not protect the forge from anything
+#       and does stop `kubectl drain` from ever finishing on its node.
+
+replicaCount: 1
+
+strategy:
+  type: Recreate
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: '2'
+    memory: 4Gi

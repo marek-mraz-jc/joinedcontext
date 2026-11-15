@@ -1,0 +1,12 @@
+---
+# The pipelines' own identities on dev (PL-19, T-1508, T-4044): the federated mechanism is seen
+# working here (T-2868, and the wasm Apps' jobs since T-3539), so the token service runs, the
+# Portal keeps each Pipeline's ServiceAccount and client in the identities namespace, and every
+# stream asks the token service for its token. No rendered stream names a client secret, so the
+# runner's streams API has none to serve back.
+pipeline-runner:
+  tokens:
+    enabled: true
+  identities:
+    enabled: true
+    streams: true

@@ -1,0 +1,16 @@
+# IPR Praha's geoportal item 3615fd648f1f4182b5f42dcdfba03b54 (Stromořadí), 8,051 on 2026-10-23: the layer's description
+# on IPR's ArcGIS server, whose field list and coded values the mapping reads before it pages
+# through the layer's FeatureServer. No key. CC BY 4.0, "datový podklad © IPR Praha" (T-5425).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-green-tree-rows
+  namespace: praha
+  title: { en: Tree rows (IPR Praha), cs: Stromořadí (IPR Praha) }
+spec:
+  type: http
+  http:
+    url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/URK_CUR_URK_SS_STROMORADI_L/FeatureServer/0?f=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

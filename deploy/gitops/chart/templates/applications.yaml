@@ -1,0 +1,97 @@
+{{- $owned := dict }}
+{{- range .Values.components }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ printf "%s-%s" $.Values.environment .name }}
+  namespace: {{ $.Values.argocdNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ .wave | quote }}
+  # No resources finalizer: deleting an Application leaves what it applied in place.
+spec:
+  project: platform
+  source:
+    repoURL: {{ $.Values.repoURL }}
+    targetRevision: {{ $.Values.targetRevision }}
+    path: .
+    plugin:
+      name: helmfile
+      env:
+        - name: ENVIRONMENT
+          value: {{ $.Values.environment }}
+        - name: COMPONENT
+          value: {{ .component }}
+        {{- if ne .name .component }}
+        - name: NAMESPACE
+          value: {{ .namespace }}
+        {{- end }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .namespace }}
+  # A Secret is created once and its data never applied again from a render: the generated
+  # values and the routes the Portal composes into apisix-standalone-config live only in the
+  # cluster (OPS-55).
+  ignoreDifferences:
+    - kind: Secret
+      jsonPointers:
+        - /data
+        - /stringData
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true
+      {{- /* The first Application of a namespace creates it and writes what the `prepare` hook
+           wrote; a cluster namespace (kube-*) is the cluster's own, never annotated. */}}
+      {{- $own := and (not (hasKey $owned .namespace)) (not (hasPrefix "kube-" .namespace)) }}
+      {{- if $own }}
+      - CreateNamespace=true
+    {{- with $.Values.namespaceAnnotations }}
+    managedNamespaceMetadata:
+      annotations:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+      {{- end }}
+      {{- $_ := set $owned .namespace true }}
+    retry:
+      limit: 3
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
+{{- end }}
+---
+# The smoke gate, after the last wave: its PostSync Job waits for every Application above to be
+# Synced at the same revision and Healthy, then checks the public surfaces (ADR-N-056 §2.6).
+{{- $last := 0 }}
+{{- range .Values.components }}{{ $last = max $last .wave }}{{ end }}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ printf "%s-smoke" .Values.environment }}
+  namespace: {{ .Values.argocdNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ add1 $last | quote }}
+spec:
+  project: platform
+  source:
+    repoURL: {{ .Values.repoURL }}
+    targetRevision: {{ .Values.targetRevision }}
+    path: .
+    plugin:
+      name: helmfile
+      env:
+        - name: ENVIRONMENT
+          value: {{ .Values.environment }}
+        - name: COMPONENT
+          value: smoke
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Values.argocdNamespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

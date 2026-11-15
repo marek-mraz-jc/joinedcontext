@@ -1,0 +1,44 @@
+# 2011 census: population by place of work: one public dataset of the hub (T-5274), item 7f90e0a0c2964e04a85462acce04d850, written by the statistics-okresy pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-sodb-2011-pocet-miesta-pracoviska
+  namespace: bratislava
+  title:
+    sk: SODB 2011 - Počet obyvateľov podľa miesta pracoviska
+    en: '2011 census: population by place of work'
+  description:
+    sk: 'Ukazovatele tabuľky „SODB 2011 - Počet obyvateľov podľa miesta pracoviska“ z data.bratislava.sk, jeden na okres Bratislava I až V, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “2011 census: population by place of work”, one per okres Bratislava I to V, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: ffo5odqbj73vekpkuttzypyr4djk5fny
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-sodb-2011-pocet-miesta-pracoviska
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/7f90e0a0c2964e04a85462acce04d850
+        title:
+          sk: SODB 2011 - Počet obyvateľov podľa miesta pracoviska
+          en: '2011 census: population by place of work'
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: SODB 2011 - Počet obyvateľov podľa miesta pracoviska. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: 2011 census: population by place of work. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-okresy }

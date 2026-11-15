@@ -1,0 +1,360 @@
+{{- $this := index .Values "prometheus" "stack" }}
+{{- $images := index .Values.images "prometheus" }}
+{{- define "prometheus.image" }}
+{{- $reference := splitList "/" .repository }}
+registry: {{ first $reference | quote }}
+repository: {{ rest $reference | join "/" | quote }}
+tag: {{ .tag | quote }}
+sha: {{ .digest | trimPrefix "sha256:" | quote }}
+{{- end }}
+# Checklist (T-5154):
+# - [x] Runs as non-root -> the chart's 1000/2000 (Prometheus, Alertmanager), 65534 (operator,
+#       kube-state-metrics, node-exporter), every capability dropped, read-only root filesystems
+# - [x] Images pinned by digest -> images.yaml, through `sha` (the chart appends @sha256:)
+# - [x] No route at the edge -> no Ingress here and no APISIX route in this component: Prometheus
+#       and Alertmanager answer inside the cluster only (Security line of T-5154)
+# - [x] Requests and limits on every container, sized for one 16 GB node (T-5113)
+
+# Short, stable object names: `prometheus-operated` is the Service the operator writes itself.
+fullnameOverride: prometheus
+cleanPrometheusOperatorObjectNames: true
+
+crds:
+  enabled: true
+
+# Grafana is its own add-on (components/grafana); the Windows exporter has no node to run on.
+grafana:
+  enabled: false
+windowsMonitoring:
+  enabled: false
+
+# The default rules this cluster can evaluate. k3s runs the API server, scheduler, controller
+# manager and proxy inside one process that exposes none of them to a pod, and has no etcd
+# (sqlite or its own embedded one), so their rules would only ever say "target missing". The
+# API server's latency histograms are tens of thousands of series on their own, and the
+# platform's own objectives are the probe-based ones of the monitoring component (T-5104).
+defaultRules:
+  create: true
+  rules:
+    etcd: false
+    kubeApiserverAvailability: false
+    kubeApiserverBurnrate: false
+    kubeApiserverHistogram: false
+    kubeApiserverSlos: false
+    kubeControllerManager: false
+    kubeProxy: false
+    kubeSchedulerAlerting: false
+    kubeSchedulerRecording: false
+    kubernetesSystem: false
+    windows: false
+    # NodeDiskAlmostFull and NodeMemoryHigh of the monitoring component cover the node; the
+    # upstream node rules repeat them under other names and thresholds.
+    node: false
+    nodeExporterAlerting: false
+    nodeExporterRecording: false
+
+kubeApiServer:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+kubeEtcd:
+  enabled: false
+# CoreDNS too: its monitor needs a Service of this release in kube-system, and nothing here
+# alerts on DNS.
+kubeDns:
+  enabled: false
+coreDns:
+  enabled: false
+
+kubelet:
+  enabled: true
+  serviceMonitor:
+    # kubelet_volume_stats_* for VolumeAlmostFull, cAdvisor for per-container memory and CPU.
+    # The probe metrics of every container are series nobody reads.
+    probes: false
+    # T-5925: k3s serves its API server, etcd, scheduler and controllers from the kubelet's own
+    # /metrics, 57,946 samples on dev (37,593 apiserver_*, 10,923 etcd_*). That is over
+    # enforcedSampleLimit, so the scrape failed every 30 s after creating each of those series in
+    # the head block: 94k head series against 32k live (2026-10-29). No rule or dashboard reads
+    # these families; dropped, the target keeps about 2,400 (kubelet_*, go_*, process_*, ...).
+    # tests/test_prometheus_series.py fails when a drop hits a metric a rule or dashboard reads.
+    metricRelabelings:
+      # The chart's default: fewer buckets of the kubelet storage operation histograms.
+      - action: drop
+        sourceLabels: [__name__, le]
+        regex: (csi_operations|storage_operation_duration)_seconds_bucket;(0.25|2.5|15|25|120|600)(\.0)?
+      - action: drop
+        sourceLabels: [__name__]
+        regex: (apiserver|apiextensions|aggregator|authentication|authorization|etcd|kubeproxy|lasso|rest_client|scheduler|storage|watch_cache|workqueue)_.+
+    # The chart's defaults (a value here replaces its list), then the per-container series no rule
+    # or dashboard reads: about 5,300 of cAdvisor's 7,700 on dev (T-5925).
+    cAdvisorMetricRelabelings:
+      - sourceLabels: [__name__]
+        action: drop
+        regex: container_cpu_(cfs_throttled_seconds_total|load_average_10s|system_seconds_total|user_seconds_total)
+      - sourceLabels: [__name__]
+        action: drop
+        regex: container_fs_(io_current|io_time_seconds_total|io_time_weighted_seconds_total|reads_merged_total|sector_reads_total|sector_writes_total|writes_merged_total)
+      - sourceLabels: [__name__]
+        action: drop
+        regex: container_memory_(mapped_file|swap)
+      - sourceLabels: [__name__]
+        action: drop
+        regex: container_(file_descriptors|tasks_state|threads_max)
+      - sourceLabels: [__name__, scope]
+        action: drop
+        regex: container_memory_failures_total;hierarchy
+      - sourceLabels: [__name__, interface]
+        action: drop
+        regex: container_network_.*;(cali|cilium|cni|lxc|nodelocaldns|tunl).*
+      - sourceLabels: [__name__]
+        action: drop
+        regex: container_spec.*
+      - sourceLabels: [id, pod]
+        action: drop
+        regex: .+;
+      - sourceLabels: [__name__]
+        action: drop
+        regex: container_(blkio_device_usage_total|cpu_load_d_average_10s|fs_(reads|writes)(_bytes)?_total|last_seen|memory_(failcnt|failures_total|kernel_usage|max_usage_bytes|total_active_file_bytes|total_inactive_file_bytes)|processes|sockets|start_time_seconds|threads|ulimits_soft)
+
+prometheusOperator:
+  enabled: true
+  # No admission webhook: it is a Job with an image of its own that mints a certificate at every
+  # upgrade, to validate PrometheusRule syntax that promtool already checks in CI
+  # (tests/test_alert_rules.py). Without the webhook the operator serves plain HTTP metrics.
+  admissionWebhooks:
+    enabled: false
+    patch:
+      enabled: false
+  tls:
+    enabled: false
+  podAnnotations:
+    security.joinedcontext.com/api-access-reason: >-
+      The Prometheus Operator watches its custom resources and writes the Prometheus and
+      Alertmanager StatefulSets, their Secrets and the kubelet Endpoints (T-5154).
+  # Liveness waits longer than readiness: a slow API server takes the operator out of the
+  # Service first and restarts it only when it stays unanswered for a minute.
+  livenessProbe:
+    failureThreshold: 6
+  # A scratch directory, so the root filesystem stays read-only and the pod lists its volumes.
+  extraVolumes:
+    - name: tmp
+      emptyDir:
+        sizeLimit: 16Mi
+  extraVolumeMounts:
+    - name: tmp
+      mountPath: /tmp
+  image:
+    {{- include "prometheus.image" $images.operator | nindent 4 }}
+  prometheusConfigReloader:
+    image:
+      {{- include "prometheus.image" $images.configReloader | nindent 6 }}
+    resources:
+      requests:
+        cpu: 5m
+        memory: 16Mi
+      limits:
+        memory: 48Mi
+  resources:
+    requests:
+      cpu: 10m
+      memory: 48Mi
+    limits:
+      memory: 160Mi
+
+prometheus:
+  enabled: true
+  ingress:
+    enabled: false
+  prometheusSpec:
+    image:
+      {{- include "prometheus.image" $images.prometheus | nindent 6 }}
+    replicas: 1
+    podMetadata:
+      annotations:
+        security.joinedcontext.com/api-access-reason: >-
+          Kubernetes service discovery: Prometheus lists the Endpoints, Pods and Services its
+          ServiceMonitors and PodMonitors select, and scrapes the kubelet with its token (T-5154).
+    retention: {{ $this.retention | quote }}
+    retentionSize: {{ $this.retentionSize | quote }}
+    scrapeInterval: 30s
+    evaluationInterval: 30s
+    # Per-scrape ceilings, so one target's series jump fails that scrape (up == 0, the
+    # TargetDown rule fires) instead of growing the head block until the 1536Mi limit
+    # OOM-kills Prometheus in a loop. The largest target on a single node is kube-state-metrics,
+    # about 7k series on dev after the T-5925 trim, then the kubelet's cAdvisor (2.4k) and its
+    # /metrics (2.4k, 57.9k before the k3s drop above); 40000 leaves 5x headroom. Prometheus holds roughly 200k
+    # active series in 1536Mi, so ~30 targets at their usual size stay well under it.
+    enforcedSampleLimit: 40000
+    enforcedTargetLimit: 200
+    enforcedLabelLimit: 64
+    enforcedLabelNameLengthLimit: 128
+    enforcedLabelValueLengthLimit: 1024
+    enforcedBodySizeLimit: 32MB
+    # Every ServiceMonitor, PodMonitor, Probe and PrometheusRule on the cluster, not only the
+    # ones labelled with this release: the monitoring component renders its monitors into the
+    # namespace of each component it scrapes, and the APISIX, Keycloak and CNPG charts render
+    # their own.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    scrapeConfigSelectorNilUsesHelmValues: false
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          {{- with .Values.global.storage.storageClass.rwo }}
+          storageClassName: {{ . | quote }}
+          {{- end }}
+          resources:
+            requests:
+              storage: {{ $this.storageSize | quote }}
+    resources:
+      requests:
+        cpu: 100m
+        # T-5897: dev working set 2026-10-25..28 (Prometheus, 3 days, supervisor): 576Mi, + 20 %.
+        # T-5925: 633Mi at 94k head series (2026-10-29); the drops above leave about 24k, and the
+        # head is most of the working set, so half the old request holds with room.
+        memory: 384Mi
+      limits:
+        memory: 1536Mi
+
+alertmanager:
+  enabled: true
+  ingress:
+    enabled: false
+  # No config Secret: the operator finds none and runs Alertmanager on its default
+  # configuration, one route to the `null` receiver, so nothing leaves the cluster and no
+  # Secret reaches the rendered manifests (gitleaks reads any Secret `data:` as a credential).
+  # Delivery is the cluster-watch host job reading /api/v2/alerts through
+  # scripts/alert-notes.py, which keeps only allow-listed labels (components/monitoring/README.md).
+  alertmanagerSpec:
+    useExistingSecret: true
+    image:
+      {{- include "prometheus.image" $images.alertmanager | nindent 6 }}
+    replicas: 1
+    # Alertmanager never calls the API server, so it carries no token (justify-api-token-access).
+    automountServiceAccountToken: false
+    retention: 120h
+    resources:
+      requests:
+        cpu: 5m
+        memory: 32Mi
+      limits:
+        memory: 128Mi
+
+kube-state-metrics:
+  podAnnotations:
+    security.joinedcontext.com/api-access-reason: >-
+      kube-state-metrics lists every object kind it reports on (Pods, CronJobs, PVCs, ...) through
+      the API server; PostgresBackupStale reads its kube_cronjob_status_last_successful_time (T-5154).
+  image:
+    {{- $reference := splitList "/" $images.kubeStateMetrics.repository }}
+    registry: {{ first $reference | quote }}
+    repository: {{ rest $reference | join "/" | quote }}
+    tag: {{ $images.kubeStateMetrics.tag | quote }}
+    # This chart appends `sha` after the @ as it stands, so it keeps its sha256: prefix.
+    sha: {{ $images.kubeStateMetrics.digest | quote }}
+  # The chart's default list minus configmaps and secrets: kube-state-metrics caches every object of
+  # a kind it lists, and dev's ConfigMaps (17 MiB of seeds) plus Secrets (57 MiB of Helm releases)
+  # OOMKilled it at start under 192Mi (T-5434). No rule reads kube_configmap_* or kube_secret_*,
+  # and the chart then grants no read on Secrets at all. T-5925 removed every kind no rule or
+  # dashboard reads (certificatesigningrequests, endpointslices, ingresses, leases, limitranges,
+  # namespaces, networkpolicies, replicationcontrollers, services, storageclasses,
+  # volumeattachments and both webhook configurations): 1,900 series on dev, and objects
+  # kube-state-metrics no longer caches or may read.
+  collectors:
+    - cronjobs
+    - daemonsets
+    - deployments
+    - horizontalpodautoscalers
+    - jobs
+    - nodes
+    - persistentvolumeclaims
+    - persistentvolumes
+    - poddisruptionbudgets
+    - pods
+    - replicasets
+    - resourcequotas
+    - statefulsets
+  # Families of the kinds above that no rule or dashboard reads: 3,700 series on dev (T-5925).
+  # Anchored, since kube-state-metrics matches each entry as an unanchored regex; no commas, since
+  # the chart joins the list with them.
+  metricDenylist:
+    - ^kube_pod_init_container_.+$
+    - ^kube_pod_(tolerations|status_qos_class)$
+    - ^kube_replicaset_(created|metadata_generation|spec_replicas|status_.+)$
+  resources:
+    requests:
+      cpu: 10m
+      memory: 48Mi
+    limits:
+      memory: 192Mi
+
+# node-exporter reads the node's own filesystems and memory, so it mounts the host's root
+# read-only (policy-exceptions.yaml says why those mounts are accepted). It runs in kube-system,
+# as the node-storage helper does (T-3431): the platform's namespaces enforce disallow-host-path,
+# and a DaemonSet that reads the node belongs with the node's own agents. Neither the host's
+# network nor its process table is shared: the pod has its own address, and /proc/meminfo inside
+# any container already reports the node's memory.
+nodeExporter:
+  enabled: true
+prometheus-node-exporter:
+  namespaceOverride: kube-system
+  # One name for the DaemonSet, its Service and its NetworkPolicy (helm caps release-scoped names).
+  fullnameOverride: node-exporter
+  hostNetwork: false
+  hostPID: false
+  securityContext:
+    fsGroup: 65534
+    runAsGroup: 65534
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  livenessProbe:
+    failureThreshold: 6
+  # kube-system has no default-deny, so the chart's own policy closes node-exporter: Prometheus
+  # from this component's namespace on 9100, and no egress at all (it calls nothing). Rendered by
+  # the release rather than components/networkpolicies, whose policies' namespaces prepare would
+  # mesh and runtime-policies would scope Pod Security to (T-3431).
+  networkPolicy:
+    enabled: true
+    ingress:
+      - from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: {{ $this.namespace | quote }}
+            podSelector:
+              matchLabels:
+                app.kubernetes.io/name: prometheus
+        ports:
+          - protocol: TCP
+            port: 9100
+  image:
+    {{- $reference = splitList "/" $images.nodeExporter.repository }}
+    registry: {{ first $reference | quote }}
+    repository: {{ rest $reference | join "/" | quote }}
+    tag: {{ $images.nodeExporter.tag | quote }}
+    digest: {{ $images.nodeExporter.digest | quote }}
+    # The pinned tag already names the distroless variant; the chart would append it twice.
+    distroless: false
+  resources:
+    requests:
+      cpu: 10m
+      memory: 24Mi
+    limits:
+      memory: 96Mi

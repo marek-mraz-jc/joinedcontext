@@ -1,0 +1,187 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "rustfs.fullname" . }}-bucket
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rustfs.labels" . | nindent 4 }}
+  annotations:
+    # Object lock can only be turned on when the bucket is created and can never be added
+    # later (PF-33), so the bucket is made here rather than by the first writer. The Job is
+    # idempotent: it runs after every apply, finds everything in place and exits.
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        {{- include "rustfs.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: bucket
+      {{- if .Values.serviceMesh.enabled }}
+      annotations:
+        # The proxy must be a native sidecar or it keeps running after the script ends and
+        # the Job never completes.
+        linkerd.io/inject: enabled
+        config.alpha.linkerd.io/proxy-enable-native-sidecar: "true"
+      {{- end }}
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: bucket
+          image: {{ include "rustfs.bootstrapImage" . | quote }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              endpoint="$ENDPOINT"
+              {{- if .Values.objectLock.enabled }}
+              lock="--object-lock-enabled-for-bucket"
+              {{- else }}
+              lock=""
+              {{- end }}
+              until aws --endpoint-url "$endpoint" s3api list-buckets >/dev/null 2>&1; do
+                echo "waiting for the artifact store at $endpoint"
+                sleep 2
+              done
+              if aws --endpoint-url "$endpoint" s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+                echo "bucket $BUCKET is already there"
+              else
+                # Object lock at creation, which also turns versioning on: a published
+                # artifact is a promise to a partner and the storage keeps it (PF-33, DM-26).
+                aws --endpoint-url "$endpoint" s3api create-bucket --bucket "$BUCKET" $lock
+                echo "created bucket $BUCKET"
+              fi
+              {{- if and .Values.objectLock.enabled (gt (int .Values.objectLock.defaultRetentionDays) 0) }}
+              aws --endpoint-url "$endpoint" s3api put-object-lock-configuration --bucket "$BUCKET" \
+                --object-lock-configuration '{"ObjectLockEnabled":"Enabled","Rule":{"DefaultRetention":{"Mode":"COMPLIANCE","Days":{{ int .Values.objectLock.defaultRetentionDays }}}}}'
+              echo "default retention: COMPLIANCE for {{ int .Values.objectLock.defaultRetentionDays }} days"
+              {{- end }}
+              # Cached file downloads are the one thing here that is not kept (PF-33). The bucket is
+              # versioned (object lock), so an expiry only stacks a delete marker over the old
+              # version: the noncurrent versions and the markers left alone go too (F-DEP1-014).
+              aws --endpoint-url "$endpoint" s3api put-bucket-lifecycle-configuration --bucket "$BUCKET" \
+                --lifecycle-configuration '{"Rules":[{"ID":"file-cache","Status":"Enabled","Filter":{"Prefix":"{{ .Values.fileCache.prefix }}"},"Expiration":{"Days":{{ int .Values.fileCache.expiryDays }}},"NoncurrentVersionExpiration":{"NoncurrentDays":{{ int .Values.fileCache.expiryDays }}}},{"ID":"file-cache-markers","Status":"Enabled","Filter":{"Prefix":"{{ .Values.fileCache.prefix }}"},"Expiration":{"ExpiredObjectDeleteMarker":true}}]}'
+              echo "lifecycle: {{ .Values.fileCache.prefix }} expires after {{ int .Values.fileCache.expiryDays }} day(s)"
+              {{- if .Values.appsBucket.enabled }}
+              # The server WASM Apps' bucket: each shard's key is minted by the Portal (AP-158);
+              # a retired App's export is deleted after its days (AP-150).
+              apps={{ .Values.appsBucket.name | quote }}
+              if aws --endpoint-url "$endpoint" s3api head-bucket --bucket "$apps" 2>/dev/null; then
+                echo "bucket $apps is already there"
+              else
+                aws --endpoint-url "$endpoint" s3api create-bucket --bucket "$apps"
+                echo "created bucket $apps"
+              fi
+              aws --endpoint-url "$endpoint" s3api put-bucket-lifecycle-configuration --bucket "$apps" \
+                --lifecycle-configuration '{"Rules":[{"ID":"retired-apps","Status":"Enabled","Filter":{"Prefix":"{{ .Values.appsBucket.retiredPrefix }}"},"Expiration":{"Days":{{ int .Values.appsBucket.retiredExpiryDays }}}}]}'
+              echo "lifecycle: {{ .Values.appsBucket.retiredPrefix }} in $apps expires after {{ int .Values.appsBucket.retiredExpiryDays }} day(s)"
+              {{- end }}
+              {{- if .Values.backupBucket.enabled }}
+              # The Postgres backup bucket and its own user (OPS-09, T-5289). No object lock:
+              # barman deletes base backups and WAL past their retention.
+              backups={{ .Values.backupBucket.name | quote }}
+              if aws --endpoint-url "$endpoint" s3api head-bucket --bucket "$backups" 2>/dev/null; then
+                echo "bucket $backups is already there"
+              else
+                aws --endpoint-url "$endpoint" s3api create-bucket --bucket "$backups"
+                echo "created bucket $backups"
+              fi
+              # Signed admin calls with plain JSON bodies, as the Portal makes them
+              # (src/artifact_store.rs). Keys and bodies go through files, never argv.
+              umask 077
+              printf 'user = "%s:%s"\n' "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" > /tmp/root.curl
+              admin() {
+                curl -fsS -K /tmp/root.curl --aws-sigv4 "aws:amz:${AWS_DEFAULT_REGION}:s3" \
+                  -X PUT --data-binary "@$2" "$endpoint/rustfs/admin/v3/$1" >/dev/null
+              }
+              printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket","s3:GetBucketLocation"],"Resource":["arn:aws:s3:::%s"]},{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject","s3:AbortMultipartUpload","s3:ListMultipartUploadParts"],"Resource":["arn:aws:s3:::%s/*"]}]}' \
+                "$backups" "$backups" > /tmp/policy.json
+              printf '{"secretKey":"%s","status":"enabled"}' "$BACKUP_SECRET_ACCESS_KEY" > /tmp/user.json
+              : > /tmp/empty
+              admin "add-canned-policy?name=postgres-backups" /tmp/policy.json
+              admin "add-user?accessKey=$BACKUP_ACCESS_KEY_ID" /tmp/user.json
+              admin "set-user-or-group-policy?policyName=postgres-backups&userOrGroup=$BACKUP_ACCESS_KEY_ID&isGroup=false" /tmp/empty
+              echo "user for $backups: read, write and delete in $backups only"
+              {{- range $i, $u := .Values.backupBucket.prefixUsers }}
+              # {{ $u.prefix }} archives under {{ $u.prefix }}/ with a user that writes and deletes there only
+              # (T-5662); listing the bucket shows it object names, never their content.
+              printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket","s3:GetBucketLocation"],"Resource":["arn:aws:s3:::%s"]},{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject","s3:AbortMultipartUpload","s3:ListMultipartUploadParts"],"Resource":["arn:aws:s3:::%s/%s/*"]}]}' \
+                "$backups" "$backups" {{ $u.prefix | quote }} > /tmp/policy.json
+              printf '{"secretKey":"%s","status":"enabled"}' "$PREFIX_{{ $i }}_SECRET_ACCESS_KEY" > /tmp/user.json
+              admin "add-canned-policy?name=postgres-backups-{{ $u.prefix }}" /tmp/policy.json
+              admin "add-user?accessKey=$PREFIX_{{ $i }}_ACCESS_KEY_ID" /tmp/user.json
+              admin "set-user-or-group-policy?policyName=postgres-backups-{{ $u.prefix }}&userOrGroup=$PREFIX_{{ $i }}_ACCESS_KEY_ID&isGroup=false" /tmp/empty
+              echo "user for $backups/{{ $u.prefix }}/: read, write and delete under that prefix only"
+              {{- end }}
+              rm -f /tmp/root.curl /tmp/user.json
+              {{- end }}
+          env:
+            - name: ENDPOINT
+              value: {{ include "rustfs.endpoint" . | quote }}
+            - name: BUCKET
+              value: {{ .Values.bucket | quote }}
+            - name: AWS_DEFAULT_REGION
+              value: {{ .Values.region | quote }}
+            # The store is not on EC2 and there is no instance metadata to ask; without this
+            # every call waits for a timeout that will never answer.
+            - name: AWS_EC2_METADATA_DISABLED
+              value: "true"
+            # aws-cli writes its own configuration next to $HOME, which is not writable here.
+            - name: HOME
+              value: /tmp
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.credentialsSecret | quote }}
+                  key: {{ .Values.accessKeyIdKey | quote }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.credentialsSecret | quote }}
+                  key: {{ .Values.secretAccessKeyKey | quote }}
+            {{- if .Values.backupBucket.enabled }}
+            - name: BACKUP_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backupBucket.credentialsSecret | quote }}
+                  key: {{ .Values.accessKeyIdKey | quote }}
+            - name: BACKUP_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backupBucket.credentialsSecret | quote }}
+                  key: {{ .Values.secretAccessKeyKey | quote }}
+            {{- range $i, $u := .Values.backupBucket.prefixUsers }}
+            - name: PREFIX_{{ $i }}_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $u.credentialsSecret | quote }}
+                  key: {{ $.Values.accessKeyIdKey | quote }}
+            - name: PREFIX_{{ $i }}_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $u.credentialsSecret | quote }}
+                  key: {{ $.Values.secretAccessKeyKey | quote }}
+            {{- end }}
+            {{- end }}
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

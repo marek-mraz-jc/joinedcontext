@@ -1,0 +1,17 @@
+---
+# Checklist:
+# - [x] Resources (requests and limits): `jc --role all` peaked at 99 MiB locally (README.md section 4);
+#   the limit leaves room for Antares' memory budget (200 MiB) and Postgres pools
+# - [x] 1 Replica: the data claim (ekiben files, shako repositories) is ReadWriteOnce and
+#   dataroom, daiya and ekiben keep state in memory; a second replica needs those stores in
+#   Postgres first. A rollout surges a second pod on the same node.
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: '2'
+    memory: 1Gi

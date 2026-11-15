@@ -1,0 +1,39 @@
+{{- /*
+  The label sandbox.joinedcontext.com/lifecycle=preview opens Keycloak and Postgres to a
+  namespace's pods where branch previews are on (components/keycloak and components/postgres
+  networkpolicies.yaml.gotmpl, T-5548). A NetworkPolicy cannot match a name prefix, so this
+  holds the label to the names `just dev-preview` makes, pv-{slug}: the Portal may only write
+  {release}-{project}-apps namespaces (AP-117), so it can never give one of them that path.
+*/}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "reaper.fullname" . }}-preview-names
+  labels:
+    {{- include "reaper.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["namespaces"]
+        operations: ["CREATE", "UPDATE"]
+  validations:
+    - expression: >-
+        !has(object.metadata.labels)
+          || !("sandbox.joinedcontext.com/lifecycle" in object.metadata.labels)
+          || object.metadata.labels["sandbox.joinedcontext.com/lifecycle"] != "preview"
+          || object.metadata.name.matches("^pv-[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$")
+      messageExpression: >-
+        "Only a branch preview namespace pv-{slug} may carry sandbox.joinedcontext.com/lifecycle=preview, not " + object.metadata.name + " (ADR-N-062, T-5548)."
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ include "reaper.fullname" . }}-preview-names
+  labels:
+    {{- include "reaper.labels" . | nindent 4 }}
+spec:
+  policyName: {{ include "reaper.fullname" . }}-preview-names
+  validationActions: [Deny]

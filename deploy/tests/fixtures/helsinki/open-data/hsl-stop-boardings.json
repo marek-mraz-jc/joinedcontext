@@ -1,0 +1,192 @@
+{
+ "type": "FeatureCollection",
+ "name": "HSL passengers by station (November 2016), read 2026-10-22: 7 real records and 5 made bad",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 1,
+    "Nousijamaa": 56005,
+    "Nimi": "Helsingin rautatieasema",
+    "Lyhyt_tunn": " "
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.9411874422467,
+     60.1718273819282
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 2,
+    "Nousijamaa": 32304,
+    "Nimi": "Pasilan asema",
+    "Lyhyt_tunn": " "
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.9331004794037,
+     60.1992254124229
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 3,
+    "Nousijamaa": 2165,
+    "Nimi": "Ilmalan asema",
+    "Lyhyt_tunn": " "
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.9214526626104,
+     60.2075916282511
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 4,
+    "Nousijamaa": 9477,
+    "Nimi": "Huopalahden asema",
+    "Lyhyt_tunn": " "
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.8934325027079,
+     60.2184555977477
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 5,
+    "Nousijamaa": 2133,
+    "Nimi": "Valimon asema",
+    "Lyhyt_tunn": " "
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.8753972834579,
+     60.2220673892986
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 389,
+    "Nousijamaa": 1014,
+    "Nimi": "Elielinaukio",
+    "Lyhyt_tunn": "H2027"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.9397199995784,
+     60.1720500001074
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 390,
+    "Nousijamaa": 1153,
+    "Nimi": "Elielinaukio",
+    "Lyhyt_tunn": "H2028"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.9397399996013,
+     60.1721100001764
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 99001,
+    "Nousijamaa": 32304,
+    "Nimi": "Pasilan asema",
+    "Lyhyt_tunn": " "
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 99002,
+    "Nousijamaa": 2165,
+    "Nimi": "Ilmalan asema",
+    "Lyhyt_tunn": " "
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     60.2075916282511,
+     24.9214526626104
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 99003,
+    "Nousijamaa": -12,
+    "Nimi": "Huopalahden asema",
+    "Lyhyt_tunn": " "
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.8934325027079,
+     60.2184555977477
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 99004,
+    "Nousijamaa": 2133,
+    "Nimi": "Valimon asema",
+    "Lyhyt_tunn": " "
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.8753972834579,
+     60.2220673892986
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 99005,
+    "Nousijamaa": 2133,
+    "Nimi": " ",
+    "Lyhyt_tunn": " "
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     24.8753972834579,
+     60.2220673892986
+    ]
+   }
+  }
+ ]
+}

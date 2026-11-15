@@ -1,0 +1,15 @@
+# The air sensors' messages (T-4857, PL-76): the runner reads the project's own broker on its
+# internal listener, with no credential.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: mqtt-sensors
+  namespace: helsinki
+  title: { en: Air sensor messages of the broker sensors }
+spec:
+  type: mqtt
+  mqtt:
+    brokerRef: { kind: MqttBroker, name: sensors }
+    topics: [sensors/+/air]
+    qos: 1
+    cleanSession: true

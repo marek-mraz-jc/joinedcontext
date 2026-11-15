@@ -1,0 +1,17 @@
+# The air sensors' messages (T-4857, PL-76): the runner reads the project's own broker on its
+# internal listener, with no credential.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: mqtt-ovzdusie
+  namespace: banskabystrica
+  title:
+    sk: Správy senzorov ovzdušia z brokera ovzdusie
+    en: Air sensor messages of the broker ovzdusie
+spec:
+  type: mqtt
+  mqtt:
+    brokerRef: { kind: MqttBroker, name: ovzdusie }
+    topics: [ovzdusie/+/air]
+    qos: 1
+    cleanSession: true

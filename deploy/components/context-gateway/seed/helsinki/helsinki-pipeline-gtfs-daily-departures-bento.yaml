@@ -1,0 +1,69 @@
+# The mapping of the gtfs-daily-departures pipeline (PL-03, T-6467): how many trips HSL schedules
+# today, per transport mode. Each trip of a service that runs on Helsinki's date counts once, at
+# its start: a day's count needs no stop_times.txt (959 MB inflated), and five entities fit any
+# reader's page where one per line (459) would not. The trips are never ingested as a table (T-3889
+# load budget): only their route and service columns survive the first step.
+#
+# A service runs today when calendar.txt lists today's weekday inside its dates, or
+# calendar_dates.txt adds today (type 1), unless calendar_dates.txt removes it (type 2).
+#
+# A mode with no trip today counts 0, so yesterday's number never stands. A day with no trip at all
+# is a broken or expired feed, and a member the archive read refused leaves nothing to count: both
+# are logged, nothing is written and the numbers stay as they are.
+
+pipeline:
+  processors:
+    # One message per member (PL-72). parse_csv of all 36 MB of trips.txt would hold its 380 000
+    # rows as maps, so the text is cut to `route,service` first.
+    - mapping: |
+        root.file = @archive_filename
+        root.rows = if @archive_filename == "trips.txt" {
+          content().string().re_replace_all("(?m)^([^,\r\n]*),([^,\r\n]*),.*$", "$1,$2").split("\n").map_each(line -> line.trim())
+        } else {
+          content().string().parse_csv()
+        }
+
+    - archive: { format: json_array }
+
+    - mapping: |
+        map mode {
+          root = match this.string() {
+            "0" => "tram",
+            "900" => "tram",
+            "1" => "metro",
+            "109" => "train",
+            "4" => "ferry",
+            _ => "bus",
+          }
+        }
+        # `get` reads a dot as a path.
+        map safe {
+          root = this.replace_all(".", "_")
+        }
+        let members = this
+        let today = now().ts_format("20060102", "Europe/Helsinki")
+        let weekday = now().ts_format("Monday", "Europe/Helsinki").lowercase()
+        let calendar = $members.filter(m -> m.file == "calendar.txt").index(0).rows
+        let exceptions = $members.filter(m -> m.file == "calendar_dates.txt").index(0).rows.filter(e -> e.date == $today)
+        let removed = $exceptions.filter(e -> e.exception_type == "2").map_each(e -> e.service_id)
+        let added = $exceptions.filter(e -> e.exception_type == "1").map_each(e -> e.service_id)
+        let running = $calendar.filter(c -> c.get($weekday) == "1" && c.start_date.number() <= $today.number() && c.end_date.number() >= $today.number()).map_each(c -> c.service_id)
+        let services = ($running.concat($added)).filter(s -> !$removed.contains(s)).map_each(s -> { (s.apply("safe")): true }).squash()
+        let modes = $members.filter(m -> m.file == "routes.txt").index(0).rows.map_each(r -> { (r.route_id.apply("safe")): r.route_type.apply("mode") }).squash()
+        let counted = $members.filter(m -> m.file == "trips.txt").index(0).rows.map_each(line -> line.split(",")).filter(t -> t.length() == 2 && $services.get(t.index(1).apply("safe")) == true).map_each(t -> $modes.get(t.index(0).apply("safe")).or("bus"))
+        root = if $counted.length() == 0 { throw("no HSL trip runs on %v: the feed is broken or expired".format($today)) } else { ["bus", "tram", "metro", "train", "ferry"] }
+        # Midnight of the service date in Helsinki, written in UTC as the broker keeps time.
+        let observed = (now().ts_format("2006-01-02", "Europe/Helsinki") + "T00:00:00" + now().ts_format("-07:00", "Europe/Helsinki")).ts_parse("2006-01-02T15:04:05-07:00").ts_format("2006-01-02T15:04:05Z", "UTC")
+        root = root.map_each(mode -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("GtfsDailyDepartures", env("JC_ORG_DOMAIN"), env("JC_SPACE"), mode),
+          "type": "GtfsDailyDepartures",
+          "transportMode": { "type": "Property", "value": mode },
+          "scheduledDepartures": { "type": "Property", "value": $counted.filter(m -> m == mode).length(), "unitCode": "C62", "observedAt": $observed },
+          "dataProvider": { "type": "Property", "value": "Helsinki Region Transport (HSL), GTFS" },
+          "source": { "type": "Property", "value": "https://infopalvelut.storage.hsldev.com/gtfs/hsl.zip" }
+        })
+
+    # A failed mapping keeps its message, which here is the members themselves.
+    - catch:
+        - log: { level: ERROR, message: 'gtfs-daily-departures writes nothing: ${! error() }' }
+        - mapping: root = deleted()

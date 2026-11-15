@@ -1,0 +1,28 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-kpi-forecast
+  namespace: helsinki
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+  title:
+    en: 'Helsinki KPIs: trend and forecast'
+    fi: 'Helsingin mittarit: trendi ja ennuste'
+spec:
+  audience: public
+  callerRole: true
+  contextSpaceRef:
+    kind: ContextSpace
+    name: helsinki-kpi
+  enabledRepresentations:
+  - ngsi-ld
+  - mcp
+  - ogc-features
+  roles:
+  - name: viewer
+    subjects:
+    - group: kpi-forecast-viewer
+  - name: steward
+    subjects:
+    - group: kpi-forecast-steward
+  slug: dljgcex3vmybwkwrguionszkcv

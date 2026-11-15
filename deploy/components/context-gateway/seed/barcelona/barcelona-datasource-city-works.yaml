@@ -1,0 +1,20 @@
+# Open Data BCN's works file (dataset obres, CC BY 4.0): every work on the city's public space
+# since 2010, one row per work and district or barri, rewritten daily (about 05:30 UTC). The
+# resource's download link answers 302 to this address on the same host. About 7.7 MB; the
+# mapping refuses more than 32 MiB.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-city-works
+  namespace: barcelona
+  title:
+    ca: Obres a l'espai públic (Open Data BCN)
+    es: Obras en el espacio público (Open Data BCN)
+    en: Works on the public space (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/resources/bcn/Obres/obres_espai_public.json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

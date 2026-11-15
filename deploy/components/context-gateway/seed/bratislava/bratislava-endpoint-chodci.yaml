@@ -1,0 +1,54 @@
+# One catalogue dataset (T-4344, T-5273): CrowdFlowObserved of the space bratislava, read through
+# its own Policy, which narrows the space's public read to them.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-chodci
+  namespace: bratislava
+  title: { sk: Chodci podľa sčítačov — Bratislava, en: Pedestrian counts — Bratislava }
+  description:
+    sk: >-
+      Chodci, ktorých mestské sčítače napočítali za uplynulý deň, podľa sčítača, oba smery zvlášť; každý deň zostáva v histórii entity. Typ Smart Data Models CrowdFlowObserved. Vynechané sú sčítače bez polohy, mimo Bratislavy, zopakované, s nulou celý deň (sčítač bez daného senzora) a hodiny mimo rozsahu. Zdroj: Hlavné mesto SR Bratislava, CC BY 4.0.
+    en: >-
+      The pedestrians the city's counter sites counted the day before, per site, both directions apart; each day stays in the entity's history. Smart Data Models type CrowdFlowObserved. Left out: sites without a position, outside Bratislava, repeated ones, sites at 0 all day (a site without that sensor) and hours out of range. Source: City of Bratislava, CC BY 4.0.
+spec:
+  contextSpaceRef: bratislava
+  slug: mqbbo7njialx75kx52xxi7oktgo4ctay
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-chodci
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+      license: cc-by
+  catalog:
+    # The publisher is the Project's spec.catalog (T-4596). Counts and stations: no record names a person.
+    personalData: does-not-contain
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [TRAN]
+    keywords:
+      sk: [Bratislava, chodci, sčítanie]
+      en: [Bratislava, pedestrians, pedestrian counts]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: DAILY
+    source:
+      - url: https://services8.arcgis.com/pRlN1m0su5BYaFAS/arcgis/rest/services/chodci10_01/FeatureServer/0
+        title:
+          sk: Počet prechádzajúcich chodcov podľa sčítačov za hodinu
+          en: Pedestrians per counter site and hour
+        description:
+          sk: 'Vrstva ArcGIS Feature Service, ktorú data.bratislava.sk publikuje ako dataset: Počet prechádzajúcich chodcov podľa sčítačov za hodinu. Licencia CC BY 4.0.'
+          en: 'The ArcGIS Feature Service layer data.bratislava.sk publishes as the dataset: Pedestrians per counter site and hour. Licence CC BY 4.0.'
+      - url: https://data.bratislava.sk/datasets/84ba9f28423e4a52aae97c8cfb7d58e6
+        title:
+          sk: Počet prechádzajúcich chodcov podľa sčítačov za hodinu (data.bratislava.sk)
+          en: Pedestrians per counter site and hour (data.bratislava.sk)
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet prechádzajúcich chodcov podľa sčítačov za hodinu. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Pedestrians per counter site and hour. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: pedestrian-counters }

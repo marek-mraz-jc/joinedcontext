@@ -1,0 +1,19 @@
+# The Mr.Parkit garages in Prague with their tariffs from Golemio's parking register into the city
+# space, one OffStreetParking per garage, once a day (T-5680).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: golemio-garages
+  namespace: praha
+  title: { en: Mr.Parkit garages, cs: Garáže Mr.Parkit }
+spec:
+  class: auto
+  # The register changes when Mr.Parkit adds a garage or a price; Golemio re-reads it every few
+  # minutes, but a driver booking a garage needs no fresher list than today's.
+  period: 24h
+  schedule: '40 4 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: golemio-mr-parkit }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: OffStreetParking, mode: upsert }
+  quotas: { maxMemoryMb: 64, cpuMillicores: 50 }

@@ -1,0 +1,37 @@
+# The derived dataset of slovensko-participacia (T-6505): proposals per process and state, published
+# as open data. CKAN holds the links to this Endpoint, the rows stay in the space.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: slovensko-participacia-statistika
+  namespace: slovensko
+  title: { sk: Návrhy občanov podľa procesu a stavu, en: Citizen proposals by process and state }
+  description:
+    sk: Koľko návrhov občanov je v každom participatívnom procese v ktorom stave. Počítané každú hodinu zo záznamov priestoru Participácia občanov.
+    en: How many citizen proposals each participatory process holds in each state. Counted every hour from the records of the Citizen participation space.
+spec:
+  contextSpaceRef: slovensko-participacia
+  slug: oirxg6atmrxhji5iitpyugswuhsbma24
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:joinedcontext.com:slovensko-participacia:participacia-statistika-read
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: slovensko }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { sk: Platforma joinedcontext, en: The joinedcontext platform }
+      uri: https://dev.joinedcontext.com/
+    # Counts and process titles only: the pipeline reads no text a resident wrote.
+    personalData: does-not-contain
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: participatívne platformy miest (atribút source)'
+      en: "Source: the towns' participation platforms (attribute source)"
+    themes: [GOVE, SOCI]
+    keywords:
+      sk: [participácia, návrhy občanov, štatistika, Decidim]
+      en: [participation, citizen proposals, statistics, Decidim]
+    spatial: [SK]
+    frequency: HOURLY

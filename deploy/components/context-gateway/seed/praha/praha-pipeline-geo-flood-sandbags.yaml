@@ -1,0 +1,18 @@
+# One FloodDefence per record of the IPR layer Protipovodňová ochrana (pytle s pískem) into the city space (T-5429).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: geo-flood-sandbags
+  namespace: praha
+  title: { en: Flood defences (sandbag lines), cs: Protipovodňová ochrana (pytle s pískem) }
+spec:
+  class: auto
+  # IPR republishes the layer a few times a year; one read a week keeps up.
+  period: 168h
+  schedule: '35 2 * * 4'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-geo-flood-sandbags }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: FloodDefence, mode: upsert }
+  # 9019 bytes on 2026-10-24.
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

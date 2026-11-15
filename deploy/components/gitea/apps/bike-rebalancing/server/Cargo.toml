@@ -1,0 +1,27 @@
+# The server component of bike-rebalancing (T-3346, ADR-N-044): a wasm32-wasip2 component on the
+# shared host that saves plans in the App's own schema and writes their route sheets under its own
+# prefix. It plans with the page's own planner (../wasm), without the browser's bindings. Its own
+# workspace and lock, as the build lane builds it (AP-151).
+[package]
+name = "bike-rebalancing-server"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+bike-rebalancing = { path = "../wasm", default-features = false }
+# The guest SDK at the platform commit with its role and history helpers (T-3825); its `gateway`
+# reaches the App's own Endpoint alone (AP-147, AP-157).
+jc-app-sdk = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "ef03418872f29c10bf895fdf84aaf899e651f205" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+
+[workspace]

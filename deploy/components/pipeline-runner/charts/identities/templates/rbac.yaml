@@ -1,0 +1,70 @@
+{{- /* PL-19, T-1508: a namespace that holds every pipeline's own ServiceAccount and nothing else
+       (the Portal's reconciler creates them in it). The token service may create a token of a
+       ServiceAccount there, so no rule names the pipelines one by one, and no workload's
+       ServiceAccount is in reach: the runner's, the service's own and every other workload's
+       live elsewhere. The chart creates the namespace, because an environment with
+       `singleNamespace` creates none and its one namespace is where everything else runs. */}}
+{{- $namespace := required "namespace names the pipelines' own namespace" .Values.namespace }}
+{{- if eq $namespace .Release.Namespace }}
+{{- fail "the identities' namespace must not be the namespace the workloads run in" }}
+{{- end }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $namespace }}
+  labels:
+    joinedcontext.com/holds: {{ .Values.holds }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.tokenRole }}
+  namespace: {{ $namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.tokenRole }}
+  namespace: {{ $namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Values.tokenRole }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ required "tokenService.serviceAccount" .Values.tokenService.serviceAccount }}
+    namespace: {{ required "tokenService.namespace names where the token service runs" .Values.tokenService.namespace }}
+{{- with .Values.portal }}
+{{- if .namespace }}
+---
+# The Portal's reconciler keeps one ServiceAccount per Pipeline here and deletes the ones whose
+# Pipeline is gone (PL-19, T-1508). ServiceAccounts only: no token, no Secret, no Role.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $.Values.portalRole }}
+  namespace: {{ $namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $.Values.portalRole }}
+  namespace: {{ $namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $.Values.portalRole }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ required "portal.serviceAccount" .serviceAccount }}
+    namespace: {{ .namespace }}
+{{- end }}
+{{- end }}

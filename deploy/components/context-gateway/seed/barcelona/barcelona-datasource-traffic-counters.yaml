@@ -1,0 +1,21 @@
+# Open Data BCN `aforaments-detall` (CC BY 4.0): the mean daily intensity of each traffic and
+# bicycle counter per month and day type, one DataStore resource a year (2017..2025 on
+# 2026-10-24, the 2025 file 52,860 rows, published 2026-05-06). The DataSource reads the dataset's
+# CKAN record (about 20 kB); the mapping takes the newest year's resource from it and reads only
+# the newest month's working-day rows with one DataStore SQL query. No key.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-traffic-counters
+  namespace: barcelona
+  title:
+    ca: Aforaments de trànsit i de bicicletes (Open Data BCN)
+    es: Aforos de tráfico y de bicicletas (Open Data BCN)
+    en: Traffic and bicycle counters (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/data/api/3/action/package_show?id=aforaments-detall
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

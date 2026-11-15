@@ -1,0 +1,17 @@
+# One PointOfInterest per branch of the Municipal Library of Prague from Golemio's /v2/municipallibraries into the city space (T-5276).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: golemio-libraries
+  namespace: praha
+  title: { en: Municipal Library branches, cs: Pobočky Městské knihovny v Praze }
+spec:
+  class: auto
+  # Golemio refreshes the opening hours every few days; one read a day is one request of the key's 20 per 8 s.
+  period: 24h
+  schedule: '20 4 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: golemio-libraries }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: PointOfInterest, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

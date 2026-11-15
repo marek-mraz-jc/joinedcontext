@@ -1,0 +1,24 @@
+# The mapping of the ticket-points pipeline (PL-03): one PointOfInterest per place that sells
+# PID public transport tickets (ROPID's register), 443 on 2026-09-25: ticket machines, metro
+# ticket offices, railway stations and information centres, in Prague and the region around it.
+# The opening hours come as day ranges (0 is Monday) and are written as one line per range.
+
+pipeline:
+  processors:
+    - mapping: |
+        let days = ["po", "út", "st", "čt", "pá", "so", "ne"]
+        root = this.or([]).filter(p -> p.id.or("").string().re_match("^[0-9A-Za-z_-]+$") && p.lat.or(null) != null && p.lon.or(null) != null && p.name.or("").trim() != "").map_each(p -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:pid-%v".format("PointOfInterest", env("JC_ORG_DOMAIN"), env("JC_SPACE"), p.id.string().lowercase()),
+          "type": "PointOfInterest",
+          "name": { "type": "LanguageProperty", "languageMap": { "cs": p.name.trim() } },
+          "serviceCategory": { "type": "Property", "value": "ticketSale" },
+          "facilityType": if p.type.or("") == "" { null } else { { "type": "Property", "value": p.type } },
+          "address": if p.address.or("").trim() == "" { null } else { { "type": "Property", "value": { "streetAddress": p.address.trim(), "addressLocality": "Praha", "addressCountry": "CZ" } } },
+          "url": if !p.link.or("").has_prefix("https://") { null } else { { "type": "Property", "value": p.link } },
+          "openingHours": if p.openingHours.or([]).length() == 0 { null } else {
+            { "type": "LanguageProperty", "languageMap": { "cs": p.openingHours.map_each(h -> "%v%v %v".format($days.index(h.from.int64()), if h.to == h.from { "" } else { "–" + $days.index(h.to.int64()) }, h.hours)).join("\n") } }
+          },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [p.lon, p.lat] } },
+          "dataProvider": { "type": "Property", "value": "ROPID, Pražská integrovaná doprava (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://data.pid.cz/pointsOfSale/json/pointsOfSale.json" }
+        }.filter(entry -> entry.value != null))

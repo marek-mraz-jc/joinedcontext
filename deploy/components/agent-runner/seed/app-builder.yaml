@@ -1,0 +1,127 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: AgentProfile
+metadata:
+  name: app-builder
+  namespace: org
+  title: { en: "Application builder" }
+spec:
+  role: builder
+  # The runner image of the workspace runs (AG-27); a `static` run never starts one, the
+  # Portal builds it in-process from one model call (AP-56). Pinned by digest all the same:
+  # the profile is refused without one.
+  runtime:
+    image: ghcr.io/all-hands-ai/agent-server
+    digest: sha256:1111111111111111111111111111111111111111111111111111111111111111
+  # The first run's one big call (SDK-26): Gemini 3.8 Flash through OpenRouter, thinking at
+  # medium on every call of the run (AG-72). The budget covers the run's whole conversation:
+  # the build itself takes about 250k tokens and every edit after it reads the files again,
+  # so 400k ended a run at its first edit ("budget exhausted", T-0896); at Flash prices two
+  # million tokens are about one euro.
+  model:
+    provider: openai-compatible
+    name: google/gemini-3.8-flash
+    maxTokensPerRun: 2000000
+    reasoningEffort: medium
+    # AI Studio's flex route first: of six calls on 2026-11-02 each route, the default went to
+    # Vertex at twice the price (median 52 s, one 504 after 15 s), this one 43 s at USD 0.013
+    # (T-6457). The other routes stay as fallbacks.
+    routing:
+      order: [google-ai-studio/flex, google-ai-studio]
+      allowFallbacks: true
+  limits:
+    stepsPerRun: 120
+    wallClock: PT20M
+    concurrentRunsPerOrganization: 2
+    requestsPerMinute: 60
+    maxResponseBytes: 2097152
+  egress:
+    allowedHosts: [registry.npmjs.org, static.crates.io]
+  tools: [shell, pnpm, git]
+  # What an assistant run may call, intersected with the person who starts it (AG-70): the
+  # catalog search, the share and KPI steps, space completion, opening a change or a removal of
+  # any project resource and a grant of a role for the person to propose (AG-77). Read and propose
+  # only: the run never approves and never removes, the person does, and a grant never exceeds
+  # what that person holds (PF-52). Without this block a run gets read-only operations only.
+  access:
+    # Everything that reads or proposes; a person's own grants narrow each call and a person
+    # approves. Never here: approvals, deletions, service-account keys, project create, delete,
+    # import and export, jc_flow_start, jc_draft_drop, jc_workspace_discard, jc_workspace_propose
+    # (AG-11, AG-82, T-1475).
+    operations:
+      - jc_catalog_search
+      - jc_endpoint_propose
+      - jc_kpi_compute
+      - jc_space_complete
+      - jc_pipeline_test
+      - jc_pipeline_sample_source
+      - jc_pipeline_try_mapping
+      - jc_pipeline_validate
+      - jc_resource_propose
+      - jc_resource_list
+      - jc_resource_get
+      - jc_project_get
+      - jc_project_revisions
+      - jc_endpoint_list_all
+      - jc_federation_graph
+      - jc_activity_list
+      - jc_change_list
+      - jc_change_get
+      - jc_draft_list
+      - jc_draft_get
+      - jc_draft_put
+      - jc_manifest_dry_run
+      - jc_datasource_check
+      - jc_model_infer
+      - jc_model_source_get
+      - jc_pipeline_metrics
+      - jc_pipeline_logs
+      - jc_pipeline_inspect
+      - jc_pipeline_run
+      - jc_syncsource_status
+      - jc_syncsource_pause
+      - jc_member_list
+      - jc_ckan_status
+      - jc_run_list
+      - jc_run_get
+      - jc_workspace_open
+      - jc_workspace_list
+      - jc_workspace_get
+      - jc_workspace_compare
+      - jc_workspace_update_from_main
+      - jc_workspace_preview_start
+      - jc_workspace_preview_get
+      - jc_workspace_preview_stop
+    kinds:
+      - kind: ContextSpace
+        verbs: [read, propose]
+      - kind: Endpoint
+        verbs: [read, propose]
+      - kind: SharedSpaceReference
+        verbs: [read, propose]
+      - kind: DataSource
+        verbs: [read, propose]
+      - kind: Pipeline
+        verbs: [read, propose]
+      - kind: Policy
+        verbs: [read, propose]
+      - kind: Dashboard
+        verbs: [read, propose]
+      - kind: Layer
+        verbs: [read, propose]
+      - kind: App
+        verbs: [read, propose]
+      - kind: SyncSource
+        verbs: [read, propose]
+      - kind: ContextSourceRegistration
+        verbs: [read, propose]
+      - kind: CkanInstance
+        verbs: [read, propose]
+      - kind: ServiceAccount
+        verbs: [read, propose]
+      - kind: DataModel
+        verbs: [read, propose]
+      - kind: RoleBinding
+        verbs: [read, propose]
+      - kind: Role
+        verbs: [read, propose]
+  workspace: { cpu: "1", memory: 2Gi, ephemeralStorage: 4Gi }

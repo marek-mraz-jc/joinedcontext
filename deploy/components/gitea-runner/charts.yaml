@@ -1,0 +1,8 @@
+---
+gitea-runner:
+  runner:
+    chart: ../../charts/workload
+  rust:
+    chart: ../../charts/workload
+  build-pods:
+    chart: charts/build-pods

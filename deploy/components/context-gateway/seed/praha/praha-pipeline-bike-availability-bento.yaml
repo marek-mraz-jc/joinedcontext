@@ -1,0 +1,20 @@
+# The mapping of the bike-availability pipeline (PL-03): what each nextbike station in Prague
+# holds right now (GBFS 2.3 `station_status`), written onto the station the bike-stations
+# pipeline names. The gateway merges attributes (`upsert?options=update`), so the name and the
+# position that pipeline writes stay.
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this.data.stations.or([]).filter(s -> s.station_id.or("").string().re_match("^[0-9]+$")).map_each(s -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:nextbike-%v".format("BikeHireDockingStation", env("JC_ORG_DOMAIN"), env("JC_SPACE"), s.station_id),
+          "type": "BikeHireDockingStation",
+          "availableBikeNumber": if s.num_bikes_available.or(null) == null { null } else { { "type": "Property", "value": s.num_bikes_available } },
+          "freeSlotNumber": if s.num_docks_available.or(null) == null { null } else { { "type": "Property", "value": s.num_docks_available } },
+          "status": { "type": "Property", "value": if s.is_installed.or(false) && s.is_renting.or(false) { "working" } else { "outOfService" } },
+          "dateModified": if s.last_reported.or(null) == null { null } else {
+            { "type": "Property", "value": s.last_reported.ts_format("2006-01-02T15:04:05Z07:00", "UTC") }
+          },
+          "dataProvider": { "type": "Property", "value": "nextbike Czech Republic (CC0 1.0)" },
+          "source": { "type": "Property", "value": "https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_tg/gbfs.json" }
+        }.filter(entry -> entry.value != null))

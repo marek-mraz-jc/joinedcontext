@@ -1,0 +1,29 @@
+{{- $this := index .Values "basemap" "tiles" }}
+{{- $images := index .Values.images "basemap" "tiles" }}
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Runs as non-root with `readOnlyRootFilesystem`: the server writes /tmp and its cache, the
+#       job /tmp and the volume
+# - [x] Health probes on the server; the job exits 0 or fails and keeps the old file
+# - [x] Standard labels
+# - [x] No ServiceAccount token: neither talks to the Kubernetes API
+# - [x] Named port, Service; the route is in apisix-routes.yaml (tiles.{domain})
+
+images:
+  server: {{ $images.server | toJson }}
+  refresh: {{ $images.refresh | toJson }}
+
+host: {{ printf "tiles.%s" $global.domain | quote }}
+# Pages on the installation's own hosts may read the tiles from a script (MapLibre fetches them).
+corsDomain: {{ $global.domain | quote }}
+schedule: {{ $this.schedule | quote }}
+file: {{ $this.file | quote }}
+maxzoom: {{ $this.maxzoom }}
+regions: {{ $this.regions | toJson }}
+storage: {{ $this.storage | quote }}
+builds: {{ $this.builds | quote }}
+pmtiles: {{ $this.pmtiles | toJson }}
+assets: {{ $this.assets | toJson }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

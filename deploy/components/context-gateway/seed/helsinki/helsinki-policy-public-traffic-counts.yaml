@@ -1,0 +1,32 @@
+# Public read of the traffic counting stations' daily TrafficFlowObserved (T-5253): the lam- entities
+# of the traffic-counters pipeline (LAM stations) only, so the two catalogue datasets of one type stay apart.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-traffic-counts
+  namespace: helsinki
+  title: { en: 'Public read: traffic counts' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: role, id: public }
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+    - queryTemporal
+    - retrieveTemporal
+  # The days keep history: anyone reads it, as far back as the space keeps it (T-4372).
+  temporalQ: timerel=after;timeAt=P-30D
+  information:
+    - entities:
+        - type: TrafficFlowObserved
+          idPattern: ^urn:ngsi-ld:TrafficFlowObserved:[a-z0-9.-]+:helsinki:lam-[0-9]+(-[a-z]+)?$

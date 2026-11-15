@@ -1,0 +1,22 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: KnowledgeSource
+metadata:
+  name: web
+  namespace: bbsk
+spec:
+  # The Banská Bystrica region's website (T-3067, user decision 2026-10-07): the region's own
+  # website, crawled once on arrival and then weekly, so the knowledge assistant's answer-quality
+  # evals are written from what it really indexes. Bounded for the one dev node: three links
+  # deep, PDFs of at most 20 MB and 200 pages, and 800 pages: the sitemap lists 766 addresses
+  # (717 of them answer, 2026-10-19), and at 500 the crawl stopped before the Festbus, the
+  # anti-bullying page and the roads list the website eval asks about (T-4688).
+  source: website
+  startUrls:
+    - https://www.bbsk.sk/
+  sitemap: true
+  maxDepth: 3
+  maxPages: 800
+  pdf: { policy: include, maxBytes: 20971520, maxPages: 200 }
+  schedule: '0 3 * * 0'
+  languages: [sk]
+  visibility: public

@@ -1,0 +1,81 @@
+# The mapping of the pid-stops pipeline (T-5423, PL-03): one GtfsStop per PID stop platform in Prague from
+# ROPID's stop layer Zastavky_WGS84 (16,118 platforms of the whole PID area on 2026-10-24, 4,922 of them
+# in Prague). It holds the GTFS stops.txt platforms with their lines and fare zones, so the 52 MB
+# timetable zip is not read.
+#
+# Ids: urn:ngsi-ld:GtfsStop:{org}:{space}:pid-{stop_id}, the GTFS stop_id (U1000Z1), lowercased; the
+# Policy public-zastavky-pid names them.
+#
+# Read: the name, the platform (platform_code), the fare zones (zones_id, comma separated on a zone
+# border), the lines that stop there (routes_names), what stops there (route_type, the GTFS route
+# types) and step-free access (wheelchair_boarding 1 yes, 2 no, 0 unknown and left out).
+#
+# Plausibility (owner 2026-10-22T18:10Z): a record without a stop id or a name, with a route type GTFS
+# does not list, without a point or outside Prague's box (the city plus about 1 km; the platforms of
+# Central Bohemia are out of scope) is dropped, and so is a second record of one stop id; the log line
+# counts each reason. An answer that is not a feature list, an empty one, or one where fewer than a
+# fifth of the platforms survive (a projection or schema change; Prague is 31 % of the layer) fails the
+# run, so the stops already written stay.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 16777216 { throw("ROPID answered %v bytes; more than 16 MiB is not the stop layer".format(content().length())) } else { this }
+        - mapping: |
+            let features = this.features.catch(null)
+            root = if $features.type() != "array" {
+              throw("ROPID's stop layer did not answer a feature list")
+            } else if $features.length() == 0 {
+              throw("ROPID's stop layer listed no stop; the layer is never empty, so the download failed")
+            } else {
+              $features.map_each(f -> {
+                "p": f.properties.catch({}),
+                "key": f.properties.stop_id.catch("").string().trim(),
+                "name": f.properties.stop_name.catch("").string().trim().re_replace_all("\\s+", " "),
+                "modes": f.properties.route_type.catch("").string().split(",").map_each(t -> t.trim()).filter(t -> t != ""),
+                "c": f.geometry.coordinates.catch(null)
+              })
+            }
+        - mapping: |
+            let rows = this
+            let usable = $rows.filter(r -> r.key.re_match("^U[0-9]{1,5}Z[0-9]{1,4}[A-Z]?$") && r.name != "")
+            let typed = $usable.filter(r -> r.modes.all(t -> ["0", "1", "2", "3", "4", "7", "11"].contains(t)))
+            let located = $typed.filter(r -> r.c.type() == "array" && r.c.length() >= 2 && r.c.index(0).type() == "number" && r.c.index(1).type() == "number")
+            let inside = $located.filter(r -> r.c.index(0) >= 14.2 && r.c.index(0) <= 14.75 && r.c.index(1) >= 49.9 && r.c.index(1) <= 50.2)
+            let unique = $inside.unique(r -> r.key)
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $usable.length()
+            meta untyped = $usable.length() - $typed.length()
+            meta outside = $typed.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            root = if $unique.length() * 5 < $rows.length() {
+              throw("ROPID's stop layer: only %v of %v platforms have a stop id, a name, a known route type and a point in Prague".format($unique.length(), $rows.length()))
+            } else { $unique }
+        - log:
+            level: INFO
+            message: 'pid-stops: read ${! meta("read") }, dropped ${! meta("unusable") } without stop id or name, ${! meta("untyped") } of an unknown route type, ${! meta("outside") } without a point in Prague, ${! meta("duplicate") } duplicates'
+        - mapping: |
+            let modes = { "0": "tram", "1": "metro", "2": "train", "3": "bus", "4": "ferry", "7": "funicular", "11": "trolleybus" }
+            root = this.map_each(r -> {
+              "r": r,
+              "platform": r.p.platform_code.catch("").string().trim(),
+              "zones": r.p.zones_id.catch("").string().split(",").map_each(z -> z.trim()).filter(z -> z.re_match("^(P|0|B|[1-9]|1[0-9])$")),
+              "lines": r.p.routes_names.catch("").string().split(",").map_each(l -> l.trim()).filter(l -> l != "" && l.length() <= 20).unique(),
+              "step": r.p.wheelchair_boarding.catch("").string().trim()
+            }).map_each(v -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:pid-%v".format("GtfsStop", env("JC_ORG_DOMAIN"), env("JC_SPACE"), v.r.key.lowercase()),
+              "type": "GtfsStop",
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": v.r.name } },
+              "platformCode": if v.platform != "" && v.platform != "null" && v.platform.length() <= 10 { { "type": "Property", "value": v.platform } } else { null },
+              "zoneCode": if v.zones.length() > 0 { { "type": "Property", "value": v.zones.join(",") } } else { null },
+              "servedLines": if v.lines.length() > 0 { { "type": "Property", "value": v.lines } } else { null },
+              "transportModes": if v.r.modes.length() > 0 { { "type": "Property", "value": v.r.modes.map_each(t -> $modes.get(t)).unique() } } else { null },
+              "wheelchairAccessible": if v.step == "1" { { "type": "Property", "value": true } } else if v.step == "2" { { "type": "Property", "value": false } } else { null },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": v.r.c.slice(0, 2) } },
+              "dataProvider": { "type": "Property", "value": "ROPID, Pražská integrovaná doprava (CC BY 4.0)" },
+              "source": { "type": "Property", "value": "https://data.pid.cz/geodata/Zastavky_WGS84.json" }
+            }.filter(kv -> kv.value != null))
+        # 500 stops per request to the endpoint (about 300 KB): one run never holds one 4,900-entity write.
+        - unarchive: { format: json_array }
+        - split: { size: 500 }
+        - archive: { format: json_array }

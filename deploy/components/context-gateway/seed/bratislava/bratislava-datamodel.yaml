@@ -1,0 +1,32 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: bratislava
+  namespace: bratislava
+  title:
+    sk: Bratislava — otvorené údaje
+    en: Bratislava, open data
+spec:
+  contextSpaceRef: bratislava
+  linkml: ./bratislava.linkml.yaml
+  version: 1.0.0
+  lifecycle: published
+  classes:
+    - AirQualityObserved
+    - AdministrativeArea
+    - PointOfInterest
+    - KeyPerformanceIndicator
+    - TrafficFlowObserved
+    - CrowdFlowObserved
+    - BikeHireDockingStation
+    - GtfsStop
+    - GtfsRoute
+    - GtfsAgency
+    - OnStreetParking
+  # A published model commits all four artifacts (DM-02); the gateway serves schema/v1 from them
+  # (DM-22, EP-49). Regenerate as ../zilina/README.md shows.
+  artifacts:
+    jsonSchema: ./bratislava.v1.schema.json
+    context: ./bratislava.v1.context.jsonld
+    docs: ./bratislava.v1.md
+    example: ./bratislava.v1.example.jsonld

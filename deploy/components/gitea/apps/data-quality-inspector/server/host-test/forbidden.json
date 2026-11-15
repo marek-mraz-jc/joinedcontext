@@ -1,0 +1,1 @@
+{"type":"https://uri.etsi.org/ngsi-ld/errors/Forbidden","title":"Forbidden","status":403,"detail":"no policy lets this caller update this entity"}

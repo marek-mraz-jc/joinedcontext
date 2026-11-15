@@ -1,0 +1,135 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "Contract": {
+      "@id": "jc:Contract"
+    },
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "cenaCelkom": {
+      "@id": "jc:cenaCelkom"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "datumPlatnostiDo": {
+      "@id": "jc:datumPlatnostiDo",
+      "@type": "xsd:date"
+    },
+    "datumPodpisu": {
+      "@id": "jc:datumPodpisu"
+    },
+    "datumPrilohy": {
+      "@id": "jc:datumPrilohy",
+      "@type": "xsd:date"
+    },
+    "datumUcinnosti": {
+      "@id": "jc:datumUcinnosti",
+      "@type": "xsd:date"
+    },
+    "datumUzavretia": {
+      "@id": "jc:datumUzavretia",
+      "@type": "xsd:date"
+    },
+    "datumZverejnenia": {
+      "@id": "jc:datumZverejnenia"
+    },
+    "druh": {
+      "@id": "jc:druh"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "iCODodavatela": {
+      "@id": "jc:iCODodavatela"
+    },
+    "iCOObjednavatela": {
+      "@id": "jc:iCOObjednavatela"
+    },
+    "iCOOrganizacie": {
+      "@id": "jc:iCOOrganizacie"
+    },
+    "iDZmluvy": {
+      "@id": "jc:iDZmluvy"
+    },
+    "id": "@id",
+    "identifier": {
+      "@id": "sdm:dataModel.CPSV-AP/identifier"
+    },
+    "index": {
+      "@id": "jc:index"
+    },
+    "isPartOf": {
+      "@id": "jc:isPartOf",
+      "@type": "xsd:anyURI"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "mena": {
+      "@id": "jc:mena"
+    },
+    "name": {
+      "@id": "sdm:name"
+    },
+    "nazovDodavatela": {
+      "@id": "jc:nazovDodavatela"
+    },
+    "nazovObjednavatela": {
+      "@id": "jc:nazovObjednavatela"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "poznamka": {
+      "@id": "jc:poznamka"
+    },
+    "predmet": {
+      "@id": "jc:predmet"
+    },
+    "priloha": {
+      "@id": "jc:priloha"
+    },
+    "rezort": {
+      "@id": "jc:rezort"
+    },
+    "rok": {
+      "@id": "jc:rok",
+      "@type": "xsd:integer"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "sidloObjednavatela": {
+      "@id": "jc:sidloObjednavatela"
+    },
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "sumaSpoluVEUR": {
+      "@id": "jc:sumaSpoluVEUR"
+    },
+    "sumaVEUR": {
+      "@id": "jc:sumaVEUR"
+    },
+    "typ": {
+      "@id": "jc:typ"
+    },
+    "type": "@type",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "zdrojNazov": {
+      "@id": "jc:zdrojNazov"
+    },
+    "zmluvneStrany": {
+      "@id": "jc:zmluvneStrany"
+    },
+    "zmluvneStranySUdajomICO": {
+      "@id": "jc:zmluvneStranySUdajomICO"
+    }
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

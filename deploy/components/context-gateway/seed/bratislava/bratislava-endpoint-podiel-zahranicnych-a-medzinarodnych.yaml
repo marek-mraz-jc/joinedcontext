@@ -1,0 +1,44 @@
+# Share of foreign and international companies in the total by SK-NACE: one public dataset of the hub (T-5274), item 3e0c5442c34941d38e38ea3247d8089f, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-podiel-zahranicnych-a-medzinarodnych
+  namespace: bratislava
+  title:
+    sk: Podiel zahraničných a medzinárodných podnikov na celkovom počte podľa SK-NACE
+    en: Share of foreign and international companies in the total by SK-NACE
+  description:
+    sk: 'Ukazovatele tabuľky „Podiel zahraničných a medzinárodných podnikov na celkovom počte podľa SK-NACE“ z data.bratislava.sk, za mesto ako celok, jeden na obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Share of foreign and international companies in the total by SK-NACE”, for the city as a whole, one per period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: 5e4uhzscnokaynnowihezqirg2ydseuz
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-podiel-zahranicnych-a-medzinarodnych
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [ECON]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/3e0c5442c34941d38e38ea3247d8089f
+        title:
+          sk: Podiel zahraničných a medzinárodných podnikov na celkovom počte podľa SK-NACE
+          en: Share of foreign and international companies in the total by SK-NACE
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Podiel zahraničných a medzinárodných podnikov na celkovom počte podľa SK-NACE. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Share of foreign and international companies in the total by SK-NACE. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

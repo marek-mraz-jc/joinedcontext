@@ -1,0 +1,24 @@
+# One KeyPerformanceIndicator per row of "Ohrozenie samospráv zmenou klímy - extrémne sucho" (T-4255); one row per area (and year).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-ohrozenie-samosprav-zmenou-klimy-extr-2
+  namespace: bbsk
+  title:
+    sk: Ohrozenie samospráv zmenou klímy - extrémne sucho
+    en: Ohrozenie samospráv zmenou klímy - extrémne sucho
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 36 1 21 * *
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-ohrozenie-samosprav-zmenou-klimy-extr-2
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: KeyPerformanceIndicator
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

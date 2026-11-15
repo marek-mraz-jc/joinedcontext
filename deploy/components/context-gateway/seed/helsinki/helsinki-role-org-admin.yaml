@@ -1,0 +1,63 @@
+# PF-56: the organization administrator proposes, approves and deletes every kind, roles and
+# bindings included; the one role that approves the red lane (CC-70). A binding under
+# users/assignments/ hands it to a person; the Portal checks the binding before a Change
+# exists (PF-50).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Role
+metadata:
+  name: org-admin
+  namespace: org
+spec:
+  rules:
+    - kinds:
+        - Organization
+        - Project
+        - ContextSpace
+        - DataModel
+        - Mapping
+        - Policy
+        - ScopeDefinition
+        - Endpoint
+        # An endpoint that names a projection carries one, and the Portal proposes the two
+        # as one import: a role that may act on the endpoint and not on its projection cannot
+        # check its own proposal (MP-01, T-1222).
+        - ModelProjection
+        - SharedSpaceReference
+        - ContextSourceRegistration
+        - ServiceAccount
+        - Pipeline
+        - DataSource
+        - MqttBroker
+        - App
+        - CkanInstance
+        # The knowledge assistant's sources and deployments (MF-51, MF-52, T-3057).
+        - KnowledgeSource
+        - AssistantDeployment
+        - McpServer
+        - Blueprint
+        - DataSpaceParticipant
+        - DataOffer
+        - DataAgreement
+        - SyncSource
+        - Bundle
+        - UiSchema
+        - Role
+        - RoleBinding
+        # Who is in a group is who a binding names, so the administrator who writes bindings
+        # writes groups too; without it Organization → Groups refused its own administrator
+        # (PF-62, T-2625).
+        - Group
+        # Administration lists both as its own sections: without them its administrator met a
+        # missing page on Environments and a refused "New agent profile" (T-4831). Environment
+        # stays a red-lane kind, which this role is the one to approve (CC-73, CC-70).
+        - AgentProfile
+        - Environment
+        - Subscription
+        - Entity
+        - Dashboard
+        - Layer
+      verbs: [propose, approve, delete]
+    # The people of the realm (PF-91): a person is a Keycloak user and never a manifest, so the
+    # Portal's people routes check these verbs, which no other kind takes.
+    - kinds: [Person]
+      verbs: [read, create, update, disable, delete]

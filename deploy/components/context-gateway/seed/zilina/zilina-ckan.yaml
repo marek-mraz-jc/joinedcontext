@@ -1,0 +1,15 @@
+# The open-data catalogue the project's cleared endpoints publish to (EP-62, EP-67): the city's
+# public data on `zilina-verejne`, its indicators on `zilina-kpi` and the university's works on
+# `zilina-uniza`, each crediting its own publisher. `zilina-mesto` stays out of the catalogue:
+# those rows are ŠÚ SR's published data mirrored for the pipelines. The API token is a reference.
+apiVersion: joinedcontext.com/v1alpha1
+kind: CkanInstance
+metadata:
+  name: zilina
+  namespace: zilina
+  # The CKAN organisation's title, kept in step on every run (ADR-N-058 2.6): the Organization's.
+  title: { sk: Mesto Žilina, en: City of Žilina }
+spec:
+  url: https://opendata.dev.joinedcontext.com
+  organizationDefault: zilina
+  apiTokenRef: { name: ckan-api-token, key: token, envVar: CKAN_API_TOKEN }

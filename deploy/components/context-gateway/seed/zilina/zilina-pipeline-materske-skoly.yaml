@@ -1,0 +1,17 @@
+# One KeyPerformanceIndicator per cell of the ŠÚ SR cube sv5001rr for the city, written through the space's one Endpoint with the runner's service account (PL-18, PF-39, T-3138).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: materske-skoly
+  namespace: zilina
+  title: { sk: Materské školy v meste, en: Kindergartens in the city }
+spec:
+  class: auto
+  # Annual or quarterly data: a weekly read is already far more often than it changes (PL-26, PL-27).
+  period: 168h
+  schedule: '35 4 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: susr-sv5001rr }
+  targetEndpoint: urn:ngsi-ld:Endpoint:zilina.sk:zilina-mesto:zilina-mesto
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

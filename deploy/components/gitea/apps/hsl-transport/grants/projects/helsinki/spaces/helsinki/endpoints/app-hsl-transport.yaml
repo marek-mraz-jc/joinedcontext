@@ -1,0 +1,24 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-hsl-transport
+  namespace: helsinki
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+  title:
+    en: HSL live
+    fi: HSL livenä
+spec:
+  audience: public
+  callerRole: true
+  contextSpaceRef:
+    kind: ContextSpace
+    name: helsinki
+  enabledRepresentations:
+  - ngsi-ld
+  - mcp
+  - ogc-features
+  - websocket
+  fileLimits:
+    maxFileRows: 5000
+  slug: sv4ibpmhwowb6gnzqy6vp2b3iy

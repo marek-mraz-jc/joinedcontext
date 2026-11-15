@@ -1,0 +1,47 @@
+# The region's own registers as it publishes them on its open-data portal (T-2783): the outlines
+# of its districts and municipalities, the organisations it founded, the hospitals, the social
+# services public bodies run and the bridges of the road network. Every source is BBSK's, under
+# CC BY-SA 4.0, read from opendata.bbsk.sk; the statistics stay in `bbsk-kraj`.
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: bbsk-registre
+  namespace: bbsk
+  title:
+    sk: Banskobystrický kraj — registre
+    en: Banská Bystrica Region, registers
+  description:
+    sk: >-
+      Hranice okresov a obcí, organizácie v zriaďovateľskej pôsobnosti kraja, nemocnice, sociálne
+      služby verejných poskytovateľov a mosty cestnej siete. Zdroj: Banskobystrický samosprávny
+      kraj, opendata.bbsk.sk, licencia CC BY-SA 4.0.
+    en: >-
+      District and municipality outlines, the organisations the region founded, hospitals, the
+      social services of public providers and the bridges of the road network. Source: Banská
+      Bystrica Self-Governing Region, opendata.bbsk.sk, licensed CC BY-SA 4.0.
+spec:
+  # The space name is the segment its ids carry, pinned so it cannot drift (PF-84).
+  urnSegment: bbsk-registre
+  isSandbox: false
+  # The one model of this space: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: bbsk-registre }
+  defaultLocale: sk
+  # History per type (DM-82, ADR-N-046 2.3, T-4275): a measurement series keeps 30 days, every
+  # other type keeps its current state only. Owners change it on the space's Retention tab.
+  retention:
+    - entityType: AdministrativeArea
+      history: 'off'
+    - entityType: Bridge
+      history: 'off'
+    - entityType: PublicOrganization
+      history: 'off'
+    - entityType: PointOfInterest
+      history: 'off'
+  # The space's place (T-4525): the catalogue's Dataset carries it, so georel=near finds the space.
+  # the Banská Bystrica Region with a margin; a PublicOrganization outside it is flagged, never refused (DM-87).
+  quality:
+    - name: in-area
+      entityType: PublicOrganization
+      kind: area
+      attribute: location
+      bbox: [18.3, 47.9, 20.5, 49.2]

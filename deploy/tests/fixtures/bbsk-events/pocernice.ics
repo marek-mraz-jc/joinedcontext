@@ -1,0 +1,42 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//wp-events-plugin.com//7.4.5//EN
+TZID:Europe/Prague
+X-WR-TIMEZONE:Europe/Prague
+BEGIN:VEVENT
+UID:0-4365@pocernice.cz
+DTSTART;TZID=Europe/Prague;VALUE=DATE:20260910
+DTEND;TZID=Europe/Prague;VALUE=DATE:20261109
+DTSTAMP:20261015T090341Z
+URL:https://www.pocernice.cz/akce/radka-folprechtova-tanec-kvetin/
+SUMMARY:RADKA FOLPRECHTOVÁ: TANEC KVĚTIN
+DESCRIPTION:Výstava ve foyer divadla.
+ATTACH;FMTTYPE=image/jpeg:https://www.pocernice.cz/app/uploads/2026/07/07_
+ 6a69d6618e8fb.webp
+CATEGORIES:Výstava
+LOCATION:Divadlo Horní Počernice\, Votuzská 379/11\, Praha\, Horní Poč
+ ernice\, 193 00\, Česká republika
+GEO:50.11635;14.621910699999944
+X-APPLE-STRUCTURED-LOCATION;VALUE=URI;X-ADDRESS=Votuzská 379/11\, Praha\, 
+ Horní Počernice\, 193 00\, Česká republika;X-APPLE-RADIUS=100;X-TITLE=
+ Divadlo Horní Počernice:geo:50.11635,14.621910699999944
+END:VEVENT
+BEGIN:VEVENT
+UID:0-4479@pocernice.cz
+DTSTART;TZID=Europe/Prague:20261025T140000
+DTEND;TZID=Europe/Prague:20261025T180000
+DTSTAMP:20260922T123549Z
+URL:https://www.pocernice.cz/akce/dynobrani/
+SUMMARY:Dýňobraní
+DESCRIPTION:Výstava ve foyer divadla.
+ATTACH;FMTTYPE=image/jpeg:https://www.pocernice.cz/app/uploads/2024/12/mum
+ raj.png
+CATEGORIES:Akce pro děti
+LOCATION:Rodinné a komunitní centrum Mumraj\, Mezilesí 2058\, Praha – 
+ Horní Počernice\, 19300\, Česká republika
+GEO:50.1120724;14.599615599999993
+X-APPLE-STRUCTURED-LOCATION;VALUE=URI;X-ADDRESS=Mezilesí 2058\, Praha – 
+ Horní Počernice\, 19300\, Česká republika;X-APPLE-RADIUS=100;X-TITLE=R
+ odinné a komunitní centrum Mumraj:geo:50.1120724,14.599615599999993
+END:VEVENT
+END:VCALENDAR

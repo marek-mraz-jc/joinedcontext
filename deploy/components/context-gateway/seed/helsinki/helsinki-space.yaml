@@ -1,0 +1,242 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: helsinki
+  namespace: helsinki
+  title: { en: Helsinki city context, fi: Helsingin kaupunkikonteksti }
+  description:
+    en: >-
+      Today's events, the city bike stations, the buses of four trunk lines, and the city's open
+      registers: services, beach water, parking, public-area permits and districts. Sources:
+      City of Helsinki, HSL, FMI, Fintraffic and Forum Virium Helsinki, each under CC BY 4.0.
+spec:
+  # Pinned so no entity id changes: the space predates rendered segments (PF-84).
+  urnSegment: helsinki
+  isSandbox: false
+  # The one model of this space: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: helsinki }
+  defaultLocale: en
+  # How long the broker keeps each type's data (DM-81, DM-82, ADR-N-046 2.1 and 2.3). A vehicle
+  # that stops reporting is gone five minutes after its last report (its expiresAt, T-4823), and it keeps five minutes of
+  # track (owner, T-5046: every vehicle, one position in thirty seconds; an hour before, T-4624). A measurement
+  # series keeps 30 days of history; every other type keeps its current state only. Departures
+  # live on their GtfsStop and the pipeline replaces them each round, and an Alert leaves with
+  # its feed (its expiresAt, or the service-alerts withdrawal). Owners change it on the space's Retention tab.
+  retention:
+    - entityType: AdministrativeArea
+      history: 'off'
+    - entityType: HeritageArea
+      history: 'off'
+    - entityType: TrafficSignalJunction
+      history: 'off'
+    - entityType: NoiseZone
+      history: 'off'
+    - entityType: Tree
+      history: 'off'
+    - entityType: NatureSite
+      history: 'off'
+    - entityType: AirQualityObserved
+      history: P30D
+      # Written on every run without an observedAt: one row per change and one a week,
+      # not one per run (T-4844, DM-108, DM-109; scripts/temporal-audit.py).
+      attributes:
+        dateObserved: { record: onChange, heartbeat: P7D }
+        districtCode: { record: onChange, heartbeat: P7D }
+        location: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+    - entityType: Alert
+      # The safety net for a writer that gives an Alert no end (DM-83 skips one with its own
+      # expiresAt): it leaves an hour after its last write, the lease the Fintraffic mapping
+      # gives its own Alerts, so the Fintraffic Alerts written before that mapping (T-4823) end
+      # too (T-4843). The HSL alerts are rewritten every minute or withdrawn.
+      current: PT1H
+      history: 'off'
+    - entityType: Article
+      history: 'off'
+    - entityType: BikeHireDockingStation
+      history: P30D
+      # A station's bikes, free slots, slots and status are levels a write repeats every
+      # minute and a half: a row when one changes and at least one an hour, the same answers
+      # from about 97 % fewer rows (T-4669, ADR-N-054 2.2). None of its slots is a count per
+      # interval, so none records every.
+      record: onChange
+      heartbeat: PT1H
+      # dateModified is bookkeeping: the pipeline stamps it on every write, so it keeps no
+      # history of its own (DM-132, T-5058).
+      attributes:
+        dateModified: { record: never }
+    - entityType: CityWork
+      history: 'off'
+    - entityType: Event
+      # The linked-events pipeline rewrites every event that has not ended each night (T-5257): an
+      # event leaves 30 days after its last write, so a past event stays a month and a cancelled
+      # or withdrawn one does not linger.
+      current: P30D
+      history: 'off'
+    - entityType: GtfsAgency
+      history: 'off'
+    - entityType: GtfsRoute
+      history: 'off'
+    # A value a day per mode: the history is the series a daily indicator or chart reads (T-6467).
+    - entityType: GtfsDailyDepartures
+      history: P730D
+      # Written on every run without an observedAt: one row per change and one a week, as above.
+      attributes:
+        dataProvider: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+        transportMode: { record: onChange, heartbeat: P7D }
+    - entityType: GtfsShape
+      history: 'off'
+    - entityType: GtfsStation
+      history: 'off'
+    - entityType: GtfsStop
+      history: 'off'
+    # Official statistics, one row per period (T-5258): ten years, the longest a duration may
+    # be (DM-82); the source keeps every earlier period.
+    - entityType: KeyPerformanceIndicator
+      history: P3650D
+      # A row when a value or its period changes, never one per run: the statistics, the heat
+      # index and the energy use are read daily or weekly and change monthly to never (T-5278).
+      # The Portal refuses onChange without a heartbeat and the whole space with it (DM-109,
+      # T-5792): one row a month at least.
+      record: onChange
+      heartbeat: P30D
+    - entityType: OffStreetParking
+      history: P30D
+      # Written on every run without an observedAt: one row per change and one a week,
+      # not one per run (T-4844, DM-108, DM-109; scripts/temporal-audit.py).
+      attributes:
+        allowedVehicleType: { record: onChange, heartbeat: P7D }
+        capacityByType: { record: onChange, heartbeat: P7D }
+        dataProvider: { record: onChange, heartbeat: P7D }
+        location: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+        refNearestStation: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+        status: { record: onChange, heartbeat: P7D }
+        totalSpotNumber: { record: onChange, heartbeat: P7D }
+    - entityType: OnStreetParking
+      history: 'off'
+    - entityType: PointOfInterest
+      # The services pipeline rewrites every unit of the register each night (T-5257): a unit the
+      # register drops leaves 30 days after its last write; a month of failed runs is visible long before.
+      current: P30D
+      history: 'off'
+    - entityType: PublicTransportRoute
+      history: 'off'
+    # A report's current state; the feedback system keeps its own history (T-5257). The nightly run
+    # rewrites 90 days: a report the city unpublishes or moderates leaves 120 days after its last write.
+    - entityType: ServiceRequest
+      current: P120D
+      history: 'off'
+    - entityType: TrafficFlowObserved
+      history: P30D
+      # One write a day, its intensity observed at the day's end; the station's name and place
+      # repeat it: one row per change and one a week (T-5253, DM-108).
+      attributes:
+        dataProvider: { record: onChange, heartbeat: P7D }
+        dateObserved: { record: onChange, heartbeat: P7D }
+        dateObservedFrom: { record: onChange, heartbeat: P7D }
+        dateObservedTo: { record: onChange, heartbeat: P7D }
+        location: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+        trafficDirection: { record: onChange, heartbeat: P7D }
+        vehicleType: { record: onChange, heartbeat: P7D }
+    - entityType: Vehicle
+      current: PT5M
+      # Five minutes of track (owner, T-5046); the broker's minute sweep deletes the older rows.
+      history: PT5M
+      # Written on every run without an observedAt: one row per change and one a quarter hour,
+      # not one per run (T-4844, DM-108, DM-109; scripts/temporal-audit.py).
+      # Every vehicle writes every report (T-5046 option A) and its track keeps every one of them
+      # (owner 2026-10-22T17:45Z, T-5247: "complet history of the vehicles for the past 5
+      # minutes"): a newer observedAt is a row, an exact repeat (a retried batch) none. What
+      # changes in nearly every report records it; a line, next stop or load that holds records
+      # its change and a minute's heartbeat, so the state at any instant of the five minutes
+      # still reads back, at about half the rows.
+      attributes:
+        location: { record: observed }
+        speed: { record: observed }
+        heading: { record: observed }
+        delay: { record: observed }
+        occupancy: { record: onChange, heartbeat: PT1M }
+        route: { record: onChange, heartbeat: PT1M }
+        onRoute: { record: onChange, heartbeat: PT1M }
+        nextStop: { record: onChange, heartbeat: PT1M }
+        fleetVehicleId: { record: onChange, heartbeat: PT15M }
+        transportMode: { record: onChange, heartbeat: PT15M }
+        vehicleType: { record: onChange, heartbeat: PT15M }
+    - entityType: WaterQualityObserved
+      history: P30D
+      # Written on every run without an observedAt: one row per change and one a week,
+      # not one per run (T-4844, DM-108, DM-109; scripts/temporal-audit.py).
+      attributes:
+        dataProvider: { record: onChange, heartbeat: P7D }
+        dateObserved: { record: onChange, heartbeat: P7D }
+        location: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+        refPointOfInterest: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+    - entityType: WeatherObserved
+      history: P30D
+      # Written on every run without an observedAt: one row per change and one a week,
+      # not one per run (T-4844, DM-108, DM-109; scripts/temporal-audit.py).
+      attributes:
+        dateObserved: { record: onChange, heartbeat: P7D }
+        location: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+  # Plausibility beside the model's own constraints (DM-86, ADR-N-046 2.4). The area is what
+  # HSL's feeds cover: its region and the commuter trains to Riihimäki (Hyvinkää is a stop of
+  # the recorded GTFS); 44.5 m/s is 160 km/h, the commuter trains' top speed (Sm5; HFP takes
+  # every rail vehicle and reports `spd` in m/s); a report more than 30 s ahead of the
+  # clock is refused.
+  quality:
+    - name: vehicle-in-hsl-area
+      entityType: Vehicle
+      kind: area
+      attribute: location
+      bbox: [23.9, 59.85, 25.6, 60.8]
+    - name: vehicle-speed
+      entityType: Vehicle
+      kind: range
+      attribute: speed
+      min: 0
+      max: 44.5
+    - name: vehicle-report-not-ahead
+      entityType: Vehicle
+      kind: freshness
+      attribute: location
+      maxAhead: PT30S
+    - name: stop-in-hsl-area
+      entityType: GtfsStop
+      kind: area
+      attribute: location
+      bbox: [23.9, 59.85, 25.6, 60.8]
+    # The city's traffic and cycle counters (T-5253): Helsinki and a kilometre around it, at most
+    # 300000 passings a day in one direction, a mean speed up to 150 km/h, and no day ahead of
+    # the clock. The mappings judge the same before they write.
+    - name: counter-in-helsinki
+      entityType: TrafficFlowObserved
+      kind: area
+      attribute: location
+      bbox: [24.76, 59.91, 25.29, 60.31]
+    - name: counter-intensity
+      entityType: TrafficFlowObserved
+      kind: range
+      attribute: intensity
+      min: 0
+      max: 300000
+    - name: counter-speed
+      entityType: TrafficFlowObserved
+      kind: range
+      attribute: averageVehicleSpeed
+      min: 0
+      max: 150
+    - name: counter-day-not-ahead
+      entityType: TrafficFlowObserved
+      kind: freshness
+      attribute: intensity
+      maxAhead: PT5M

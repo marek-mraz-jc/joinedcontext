@@ -1,0 +1,22 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: AssistantDeployment
+metadata:
+  name: knowledge
+  namespace: praha
+spec:
+  # The staff assistant over the city's own website (T-3067): what the answer-quality evals ask,
+  # through the Portal as a signed-in person. Internal, so nothing is published; capped at about
+  # 0.1 USD a day (google/gemini-3.8-flash, 2026-10-07).
+  publicId: praha-knowledge
+  channel: internal
+  systemPrompt: >-
+    You answer the questions of Prague's staff and residents from what the city publishes on its
+    website. Answer in the language of the question, cite the passages you used, and say plainly
+    when the website does not cover the question.
+  sources: [web]
+  budget:
+    tokensPerDay: 5000000
+    tokensPerConversation: 100000
+    costPerDayUsd: 3
+    costPerConversationUsd: 0.15
+  languages: [cs, en]

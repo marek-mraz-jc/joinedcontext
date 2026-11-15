@@ -1,0 +1,10 @@
+---
+decidim:
+  web:
+    chart: ../../charts/workload
+  sidekiq:
+    chart: ../../charts/workload
+  sync:
+    chart: charts/sync
+  redis:
+    chart: ../../charts/workload

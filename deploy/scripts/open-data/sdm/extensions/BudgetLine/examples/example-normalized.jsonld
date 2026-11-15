@@ -1,0 +1,62 @@
+{
+  "id": "urn:ngsi-ld:BudgetLine:joinedcontext.com:example:1",
+  "type": "BudgetLine",
+  "adjustedAmount": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "approvedAmount": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "budgetArea": {
+    "type": "Property",
+    "value": "budgetArea"
+  },
+  "budgetFunction": {
+    "type": "Property",
+    "value": "budgetFunction"
+  },
+  "budgetItem": {
+    "type": "Property",
+    "value": "budgetItem"
+  },
+  "budgetPurpose": {
+    "type": "Property",
+    "value": "budgetPurpose"
+  },
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "fiscalYear": {
+    "type": "Property",
+    "value": 0
+  },
+  "identifier": {
+    "type": "Property",
+    "value": "identifier"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/BudgetLine/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

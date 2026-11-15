@@ -1,0 +1,91 @@
+{{- /*
+  Catalogue harvests (T-4151): one CronJob per `harvest.sources` entry, each copying one
+  publisher's datasets from the national catalogue into a CKAN organization with
+  `files/harvest-<kind>.py` (`nkod` unless the entry names `kind`; `hub` reads an ArcGIS Hub,
+  T-4152). It writes through the Action API on the catalogue's own Service with
+  the harvest user's token the api-token Job keeps (an editor of the harvested organizations, never
+  the site administrator: F-DEP1-002), so it needs no Kubernetes API access and mounts no
+  ServiceAccount token. The api-token Job creates the organizations; a harvest cannot. Its egress is the catalogue and public 443 (networkpolicies.yaml).
+  A run takes minutes, so it is never a Helm hook: the first run after an install is
+  `kubectl create job --from=cronjob/ckan-harvest-<name> ckan-harvest-<name>-now`.
+*/}}
+{{- $full := include "ckan.fullname" . }}
+{{- range .Values.harvest.sources }}
+{{- $part := "harvest" }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $full }}-{{ $part }}-{{ .name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "ckan.labels" (dict "root" $ "part" $part) | nindent 4 }}
+spec:
+  # A source may name its own minute, so two harvests (each up to 1Gi, both reading the
+  # gateway through one edge address) do not start together (T-6218).
+  schedule: {{ .schedule | default $.Values.harvest.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      # A run is idempotent (fixed ids, a content hash per dataset), so a failed one is run again
+      # rather than leaving the catalogue a day behind (T-4385).
+      backoffLimit: 3
+      activeDeadlineSeconds: 3600
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            {{- include "ckan.selectorLabels" (dict "root" $ "part" $part) | nindent 12 }}
+          {{- if $.Values.serviceMesh.enabled }}
+          annotations:
+            # Told to exit with the script, or the pod stays Running and the Job never completes.
+            linkerd.io/inject: enabled
+            config.alpha.linkerd.io/proxy-enable-native-sidecar: "true"
+          {{- end }}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          securityContext:
+            {{- toYaml $.Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: harvest
+              # CKAN's own image: pinned, and it carries python3; the script needs nothing else.
+              image: {{ include "ckan.image" $.Values.ckan.image }}
+              imagePullPolicy: {{ $.Values.ckan.image.pullPolicy }}
+              securityContext:
+                {{- toYaml $.Values.securityContext | nindent 16 }}
+              resources:
+                # An Endpoint sheet (od_sheet) is the peak: bb-dtm-bb-register-statickej-dopravy,
+                # 26 409 rows (85 MB as JSON), held 434 MiB in od_fields and OOMKilled 512Mi on
+                # prod 2026-10-27 (T-5841); OD_MAX_SHEET_BYTES lets a sheet grow about twice that.
+                requests: { cpu: 50m, memory: 128Mi }
+                limits: { memory: 1Gi }
+              env:
+                - name: CATALOGUE
+                  value: {{ printf "%s.%s.svc.cluster.local" $full $.Release.Namespace | quote }}
+                - name: CKAN_API_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $.Values.apiToken.harvestSecret }}
+                      key: token
+                # The converted datasets and the base their Endpoints answer under (T-4279).
+                # The generated file names the catalogue it was generated against; each instance's
+                # datasets live on its own catalogue (T-4678, T-4679).
+                {{- $datasets := $.Files.Get "files/od-datasets.json" }}
+                {{- with $.Values.harvest.datasetsBase }}{{ $datasets = replace . (printf "%s/" (trimSuffix "/" $.Values.siteUrl)) $datasets }}{{ end }}
+                - name: OD_DATASETS
+                  value: {{ $datasets | fromJson | toJson | quote }}
+                - name: OD_GATEWAY
+                  value: {{ $.Values.harvest.gateway | default "" | quote }}
+                # The datasets the publish gate hides get no DataStore sheet (T-4318, T-4742).
+                - name: OD_HIDDEN
+                  value: {{ keys ($.Values.hidden | default dict) | sortAlpha | toJson | quote }}
+                - name: HARVEST_CONFIG
+                  value: {{ merge (dict "source" (printf "%s-%s" (.kind | default "nkod") .name)) (omit . "name" "schedule") | toJson | quote }}
+              command: [python3, -c]
+              args:
+                - {{ printf "%s\n%s" ($.Files.Get "files/od-standards.py") ($.Files.Get (printf "files/harvest-%s.py" (.kind | default "nkod"))) | toJson }}
+{{- end }}

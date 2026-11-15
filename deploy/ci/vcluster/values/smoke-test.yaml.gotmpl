@@ -1,0 +1,85 @@
+# vcluster values for ephemeral smoke-test environments
+# Variables (substituted via Go template at helmfile runtime):
+#   SMOKE_TEST_DOMAIN - e.g. <pipeline>.dev.example.org
+
+controlPlane:
+  statefulSet:
+    image:
+      repository: 'loft-sh/vcluster-oss'
+    scheduling:
+      podManagementPolicy: OrderedReady
+
+  distro:
+    k3s:
+      enabled: true
+
+  ingress:
+    enabled: true
+    host: {{ requiredEnv "SMOKE_TEST_DOMAIN" }}
+    annotations:
+      nginx.ingress.kubernetes.io/backend-protocol: HTTPS
+      nginx.ingress.kubernetes.io/ssl-redirect: 'true'
+      cert-manager.io/issuer: letsencrypt-prod
+      cert-manager.io/issuer-kind: ClusterIssuer
+    spec:
+      tls:
+        - hosts:
+            - {{ requiredEnv "SMOKE_TEST_DOMAIN" }}
+          secretName: {{ requiredEnv "SMOKE_TEST_DOMAIN" }}
+
+  # Smoke test: single etcd replica (no HA needed for ephemeral clusters)
+  backingStore:
+    etcd:
+      deploy:
+        enabled: true
+        statefulSet:
+          highAvailability:
+            replicas: 1
+
+  proxy:
+    extraSANs:
+      - {{ requiredEnv "SMOKE_TEST_DOMAIN" }}
+
+exportKubeConfig:
+  server: https://{{ requiredEnv "SMOKE_TEST_DOMAIN" }}
+  # Do not embed the vcluster's internal CA in the kubeconfig.
+  # The ingress terminates TLS with a publicly trusted Let's Encrypt cert,
+  # so the system CA bundle is sufficient. Without this, kubectl rejects
+  # the connection because the embedded CA doesn't match the ingress cert.
+  insecure: true
+  serviceAccount:
+    name: 'admin'
+    clusterRole: 'cluster-admin'
+
+sync:
+  toHost:
+    ingresses:
+      enabled: true
+    services:
+      enabled: true
+    networkPolicies:
+      enabled: true
+    customResources:
+      serviceprofiles.linkerd.io:
+        enabled: true
+      servers.policy.linkerd.io:
+        enabled: true
+      serverauthorizations.policy.linkerd.io:
+        enabled: true
+      authorizationpolicies.policy.linkerd.io:
+        enabled: true
+    # endpoints:
+    #   enabled: true
+
+  fromHost:
+    nodes:
+      # Do not sync real node information
+      enabled: true
+    storageClasses:
+      enabled: true
+
+rbac:
+  role:
+    enabled: true
+  clusterRole:
+    enabled: true

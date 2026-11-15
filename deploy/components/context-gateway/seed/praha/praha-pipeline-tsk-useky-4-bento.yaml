@@ -1,0 +1,156 @@
+# The mapping of the tsk-useky-4 pipeline (T-5677, PL-03): one RoadSegment per record of the IPR layer
+# Uliční úseky TSK (DOP_CUR_DOP_TSK_ULICUSPAKOM_L) whose objectid falls in `where`. A run holds every entity it wrote until it ends, so each
+# layer is read by several pipelines, one objectid band of about 10,000 street sections or 3,200 street
+# areas each: every part ran in 128 MiB under docker run --memory on 2026-10-26, 7.7 MB written at most.
+# The tsk-useky-0 to -4 and tsk-letni-0 and -1 pipelines share this mapping; only the lets of the first
+# step differ.
+#
+# Read in pages: the DataSource reads the layer's description, which must list every field the mapping
+# reads; a count query over `where` sizes the run and each page of `page` records, ordered by objectid, is one
+# request to the layer's FeatureServer at mp.iprpraha.cz.
+#
+# Ids: urn:ngsi-ld:RoadSegment:{org}:{space}:tsk-{set}-{globalid}, the record's GlobalID in lower case. The
+# Policies public-ulicni-useky and public-letni-udrzba name them by set.
+#
+# Read: the outline (a third, height coordinate dropped) and
+#   useky: usek_naz (the street section, `name`), typkomunik (`facilityType`, TSK's Czech label; 0, not
+#          given, leaves it out; 25, a defunct section, drops the record) and the road class from dalnice,
+#          tridasil and tridamk (`roadClass`: motorway NATIONAL_HIGHWAY, road class I STATE_HIGHWAY, II
+#          MAJOR_DISTRICT_ROAD, III OTHER_DISTRICT_ROAD, local road class 1 and 2 MAJOR_CITY_ROAD, 3 and 4
+#          MINOR_CITY_ROAD, none of them: left out);
+#   letni: nazev (the street, `name`) and day, the cleaning dates "dd.mm.yyyy, dd.mm.yyyy", as the list
+#          `streetCleaningDates` of ISO dates (cars parked there on those days are towed).
+# Nothing else of the layer is read: id_poskyt, mkn, smerovost and the shape lengths are TSK's bookkeeping.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a record without an outline of the layer's geometry, without a
+# GlobalID, with an unknown road type, a date that is no calendar date or no date at all, or with its first
+# vertex outside Prague's box (the city plus about 1 km) is dropped, and so is a second record of one GlobalID
+# in the page; the log line counts each reason per page. A layer that answers no field list or lacks one of
+# the fields, a count of none or over the cap, a page that is not a feature list, or a page where fewer than
+# half the records survive (a projection or schema change) fails the run, so the segments already written stay.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            let set = "useky"
+            let item = "1bbe08c6c9f44c70810957c5e10f22db"
+            let service = "DOP_CUR_DOP_TSK_ULICUSPAKOM_L"
+            let key = "objectid"
+            let where = "objectid%3E%3D258849"
+            let fields = "globalid,usek_naz,typkomunik,dalnice,tridasil,tridamk"
+            let geometries = ["LineString", "MultiLineString"]
+            let page = 2000
+            let cap = 11000
+            let chunk = 200
+            let codes = {"0": "nezadáno", "1": "Vozovka bez přileh.chodníku", "2": "Vozovka s chodníkem a pojížděnou TT", "3": "Vozovka s přil.chodníkem", "4": "Vozovka se samostatnou TT", "5": "Vozovka se stř.děl.pásem", "6": "Pěší zóna", "7": "Samostatná TT", "8": "Samostatný chodník pro pěší", "9": "Samostatný chodník pojížděný", "10": "Schody", "11": "Sjízdná a nájezdná rampa", "12": "Víceproudá komunikace", "13": "Víceproud kom.se stř.děl.pás.", "14": "Most", "15": "Neupravená komunikace", "16": "Most přes Vltavu s chodníkem", "17": "Vozovka s pojížděnou TT", "18": "Podchod", "19": "Parkoviště", "20": "Přejezd mezi jízdními pasy", "21": "Přejezd křižovatky", "22": "Přejezd do boční ulice", "23": "Tunel", "24": "Tunel pro pěší", "25": "Zaniklý úsek", "26": "Autobusový terminál - točka BUS", "27": "ČSPH", "28": "Samostatný chodník pro pěší se schody", "29": "Podjezd", "30": "Vnitrobloková komunikace", "31": "Kruhový objezd", "32": "Vjezd do objektu", "33": "Parková nebo lesní cesta", "34": "Komunikace ve výstavbě", "35": "Nájez do křižovatky", "36": "Lávka pro pěší", "37": "Polní cesta", "38": "Odbočovací/připojovací pruh", "39": "Areálová komunikace", "40": "Příjezd k/do objektu", "41": "Snížené nábřeží - náplavka", "42": "Parkoviště u OC", "43": "Parkoviště u objektu", "44": "Obytná ulice", "45": "Tunel (nájezd)", "46": "Tunel (výjezd)"}
+            let described = this.fields.catch(null)
+            let wanted = $fields.split(",")
+            root = if content().length() > 1048576 || $described.type() != "array" {
+              throw("IPR layer %v did not answer its field list".format($service))
+            } else if $described.map_each(f -> f.name.catch("")).filter(n -> $wanted.contains(n)).unique().length() != $wanted.length() {
+              throw("IPR layer %v no longer lists every field of %v".format($service, $fields))
+            } else {
+              { "set": $set, "item": $item, "service": $service, "key": $key, "where": $where, "fields": $fields, "geometries": $geometries,
+                "page": $page, "cap": $cap, "chunk": $chunk, "codes": $codes }
+            }
+        - mapping: |
+            meta layer = this.string()
+            meta path = "%v/FeatureServer/0/query?where=%v&returnCountOnly=true&f=json".format(this.service, this.where)
+            root = ""
+        - http:
+            url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/${! @path }
+            verb: GET
+            headers: { Accept: application/json }
+            timeout: 60s
+            retries: 2
+            rate_limit: pipeline_egress
+        - mapping: |
+            let layer = @layer.parse_json()
+            let count = this.count.catch(null)
+            root = if $count.type() != "number" || $count < 1 {
+              throw("IPR layer %v counted no record; the layer is never empty, so the query failed".format($layer.service))
+            } else if $count > $layer.cap {
+              throw("IPR layer %v counted %v records, more than the %v this pipeline reads".format($layer.service, $count, $layer.cap))
+            } else {
+              range(0, ($count / $layer.page).ceil().int64()).map_each(i -> { "offset": i * $layer.page })
+            }
+        - unarchive: { format: json_array }
+    # One page at a time, so a run holds one page in memory, not the layer.
+    - split: { size: 1 }
+    - try:
+        - mapping: |
+            let layer = @layer.parse_json()
+            meta path = "%v/FeatureServer/0/query?where=%v&outFields=%v&orderByFields=%v&resultOffset=%v&resultRecordCount=%v&outSR=4326&geometryPrecision=6&f=geojson".format($layer.service, $layer.where, $layer.fields, $layer.key, this.offset, $layer.page)
+            root = ""
+        - http:
+            url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/${! @path }
+            verb: GET
+            headers: { Accept: application/geo+json }
+            timeout: 120s
+            retries: 2
+            rate_limit: pipeline_egress
+        - mapping: |
+            root = if content().length() > 16777216 { throw("IPR answered %v bytes for one page; more than 16 MiB is not a page of this layer".format(content().length())) } else { this }
+        - mapping: |
+            let layer = @layer.parse_json()
+            map flat2 {
+              root = if this.type() == "array" && this.length() > 0 && this.index(0).type() == "number" { this.slice(0, 2) } else if this.type() == "array" { this.map_each(c -> c.apply("flat2")) } else { null }
+            }
+            map first {
+              root = if this.type() == "array" && this.length() > 0 && this.index(0).type() == "number" { this } else if this.type() == "array" && this.length() > 0 { this.index(0).apply("first") } else { null }
+            }
+            map useky {
+              let typ = this.p.typkomunik.catch(null)
+              let label = if $typ.type() == "number" { this.codes.get($typ.string()).catch(null) } else { null }
+              root.ok = $label != null && $typ != 25
+              root.name = this.p.usek_naz.catch("").string().trim()
+              root.attrs.facilityType = if $typ == 0 { null } else { $label }
+              root.attrs.roadClass = if this.p.dalnice.catch(0) == 1 { "NATIONAL_HIGHWAY" } else {
+                {"1": "STATE_HIGHWAY", "2": "MAJOR_DISTRICT_ROAD", "3": "OTHER_DISTRICT_ROAD"}.get(this.p.tridasil.catch(0).string()).catch(null).or(
+                  {"1": "MAJOR_CITY_ROAD", "2": "MAJOR_CITY_ROAD", "3": "MINOR_CITY_ROAD", "4": "MINOR_CITY_ROAD"}.get(this.p.tridamk.catch(0).string()).catch(null))
+              }
+            }
+            map letni {
+              let dates = this.p.day.catch("").string().split(",").map_each(d -> d.trim()).filter(d -> d != "").map_each(d -> if d.re_match("^[0-9]{2}\\.[0-9]{2}\\.[0-9]{4}$") && d.ts_strptime("%d.%m.%Y").ts_strftime("%d.%m.%Y").catch("") == d { d.ts_strptime("%d.%m.%Y").ts_strftime("%Y-%m-%d") } else { null })
+              root.ok = $dates.length() > 0 && $dates.filter(d -> d == null).length() == 0
+              root.name = this.p.nazev.catch("").string().trim()
+              root.attrs.streetCleaningDates = if $dates.filter(d -> d == null).length() == 0 { $dates.sort() } else { null }
+            }
+            let features = this.features.catch(null)
+            let records = if $features.type() != "array" {
+              throw("IPR layer %v did not answer a feature list at %v".format($layer.service, @path))
+            } else { $features }
+            let rows = $records.map_each(f -> {
+              "p": f.properties.catch({}),
+              "g": if $layer.geometries.contains(f.geometry.type.catch("")) && f.geometry.coordinates.catch(null).type() == "array" && f.geometry.coordinates.length() > 0 { { "type": f.geometry.type, "coordinates": f.geometry.coordinates.apply("flat2") } } else { null }
+            }).map_each(r -> r.merge({
+              "guid": r.p.globalid.catch("").string().lowercase().trim("{}"),
+              "v": if r.g == null { null } else { r.g.coordinates.apply("first") }
+            })).map_each(r -> r.merge(r.merge({ "codes": $layer.codes }).apply($layer.set)))
+            let usable = $rows.filter(r -> r.g != null && r.ok && r.guid.re_match("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"))
+            let inside = $usable.filter(r -> r.v.type() == "array" && r.v.length() == 2 && r.v.index(0).type() == "number" && r.v.index(1).type() == "number" && r.v.index(0) >= 14.2 && r.v.index(0) <= 14.75 && r.v.index(1) >= 49.9 && r.v.index(1) <= 50.2)
+            let unique = $inside.unique(r -> r.guid)
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $usable.length()
+            meta outside = $usable.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            meta set = $layer.set
+            root = if $unique.length() * 2 < $rows.length() {
+              throw("IPR layer %v: only %v of %v records at %v have an outline, a GlobalID and known values in Prague".format($layer.service, $unique.length(), $rows.length(), @path))
+            } else { { "layer": $layer, "rows": $unique } }
+        - log:
+            level: INFO
+            message: 'tsk-${! meta("set") }: read ${! meta("read") } records, dropped ${! meta("unusable") } without an outline, a GlobalID or known values, ${! meta("outside") } outside Prague, ${! meta("duplicate") } duplicates'
+        - mapping: |
+            let layer = this.layer
+            let source = "https://geoportalpraha.cz/data-a-sluzby/" + $layer.item
+            let entities = this.rows.map_each(r -> {
+              "id": "urn:ngsi-ld:RoadSegment:%v:%v:tsk-%v-%v".format(env("JC_ORG_DOMAIN"), env("JC_SPACE"), $layer.set, r.guid),
+              "type": "RoadSegment",
+              "location": { "type": "GeoProperty", "value": r.g },
+              "dataProvider": { "type": "Property", "value": "datový podklad © IPR Praha, TSK hl. m. Prahy (CC BY 4.0)" },
+              "source": { "type": "Property", "value": $source }
+            }.merge(if r.name != "" { { "name": { "type": "LanguageProperty", "languageMap": { "cs": r.name } } } } else { {} }).merge(r.attrs.filter(kv -> kv.value != null).map_each(kv -> { "type": "Property", "value": kv.value })))
+            root = range(0, ($entities.length() / $layer.chunk).ceil().int64()).map_each(i -> $entities.slice(i * $layer.chunk, [(i + 1) * $layer.chunk, $entities.length()].min()))
+        # `chunk` records per request to the endpoint, so one write stays well under the broker's 4 MiB body limit.
+        - unarchive: { format: json_array }

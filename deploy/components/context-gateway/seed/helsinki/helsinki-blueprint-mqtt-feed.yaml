@@ -1,0 +1,97 @@
+# A resident Bento flow on an MQTT topic tree (PL-01, PL-03, CC-23..CC-27): what the HSL
+# trunk-line feed is, as a card. Push-based, so no schedule: the runner keeps the subscription.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Blueprint
+metadata:
+  name: mqtt-feed
+  namespace: org
+  title:
+    en: Subscribe to an MQTT feed
+    fi: Tilaa MQTT-syöte
+    sk: Odoberať kanál MQTT
+    cs: Odebírat kanál MQTT
+    de: Einen MQTT-Feed abonnieren
+  description:
+    en: Listens to an MQTT topic and writes each message as an entity of one type.
+    sk: Počúva tému MQTT a každú správu zapíše ako entitu jedného typu.
+    cs: Poslouchá téma MQTT a každou zprávu zapíše jako entitu jednoho typu.
+    de: Hört ein MQTT-Thema ab und schreibt jede Nachricht als Entität eines Typs.
+spec:
+  version: 1.0.0
+  category: ingestion
+  riskClass: yellow
+  allowedRoles: [portal-approver]
+  parameterSchema:
+    type: object
+    required: [name, brokerUrl, topic, entityType]
+    additionalProperties: false
+    properties:
+      name:
+        type: string
+        title: Flow name
+        x-jc-title: { sk: Názov toku, cs: Název toku, de: Name des Ablaufs }
+        pattern: ^[a-z][a-z0-9-]{1,40}$
+      brokerUrl:
+        type: string
+        title: Broker URL
+        x-jc-title: { sk: URL brokera, cs: URL brokeru, de: Broker-URL }
+        default: wss://mqtt.hsl.fi:443/
+        description: tls://host:8883 or wss://host:443/; the cluster lets 443 out.
+        x-jc-description:
+          sk: tls://host:8883 alebo wss://host:443/; klaster púšťa von port 443.
+          cs: tls://host:8883 nebo wss://host:443/; cluster pouští ven port 443.
+          de: tls://host:8883 oder wss://host:443/; der Cluster lässt Port 443 hinaus.
+      topic:
+        type: string
+        title: Topic filter
+        x-jc-title: { sk: Filter tém, cs: Filtr témat, de: Themenfilter }
+        default: /hfp/v2/journey/ongoing/vp/bus/+/+/2510/#
+      entityType:
+        type: string
+        title: Entity type written
+        x-jc-title:
+          sk: Zapisovaný typ entity
+          cs: Zapisovaný typ entity
+          de: Geschriebener Entitätstyp
+        pattern: ^[A-Z][A-Za-z0-9]+$
+        default: Vehicle
+      targetEndpoint:
+        type: string
+        title: Endpoint the flow writes through
+        x-jc-title:
+          sk: Endpoint, cez ktorý tok zapisuje
+          cs: Endpoint, přes který tok zapisuje
+          de: Endpoint, über den der Ablauf schreibt
+        default: urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all
+  templates:
+    - name: datasource
+      template: |
+        apiVersion: joinedcontext.com/v1alpha1
+        kind: DataSource
+        metadata:
+          name: "{{ name }}"
+          title: { en: "MQTT {{ topic }}" }
+        spec:
+          type: mqtt
+          mqtt:
+            urls:
+              - "{{ brokerUrl }}"
+            topics:
+              - "{{ topic }}"
+            qos: 0
+            cleanSession: true
+    - name: pipeline
+      template: |
+        apiVersion: joinedcontext.com/v1alpha1
+        kind: Pipeline
+        metadata:
+          name: "{{ name }}"
+          title: { en: "{{ entityType }} from {{ name }}" }
+        spec:
+          class: auto
+          source:
+            dataSourceRef: { kind: DataSource, name: "{{ name }}" }
+          targetEndpoint: "{{ targetEndpoint }}"
+          quotas:
+            maxMemoryMb: 128
+            cpuMillicores: 250

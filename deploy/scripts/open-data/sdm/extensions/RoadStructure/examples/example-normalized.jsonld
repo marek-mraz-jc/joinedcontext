@@ -1,0 +1,146 @@
+{
+  "id": "urn:ngsi-ld:RoadStructure:joinedcontext.com:example:1",
+  "type": "RoadStructure",
+  "celkovaDlzkaPodjazdu": {
+    "type": "Property",
+    "value": 0
+  },
+  "cisloPK": {
+    "type": "Property",
+    "value": "cisloPK"
+  },
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "druhKonstrukcie": {
+    "type": "Property",
+    "value": "druhKonstrukcie"
+  },
+  "druhZabezpecenia": {
+    "type": "Property",
+    "value": "druhZabezpecenia"
+  },
+  "isPartOf": {
+    "type": "Property",
+    "value": "https://example.org/isPartOf"
+  },
+  "jICZSR": {
+    "type": "Property",
+    "value": "jICZSR"
+  },
+  "kraj": {
+    "type": "Property",
+    "value": "kraj"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "material": {
+    "type": "Property",
+    "value": "material"
+  },
+  "materialPriepustu": {
+    "type": "Property",
+    "value": "materialPriepustu"
+  },
+  "minVyskaPodjazdu": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "najblizsiKM": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "name": {
+    "type": "Property",
+    "value": "name"
+  },
+  "normanaZatazitelnostT": {
+    "type": "Property",
+    "value": 0
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "okres": {
+    "type": "Property",
+    "value": "okres"
+  },
+  "pocetKolaji": {
+    "type": "Property",
+    "value": 0
+  },
+  "predmetPremostenia": {
+    "type": "Property",
+    "value": "predmetPremostenia"
+  },
+  "rokStavby": {
+    "type": "Property",
+    "value": 0
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "spravca": {
+    "type": "Property",
+    "value": "spravca"
+  },
+  "spravcaMostu": {
+    "type": "Property",
+    "value": "spravcaMostu"
+  },
+  "spravcaUseku": {
+    "type": "Property",
+    "value": "spravcaUseku"
+  },
+  "stavebnoTechnickyStav": {
+    "type": "Property",
+    "value": "stavebnoTechnickyStav"
+  },
+  "triedaPK": {
+    "type": "Property",
+    "value": "triedaPK"
+  },
+  "typPodjazdu": {
+    "type": "Property",
+    "value": "typPodjazdu"
+  },
+  "typSpravcu": {
+    "type": "Property",
+    "value": "typSpravcu"
+  },
+  "vlastnik": {
+    "type": "Property",
+    "value": "vlastnik"
+  },
+  "vlastnikMostu": {
+    "type": "Property",
+    "value": "vlastnikMostu"
+  },
+  "vlastnikUseku": {
+    "type": "Property",
+    "value": "vlastnikUseku"
+  },
+  "vyhradnaZatazitelnostT": {
+    "type": "Property",
+    "value": "vyhradnaZatazitelnostT"
+  },
+  "vynimocnaZatazitelnostT": {
+    "type": "Property",
+    "value": "vynimocnaZatazitelnostT"
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/RoadStructure/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

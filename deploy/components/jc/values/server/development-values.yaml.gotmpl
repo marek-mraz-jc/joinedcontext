@@ -1,0 +1,14 @@
+---
+# Checklist:
+# - [x] Minimal Resources: `jc --role all` peaked at 99 MiB locally (README.md section 4)
+# - [x] 1 Replica
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 192Mi
+  limits:
+    cpu: '1'
+    memory: 768Mi

@@ -1,0 +1,511 @@
+{
+"success": true,
+"result": {
+"records": [
+{
+"Codi_Dimensio": "1",
+"Desc_Dimensio": "SEXE",
+"Codi_Valor": "1",
+"Desc_Valor_CA": "Dona"
+},
+{
+"Codi_Dimensio": "1",
+"Desc_Dimensio": "SEXE",
+"Codi_Valor": "2",
+"Desc_Valor_CA": "Home"
+},
+{
+"Codi_Dimensio": "13",
+"Desc_Dimensio": "N_PERSONES_AGG",
+"Codi_Valor": "1",
+"Desc_Valor_CA": "Una persona"
+},
+{
+"Codi_Dimensio": "13",
+"Desc_Dimensio": "N_PERSONES_AGG",
+"Codi_Valor": "2",
+"Desc_Valor_CA": "Dues persones"
+},
+{
+"Codi_Dimensio": "13",
+"Desc_Dimensio": "N_PERSONES_AGG",
+"Codi_Valor": "3",
+"Desc_Valor_CA": "Tres persones"
+},
+{
+"Codi_Dimensio": "13",
+"Desc_Dimensio": "N_PERSONES_AGG",
+"Codi_Valor": "4",
+"Desc_Valor_CA": "Quatre persones"
+},
+{
+"Codi_Dimensio": "13",
+"Desc_Dimensio": "N_PERSONES_AGG",
+"Codi_Valor": "5",
+"Desc_Valor_CA": "Cinc persones"
+},
+{
+"Codi_Dimensio": "13",
+"Desc_Dimensio": "N_PERSONES_AGG",
+"Codi_Valor": "6",
+"Desc_Valor_CA": "Sis persones"
+},
+{
+"Codi_Dimensio": "13",
+"Desc_Dimensio": "N_PERSONES_AGG",
+"Codi_Valor": "7",
+"Desc_Valor_CA": "Set persones"
+},
+{
+"Codi_Dimensio": "13",
+"Desc_Dimensio": "N_PERSONES_AGG",
+"Codi_Valor": "8",
+"Desc_Valor_CA": "Vuit persones"
+},
+{
+"Codi_Dimensio": "13",
+"Desc_Dimensio": "N_PERSONES_AGG",
+"Codi_Valor": "9",
+"Desc_Valor_CA": "Nou o més persones"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "72",
+"Desc_Valor_CA": "Sant Martí de Provençals"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "71",
+"Desc_Valor_CA": "Provençals del Poblenou"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "70",
+"Desc_Valor_CA": "el Besòs i el Maresme"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "69",
+"Desc_Valor_CA": "Diagonal Mar i el Front Marítim del Poblenou"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "68",
+"Desc_Valor_CA": "el Poblenou"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "67",
+"Desc_Valor_CA": "la Vila Olímpica del Poblenou"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "66",
+"Desc_Valor_CA": "el Parc i la Llacuna del Poblenou"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "65",
+"Desc_Valor_CA": "el Clot"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "64",
+"Desc_Valor_CA": "el Camp de l'Arpa del Clot"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "12",
+"Desc_Valor_CA": "la Marina del Prat Vermell"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "18",
+"Desc_Valor_CA": "Sants"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "17",
+"Desc_Valor_CA": "Sants - Badal"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "16",
+"Desc_Valor_CA": "la Bordeta"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "15",
+"Desc_Valor_CA": "Hostafrancs"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "14",
+"Desc_Valor_CA": "la Font de la Guatlla"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "13",
+"Desc_Valor_CA": "la Marina de Port"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "11",
+"Desc_Valor_CA": "el Poble-sec"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "22",
+"Desc_Valor_CA": "Vallvidrera, el Tibidabo i les Planes"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "23",
+"Desc_Valor_CA": "Sarrià"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "26",
+"Desc_Valor_CA": "Sant Gervasi - Galvany"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "25",
+"Desc_Valor_CA": "Sant Gervasi - la Bonanova"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "24",
+"Desc_Valor_CA": "les Tres Torres"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "27",
+"Desc_Valor_CA": "el Putxet i el Farró"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "3",
+"Desc_Valor_CA": "la Barceloneta"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "2",
+"Desc_Valor_CA": "el Barri Gòtic"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "1",
+"Desc_Valor_CA": "el Raval"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "4",
+"Desc_Valor_CA": "Sant Pere, Santa Caterina i la Ribera"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "10",
+"Desc_Valor_CA": "Sant Antoni"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "9",
+"Desc_Valor_CA": "la Nova Esquerra de l'Eixample"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "8",
+"Desc_Valor_CA": "l'Antiga Esquerra de l'Eixample"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "7",
+"Desc_Valor_CA": "la Dreta de l'Eixample"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "6",
+"Desc_Valor_CA": "la Sagrada Família"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "5",
+"Desc_Valor_CA": "el Fort Pienc"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "21",
+"Desc_Valor_CA": "Pedralbes"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "20",
+"Desc_Valor_CA": "la Maternitat i Sant Ramon"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "19",
+"Desc_Valor_CA": "les Corts"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "28",
+"Desc_Valor_CA": "Vallcarca i els Penitents"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "30",
+"Desc_Valor_CA": "la Salut"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "29",
+"Desc_Valor_CA": "el Coll"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "32",
+"Desc_Valor_CA": "el Camp d'en Grassot i Gràcia Nova"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "31",
+"Desc_Valor_CA": "la Vila de Gràcia"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "43",
+"Desc_Valor_CA": "Horta"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "42",
+"Desc_Valor_CA": "la Clota"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "40",
+"Desc_Valor_CA": "Montbau"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "39",
+"Desc_Valor_CA": "Sant Genís dels Agudells"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "38",
+"Desc_Valor_CA": "la Teixonera"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "36",
+"Desc_Valor_CA": "la Font d'en Fargues"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "41",
+"Desc_Valor_CA": "la Vall d'Hebron"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "37",
+"Desc_Valor_CA": "el Carmel"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "34",
+"Desc_Valor_CA": "Can Baró"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "35",
+"Desc_Valor_CA": "el Guinardó"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "33",
+"Desc_Valor_CA": "el Baix Guinardó"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "55",
+"Desc_Valor_CA": "Ciutat Meridiana"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "54",
+"Desc_Valor_CA": "Torre Baró"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "53",
+"Desc_Valor_CA": "la Trinitat Nova"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "50",
+"Desc_Valor_CA": "les Roquetes"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "52",
+"Desc_Valor_CA": "la Prosperitat"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "51",
+"Desc_Valor_CA": "Verdun"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "48",
+"Desc_Valor_CA": "la Guineueta"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "47",
+"Desc_Valor_CA": "Can Peguera"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "49",
+"Desc_Valor_CA": "Canyelles"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "56",
+"Desc_Valor_CA": "Vallbona"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "46",
+"Desc_Valor_CA": "el Turó de la Peira"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "45",
+"Desc_Valor_CA": "Porta"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "44",
+"Desc_Valor_CA": "Vilapicina i la Torre Llobeta"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "59",
+"Desc_Valor_CA": "el Bon Pastor"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "58",
+"Desc_Valor_CA": "Baró de Viver"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "57",
+"Desc_Valor_CA": "la Trinitat Vella"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "63",
+"Desc_Valor_CA": "Navas"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "62",
+"Desc_Valor_CA": "el Congrés i els Indians"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "61",
+"Desc_Valor_CA": "la Sagrera"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "60",
+"Desc_Valor_CA": "Sant Andreu"
+},
+{
+"Codi_Dimensio": "21",
+"Desc_Dimensio": "CODI_BARRI_DEST",
+"Codi_Valor": "73",
+"Desc_Valor_CA": "la Verneda i la Pau"
+}
+]
+}
+}

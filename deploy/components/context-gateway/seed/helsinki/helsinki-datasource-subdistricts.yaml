@@ -1,0 +1,17 @@
+# The city's 148 sub-districts (osa-alueet) as an open WFS layer, in WGS84. No key. CC-BY-4.0, read from the HRI
+# catalogue (package helsingin-piirijako).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-subdistricts
+  namespace: helsinki
+  title:
+    en: City sub-districts (osa-alueet)
+    fi: Piirijako, osa-alueet
+spec:
+  type: http
+  http:
+    url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Piirijako_osaalue
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

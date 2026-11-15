@@ -1,0 +1,27 @@
+---
+# A token bound to the realm's audience: the API server refuses it, so it is no API
+# client and needs no reason (the Portal and the gateway mount one).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: realm-audience-token
+  namespace: dev
+spec:
+  automountServiceAccountToken: false
+  containers:
+    - name: app
+      image: nginx:1.27
+      volumeMounts:
+        - name: realm-token
+          mountPath: /var/run/secrets/realm
+          readOnly: true
+  volumes:
+    - name: scratch
+      emptyDir: {}
+    - name: realm-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              audience: https://idm.example.test/realms/dev
+              path: token
+              expirationSeconds: 3600

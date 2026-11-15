@@ -1,0 +1,17 @@
+---
+# Checklist:
+# - [x] Minimal Resources: the smallest the kind run kept serving at (T-6316, Deployment/18)
+# - [x] 1 Replica
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 640Mi
+  limits:
+    cpu: '1'
+    memory: 1Gi
+
+env:
+  RAILS_MAX_THREADS: "3"

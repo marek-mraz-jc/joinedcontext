@@ -1,0 +1,599 @@
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix linkml: <https://w3id.org/linkml/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+jc:Entity a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "Entity" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:observedAt ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:id ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:type ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:location ] ;
+    skos:definition "The root every NGSI-LD entity class specialises." ;
+    skos:exactMatch ngsi-ld:Entity ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:PublicProcurement a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "PublicProcurement" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:zeleneObstaravanie ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:druhPostupu ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:name ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:stav ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:pocetZaujemcov ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:hlavnyCPVCasti ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:cPVNazov ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dataProvider ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:adresaNajvyhodnejsiehoUchadza ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:najvyhodnejsiUchadzac ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:financovanie ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:pHZ ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:datumSpustenia ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:typVydavku ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:druhObstaravania ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:typKomodity ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:identifier ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:predpokladanaHodnota ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:obstaravatel ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:nazovCasti ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:spolocenskyZodpovedneVerejne ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:datumUkoncenia ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:socialneZodpovedneObstaravani ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:hlavnyCPV ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:druhKomoditAleboSluzieb ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:rok ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:iDZakazky ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:mena ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:ponukaUchadzaca ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:lehotaNaPredkladanie ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:cPVCastiNazov ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:source ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:cisloSpisu ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:utvarOvZP ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:isPartOf ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:pocetUchadzacov ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:elektronickaAukcia ],
+        jc:Entity ;
+    skos:definition "A planned or realised public procurement of the publisher." ;
+    skos:exactMatch jc:PublicProcurement ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:upstream_source "https://smart-data-models.github.io/dataModel.CPSV-AP/Cost/schema.json" .
+
+jc:adresaNajvyhodnejsiehoUchadza a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "adresaNajvyhodnejsiehoUchadza" ;
+    skos:definition "The source column `Adresa_najvýhodnejšieho_uchádza`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:boolean a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:boolean ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:cPVCastiNazov a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "cPVCastiNazov" ;
+    skos:definition "The source column `CPV_časti___názov`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:cPVNazov a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "cPVNazov" ;
+    skos:definition "The source column `CPV___názov`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:cisloSpisu a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "cisloSpisu" ;
+    skos:definition "The source column `Číslo_spisu`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:curie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:curie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:dataProvider a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dataProvider" ;
+    skos:definition "Who published the row, with the credit its licence asks for." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" .
+
+jc:date a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:date ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:date_or_datetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:date_or_datetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:datumSpustenia a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "datumSpustenia" ;
+    rdfs:range jc:datetime ;
+    skos:definition "The source column `Dátum_spustenia`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:datumUkoncenia a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "datumUkoncenia" ;
+    skos:definition "The source column `Dátum_ukončenia`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:decimal a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:decimal ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:double a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:double ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:druhKomoditAleboSluzieb a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "druhKomoditAleboSluzieb" ;
+    skos:definition "The source column `Druh_komodít_alebo_služieb`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:druhObstaravania a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "druhObstaravania" ;
+    skos:definition "The source column `Druh_obstarávania`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:druhPostupu a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "druhPostupu" ;
+    skos:definition "The source column `Druh_postupu`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:elektronickaAukcia a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "elektronickaAukcia" ;
+    skos:definition "The source column `Elektronická_aukcia`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:financovanie a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "financovanie" ;
+    skos:definition "The source column `Financovanie`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:hlavnyCPV a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "hlavnyCPV" ;
+    skos:definition "The source column `Hlavný_CPV`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:hlavnyCPVCasti a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "hlavnyCPVCasti" ;
+    skos:definition "The source column `Hlavný_CPV_časti`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:iDZakazky a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "iDZakazky" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `ID_zákazky`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:id a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "id" ;
+    skos:definition "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:jsonld_keyword "@id" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:identifier a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "identifier" ;
+    skos:definition "The source column `id`, `ID_časti`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" .
+
+jc:isPartOf a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "isPartOf" ;
+    rdfs:range jc:uri ;
+    skos:definition "The catalogue dataset the row belongs to, where its licence and its other rows are." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:jsonpath a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:jsonpath ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:jsonpointer a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:jsonpointer ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:lehotaNaPredkladanie a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "lehotaNaPredkladanie" ;
+    rdfs:range jc:datetime ;
+    skos:definition "The source column `Lehota_na_predkladanie`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:location a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "location" ;
+    rdfs:range jc:string ;
+    skos:definition "Where the entity is, as GeoJSON geometry." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "GeoProperty" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:mena a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "mena" ;
+    skos:definition "The source column `Mena`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:najvyhodnejsiUchadzac a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "najvyhodnejsiUchadzac" ;
+    skos:definition "The source column `Najvýhodnejší_uchádzač`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:name a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "name" ;
+    skos:definition "The source column `Predmet_zákazky`, `Názov_predmetu`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" .
+
+jc:nazovCasti a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "nazovCasti" ;
+    skos:definition "The source column `Názov_časti`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:ncname a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:ncname ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:nodeidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:nodeidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:objectidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:objectidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:observedAt a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "observedAt" ;
+    rdfs:range jc:datetime ;
+    skos:definition "When the observation the entity reports was made." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:obstaravatel a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "obstaravatel" ;
+    skos:definition "The source column `Obstarávateľ`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:pHZ a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "pHZ" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `PHZ`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:pocetUchadzacov a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "pocetUchadzacov" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `Počet_uchádzačov`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:pocetZaujemcov a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "pocetZaujemcov" ;
+    rdfs:range jc:integer ;
+    skos:definition "The source column `Počet_záujemcov`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:ponukaUchadzaca a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "ponukaUchadzaca" ;
+    rdfs:range jc:float ;
+    skos:definition "The source column `Ponuka_uchádzača`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:predpokladanaHodnota a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "predpokladanaHodnota" ;
+    skos:definition "The source column `Predpokladaná_hodnota`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:rok a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "rok" ;
+    skos:definition "The source column `Rok`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:socialneZodpovedneObstaravani a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "socialneZodpovedneObstaravani" ;
+    skos:definition "The source column `Sociálne_zodpovedné_obstarávani`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:source a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "source" ;
+    rdfs:range jc:uri ;
+    skos:definition "The service the row was read from." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.CPSV-AP/a05d1663475fc0f79361bc9bc2550c3f24df1ba0/context.jsonld" .
+
+jc:sparqlpath a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:sparqlpath ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:spolocenskyZodpovedneVerejne a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "spolocenskyZodpovedneVerejne" ;
+    skos:definition "The source column `Spoločensky_zodpovedné_verejné_`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:stav a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "stav" ;
+    skos:definition "The source column `Stav`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:time a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:time ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:typKomodity a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "typKomodity" ;
+    skos:definition "The source column `Typ_komodity`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:typVydavku a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "typVydavku" ;
+    skos:definition "The source column `Typ_výdavku`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:type a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "type" ;
+    skos:definition "The entity type, one class of a published data model." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:jsonld_keyword "@type" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:uriorcurie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:uriorcurie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:utvarOvZP a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "utvarOvZP" ;
+    skos:definition "The source column `Útvar_OvZP`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:zeleneObstaravanie a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "zeleneObstaravanie" ;
+    skos:definition "The source column `Zelené_obstarávanie`." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/PublicProcurement> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:string a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:string ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:float a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:float ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:uri a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:uri ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:datetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:datetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:integer a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:integer ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+linkml:topValue a owl:DatatypeProperty ;
+    rdfs:label "value" .
+
+<https://joinedcontext.com/models/sdm/extensions/PublicProcurement> a owl:Ontology ;
+    rdfs:label "PublicProcurement" ;
+    dcterms:license "https://joinedcontext.com/licenses/cc-by-4.0" ;
+    dcterms:title "PublicProcurement, an extension of dataModel.CPSV-AP/Cost" ;
+    skos:definition "A planned or realised public procurement of the publisher. Extends dataModel.CPSV-AP/Cost: CPSV-AP Cost is the official model of an amount a public body pays or charges (value, currency, identifier); no subject holds a contract, order, invoice, grant or procurement." .
+

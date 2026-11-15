@@ -1,0 +1,5 @@
+---
+runtime-policies:
+  runtime-policies:
+    enabled: true
+    namespace: {{ include "jc.operatorNamespace" (dict "global" .Values.global "suffix" "runtime-policies" "deployLayer" .Values.deployLayer) }}

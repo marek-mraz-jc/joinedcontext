@@ -1,0 +1,46 @@
+{
+  "id": "urn:ngsi-ld:HeritageArea:joinedcontext.com:example:1",
+  "type": "HeritageArea",
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "dateModified": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "description": {
+    "type": "Property",
+    "value": "description"
+  },
+  "heritageCategory": {
+    "type": "Property",
+    "value": "heritageCategory"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "name": {
+    "type": "Property",
+    "value": "name"
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/HeritageArea/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

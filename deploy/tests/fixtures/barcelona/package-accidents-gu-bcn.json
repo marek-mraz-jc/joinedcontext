@@ -1,0 +1,37 @@
+{
+ "help": "https://opendata-ajuntament.barcelona.cat/data/api/3/action/help_show?name=package_show",
+ "success": true,
+ "result": {
+  "name": "accidents-gu-bcn",
+  "id": "e769eb9d-d778-4cd7-9e3a-5858bba49b20",
+  "resources": [
+   {
+    "id": "066d46b1-25be-4f08-b0e0-5a233714bda2",
+    "name": "2025_accidents_gu_bcn.csv",
+    "format": "CSV",
+    "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/e769eb9d-d778-4cd7-9e3a-5858bba49b20/resource/066d46b1-25be-4f08-b0e0-5a233714bda2/download/2025_accidents_gu_bcn.csv",
+    "datastore_active": true,
+    "position": 0,
+    "last_modified": "2026-02-17T11:37:55.688872"
+   },
+   {
+    "id": "66f5e7e3-045b-4d19-b649-2eaea622ae93",
+    "name": "2024_accidents_gu_bcn.csv",
+    "format": "CSV",
+    "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/e769eb9d-d778-4cd7-9e3a-5858bba49b20/resource/66f5e7e3-045b-4d19-b649-2eaea622ae93/download/2024_accidents_gu_bcn.csv",
+    "datastore_active": true,
+    "position": 1,
+    "last_modified": "2025-02-28T11:36:28.586723"
+   },
+   {
+    "id": "d12c8a6f-feb0-4c3e-bcf1-46b8a8b3d651",
+    "name": "2023_ACCIDENTS_GU_BCN.csv",
+    "format": "CSV",
+    "url": "https://opendata-ajuntament.barcelona.cat/data/dataset/e769eb9d-d778-4cd7-9e3a-5858bba49b20/resource/d12c8a6f-feb0-4c3e-bcf1-46b8a8b3d651/download/2023_accidents_gu_bcn.csv",
+    "datastore_active": true,
+    "position": 2,
+    "last_modified": "2026-05-19T17:34:09.052807"
+   }
+  ]
+ }
+}

@@ -1,0 +1,17 @@
+# HSL's fare zones A to D (T-5254), from HSL's open data hub as GeoJSON in WGS84. No key. CC-BY-4.0, read
+# from the HRI catalogue (package hsl-n-taksavyohykkeet). Four polygons, about 190 kB.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hsl-fare-zones
+  namespace: helsinki
+  title:
+    en: HSL fare zones
+    fi: HSL:n taksavyöhykkeet
+spec:
+  type: http
+  http:
+    url: https://hub.arcgis.com/api/v3/datasets/89b6b5142a9b4bb9a5c5f4404ff28963_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

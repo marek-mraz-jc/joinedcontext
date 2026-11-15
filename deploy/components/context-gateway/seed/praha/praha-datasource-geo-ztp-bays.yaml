@@ -1,0 +1,17 @@
+# IPR Praha's geoportal item ab4a8cd8fc284b738ca806681559d694 (Vyhrazená parkovací stání pro držitele průkazu ZTP/P bez vazby na registrační značku vozidla, TSK hl. m. Prahy), 2,192 records on 2026-10-24, served
+# by its ArcGIS Hub download as GeoJSON in WGS 84. No key. CC BY 4.0, "datový podklad © IPR Praha" (T-5424).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-geo-ztp-bays
+  namespace: praha
+  title:
+    en: Reserved bays for ZTP/P card holders, any vehicle (IPR Praha)
+    cs: Vyhrazená parkovací stání pro držitele průkazu ZTP/P bez vazby na registrační značku vozidla (IPR Praha)
+spec:
+  type: http
+  http:
+    url: https://hub.arcgis.com/api/v3/datasets/ab4a8cd8fc284b738ca806681559d694_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 120s

@@ -1,0 +1,75 @@
+# The mapping of the vlaky pipeline (PL-03, T-3138): the city's five railway stations from the
+# national GTFS timetable, each with the number of trains that leave it today.
+#
+# The stations are named, not found by distance: Žilina, Žilina-zariečie and Žilina-Solinky, and
+# Bytčica and Brodno, which are parts of the city with stations of their own. Lietavská Lúčka,
+# Rudina and Varín lie as close and are other municipalities. In this feed one route is one train
+# number, so a count of routes would repeat the count of trains; the model carries departures only.
+
+pipeline:
+  processors:
+    # The download's size is capped before it is unpacked (T-5701): the feed was 290550 bytes on
+    # 2026-10-25, four times that is the cap. Bento cannot cap what a member inflates to, so this
+    # packed size is the only bound. An errored zip skips the unpack and becomes a problem below.
+    - try:
+        - mapping: |
+            root = if content().length() > 1162200 { throw("the timetable zip holds %v bytes; more than 1162200 is not the national GTFS feed of 290 kB".format(content().length())) } else { content() }
+        - unarchive: { format: zip }
+    # The five tables the count reads; the rest of the timetable (2.3 MB unpacked) is dropped here.
+    - mapping: |
+        let tables = ["stops.txt", "trips.txt", "stop_times.txt", "calendar.txt", "calendar_dates.txt"]
+        root = if errored() { { "table": "problem", "rows": error() } } else if !$tables.contains(@archive_filename) { deleted() } else {
+          { "table": @archive_filename.trim_suffix(".txt"), "rows": content().string().trim_prefix("﻿").parse_csv() }
+        }
+    - archive: { format: json_array }
+
+    - mapping: |
+        let names = ["Žilina", "Žilina-zariečie", "Žilina-Solinky", "Bytčica", "Brodno"]
+        let t = this.fold({}, acc -> acc.tally.assign({ acc.value.table: acc.value.rows }))
+        # The empty-read guard (T-3138): a ZIP without the city's stations is a broken download,
+        # never a city whose railway closed, so the run fails where it can be seen.
+        let stations = $t.stops.or([]).filter(s -> $names.contains(s.stop_name) && s.location_type.or("0") != "1")
+        # A refused download fails the run with its own reason and writes no station.
+        root = if $t.problem.or(null) != null { throw($t.problem) } else if $stations.length() == 0 { throw("the timetable names none of the city's stations") } else { this }
+        meta today = now().ts_format("20060102", "Europe/Bratislava")
+    # A throw keeps the message's content: a refused download goes on as no table at all.
+    - mapping: |
+        root = if this.any(x -> x.table == "problem") { [] } else { this }
+
+    - mapping: |
+        let names = ["Žilina", "Žilina-zariečie", "Žilina-Solinky", "Bytčica", "Brodno"]
+        let t = this.fold({}, acc -> acc.tally.assign({ acc.value.table: acc.value.rows }))
+        let today = @today
+        let weekday = $today.ts_strptime("%Y%m%d").ts_format("Monday", "UTC").lowercase()
+        let stations = $t.stops.filter(s -> $names.contains(s.stop_name) && s.location_type.or("0") != "1")
+        let wanted = $stations.fold({}, acc -> acc.tally.assign({ acc.value.stop_id: true }))
+
+        # The services running today: the calendar's weekday within its dates, less the exceptions
+        # that remove the day (type 2), plus those that add it (type 1).
+        let exceptions = $t.calendar_dates.or([]).filter(e -> e.date == $today)
+        let removed = $exceptions.filter(e -> e.exception_type == "2").fold({}, acc -> acc.tally.assign({ acc.value.service_id: true }))
+        let services = $t.calendar.or([]).filter(c -> c.get($weekday) == "1" && c.start_date <= $today && c.end_date >= $today && $removed.get(c.service_id) == null).map_each(c -> c.service_id).concat($exceptions.filter(e -> e.exception_type == "1").map_each(e -> e.service_id)).fold({}, acc -> acc.tally.assign({ acc.value: true }))
+        # Only the trains that call in the city are folded: a fold with assign copies its map at
+        # every row, and over the national tables that peaked at 201 MiB (F-BNT3-022).
+        let here = $t.stop_times.filter(st -> $wanted.get(st.stop_id) != null).map_each(st -> st.trip_id).unique().fold({}, acc -> acc.tally.assign({ acc.value: true }))
+        let running = $t.trips.filter(trip -> $here.get(trip.trip_id) != null && $services.get(trip.service_id) != null).fold({}, acc -> acc.tally.assign({ acc.value.trip_id: true }))
+
+        # A train leaves a station it calls at unless the station ends its run.
+        let calls = $t.stop_times.filter(st -> $running.get(st.trip_id) != null)
+        let last = $calls.fold({}, acc -> acc.tally.assign({ acc.value.trip_id: [acc.tally.get(acc.value.trip_id).or(-1), acc.value.stop_sequence.number()].max() }))
+        let leaving = $calls.filter(st -> $wanted.get(st.stop_id) != null && st.stop_sequence.number() < $last.get(st.trip_id))
+
+        # A timetable that runs no train from the city today has expired or is broken; writing a
+        # zero at every station would tell residents the trains stopped.
+        root = if $leaving.length() == 0 { throw("the timetable runs no train from the city on %v".format($today)) } else {
+          $stations.map_each(s -> {
+            "id": "urn:ngsi-ld:%v:%v:%v:%v".format("GtfsStop", "zilina.sk", env("JC_SPACE"), "zsr-" + s.stop_id),
+            "type": "GtfsStop",
+            "name": { "type": "LanguageProperty", "languageMap": { "sk": s.stop_name } },
+            "stopCode": { "type": "Property", "value": s.stop_id },
+            "dailyDepartures": { "type": "Property", "value": $leaving.filter(st -> st.stop_id == s.stop_id).length() },
+            "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [s.stop_lon.number(), s.stop_lat.number()] } },
+            "dataProvider": { "type": "Property", "value": "ŽSR, grafikon vlakovej dopravy (GTFS), CC BY 1.0" },
+            "source": { "type": "Property", "value": "https://data.slovensko.sk/download?id=a5503f2c-c7cc-4a9a-a713-511e7406800d" }
+          })
+        }

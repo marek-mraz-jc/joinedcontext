@@ -1,0 +1,41 @@
+# Helsinki's upcoming events: a search and a date range, the events per day and per register in
+# charts, every located event on a coloured map, and the list (AP-138, T-2923). Hand written, so no
+# generated-by annotation (AP-35).
+#
+# A frontend only: React on the App SDK, read-only, so `static` with a Vite build. Its source is
+# its own repository on the forge, which the build lane builds at `ref` (AP-75, AP-80); this folder
+# of the portal repository is where CI tests the same tree before it is pushed there (T-2599). The
+# plain-HTML version it replaces stays as the SDK's teaching example, sdk/examples/plain-html-events.
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: helsinki-events
+  namespace: helsinki
+  title:
+    en: "Helsinki events"
+    fi: "Helsingin tapahtumat"
+  description:
+    en: "Upcoming events in Helsinki and Espoo from the Linked Events registers: search, filter by date, see how many there are each day and where they are on the map."
+    fi: "Tulevat tapahtumat Helsingissä ja Espoossa Linked Events -rekistereistä: hae, rajaa päivämäärällä, katso tapahtumien määrä päivittäin ja sijainti kartalla."
+spec:
+  kind: ui
+  source:
+    git:
+      url: https://dev.joinedcontext.com/git/joinedcontext/helsinki_helsinki-events.git
+      ref: main
+  build:
+    node: "22"
+  # The events endpoint of Helsinki is public (GW22): an anonymous reader gets what the public
+  # role is granted and nothing more.
+  visibility: public
+  lifecycle: published
+  dataNeeds:
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [Event]
+      # The attributes the Event entities carry on dev (2026-09-22); contactPoint is hidden by
+      # the endpoint's projection and is not asked for.
+      attrs: [name, description, startDate, endDate, eventStatus, address, location, source]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, ogc-features]

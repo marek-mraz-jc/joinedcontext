@@ -1,0 +1,74 @@
+---
+# Meshed traffic reaches the server through its Linkerd inbound proxy on 4143, not on 8080, so
+# the rule in networkpolicies.yaml alone would leave the edge blocked.
+viz-server-allow-linkerd:
+  _component: viz
+  podSelector:
+    app.kubernetes.io/name: renderer
+    app.kubernetes.io/instance: viz-renderer
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+# The pod declares an egress policy, so its proxy needs identity (8080), destination (8086)
+# and policy (8090) named explicitly, else the kubelet probe gets a 403 and the pod stays in Init.
+viz-linkerd-control-plane:
+  _component: viz
+  podSelector:
+    app.kubernetes.io/name: renderer
+    app.kubernetes.io/instance: viz-renderer
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+apisix-linkerd-egress-to-viz:
+  componentNamespace: apisix
+  podSelector:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/instance: apisix-apisix
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: renderer
+          componentNamespace: viz
+      ports:
+        - protocol: TCP
+          port: 4143

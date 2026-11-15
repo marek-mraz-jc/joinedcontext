@@ -1,0 +1,19 @@
+# The steward may import rows of journey 41 (T-4867) into the places register and remove them
+# again: batch create and batch delete of PointOfInterest, only for ids whose last part starts
+# with `j41-`, the run id the journey mints. Every real place keeps its pipeline as its only
+# writer (pipelines-write); this grant reaches no entity a person or pipeline made otherwise.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: steward-import-journey
+  namespace: helsinki
+  title: { en: The steward imports and removes journey 41's test places }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: user, id: de300000-0000-4000-8000-000000000001 } # demo.steward
+  operations: [createBatch, deleteBatch]
+  information:
+    - entities:
+        - type: PointOfInterest
+          idPattern: ^urn:ngsi-ld:PointOfInterest:[a-z0-9.-]+:helsinki:j41-[a-z0-9-]+$

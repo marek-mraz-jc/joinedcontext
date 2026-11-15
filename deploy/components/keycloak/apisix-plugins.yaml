@@ -1,0 +1,71 @@
+---
+keycloak:
+  name: keycloak
+  description: Keycloak route pass-through
+  plugins:
+    request-id:
+      include_in_response: true
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+        - >-
+          return function()
+            local forged = {
+              "NGSILD-Tenant", "X-Userinfo", "X-Access-Token", "X-Allowed-Scope-Ids",
+              "X-Endpoint-Slug", "X-Consumer-Identity", "X-Forwarded-User",
+              "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port",
+              "X-Forwarded-Prefix", "X-Forwarded-Server", "X-Real-IP", "JC-Read-Versions",
+            }
+            for _, header in ipairs(forged) do
+              ngx.req.clear_header(header)
+              ngx.req.clear_header((header:gsub("%-", "_")))
+            end
+            for name in pairs(ngx.req.get_headers(0)) do
+              local key = name:lower():gsub("_", "-")
+              for _, prefix in ipairs({ "x-jc-", "jc-provenance-", "l5d-" }) do
+                if key:sub(1, #prefix) == prefix and key ~= "x-jc-visitor" then
+                  ngx.req.clear_header(name)
+                end
+              end
+            end
+          end
+    # Keyed per IP, not per client identity: these are browser login pages and the token
+    # endpoint, where there is no bearer token yet and the thing worth bounding is one
+    # source hammering credentials.
+    limit-count:
+      count: 1200
+      time_window: 60
+      key_type: var
+      key: remote_addr
+      rejected_code: 429
+      policy: local
+      show_limit_quota_header: true
+    proxy-rewrite:
+      headers:
+        set:
+          X-Forwarded-Proto: https
+          X-Forwarded-Port: '443'
+    response-rewrite:
+      headers:
+        set:
+          Strict-Transport-Security: "max-age=31536000; includeSubDomains; preload"
+          X-Content-Type-Options: "nosniff"
+          # SAMEORIGIN, not DENY: Keycloak renders login pages in the browser and its own
+          # account console frames them.
+          X-Frame-Options: "SAMEORIGIN"
+          Referrer-Policy: "strict-origin-when-cross-origin"
+          Cache-Control: "no-store, no-cache, must-revalidate"
+    # OPS-34: the upstream owns the Content Security Policy (the Portal's, each App's, AP-12,
+    # AP-122), so the edge sets none over it and adds this baseline only to an answer that
+    # carries none, its own refusals included. `frame-ancestors` says what X-Frame-Options
+    # says. It runs after `response-rewrite`, whose `add` of an App's frame-ancestors counts.
+    serverless-post-function:
+      phase: header_filter
+      functions:
+        - >-
+          return function()
+            if ngx.header["Content-Security-Policy"] == nil then
+              ngx.header["Content-Security-Policy"] =
+                "frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
+            end
+          end

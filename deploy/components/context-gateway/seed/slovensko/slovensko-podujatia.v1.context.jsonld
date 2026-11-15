@@ -1,0 +1,123 @@
+{
+  "@context": {
+    "@vocab": "https://smartdatamodels.org/",
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "Event": {
+      "@id": "schema:Event"
+    },
+    "Organizer": {
+      "@id": "schema:Organization"
+    },
+    "PointOfInterest": {
+      "@id": "sdm:PointOfInterest"
+    },
+    "PostalAddress": {
+      "@id": "schema:PostalAddress"
+    },
+    "address": {
+      "@id": "schema:address"
+    },
+    "addressCountry": {
+      "@id": "schema:addressCountry"
+    },
+    "addressLocality": {
+      "@id": "schema:addressLocality"
+    },
+    "addressRegion": {
+      "@id": "schema:addressRegion"
+    },
+    "areaServed": {
+      "@id": "sdm:areaServed"
+    },
+    "audience": {
+      "@id": "sdm:audience"
+    },
+    "category": {
+      "@id": "sdm:category"
+    },
+    "categorySource": {
+      "@id": "jc:categorySource"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "dateModified": {
+      "@id": "sdm:dateModified",
+      "@type": "xsd:dateTime"
+    },
+    "description": {
+      "@id": "schema:description"
+    },
+    "endDate": {
+      "@id": "schema:endDate"
+    },
+    "eventCategory": {
+      "@id": "jc:eventCategory"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "id": "@id",
+    "jc": "https://joinedcontext.com/models/",
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "locationPrecision": {
+      "@context": {
+        "description": "skos:prefLabel",
+        "meaning": "@id",
+        "text": "skos:notation"
+      },
+      "@id": "jc:locationPrecision"
+    },
+    "locationSource": {
+      "@id": "jc:locationSource"
+    },
+    "name": {
+      "@id": "schema:name"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "organizer": {
+      "@id": "schema:organizer"
+    },
+    "postalCode": {
+      "@id": "schema:postalCode"
+    },
+    "refPointOfInterest": {
+      "@id": "sdm:refPointOfInterest",
+      "@type": "@id"
+    },
+    "schema": "https://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "skos": "http://www.w3.org/2004/02/skos/core#",
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "sourceId": {
+      "@id": "jc:sourceId"
+    },
+    "startDate": {
+      "@id": "schema:startDate"
+    },
+    "streetAddress": {
+      "@id": "schema:streetAddress"
+    },
+    "type": "@type",
+    "url": {
+      "@id": "schema:url",
+      "@type": "xsd:anyURI"
+    },
+    "venue": {
+      "@id": "jc:venue"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

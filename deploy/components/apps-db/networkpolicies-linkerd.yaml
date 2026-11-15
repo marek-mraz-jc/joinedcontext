@@ -1,0 +1,136 @@
+---
+# The same callers through the Linkerd proxy's inbound port (components/postgres).
+apps-db-allow-linkerd:
+  podSelector:
+    cnpg.io/cluster: apps-db
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudnative-pg
+          componentNamespace: postgres.operator
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: apps-db
+          componentNamespace: apps-db
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+        # jc, which carries the Portal where an environment runs it (components/jc).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jc-server
+          componentNamespace: jc
+        # A shard of the WASM host (ADR-N-044 §2.7, T-3361).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: wasm-host-shard
+          componentNamespace: wasm-host
+        # The nightly dump and the stat-statements Job of the `backup` part (F-DEP1-018).
+        - podSelector:
+            matchLabels:
+              joinedcontext.com/psql-client: "true"
+              app.kubernetes.io/name: apps-db-backup
+          componentNamespace: apps-db.backup
+      ports:
+        - port: 4143
+          protocol: TCP
+    # The Prometheus that scrapes the instances' exporter on :9187 (cluster.monitoring.enabled, T-5125),
+    # from its own namespace only; no peer is rendered while monitoring.prometheusNamespace is empty.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+          namespaceFrom: monitoring.monitoring.prometheusNamespace
+      ports:
+        - protocol: TCP
+          port: 4143
+
+# Its pods declare egress, so their proxies need the control plane, and an instance dials its
+# peers through their inbound proxy (4143) beside 5432, as components/postgres does.
+apps-db-linkerd-control-plane:
+  podSelector:
+    cnpg.io/cluster: apps-db
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    # The in-cluster artifact store, where an environment archives apps-db to it (T-5662): its
+    # inbound proxy.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: store
+          componentNamespace: artifact-store
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: apps-db
+          componentNamespace: apps-db
+      ports:
+        - protocol: TCP
+          port: 4143
+
+# The operator's meshed calls land on the instance's inbound proxy (components/postgres'
+# `postgres-operator-linkerd` names only the platform's cluster).
+apps-db-operator-linkerd:
+  deployLayer: operators
+  componentNamespace: postgres.operator
+  podSelector:
+    app.kubernetes.io/name: cloudnative-pg
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: apps-db
+          componentNamespace: apps-db
+      ports:
+        - protocol: TCP
+          port: 4143
+
+# The `backup` part's Jobs, meshed like the namespace: the control plane, and apps-db through its
+# inbound proxy (as role-setup-linkerd in components/postgres).
+apps-db-backup-linkerd:
+  podSelector:
+    joinedcontext.com/psql-client: "true"
+    app.kubernetes.io/name: apps-db-backup
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: apps-db
+          componentNamespace: apps-db
+      ports:
+        - protocol: TCP
+          port: 4143

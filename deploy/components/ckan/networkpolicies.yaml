@@ -1,0 +1,318 @@
+---
+# CKAN itself. It answers the edge and talks to three things: its databases, its index and
+# its cache. No egress to the internet here: nothing in this configuration fetches a remote URL
+# (the DataStore is filled by jcctl, EP-65). The one exception is the Keycloak login, which is
+# its own policy in `networkpolicies.yaml.gotmpl` and exists only while `global.ckan.sso` is on.
+ckan:
+  podSelector:
+    app.kubernetes.io/name: ckan
+    app.kubernetes.io/instance: ckan-catalogue
+    app.kubernetes.io/component: ckan
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+      ports:
+        - protocol: TCP
+          port: 5000
+    # The API token Job signs in on the Service itself (T-0493), the one peer beside the edge:
+    # CKAN has no password grant for its API, and the CLI would need the database, Solr and Redis.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: api-token
+          componentNamespace: ckan
+      ports:
+        - protocol: TCP
+          port: 5000
+    # The Portal's reconciler publishes every Endpoint's dataset on the Service (T-5314).
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 5000
+    # The catalogue harvest (T-4151) writes through the Action API with the publisher token.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: harvest
+          componentNamespace: ckan
+      ports:
+        - protocol: TCP
+          port: 5000
+  egress:
+    # CoreDNS. Every rule below names a Service, and a Service name is worth nothing
+    # without this one.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Solr and Redis live beside CKAN. The namespace is named even so: a peer that carries
+    # only a podSelector reads as "this namespace" and keeps validating after the workload
+    # it was written for has moved somewhere else.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: solr
+          componentNamespace: ckan
+      ports:
+        - protocol: TCP
+          port: 8983
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: redis
+          componentNamespace: ckan
+      ports:
+        - protocol: TCP
+          port: 6379
+
+# The index answers CKAN and nothing else. A Solr reachable from anywhere else is a
+# full-text dump of every private dataset over an unauthenticated HTTP API.
+ckan-solr:
+  podSelector:
+    app.kubernetes.io/name: ckan
+    app.kubernetes.io/instance: ckan-catalogue
+    app.kubernetes.io/component: solr
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: ckan
+          componentNamespace: ckan
+      ports:
+        - protocol: TCP
+          port: 8983
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+ckan-redis:
+  podSelector:
+    app.kubernetes.io/name: ckan
+    app.kubernetes.io/instance: ckan-catalogue
+    app.kubernetes.io/component: redis
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: ckan
+          componentNamespace: ckan
+      ports:
+        - protocol: TCP
+          port: 6379
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+postgres-from-ckan:
+  componentNamespace: postgres
+  podSelector:
+    cnpg.io/cluster: postgres-cluster
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: ckan
+          componentNamespace: ckan
+      ports:
+        - protocol: TCP
+          port: 5432
+
+# The edge side of the catalogue's own ingress rule above. APISIX is under a default-deny
+# egress of its own, and its component names only the upstreams that ship with every
+# installation; the catalogue is opt-in, so it brings its own line the way the forge brings
+# the Portal's. Without it the route resolves, the connection is dropped on the way out, and
+# the edge answers 504 while the pod is 2/2 and healthy.
+apisix-egress-to-ckan:
+  componentNamespace: apisix
+  podSelector:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/instance: apisix-apisix
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: ckan
+          componentNamespace: ckan
+      ports:
+        - protocol: TCP
+          port: 5000
+
+# The API token Job talks to exactly two things: the catalogue it signs in on, and the Kubernetes
+# API it writes the minted token into. The API server is not a pod, so it is named by address;
+# the Job's Role is what bounds what it may do there (the same shape as the forge bootstrap).
+ckan-api-token:
+  podSelector:
+    app.kubernetes.io/name: ckan
+    app.kubernetes.io/instance: ckan-catalogue
+    app.kubernetes.io/component: api-token
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: ckan
+          componentNamespace: ckan
+      ports:
+        - protocol: TCP
+          port: 5000
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - kubeApi: true
+      ports:
+        - protocol: TCP
+          port: 6443
+
+# The catalogue harvest (T-4151) reads the national catalogue and the publishers' files, and
+# writes into the catalogue. Public addresses are named by address, 443 only, and the private
+# ranges are cut out, so a source URL can never point the fetcher at a cluster Service; the
+# script's host allowlist is the second fence.
+ckan-harvest:
+  podSelector:
+    app.kubernetes.io/name: ckan
+    app.kubernetes.io/instance: ckan-catalogue
+    app.kubernetes.io/component: harvest
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: ckan
+          componentNamespace: ckan
+      ports:
+        - protocol: TCP
+          port: 5000
+    - to:
+        - publicInternet: true
+      ports:
+        - protocol: TCP
+          port: 443
+    # The gateway's Endpoints (od-standards.py's OD_GATEWAY) are the cluster's own public host,
+    # which the node rewrites to the ingress controller's pod before this rule is evaluated, on
+    # its container port (8443 for Traefik, 443 for ingress-nginx): the except above dropped it,
+    # and the proxy answered every read with a reset (T-4401). That pod is the one private
+    # address the harvest reaches over HTTPS, as for the pipeline runner.
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: [traefik, kube-system, ingress-nginx]
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [traefik, ingress-nginx]
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8443

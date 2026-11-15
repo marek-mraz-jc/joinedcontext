@@ -1,0 +1,8 @@
+forge: "http://gitea-http.{{ .Values.gitea.forge.namespace }}.svc.cluster.local:3000"
+{{- if has "portal" .Values.components }}
+portalUrl: "http://portal.{{ .Values.portal.portal.namespace }}.svc.cluster.local:8080"
+portal:
+  # fullnameOverride of the portal part names its ServiceAccount.
+  serviceAccount: portal
+  namespace: {{ .Values.portal.portal.namespace | quote }}
+{{- end }}

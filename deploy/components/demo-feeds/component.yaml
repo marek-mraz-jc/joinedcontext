@@ -1,0 +1,10 @@
+---
+component: demo-feeds
+parts:
+  - name: nats
+  - name: feed
+    needs:
+      - demo-feeds.nats
+  # HSL's live trams republished to the helsinki broker hsl-bridge (T-5883): a real feed over the
+  # platform's MQTT path, with the bridge ServiceAccount's token.
+  - name: hsl-bridge

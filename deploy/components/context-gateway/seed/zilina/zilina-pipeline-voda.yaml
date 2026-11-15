@@ -1,0 +1,18 @@
+# One KeyPerformanceIndicator per year from the ŠÚ SR drinking-water cube, for the city.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: voda
+  namespace: zilina
+  title: { sk: Fakturovaná spotreba pitnej vody, en: Invoiced drinking water consumption }
+spec:
+  class: auto
+  # Annual data. Polling it weekly is already ten times more often than it changes, and it is
+  # the publisher's bandwidth being spent (PL-26, PL-27).
+  period: 168h
+  schedule: '41 3 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: susr-vh5003rr }
+  targetEndpoint: urn:ngsi-ld:Endpoint:zilina.sk:zilina-mesto:zilina-mesto
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

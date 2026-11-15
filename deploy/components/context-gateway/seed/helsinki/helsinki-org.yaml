@@ -1,0 +1,40 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Organization
+metadata:
+  name: hel
+  namespace: org
+  title: { en: City of Helsinki, fi: Helsingin kaupunki, sk: Mesto Helsinki }
+spec:
+  domain: hel.fi
+  # The installation's Organization (PF-121, ADR-N-058): it owns the repository, the gateway's
+  # {orgDomain} and the installation-wide kinds; organizations/zilina.yaml is the second one.
+  installation: true
+  # fi: the city's own language, so its models are titled in Finnish (T-4829).
+  locales: [en, fi, sk]
+  defaultLocale: en
+  # The national DCAT-AP renderings its records and catalogues are also served in (API/08 §5):
+  # Banská Bystrica and BBSK publish to data.slovensko.sk, Praha to data.gov.cz (T-4586).
+  dcatProfiles: [dcat-ap-sk, dcat-ap-cz]
+  projects:
+    # Every signed-in person of the organization holds the seeded viewer role (PF-61), and a
+    # project is opened by whoever holds propose on Project (PF-65).
+    visibility: organization
+    creation: org-admin
+    # What a project of this organization starts from (PF-73). Owner, 2026-09-25 (T-2873): no
+    # demo work and no city dataset is refused by a quota, so 100 of each countable kind and
+    # runtime ceilings nobody reaches; the quota stays as the mechanism, and what the one node
+    # holds is the operator's bounds file (PF-97). Every App in `preview` or `published` counts
+    # and the reconciler serves only the first `apps` by name (PF-74, T-2633).
+    quota:
+      contextSpaces: 100
+      residentPipelines: 100
+      publicEndpoints: 100
+      apps: 100
+      ingestEventsPerSecond: 500
+      # Owner, 2026-09-25: the model keys have no spending limit, so the cap must never stop a
+      # live check or a demo; it stays as the mechanism (AG-41) at a ceiling nobody reaches.
+      agentRunsPerDay: 2000
+      entitiesPerSpace: 1000000
+      # The ceiling on a limit a person sets on an endpoint, not a limit itself: the form's
+      # "open" class (6000) is accepted, and the edge's own flood class still holds (OPS-35).
+      requestsPerMinute: 6000

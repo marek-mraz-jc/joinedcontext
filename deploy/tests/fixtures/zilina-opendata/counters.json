@@ -1,0 +1,182 @@
+[
+ {
+  "type": "Feature",
+  "geometry": {
+   "type": "Point",
+   "coordinates": [
+    18.766588,
+    49.216516
+   ]
+  },
+  "properties": {
+   "id": "6513c69d47e24700017529e1",
+   "active": "none",
+   "item": {
+    "id": "6513c69d47e24700017529e1",
+    "name": "Merač intenzity dopravy Košická",
+    "type": "Device",
+    "class": "TrafficCounter",
+    "producer": "ZTS Elektronika SKS",
+    "model": "VideoBox",
+    "serialNo": "23/002",
+    "position": {
+     "type": "Point",
+     "coordinates": [
+      18.766588,
+      49.216516
+     ]
+    },
+    "operatingStatus": "Active",
+    "malfunctions": [],
+    "address": "Košická, 010 01 Žilina",
+    "area": null,
+    "connectorId": null,
+    "lifetime": null,
+    "managementUrl": null,
+    "note": null,
+    "parentId": null,
+    "systemStatus": {
+     "status": "Ok",
+     "timestamp": "2026-10-22T13:35:00.292Z",
+     "changed": "2023-10-11T12:25:00.949Z",
+     "issues": []
+    }
+   }
+  }
+ },
+ {
+  "type": "Feature",
+  "geometry": {
+   "type": "Point",
+   "coordinates": [
+    18.768235,
+    49.199612
+   ]
+  },
+  "properties": {
+   "id": "6513c72747e24700017529f7",
+   "active": "none",
+   "item": {
+    "id": "6513c72747e24700017529f7",
+    "name": "Merač intenzity dopravy Rosina",
+    "type": "Device",
+    "class": "TrafficCounter",
+    "producer": "ZTS Elektronika SKS",
+    "model": "VideoBox",
+    "serialNo": "23/010",
+    "position": {
+     "type": "Point",
+     "coordinates": [
+      18.768235,
+      49.199612
+     ]
+    },
+    "operatingStatus": "Active",
+    "malfunctions": [],
+    "systemStatus": {
+     "status": "Ok",
+     "timestamp": "2026-10-22T13:35:00.257Z",
+     "changed": "2023-10-11T11:15:00.810Z",
+     "issues": []
+    },
+    "address": "2084, 010 08 Žilina",
+    "area": null,
+    "connectorId": null,
+    "lifetime": null,
+    "managementUrl": null,
+    "note": null,
+    "parentId": null
+   }
+  }
+ },
+ {
+  "type": "Feature",
+  "geometry": {
+   "type": "Point",
+   "coordinates": [
+    18.727615,
+    49.178931
+   ]
+  },
+  "properties": {
+   "id": "6513ca6247e2470001752a86",
+   "active": "none",
+   "item": {
+    "id": "6513ca6247e2470001752a86",
+    "name": "Merač intenzity dopravy Rajec",
+    "type": "Device",
+    "class": "TrafficCounter",
+    "producer": "ZTS Elektronika SKS",
+    "model": "VideoBox",
+    "serialNo": "23/009",
+    "position": {
+     "type": "Point",
+     "coordinates": [
+      18.727615,
+      49.178931
+     ]
+    },
+    "operatingStatus": "Active",
+    "malfunctions": [],
+    "systemStatus": {
+     "status": "Ok",
+     "timestamp": "2026-10-22T13:35:00.020Z",
+     "changed": "2023-10-11T12:20:01.543Z",
+     "issues": []
+    },
+    "address": "Hlavná 25-21, 010 09 Žilina",
+    "area": null,
+    "connectorId": null,
+    "lifetime": null,
+    "managementUrl": null,
+    "note": null,
+    "parentId": null
+   }
+  }
+ },
+ {
+  "type": "Feature",
+  "geometry": {
+   "type": "Point",
+   "coordinates": [
+    18.740015,
+    49.20243
+   ]
+  },
+  "properties": {
+   "id": "69452d631155360001f5d5cf",
+   "active": "none",
+   "item": {
+    "id": "69452d631155360001f5d5cf",
+    "name": "CYC_rudnaya",
+    "type": "Device",
+    "class": "TrafficCounter",
+    "address": "Mesto Zilina - rudnaya",
+    "producer": "Ecocounter",
+    "connectorId": "6939660a1155360001f0370b",
+    "position": {
+     "type": "Point",
+     "coordinates": [
+      18.740015,
+      49.20243
+     ]
+    },
+    "operatingStatus": "Disabled",
+    "malfunctions": [],
+    "systemStatus": {
+     "status": "Ok",
+     "timestamp": "2026-10-22T13:33:52.442Z",
+     "changed": "2026-10-19T09:14:40.144Z",
+     "issues": []
+    },
+    "area": null,
+    "lifetime": null,
+    "managementUrl": null,
+    "model": null,
+    "note": null,
+    "parentId": null,
+    "serialNo": null
+   }
+  }
+ }
+]

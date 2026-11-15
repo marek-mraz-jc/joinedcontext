@@ -1,0 +1,182 @@
+# The mapping of the accidents pipeline (PL-03, T-5374): one RoadAccident per police file of Open
+# Data BCN `accidents-gu-bcn`, the newest year's CSV (YYYY_accidents_gu_bcn.csv, CRLF lines):
+# Numero_expedient, the place (street, number, barri, district, WGS84 point), the local day and
+# hour, and the counts of dead (Numero_morts), slightly and seriously injured, vehicles, and the
+# pedestrian's cause where the police name one. Nothing about a person is in the file or written.
+#
+# The four detail tables of the same year join each accident by file number (owner 2026-10-22,
+# rows 1..6 of docs Research/barcelona-open-data.md): its kinds (accidents-tipus-gu-bcn), its
+# mediate and drivers' causes (accidents-causes-gu-bcn, accidents_causa_conductor_gu_bcn), the
+# kind of each vehicle (accidents-vehicles-gu-bcn; no make, model, colour or licence) and the
+# passengers and pedestrians injured or dead (accidents-persones-gu-bcn, as counts; no age, sex or
+# trip purpose leaves the city's database). One package_search names the five records, and one
+# DataStore SQL query aggregates them per file on the city's side; only resource ids of the UUID
+# form reach the SQL. A year whose detail tables are not all published fails the run.
+#
+# The DataSource's answer is the dataset's CKAN record: the newest CSV resource whose name starts
+# with a year is read, only from the city's dataset path; a newest year more than two years old
+# fails the run, so a dataset the city renamed does not go quiet.
+#
+# Plausibility (owner 2026-10-22): a row without a file number (YYYYS + 6 digits), a day or hour
+# that is no date, a point that is no number or lies outside the municipality's 1 km margin (the
+# space's in-area bbox), a count that is negative or above 100 (no vehicle at all), a second row
+# of one file number, and an accident dated after now are dropped, each counted by reason in the
+# run's log line. A file with no accident at all fails the run, which writes nothing.
+
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            let record = if content().length() > 1048576 { throw("the dataset record is %d bytes, more than the 1 MiB read".format(content().length())) } else { content().string().parse_json().catch({}) }
+            let files = $record.result.resources.or([]).filter(r -> r.format.or("").uppercase() == "CSV" && r.name.or("").lowercase().re_match("^[0-9]{4}_accidents_gu_bcn\\.csv$")).sort_by(r -> r.name.slice(0, 4))
+            let newest = if $files.length() == 0 { throw("the dataset record names no YYYY_accidents_gu_bcn.csv") } else { $files.index(-1) }
+            meta accidents_year = $newest.name.slice(0, 4)
+            let file = $newest.url.or("").trim_prefix("https://opendata-ajuntament.barcelona.cat/data/dataset/")
+            meta accidents_path = if !$newest.url.or("").has_prefix("https://opendata-ajuntament.barcelona.cat/data/dataset/") || !$file.re_match("^[0-9a-f-]{36}/resource/[0-9a-f-]{36}/download/[0-9]{4}_accidents_gu_bcn\\.csv$") { throw("the newest accidents file is not on the city's dataset path") } else if $newest.name.slice(0, 4).number() < now().ts_format("2006", "UTC").number() - 2 { throw("the newest accidents file is of %v, more than two years old".format($newest.name.slice(0, 4))) } else { $file }
+            root = ""
+        - http:
+            url: https://opendata-ajuntament.barcelona.cat/data/dataset/${! @accidents_path }
+            verb: GET
+            headers:
+              Accept: text/csv
+              User-Agent: joinedcontext-barcelona/1.0 (+https://dev.joinedcontext.com)
+            timeout: 60s
+            retries: 1
+            rate_limit: barcelona_opendata
+        - mapping: |
+            let text = if content().length() > 4194304 { throw("the accidents file is %d bytes, more than the 4 MiB read".format(content().length())) } else { content().string().trim_prefix("﻿").replace_all("\r", "") }
+            let bbox = [2.04, 41.3, 2.24, 41.48]
+            let now = now().ts_unix()
+            let rows = $text.parse_csv(true, ",").catch([])
+            let numbered = $rows.filter(r -> r.Numero_expedient.or("").trim().re_match("^[0-9]{4}S[0-9]{6}$"))
+            let dated = $numbered.map_each(r -> {
+              "id": r.Numero_expedient.trim(),
+              "at": "%04d-%02d-%02dT%02d:00:00".format(r.NK_Any.number().int64().catch(0), r.Mes_any.number().int64().catch(0), r.Dia_mes.number().int64().catch(0), r.Hora_dia.number().int64().catch(99)).(local -> (local + (local + "Z").ts_parse("2006-01-02T15:04:05Z07:00").ts_format("-07:00", "Europe/Madrid")).ts_parse("2006-01-02T15:04:05Z07:00").ts_unix()).catch(null),
+              "lon": r.Longitud_WGS84.or("").trim().number().catch(null),
+              "lat": r.Latitud_WGS84.or("").trim().number().catch(null),
+              "dead": r.Numero_morts.or("").trim().(n -> if n == "" { 0 } else { n.number().catch(-1) }),
+              "slight": r.Numero_lesionats_lleus.or("").trim().(n -> if n == "" { 0 } else { n.number().catch(-1) }),
+              "serious": r.Numero_lesionats_greus.or("").trim().(n -> if n == "" { 0 } else { n.number().catch(-1) }),
+              "vehicles": r.Numero_vehicles_implicats.or("").trim().number().catch(-1),
+              "cause": r.Descripcio_causa_vianant.or("").trim(),
+              "street": r.Nom_carrer.or("").trim(),
+              "number": r.get("Num_postal ").or(r.Num_postal).or("").trim(),
+              "barri": r.Nom_barri.or("").trim(),
+              "district": r.Nom_districte.or("").trim()
+            }).filter(a -> a.at != null)
+            let placed = $dated.filter(a -> a.lon != null && a.lat != null)
+            let inside = $placed.filter(a -> a.lon >= $bbox.index(0) && a.lon <= $bbox.index(2) && a.lat >= $bbox.index(1) && a.lat <= $bbox.index(3))
+            let counted = $inside.filter(a -> a.dead >= 0 && a.dead <= 100 && a.slight >= 0 && a.slight <= 100 && a.serious >= 0 && a.serious <= 100 && a.vehicles >= 1 && a.vehicles <= 100)
+            let past = $counted.filter(a -> a.at <= $now)
+            let first = $past.fold({ "seen": {}, "kept": [] }, t -> if t.tally.seen.exists(t.value.id) { t.tally } else { { "seen": t.tally.seen.merge({ t.value.id: true }), "kept": t.tally.kept.append(t.value) } }).kept
+            root.dropped = {
+              "noFileNumber": $rows.length() - $numbered.length(),
+              "noDate": $numbered.length() - $dated.length(),
+              "noPoint": $dated.length() - $placed.length(),
+              "outsideTheCity": $placed.length() - $inside.length(),
+              "countOutOfRange": $inside.length() - $counted.length(),
+              "dateInFuture": $counted.length() - $past.length(),
+              "duplicateFileNumber": $past.length() - $first.length()
+            }
+            root.accidents = if $first.length() == 0 { throw("the accidents file of %v holds no accident".format(@accidents_year)) } else { $first }
+        - branch:
+            request_map: root = ""
+            processors:
+              - http:
+                  url: https://opendata-ajuntament.barcelona.cat/data/api/3/action/package_search?rows=10&fq=name:(accidents-tipus-gu-bcn%20OR%20accidents-causes-gu-bcn%20OR%20accidents_causa_conductor_gu_bcn%20OR%20accidents-vehicles-gu-bcn%20OR%20accidents-persones-gu-bcn)
+                  verb: GET
+                  headers:
+                    Accept: application/json
+                    User-Agent: joinedcontext-barcelona/1.0 (+https://dev.joinedcontext.com)
+                  timeout: 30s
+                  retries: 1
+                  rate_limit: barcelona_opendata
+              - mapping: |
+                  let uuid = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                  let year = @accidents_year
+                  let packages = if content().length() > 1048576 { throw("the accident detail records are %d bytes, more than the 1 MiB read".format(content().length())) } else { content().string().parse_json().catch({}).result.results.or([]) }
+                  let tables = [["accidents-tipus-gu-bcn", "accidents_tipus_gu_bcn"], ["accidents-causes-gu-bcn", "accidents_causes_gu_bcn"], ["accidents_causa_conductor_gu_bcn", "accidents_causa_conductor_gu_bcn"], ["accidents-vehicles-gu-bcn", "accidents_vehicles_gu_bcn"], ["accidents-persones-gu-bcn", "accidents_persones_gu_bcn"]]
+                  let ids = $tables.map_each(w -> $packages.filter(p -> p.name.or("") == w.index(0)).index(0).or({}).resources.or([]).filter(r -> r.datastore_active.or(false) == true && r.id.or("").re_match($uuid) && r.name.or("").lowercase() == $year + "_" + w.index(1) + ".csv").index(0).or({}).id.or(""))
+                  let missing = $tables.enumerated().filter(t -> $ids.index(t.index) == "").map_each(t -> t.value.index(0))
+                  let t = if $missing.length() > 0 { throw("the accident detail tables of %v are not all in the DataStore: %v".format($year, $missing.join(", "))) } else { $ids }
+                  meta details_sql = ("SELECT id, types, causes, drivers, vehicles, pi::text, pd::text, wi::text, wd::text FROM (SELECT trim(\"Numero_expedient\") AS id, string_agg(DISTINCT nullif(trim(\"Descripcio_tipus_accident\"), ''), '|') AS types FROM \"" + $t.index(0) + "\" GROUP BY 1) a FULL JOIN (SELECT trim(\"Numero_expedient\") AS id, string_agg(DISTINCT nullif(trim(\"Descripcio_causa_mediata\"), ''), '|') AS causes FROM \"" + $t.index(1) + "\" GROUP BY 1) b USING (id) FULL JOIN (SELECT trim(\"Número_expedient\") AS id, string_agg(DISTINCT nullif(trim(\"Causa conductor\"), ''), '|') AS drivers FROM \"" + $t.index(2) + "\" GROUP BY 1) c USING (id) FULL JOIN (SELECT trim(\"Numero_expedient\") AS id, string_agg(nullif(trim(\"Descripcio_tipus_vehicle\"), ''), '|' ORDER BY trim(\"Descripcio_tipus_vehicle\")) AS vehicles FROM \"" + $t.index(3) + "\" GROUP BY 1) d USING (id) FULL JOIN (SELECT trim(\"Numero_expedient\") AS id, count(*) FILTER (WHERE \"Descripcio_tipus_persona\" = 'Passatger' AND \"Descripcio_victimitzacio\" LIKE 'Ferit%') AS pi, count(*) FILTER (WHERE \"Descripcio_tipus_persona\" = 'Passatger' AND \"Descripcio_victimitzacio\" LIKE 'Mort (%') AS pd, count(*) FILTER (WHERE \"Descripcio_tipus_persona\" = 'Vianant' AND \"Descripcio_victimitzacio\" LIKE 'Ferit%') AS wi, count(*) FILTER (WHERE \"Descripcio_tipus_persona\" = 'Vianant' AND \"Descripcio_victimitzacio\" LIKE 'Mort (%') AS wd FROM \"" + $t.index(4) + "\" GROUP BY 1) e USING (id) LIMIT 50000").escape_url_query()
+                  root = ""
+              - http:
+                  url: https://opendata-ajuntament.barcelona.cat/data/api/3/action/datastore_search_sql?sql=${! @details_sql }
+                  verb: GET
+                  headers:
+                    Accept: application/json
+                    User-Agent: joinedcontext-barcelona/1.0 (+https://dev.joinedcontext.com)
+                  timeout: 60s
+                  retries: 1
+                  rate_limit: barcelona_opendata
+              - mapping: |
+                  let answer = if content().length() > 8388608 { throw("the accident details answer is %d bytes, more than the 8 MiB read".format(content().length())) } else { content().string().parse_json().catch({}) }
+                  root = if $answer.success.or(false) != true { throw("Open Data BCN refused the accident details query: %s".format($answer.error.format_json(no_indent: true).or("no reason given"))) } else if $answer.result.records.or([]).length() >= 50000 { throw("the accident details answered %d rows, the LIMIT 50000 of its query: raise it, or the rows past it are dropped".format($answer.result.records.length())) } else { $answer.result.records.or([]).filter(r -> r.id.or("").type() == "string").map_each(r -> { r.id: r }).squash() }
+            result_map: root.details = this
+        - mapping: |
+            # The city's labels, in Catalan, stay as the city writes them (accidentKind, accidentCause,
+            # vehicleKind); the Smart Data Model's coded lists (accidentType, vehiclesInvolved) carry
+            # a label only where its code means the same thing, never a nearest guess. A count the
+            # persons table cannot give (no row of the file) stays out of the entity.
+            map split {
+              root = if this.or("") == "" { [] } else { this.split("|") }
+            }
+            map count {
+              root = this.or("").string().number().int64().catch(null)
+            }
+            let typeCodes = [["Col.lisió frontal", "1"], ["Col.lisió fronto-lateral", "2"], ["Col.lisió lateral", "3"], ["Abast", "4"], ["Abast multiple", "4"], ["Encalç", "4"], ["Atropellament", "5"], ["Xoc contra element estàtic", "8"]]
+            let vehicleCodes = [["Bicicleta", "1"], ["Bicicleta pedaleig assistit", "1"], ["Autobús", "3"], ["Autobús articulat", "3"], ["Autocar", "3"], ["Microbús <= 17", "4"], ["Turisme", "5"], ["Taxi", "5"], ["Tot terreny", "5"], ["Tren o tramvia", "7"], ["Camió rígid <= 3,5 tones", "11"], ["Camió rígid > 3,5 tones", "11"], ["Tractor camió", "11"], ["Ciclomotor", "12"], ["Motocicleta", "14"], ["Furgoneta", "18"], ["Maquinària d'obres i serveis", "20"]]
+            let details = this.details
+            root.dropped = this.dropped
+            root.accidents = this.accidents.map_each(a -> $details.get(a.id).or({}).(d -> a.assign({
+              "kinds": d.types.apply("split"),
+              "typeCodes": d.types.apply("split").map_each(k -> $typeCodes.filter(c -> c.index(0) == k).index(0).or([]).index(1).or("")).filter(c -> c != "").unique(),
+              "causes": d.causes.apply("split").concat(d.drivers.apply("split")),
+              "vehicleKinds": d.vehicles.apply("split"),
+              "vehicleCodes": d.vehicles.apply("split").map_each(k -> $vehicleCodes.filter(c -> c.index(0) == k).index(0).or([]).index(1).or("")).filter(c -> c != ""),
+              "passengersInjured": d.pi.apply("count"),
+              "passengersDead": d.pd.apply("count"),
+              "pedestriansInjured": d.wi.apply("count"),
+              "pedestriansDead": d.wd.apply("count")
+            })))
+            root.withDetails = this.accidents.filter(a -> $details.exists(a.id)).length()
+        - log:
+            level: INFO
+            message: 'accidents ${! @accidents_year }: ${! json("accidents").length() } written, ${! json("withDetails") } with details; dropped ${! json("dropped").format_json(no_indent: true) }'
+        - mapping: root = this.accidents
+        - unarchive: { format: json_array }
+        - mapping: |
+            root = {
+              "id": "urn:ngsi-ld:%v:%v:%v:accident-%v".format("RoadAccident", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.id.lowercase()),
+              "type": "RoadAccident",
+              "localId": { "type": "Property", "value": this.id },
+              "status": { "type": "Property", "value": "archived" },
+              "accidentDate": { "type": "Property", "value": this.at.ts_format("2006-01-02T15:04:05Z", "UTC") },
+              "totalInjured": { "type": "Property", "value": this.slight + this.serious },
+              "seriouslyInjured": { "type": "Property", "value": this.serious },
+              "slightlyInjured": { "type": "Property", "value": this.slight },
+              "deadCount": { "type": "Property", "value": this.dead },
+              "vehicleCount": { "type": "Property", "value": this.vehicles },
+              "pedestriansInvolved": if this.cause == "" { null } else { { "type": "Property", "value": true } },
+              "pedestrianCause": if this.cause == "" { null } else { { "type": "Property", "value": this.cause } },
+              "accidentKind": if this.kinds.or([]).length() == 0 { null } else { { "type": "Property", "value": this.kinds } },
+              "accidentType": if this.typeCodes.or([]).length() == 0 { null } else { { "type": "Property", "value": this.typeCodes } },
+              "accidentCause": if this.causes.or([]).length() == 0 { null } else { { "type": "Property", "value": this.causes } },
+              "vehicleKind": if this.vehicleKinds.or([]).length() == 0 { null } else { { "type": "Property", "value": this.vehicleKinds } },
+              "vehiclesInvolved": if this.vehicleCodes.or([]).length() == 0 { null } else { { "type": "Property", "value": this.vehicleCodes } },
+              "numPassengersInjured": if this.passengersInjured == null { null } else { { "type": "Property", "value": this.passengersInjured } },
+              "numPassengersDead": if this.passengersDead == null { null } else { { "type": "Property", "value": this.passengersDead } },
+              "numPedestrianInjured": if this.pedestriansInjured == null { null } else { { "type": "Property", "value": this.pedestriansInjured } },
+              "numPedestrianDead": if this.pedestriansDead == null { null } else { { "type": "Property", "value": this.pedestriansDead } },
+              "address": { "type": "Property", "value": {
+                "streetAddress": if this.street == "" { null } else if this.number == "" { this.street } else { this.street + " " + this.number },
+                "addressLocality": "Barcelona",
+                "district": if this.district == "" { null } else { this.district },
+                "addressCountry": "ES"
+              }.filter(entry -> entry.value != null) },
+              "areaServed": if this.barri == "" { null } else { { "type": "Property", "value": this.barri } },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [this.lon, this.lat] } },
+              "dataProvider": { "type": "Property", "value": "Ajuntament de Barcelona, Open Data BCN (CC BY 4.0)" },
+              "source": { "type": "Property", "value": "https://opendata-ajuntament.barcelona.cat/data/dataset/accidents-gu-bcn" }
+            }.filter(entry -> entry.value != null)

@@ -1,0 +1,19 @@
+# Open Data BCN `trams-aparcament-superficie` (T-5262): every regulated surface parking section of
+# B:SM, one CSV row per curb piece (17,275 rows, 3.1 MB on 2026-10-22), updated monthly. The
+# package's download link redirects here. No key. CC BY 4.0, Ajuntament de Barcelona.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-parking-sections
+  namespace: barcelona
+  title:
+    ca: Trams d'aparcament en superfície (Open Data BCN)
+    es: Tramos de aparcamiento en superficie (Open Data BCN)
+    en: Surface parking sections (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/resources/bsm/TRAMS.CSV
+    verb: GET
+    headers: { Accept: text/csv }
+    timeout: 60s

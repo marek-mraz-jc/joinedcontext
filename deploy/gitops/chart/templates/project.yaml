@@ -1,0 +1,29 @@
+{{- if not .Values.environment }}{{ fail "gitops: environment is required (gitops/<environment>.yaml)" }}{{ end }}
+{{- if and .Values.hold (not .Values.reason) }}{{ fail "gitops/hold.yaml: a hold names its reason" }}{{ end }}
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: {{ .Values.argocdNamespace }}
+spec:
+  description: The joinedcontext platform on {{ .Values.environment }}, rendered from helmfile (ADR-N-056)
+  sourceRepos:
+    - {{ .Values.repoURL }}
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "*"
+  # The components install CRDs, cluster policies and their roles.
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  {{- if .Values.hold }}
+  # The hold switch (OPS-56): {{ .Values.reason }}. The root Application is not in the window,
+  # so `hold: false` always reaches the cluster.
+  syncWindows:
+    - kind: deny
+      schedule: "* * * * *"
+      duration: 1h
+      applications:
+        - {{ printf "%s-*" .Values.environment | quote }}
+      manualSync: true
+  {{- end }}

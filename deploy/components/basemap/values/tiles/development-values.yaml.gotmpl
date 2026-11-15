@@ -1,0 +1,20 @@
+---
+# The node is shared and its memory nearly full (T-4638: 89 % on 2026-10-18): nginx serving
+# files needs little, the job holds the extract's index in memory for its run only: z15 over
+# SK+CZ+FI was OOMKilled at 256Mi twice on dev (2026-10-18), so 1Gi, for the monthly run only.
+server:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 500m
+      memory: 64Mi
+refresh:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi

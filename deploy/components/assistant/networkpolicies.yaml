@@ -1,0 +1,243 @@
+---
+# jc-assistant (T-3052, T-3055) is called by the edge on its chat route, by the Portal and by
+# the gateway on the paths the edge never routes. It reads its own
+# database, the forge (git-sync and the checkouts sidecar, read-only token) and CoreDNS; asks
+# jc-agent-proxy for the model, the gateway's Endpoint MCP surfaces for its connectors and the
+# realm for its own token; and crawls the
+# public websites a KnowledgeSource names. A NetworkPolicy names addresses, not hosts, so the
+# crawl rule is the two web ports and every public address; every private range is excepted,
+# so a source URL a person typed never reaches the Kubernetes API, a node, another pod or a
+# metadata service. The crawler refuses those addresses itself as well (Crawler::public).
+assistant-worker:
+  podSelector:
+    app.kubernetes.io/name: assistant-worker
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+        # The Portal's knowledge administration (API/01 §34), on the paths the edge never routes.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+        # The gateway's `search_documents` on /internal/v1/search (AG-119, T-4659): public
+        # passages only, and the worker refuses a call that came through a proxy.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-runner-proxy
+          componentNamespace: agent-runner
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+          componentNamespace: keycloak
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: functions-runtime
+          componentNamespace: functions
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 3000
+    - to:
+        - publicInternet: true
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+    # The platform's own CKAN (a `ckan` source, T-3054) is the cluster's public host, which the
+    # node rewrites to the ingress controller's pod before this rule is evaluated, on the
+    # controller's container port: 8443 for Traefik, 443 for ingress-nginx (the Portal's rule
+    # explains the same thing). Through it the worker sees what the internet sees, no more.
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: [traefik, kube-system, ingress-nginx]
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [traefik, ingress-nginx]
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8443
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+postgres-from-assistant:
+  componentNamespace: postgres
+  podSelector:
+    cnpg.io/cluster: postgres-cluster
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: assistant-worker
+          componentNamespace: assistant
+      ports:
+        - protocol: TCP
+          port: 5432
+
+gitea-from-assistant:
+  componentNamespace: gitea
+  podSelector:
+    app.kubernetes.io/name: gitea
+    app.kubernetes.io/instance: gitea-forge
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: assistant-worker
+          componentNamespace: assistant
+      ports:
+        - protocol: TCP
+          port: 3000
+
+apisix-egress-to-assistant:
+  componentNamespace: apisix
+  podSelector:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/instance: apisix-apisix
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: assistant-worker
+          componentNamespace: assistant
+      ports:
+        - protocol: TCP
+          port: 8080
+
+agent-proxy-from-assistant:
+  componentNamespace: agent-runner
+  podSelector:
+    app.kubernetes.io/name: agent-runner-proxy
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: assistant-worker
+          componentNamespace: assistant
+      ports:
+        - protocol: TCP
+          port: 8080
+
+gateway-from-assistant:
+  componentNamespace: context-gateway
+  podSelector:
+    app.kubernetes.io/name: context-gateway-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: assistant-worker
+          componentNamespace: assistant
+      ports:
+        - protocol: TCP
+          port: 8080
+
+keycloak-from-assistant:
+  componentNamespace: keycloak
+  podSelector:
+    app.kubernetes.io/instance: keycloak-app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: assistant-worker
+          componentNamespace: assistant
+      ports:
+        - protocol: TCP
+          port: 8080
+
+functions-from-assistant:
+  componentNamespace: functions
+  podSelector:
+    app.kubernetes.io/name: functions-runtime
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: assistant-worker
+          componentNamespace: assistant
+      ports:
+        - protocol: TCP
+          port: 8080
+
+portal-egress-to-assistant:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: assistant-worker
+          componentNamespace: assistant
+      ports:
+        - protocol: TCP
+          port: 8080

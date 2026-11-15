@@ -1,0 +1,45 @@
+# One Smart Data Model type per catalogue dataset (T-4344): BudgetLine of the space
+# praha-mesto, read through its own Policy, which narrows the space's public read to these types.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-rozpocet
+  namespace: praha
+  title: { cs: Rozpočet — Praha, en: Budget — Prague }
+  description:
+    cs: 'Schválený a upravený rozpočet hlavního města Prahy na rok 2026 po rozpočtových řádcích. Zdroj: hl. m. Praha, bez omezení práv.'
+    en: 'The approved and adjusted 2026 budget of the City of Prague, line by line. Source: the City of Prague, free of rights.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: om2xospuff5uotaib5vqnkiuv3lne4w2
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-rozpocet
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-zero
+  catalog:
+    # The publisher and contact desk are the Project's spec.catalog, its registry IRI (T-4596).
+    # Aggregates of public facilities and readings: no record names a person (T-4596).
+    personalData: does-not-contain
+    # Open data under the Czech act on free access to information (DCAT-AP-CZ, API/08 section 3).
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC0
+    attribution: { cs: 'Zdroj: rozpočet hl. m. Prahy', en: 'Source: City of Prague budget' }
+    themes: [ECON, GOVE]
+    keywords:
+      cs: [Praha, rozpočet, veřejné finance]
+      en: [Prague, budget, public finance]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: ANNUAL
+    source:
+      - url: https://opendata-storage.praha.eu/ROZ_rozpocet_finance/rozpocet/Zdroje/2026/Rozpocet_MHMP_2026.json
+        title: { cs: Rozpočet hl. m. Prahy 2026, en: City of Prague budget 2026 }
+        description:
+          cs: Schválený a upravený rozpočet hlavního města Prahy na rok 2026, bez omezení práv.
+          en: The approved and adjusted budget of the City of Prague for 2026, free of rights.
+    pipelineRef: { kind: Pipeline, name: budget }

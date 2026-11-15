@@ -1,0 +1,19 @@
+---
+# Browser login for the catalogue, on the catalogue's own host. The callback path is the one
+# `ckanext-oidc-pkce` registers on its blueprint; nothing uses this client while
+# `global.ckan.sso` is false (see README).
+ckan:
+  # What the login page names ("Sign in to {name} · {organization}"): a key the login theme
+  # translates (components/keycloak/charts/theme).
+  name: ${jcClientCatalogue}
+  description: Confidential client of the open-data catalogue for human login
+  subdomain: data
+  redirectPath: /user/login/oidc-pkce/callback
+  componentNamespaces:
+    - ckan
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false

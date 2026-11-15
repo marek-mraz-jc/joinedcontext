@@ -1,0 +1,174 @@
+{{- /*
+  The demo's catalogue (T-4687): the platform's CKAN chart and pins, with only Banská Bystrica and
+  the region. Their harvest sources and the publish gate's hidden packages are read from the
+  platform's own catalogue values, so a correction made there reaches the demo with no copy to
+  keep in step; nothing of another publisher is taken.
+*/}}
+{{- $publishers := list "banskabystrica" "bbsk" }}
+{{- $images := (readFile "../../../components/ckan/images.yaml" | fromYaml).ckan }}
+{{- $platform := readFile "../../../components/ckan/values/catalogue/development-values.yaml.gotmpl" | fromYaml }}
+{{- $security := (readFile "../../../defaults/environment/security.yaml.gotmpl" | fromYaml).securityDefaults }}
+{{- $sources := list }}
+{{- range $platform.harvest.sources }}
+{{- if has .name $publishers }}{{ $sources = append $sources . }}{{ end }}
+{{- end }}
+{{- if ne (len $sources) (len $publishers) }}
+{{- fail (printf "demo-bbsk: the platform's catalogue harvests %d of %v (T-4687)" (len $sources) $publishers) }}
+{{- end }}
+{{- $ribbon := "DEMO · ukážka, nie oficiálna stránka BBSK" }}
+fullnameOverride: ckan-demo-bbsk
+siteUrl: https://{{ .Values.host }}
+
+ckan:
+  image:
+    {{- toYaml $images.catalogue | nindent 4 }}
+  locales:
+    default: sk
+    offered: [sk, hu, en]
+  storage:
+    size: 2Gi
+  # The demo's About page ("O ukážke", T-4687), CKAN's `ckan.site_about`, which the theme lets win
+  # over its own text: what the demo is, how it works and what it keeps.
+  env:
+    CKAN__SITE_ABOUT: |
+      # O ukážke
+
+      **DEMO · ukážka, nie oficiálna stránka BBSK.** Túto stránku prevádzkuje joinedcontext, aby si
+      ľudia z Banskobystrického samosprávneho kraja mohli vyskúšať AI asistenta nad vlastnými dátami.
+
+      ## Čo tu nájdete
+
+      - Otvorené dáta **Banskobystrického samosprávneho kraja** (opendata.bbsk.sk) a **mesta Banská
+        Bystrica** (Národný katalóg otvorených dát), nič iné.
+      - **AI asistenta** v pravom okraji každej stránky. Odpovedá z webov www.bbsk.sk a
+        www.banskabystrica.sk, z týchto datasetov a zo živých dát, a pri každom fakte uvedie zdroj.
+
+      ## Ako to funguje
+
+      1. Dáta kraja a mesta sa načítajú do dátového priestoru NGSI-LD (Context Space) podľa
+         štandardných modelov Smart Data Models.
+      2. Každý verejný dataset má svoj Endpoint s pravidlami prístupu: verejne sa dá len čítať.
+      3. Asistent sa na Endpointy pýta cez MCP, rovnako ako ktorýkoľvek AI asistent, ktorý si
+         pripojíte sami (stránka [Použite v AI asistentovi](/assistants)).
+      4. Weby kraja a mesta asistent prehľadáva cez vlastný index (RAG), ktorý sa obnovuje každý týždeň.
+
+      ## Vyskúšajte
+
+      - Kde nájdem mapu cyklotrás v kraji?
+      - Koľko mostov spravuje kraj a koľko je starších ako 100 rokov?
+      - Ktoré stredné školy sú v okrese Zvolen?
+      - Kde je najbližšia lekáreň k Námestiu SNP?
+      - Ako sa vyvíja nehodovosť v kraji?
+      - Kde môžem nahlásiť problém na cyklochodníku?
+
+      ## Súkromie a limity
+
+      Odpovede tvorí umelá inteligencia a môžu obsahovať chyby, overte si dôležité informácie v
+      uvedených zdrojoch. Rozhovory uchovávame 90 dní na zlepšenie služby; e-mailové adresy,
+      telefónne čísla, IBAN a rodné čísla v nich pred uložením maskujeme. Nezadávajte osobné údaje.
+      Asistent má denný limit; keď ho minie, povie to. Stránka nepoužíva analytiku ani skripty
+      tretích strán a vyhľadávače ju neindexujú.
+
+      ## Pre vývojárov
+
+      Katalóg má API na [/api/3/action/package_list](/api/3/action/package_list) a každý dataset
+      odkazuje na svoje štandardné rozhrania (NGSI-LD, OGC API, CSV).
+  resources:
+    requests: { cpu: 100m, memory: 352Mi }
+    limits: { cpu: '1', memory: 1Gi }
+
+solr:
+  image:
+    {{- toYaml $images.solr | nindent 4 }}
+  heap: 256m
+  storage:
+    size: 2Gi
+  resources:
+    requests: { cpu: 50m, memory: 512Mi }
+    limits: { cpu: '1', memory: 1Gi }
+
+redis:
+  image:
+    {{- toYaml $images.redis | nindent 4 }}
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { cpu: 200m, memory: 128Mi }
+
+# The demo's own Postgres (chart/templates/postgres.yaml) and the Secrets beside it, by the names
+# the chart reads by default.
+database:
+  host: demo-bbsk-db.demo-bbsk.svc.cluster.local
+
+# Our design, not BBSK's (the region's logo and colours are theirs): the platform's tokens, the
+# demo's name, and the DEMO line on top of every page, in its footer and in its title.
+branding:
+  instanceName: "DEMO · Banskobystrický samosprávny kraj"
+  shortName: "DEMO BBSK"
+  siteTitle: "DEMO · Banskobystrický samosprávny kraj"
+  tagline: "Ukážka: AI asistent nad otvorenými dátami Banskobystrického kraja a mesta Banská Bystrica."
+  organisation: joinedcontext
+  domain: {{ .Values.domain }}
+  ribbon: {{ $ribbon | quote }}
+  # The connector page's and guides' questions to try: the demo's cards, the first one first.
+  samples:
+    sk:
+      - "Kde nájdem mapu cyklotrás v kraji?"
+      - "Koľko mostov spravuje kraj a koľko je starších ako 100 rokov?"
+      - "Ktoré stredné školy sú v okrese Zvolen?"
+    en:
+      - "Where is a map of the region's cycle routes?"
+      - "How many bridges does the region manage, and how many are over 100 years old?"
+      - "Which secondary schools are in the Zvolen district?"
+  noindex: true
+  # The "add to your AI assistant" page and panel name the demo assistant's own MCP server, its
+  # Endpoints and sources only (T-4691), not the platform's hub of every publisher.
+  mcpServer: d/bbsk-demo
+  footerLines:
+    - {{ $ribbon | quote }}
+    - "Odpovede tvorí umelá inteligencia z verejných stránok a otvorených dát. Môžu obsahovať chyby, overte si dôležité informácie v uvedených zdrojoch."
+  colours:
+    primary: '#0000bf'
+    secondary: '#0072c6'
+    accent: '#ffe977'
+    background: '#ffffff'
+    text: '#1a1a1a'
+  fonts:
+    heading: system-ui, sans-serif
+    body: system-ui, sans-serif
+  languages:
+    default: sk
+    offered: [sk, hu, en]
+
+organizations:
+  {{- toYaml (pick $platform.organizations "banskabystrica" "bbsk") | nindent 2 }}
+
+hidden:
+{{- range $package, $why := $platform.hidden }}
+{{- if or (hasPrefix "bb-" $package) (hasPrefix "bbsk-" $package) }}
+  {{ $package | quote }}: {{ $why | quote }}
+{{- end }}
+{{- end }}
+
+harvest:
+  gateway: https://api.{{ .Values.domain }}
+  datasetsBase: {{ $platform.harvest.datasetsBase | quote }}
+  sources:
+    {{- toYaml $sources | nindent 4 }}
+
+# The region's demo assistant, docked on every page (T-4685); its AssistantDeployment allows this
+# host as an origin (components/context-gateway/seed/bbsk/bbsk-assistant-demo.yaml).
+assistantWidget: https://assistant.{{ .Values.domain }}/d/bbsk-demo/widget
+# The websites that server's search_documents reads, listed on the assistants page (T-4659).
+assistants:
+  sources:
+    - { publisher: bbsk, url: "https://www.bbsk.sk/", languages: [sk] }
+    - { publisher: banskabystrica, url: "https://www.banskabystrica.sk/", languages: [sk] }
+mapBasemap:
+  style: https://tiles.{{ .Values.domain }}/styles/light-sk.json
+
+podSecurityContext:
+  {{- toYaml $security.podSecurityContext | nindent 2 }}
+securityContext:
+  {{- toYaml $security.securityContext | nindent 2 }}
+serviceMesh:
+  enabled: false

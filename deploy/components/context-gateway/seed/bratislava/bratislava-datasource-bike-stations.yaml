@@ -1,0 +1,18 @@
+# nextbike's Bratislava system, which runs the city's Slovnaft BAjk, as GBFS 2.3 `station_information`:
+# 444 stations on 2026-10-23, each a marked area without docks. No key. CC0-1.0, read from the
+# feed's own `system_information.json` (T-5273).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: nextbike-stations
+  namespace: bratislava
+  title:
+    sk: Stanice Slovnaft BAjk (nextbike, GBFS)
+    en: Slovnaft BAjk stations (nextbike, GBFS)
+spec:
+  type: http
+  http:
+    url: https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_bi/sk/station_information.json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

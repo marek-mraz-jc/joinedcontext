@@ -1,0 +1,153 @@
+---
+# The forge the Job talks to, in-cluster. Not the public URL: under a self-signed cluster
+# issuer that host is served with the cluster CA and curl in this image trusts only the
+# Mozilla bundle.
+giteaUrl: ''
+
+# What the repository is called. Filled from global.configRepo.
+# The forge teams a signed-in person lands in, keyed by name so the environment's
+# group -> teams map and this list cannot drift (PF-79). Every team reads, none writes.
+teams: {}
+# Layout 2 (PF-87, T-2647): the projects whose repository gets its two teams, `{slug}-readers`
+# (read) and `{slug}-writers` (write), on that repository alone. Created here, as the forge's
+# administrator, because creating a team needs an organization owner; the Portal keeps members.
+projectTeams: []
+
+repo:
+  owner: ''
+  name: ''
+  branch: main
+
+# 1: one repository holds every project. 2: the organization repository holds the registry and each
+# project of the seed gets a repository of its own (ADR-N-029, CC-85).
+layout: 1
+
+# The generated applications' own organization (PF-106). Empty: their repositories stay in
+# `repo.owner` beside the configuration, created by the Portal's user. Set: the Job creates it,
+# moves the applications' repositories already in `repo.owner` into it with their history, and
+# mints the `apps` token on its own machine user; the registry's and the lane's tokens and the
+# runner follow it.
+apps:
+  owner: ''
+
+# The forge administrator, the only credential that can mint a token.
+adminSecret:
+  name: gitea-admin-credentials
+  usernameKey: username
+  passwordKey: password
+
+# Where the two minted tokens are written. Each holds `token`, and `scopes` and `owner`, the
+# record of what it was minted with and on whom.
+tokens:
+  portal:
+    secret: gitea-token-portal
+    # The machine user the token is minted on (PF-106): never the administrator. It writes the
+    # configuration repository and is the only identity its branch rule lets move `main` (PF-105).
+    user: jc-portal
+    # `namespace/name` of every Deployment that reads the token at start: restarted when the
+    # token is minted again, or it would hold a credential the forge no longer accepts.
+    restart: []
+    # Read and write the organization's repositories: the Portal opens branches, writes files
+    # and merges. `write:organization` is what creates a generated application's own repository
+    # in the organization (AP-75); the forge files that route under the organization scope.
+    # `write:package` publishes an application's checked build as the generic package
+    # `app-{name}`: the Portal is the registry's only writer, no runner holds it (AP-101, AP-104).
+    scopes: ['write:repository', 'read:user', 'write:organization', 'write:package']
+    # Where the Secret is written. One entry under `singleNamespace: true`, one per consumer
+    # otherwise.
+    namespaces: []
+  # The applications' machine user (PF-106): creates, writes and publishes the generated
+  # applications in `apps.owner` and holds nothing of the configuration's. Only with
+  # `apps.owner`.
+  apps:
+    secret: gitea-token-apps
+    user: jc-apps
+    scopes: ['write:repository', 'read:user', 'write:organization', 'write:package']
+    namespaces: []
+    restart: []
+  gateway:
+    secret: gitea-token-gateway
+    user: jc-gateway
+    # The gateway only ever clones.
+    scopes: ['read:repository']
+    namespaces: []
+    restart: []
+  # What a node pulls a fullstack App's image with (AP-108): a token that reads packages and
+  # nothing else, written as the `dockerconfigjson` Secret every App pod names in
+  # `imagePullSecrets`, for the registry at `host`. Empty namespaces: no App pod runs here.
+  registry:
+    secret: app-registry
+    scopes: ['read:package']
+    host: ''
+    namespaces: []
+  # What the `gitea-lane-token` CronJob writes the Actions organization secret `JC_LANE_TOKEN`
+  # with (ADR-N-028 §5, T-2636): `write:organization` alone, the scope the forge files the
+  # organization's Actions secrets under. It reads no repository and writes no package. Empty
+  # namespaces: no runner, no lane, no token.
+  lane:
+    secret: gitea-token-lane-secret
+    scopes: ['write:organization']
+    namespaces: []
+  # Not a token of the admin user: the organization's Actions runner registration token
+  # (ADR-N-028), which only the runner's init container mounts. Empty namespaces: no runner.
+  runner:
+    secret: gitea-runner-registration
+    namespaces: []
+    # `namespace/name` of every runner Deployment: restarted when the token they registered
+    # with belongs to another organization than the one written now (T-2969).
+    restart: []
+
+# Files committed into the repository after it exists, keyed by their path with `/` written as
+# `__` (a ConfigMap key cannot hold a slash): the manifests the gateway already serves, under the
+# paths the Portal reads (T-0478). Idempotent: a file whose committed content matches is left
+# alone, one that differs is updated, one that is missing is created; nothing is ever deleted.
+seed: {}
+# The projects whose files another release holds, one ConfigMap `<seedConfigMaps>-<project>`
+# each, mounted into the same tree as `seed` (T-3998).
+seedProjects: []
+seedConfigMaps: gitea-seed
+
+# The refresher of the lane's token (AP-73, ADR-N-028 §5, T-2636): every `schedule` it asks
+# Keycloak for a `client_credentials` token of `clientId` and writes it as the organization's
+# Actions secret `JC_LANE_TOKEN`, with the `lane` forge token above and nothing else. Off unless
+# the environment runs the runner.
+laneToken:
+  enabled: false
+  schedule: '*/5 * * * *'
+  # The realm's token endpoint in-cluster: Keycloak pins its public hostname, so the token's
+  # `iss` is the one the Portal checks, and no TLS to the public host is needed from this image.
+  tokenUrl: ''
+  clientId: jc-build-lane
+  # The realm issuer the pod's projected token is bound to; `jc-build-lane` is federated and
+  # trusts this pod's ServiceAccount, `<fullname>-lane-token` (PF-47, T-2868).
+  audience: ''
+  secretName: JC_LANE_TOKEN
+
+image:
+  repository: ''
+  tag: ''
+  digest: ''
+  pullPolicy: IfNotPresent
+
+resources:
+  requests: { cpu: 50m, memory: 64Mi }
+  limits: { cpu: 500m, memory: 128Mi }
+
+podSecurityContext: {}
+securityContext: {}
+serviceMesh:
+  enabled: false
+
+# The sample applications the Job pushes each into its own repository and commits into
+# `projects/<project>/apps/<name>/app.yaml` (T-2599, AP-75): `apps.<name>` names each file's path,
+# `/` written as `__`; the text is in the ConfigMap `<configMaps>-<name>` of the release
+# gitea-sample-apps (T-3175). `app.yaml` is the manifest and is not pushed with the tree.
+# `publicBase` is where a person clones from, the address the manifest's `source.git.url` names.
+sampleApps:
+  configMaps: gitea-sample-apps
+  project: ''
+  publicBase: ''
+  apps: {}
+
+# Regex rewrites (from, to) applied to every seed file, in order (T-4678).
+rewrites: []

@@ -1,0 +1,154 @@
+{{- if .Values.laneToken.enabled }}
+{{- if not .Values.laneToken.tokenUrl }}
+{{- fail "gitea-bootstrap: laneToken.tokenUrl names the realm's token endpoint the lane's token is minted at" }}
+{{- end }}
+{{- if not .Values.laneToken.audience }}
+{{- fail "gitea-bootstrap: laneToken.audience names the realm issuer the pod's projected token is bound to" }}
+{{- end }}
+{{- /*
+  The lane's token as the Actions organization secret JC_LANE_TOKEN (AP-73, AP-80, ADR-N-028 §5,
+  T-2636). A Keycloak access token expires, so one write at bootstrap is not enough: every run
+  mints a `client_credentials` token of the lane's client and replaces the secret. The token
+  lives 15 minutes and a run comes every 5, so a `propose` job reads one that is good for 10.
+  The lane's client is federated (PF-47, T-2868): the pod proves it with its own projected
+  ServiceAccount token, bound to the realm and ten minutes long, and holds no client secret. The
+  forge token that writes organization settings is a file too; the pod has no Kubernetes API
+  token and prints status codes, never a body.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "bootstrap.fullname" . }}-lane-token
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "bootstrap.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: gitea-lane-token
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "bootstrap.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.laneToken.schedule | quote }}
+  timeZone: UTC
+  # A run that could not start in time is skipped, never queued: the next one mints afresh.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 120
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: lane-token
+            app.kubernetes.io/instance: {{ .Release.Name }}
+          {{- if .Values.serviceMesh.enabled }}
+          annotations:
+            # The proxy has to exit with the script, or the Job never completes.
+            linkerd.io/inject: enabled
+            config.alpha.linkerd.io/proxy-enable-native-sidecar: "true"
+          {{- end }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "bootstrap.fullname" . }}-lane-token
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: lane-token
+              image: {{ include "bootstrap.image" . | quote }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              resources:
+                requests: { cpu: 10m, memory: 16Mi }
+                limits: { cpu: 100m, memory: 32Mi }
+              env:
+                - name: GITEA_URL
+                  value: {{ .Values.giteaUrl | quote }}
+                # The organization the applications' builds run in (PF-106).
+                - name: ORG
+                  value: {{ .Values.apps.owner | default .Values.repo.owner | quote }}
+                - name: TOKEN_URL
+                  value: {{ .Values.laneToken.tokenUrl | quote }}
+                - name: CLIENT_ID
+                  value: {{ .Values.laneToken.clientId | quote }}
+                - name: SECRET_NAME
+                  value: {{ .Values.laneToken.secretName | quote }}
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+                - name: client
+                  mountPath: /lane
+                  readOnly: true
+                - name: forge
+                  mountPath: /forge
+                  readOnly: true
+              command: [/bin/sh, -c]
+              args:
+                - |
+                  set -eu
+                  # Overridable so that tests/test_lane_token.py runs this script against stubs.
+                  WORK=${WORK:-/tmp}
+                  LANE_DIR=${LANE_DIR:-/lane}
+                  FORGE_DIR=${FORGE_DIR:-/forge}
+                  trap 'rm -f "$WORK/token" "$WORK/auth" "$WORK/body"' EXIT
+
+                  # Every run on k3d failed its first call in 6 ms with "connection refused" while
+                  # Keycloak was ready (ci-full 36096443083, T-2826): k3s's NetworkPolicy
+                  # controller answers REJECT, and a pod this short-lived calls before the
+                  # controller has admitted its new address. curl retries, for at most a minute,
+                  # a refused connection, a timeout and a transient answer (408, 429, 5xx); a
+                  # refusal such as 401 or 403 still fails the run at once.
+                  RETRY="--retry 6 --retry-delay 2 --retry-connrefused --retry-max-time 60"
+
+                  # 1. A client_credentials token of the lane, proved by the pod's projected token
+                  #    from its file, so it is on no command line, and with no client_id: Keycloak
+                  #    finds a federated client by the token's subject. The answer is read for its
+                  #    one field.
+                  # shellcheck disable=SC2086
+                  code=$(curl -sS $RETRY -o "$WORK/token" -w '%{http_code}' -X POST "$TOKEN_URL" \
+                    --data-urlencode grant_type=client_credentials \
+                    --data-urlencode client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer \
+                    --data-urlencode "client_assertion@$LANE_DIR/token")
+                  [ "$code" = 200 ] || { echo "the realm answered $code for $CLIENT_ID" >&2; exit 1; }
+                  token=$(sed -n 's/.*"access_token" *: *"\([A-Za-z0-9_-]*\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*\)".*/\1/p' "$WORK/token")
+                  [ -n "$token" ] || { echo "the realm answered no access token for $CLIENT_ID" >&2; exit 1; }
+
+                  # 2. The organization's Actions secret, replaced whole: 201 created, 204 updated.
+                  printf 'Authorization: token %s\n' "$(cat "$FORGE_DIR/token")" > "$WORK/auth"
+                  printf '{"data":"%s"}' "$token" > "$WORK/body"
+                  # shellcheck disable=SC2086
+                  code=$(curl -sS $RETRY -o /dev/null -w '%{http_code}' -X PUT \
+                    -H @"$WORK/auth" -H 'content-type: application/json' --data @"$WORK/body" \
+                    "$GITEA_URL/api/v1/orgs/$ORG/actions/secrets/$SECRET_NAME")
+                  case "$code" in
+                    201|204) echo "$SECRET_NAME of $ORG holds a fresh token of $CLIENT_ID" ;;
+                    *) echo "the forge answered $code for $SECRET_NAME of $ORG" >&2; exit 1 ;;
+                  esac
+          volumes:
+            - name: tmp
+              emptyDir:
+                medium: Memory
+                sizeLimit: 1Mi
+            - name: client
+              projected:
+                sources:
+                  - serviceAccountToken:
+                      audience: {{ .Values.laneToken.audience | quote }}
+                      expirationSeconds: 600
+                      path: token
+            - name: forge
+              secret:
+                secretName: {{ .Values.tokens.lane.secret | quote }}
+                items:
+                  - { key: token, path: token }
+{{- end }}

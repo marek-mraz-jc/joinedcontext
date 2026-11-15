@@ -1,0 +1,41 @@
+# The region's indicator space (PF-54): every KPI a pipeline computes for `bbsk` is one
+# KeyPerformanceIndicator entity here, never in the raw space it reads.
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: bbsk-kpi
+  namespace: bbsk
+  title: { sk: Ukazovatele kraja, en: Region indicators }
+  description:
+    sk: Jeden záznam na ukazovateľ a územie, s jeho vzorcom, oknom a zdrojmi.
+    en: One entity per indicator and territory, with its formula, its window and its sources.
+spec:
+  urnSegment: bbsk-kpi
+  isSandbox: false
+  # The one model of this space: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: key-performance-indicator }
+  defaultLocale: sk
+  # History per type (DM-82, ADR-N-046 2.3, T-4275): a measurement series keeps 30 days, every
+  # other type keeps its current state only. Owners change it on the space's Retention tab.
+  retention:
+    - entityType: KeyPerformanceIndicator
+      history: P30D
+      # Written on every run without an observedAt: one row per change and one a week,
+      # not one per run (T-4844, DM-108, DM-109; scripts/temporal-audit.py).
+      attributes:
+        calculationFormula: { record: onChange, heartbeat: P7D }
+        calculationPeriod: { record: onChange, heartbeat: P7D }
+        computedBy: { record: onChange, heartbeat: P7D }
+        derivedFrom: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+        title: { record: onChange, heartbeat: P7D }
+        # updatedAt is the run's own clock, new on every run: no history of its own (DM-132, T-5848).
+        updatedAt: { record: never }
+  # The space's place (T-4525): the catalogue's Dataset carries it, so georel=near finds the space.
+  # the Banská Bystrica Region with a margin; a KeyPerformanceIndicator outside it is flagged, never refused (DM-87).
+  quality:
+    - name: in-area
+      entityType: KeyPerformanceIndicator
+      kind: area
+      attribute: location
+      bbox: [18.3, 47.9, 20.5, 49.2]

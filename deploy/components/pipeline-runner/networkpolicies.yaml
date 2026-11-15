@@ -1,0 +1,133 @@
+---
+# The runner is a pure client: it reads its streams from a ConfigMap and writes to the
+# Context Gateway Endpoint. Nothing calls it, so ingress stays closed (PL-07) — a
+# metrics scraper needs its own rule here before it can reach port 4195.
+pipeline-runner:
+  podSelector:
+    app.kubernetes.io/name: pipeline-runner-runner
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+    # A test stream's output goes to the Portal's internal listener, never to an endpoint
+    # (PL-43); the Portal is the only other cluster peer the runner talks to.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 9090
+    # The feeds, out on the internet: HTTPS to the city's and HSL's open-data hosts, MQTT over
+    # WebSocket to mqtt.hsl.fi on the same 443 (the cluster's firewall lets nothing out on
+    # 8883). A NetworkPolicy names addresses, not hosts, and CDN-fronted hosts move, so the
+    # rule is the port and every public address. Every private range is excepted: a check
+    # probes a DataSource URL a person typed on this runner (MF-39), and that URL must not
+    # reach the Kubernetes API, a node, a webhook, another pod or a metadata service.
+    - to:
+        - publicInternet: true
+      ports:
+        - protocol: TCP
+          port: 443
+    # The realm's token endpoint is the cluster's own public host, which the node rewrites to
+    # the ingress controller's pod before this rule is evaluated, on the controller's container
+    # port: 8443 for Traefik, 443 for ingress-nginx (the Portal's rule explains the same thing).
+    # That pod is the one private address the runner reaches over HTTPS.
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: [traefik, kube-system, ingress-nginx]
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [traefik, ingress-nginx]
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8443
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # The pipelines' token service beside it (PL-19, T-1508): every stream's token, once the
+    # Portal renders streams with their own pipeline. The service, not the runner, reaches the
+    # Kubernetes API.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pipeline-runner-tokens
+          componentNamespace: pipeline-runner.tokens
+      ports:
+        - protocol: TCP
+          port: 4180
+
+# The scheduled half (PL-04, PL-10): the same client, in a pod that exists for one run. The
+# selector is the release rather than the workload name, because the pod's name label carries
+# the project and the project is a value.
+pipeline-scheduled:
+  podSelector:
+    app.kubernetes.io/instance: pipeline-runner-scheduled
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# The Portal's internal listener takes the runner's captured test output (PL-43), the same door
+# the agent proxy uses (AG-52); the Portal reads the test id from the path and nothing else.
+portal-internal-from-pipeline-runner:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pipeline-runner-runner
+          componentNamespace: pipeline-runner
+      ports:
+        - protocol: TCP
+          port: 9090

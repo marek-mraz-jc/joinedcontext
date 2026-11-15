@@ -1,0 +1,7 @@
+---
+{{ componentVariableName }}:
+{%- for release in releasesList %}
+  {{ release }}:
+    enabled: true
+    namespace: {{ '{{' }} include "jc.namespace" (dict "global" .Values.global "suffix" "{{ componentSlug }}") {{ '}}' }}
+{%- endfor %}

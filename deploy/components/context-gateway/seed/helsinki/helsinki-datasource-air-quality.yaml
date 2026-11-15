@@ -1,0 +1,19 @@
+# FMI's hourly air quality observations of the capital region's stations, the last day of them,
+# as simple WFS features: one element per station, hour and parameter (PM10, PM2.5, the air
+# quality index). The box is the one the road-weather mapping keeps; the mapping picks the
+# newest value of each station.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: fmi-air-quality
+  namespace: helsinki
+  title:
+    en: Air quality stations (FMI open data)
+    fi: Ilmanlaadun mittausasemat (Ilmatieteen laitos)
+spec:
+  type: http
+  http:
+    url: https://opendata.fmi.fi/wfs?service=WFS&version=2.0.0&request=getFeature&storedquery_id=urban::observations::airquality::hourly::simple&bbox=24.6,60.1,25.2,60.35&parameters=PM10_PT1H_avg,PM25_PT1H_avg,AQINDEX_PT1H_avg
+    verb: GET
+    headers: { Accept: application/xml }
+    timeout: 30s

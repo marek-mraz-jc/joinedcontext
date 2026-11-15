@@ -1,0 +1,53 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-feedback
+  namespace: helsinki
+  title: { fi: Kaupunkipalautteet — Helsinki, en: City feedback reports — Helsinki }
+  description:
+    fi: >-
+      Helsingin kaupungin palautejärjestelmään jätetyt ja julkaistut palautteet (Open311): teksti, sijainti,
+      sektori, tila (open käsittelyssä, closed vastattu) ja kaupungin vastaus. Palautteen antajan nimeä,
+      yhteystietoja ja kuvia ei lueta. Lähde: Helsingin kaupunki, CC BY 4.0.
+    en: >-
+      Reports filed in the City of Helsinki's feedback system and published by the city (Open311): the text,
+      place, sector, status (open while handled, closed once answered) and the city's answer. The reporter's
+      name, contact details and photos are never read. Smart Data Models service_requests, typed ServiceRequest
+      here. Source: City of Helsinki, CC BY 4.0.
+spec:
+  contextSpaceRef: helsinki
+  slug: gv24bicwway4foznuszsagmzydzk3e2z
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-feedback
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Helsingin kaupunki, palauterajapinta (Open311), CC BY 4.0'
+      sv: 'Källa: Helsingfors stad, responsgränssnitt (Open311), CC BY 4.0'
+      en: 'Source: City of Helsinki, Issue Reporting API (Open311), CC BY 4.0'
+    themes: [GOVE, SOCI]
+    keywords:
+      fi: [palaute, kaupunkiympäristö, open311]
+      sv: [respons, stadsmiljö, open311]
+      en: [feedback, issue reporting, open311]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: HOURLY
+    source:
+      - url: https://hri.fi/data/en_GB/dataset/helsingin-kaupungin-palauterajapinta
+        title:
+          fi: Helsingin kaupungin palauterajapinta
+          en: The Issue Reporting API of the City of Helsinki
+        description:
+          fi: Open311 GeoReport v2 -rajapinta kaupungin julkaisemiin palautteisiin, CC BY 4.0.
+          en: The Open311 GeoReport v2 interface to the reports the city publishes, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: feedback-requests }

@@ -1,0 +1,18 @@
+{#
+  An API resource's usage text (T-3887, EP-108): its paragraphs as Markdown through CKAN's
+  sanitiser (T-4066, so `query_entities` reads as code and no raw HTML passes), each command as a
+  block that wraps (a field sized itself in Chromium only, owner 2026-10-12), with a copy button (jc-copy.js; without script it is selected by hand), and the
+  WebSocket guide when the installation names its documentation.
+#}
+{% for block in blocks %}
+  {% if block.code %}
+    <div class="jc-copy jc-copy-code">
+      <pre id="{{ block.id }}" aria-label="{{ h.jc_t('snippet') }}" tabindex="0"><code>{% snippet 'snippets/jc_breakable.html', text=block.text %}</code></pre>
+      <button type="button" class="btn btn-default" data-jc-copy="{{ block.id }}" data-jc-copied="{{ h.jc_t('copied') }}" data-jc-select="{{ h.jc_t('copy_select') }}">{{ h.jc_t('copy') }}</button>
+    </div>
+  {% else %}
+    {{ h.render_markdown(block.text) }}
+  {% endif %}
+{% endfor %}
+{% set guide = h.jc_guide(res) %}
+{% if guide %}<p><a href="{{ guide }}" rel="noreferrer">{{ h.jc_t('guide') }}</a></p>{% endif %}

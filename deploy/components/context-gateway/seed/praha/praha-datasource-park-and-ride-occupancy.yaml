@@ -1,0 +1,25 @@
+# Golemio's live occupancy of the city's park-and-ride car parks (TSK hl. m. Prahy counters, served by
+# Operátor ICT), one record per car park with counters, 16 on 2026-09-25. The key is the owner's
+# (T-2785) and travels as the X-Access-Token header from the secret `golemio`, never as a value here
+# (CC-06, MF-35).
+#
+# Terms, read 2026-09-25 (T-2792): Golemio's public OpenAPI (api.golemio.cz/docs/static/output-gateway/
+# openapi-public.json) marks this endpoint "Open Data" and names no licence and no attribution text;
+# a key is limited to 20 requests per 8 seconds and 10 000 rows per answer. Credited as
+# "Golemio, Operátor ICT" with the counters' owner, TSK hl. m. Prahy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: golemio-park-and-ride
+  namespace: praha
+  title: { en: Park and ride occupancy (Golemio), cs: Obsazenost P+R (Golemio) }
+spec:
+  type: http
+  http:
+    url: https://api.golemio.cz/v3/parking-measurements?primarySource=tsk-offstreet
+    verb: GET
+    headers: { Accept: application/json }
+    authorization:
+      header: X-Access-Token
+      headerRef: { name: golemio, key: token }
+    timeout: 30s

@@ -1,0 +1,85 @@
+---
+decidim:
+  name: decidim
+  description: Participation platform headers, rate limiting and the refused paths
+  plugins:
+    request-id:
+      include_in_response: true
+    # Every route clears the headers the platform trusts internally, not only the
+    # authenticated ones (T-0026): a client that can set them can claim a tenant or an
+    # identity. X-Forwarded-For stays — nginx maintains it and the rate limit keys on it.
+    # Each name is cleared twice, hyphenated and with underscores (T-1672): the http block
+    # runs with `underscores_in_headers on`, so `X_Userinfo` survives to the upstream as a
+    # header of its own, and a WSGI or CGI upstream folds it onto the same name the
+    # hyphenated spelling has. The Lua is identical on every route and a test holds it so.
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+        - >-
+          return function()
+            local forged = {
+              "NGSILD-Tenant", "X-Userinfo", "X-Access-Token", "X-Allowed-Scope-Ids",
+              "X-Endpoint-Slug", "X-Consumer-Identity", "X-Forwarded-User",
+              "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port",
+              "X-Forwarded-Prefix", "X-Forwarded-Server", "X-Real-IP", "JC-Read-Versions",
+            }
+            for _, header in ipairs(forged) do
+              ngx.req.clear_header(header)
+              ngx.req.clear_header((header:gsub("%-", "_")))
+            end
+            for name in pairs(ngx.req.get_headers(0)) do
+              local key = name:lower():gsub("_", "-")
+              for _, prefix in ipairs({ "x-jc-", "jc-provenance-", "l5d-" }) do
+                if key:sub(1, #prefix) == prefix and key ~= "x-jc-visitor" then
+                  ngx.req.clear_header(name)
+                end
+              end
+            end
+          end
+    # Class 1 (standard web), as the catalogue's pages: a person reads and writes proposals, a
+    # crawler reads the public GraphQL API, and only the caller over the bucket gets 429.
+    limit-count:
+      count: 300
+      time_window: 60
+      key_type: var
+      key: remote_addr
+      rejected_code: 429
+      policy: local
+      show_limit_quota_header: true
+    # ADR-N-065 section 3: the system console (organizations, system admins with local
+    # passwords) is reached by port-forward only; local password reset and invitation
+    # acceptance would give a realm account a password the realm's MFA never sees; Decidim's own
+    # sign-up form is off by the organization's registration mode and refused here as well.
+    uri-blocker:
+      block_rules:
+        - '^/system([/?]|$)'
+        - '^/users/password([/?]|$)'
+        - '^/users/invitation([/?]|$)'
+        - '^/users/sign_up([/?]|$)'
+      rejected_code: 404
+    proxy-rewrite:
+      headers:
+        set:
+          X-Forwarded-Proto: https
+          X-Forwarded-Port: '443'
+    response-rewrite:
+      headers:
+        set:
+          Strict-Transport-Security: "max-age=31536000; includeSubDomains; preload"
+          X-Content-Type-Options: "nosniff"
+          X-Frame-Options: "SAMEORIGIN"
+          Referrer-Policy: "strict-origin-when-cross-origin"
+    # OPS-34: the upstream owns the Content Security Policy (the Portal's, each App's, AP-12,
+    # AP-122), so the edge sets none over it and adds this baseline only to an answer that
+    # carries none, its own refusals included. `frame-ancestors` says what X-Frame-Options
+    # says. It runs after `response-rewrite`, whose `add` of an App's frame-ancestors counts.
+    serverless-post-function:
+      phase: header_filter
+      functions:
+        - >-
+          return function()
+            if ngx.header["Content-Security-Policy"] == nil then
+              ngx.header["Content-Security-Policy"] =
+                "frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
+            end
+          end

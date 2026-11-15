@@ -1,0 +1,17 @@
+# Fintraffic LIIPI's live free spaces (T-3894): every reporting facility of the country in one
+# small document (39 rows, 6 kB on 2026-10-12). No key. CC BY 4.0.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: liipi-utilizations
+  namespace: helsinki
+  title:
+    en: Park and ride free spaces (Fintraffic LIIPI)
+    fi: Liityntäpysäköinnin vapaat paikat (Fintraffic LIIPI)
+spec:
+  type: http
+  http:
+    url: https://parking.fintraffic.fi/api/v1/utilizations
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 15s

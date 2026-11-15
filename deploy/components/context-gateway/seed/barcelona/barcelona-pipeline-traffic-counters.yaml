@@ -1,0 +1,22 @@
+# The mean working-day intensity of each traffic and bicycle counter into the traffic dataset of
+# the space barcelona (T-5374): one TrafficFlowObserved per counter, the newest month published.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: traffic-counters
+  namespace: barcelona
+  title:
+    ca: Aforaments de trànsit i de bicicletes, cada setmana
+    es: Aforos de tráfico y de bicicletas, cada semana
+    en: Traffic and bicycle counters, weekly
+spec:
+  class: auto
+  # The city publishes a year's readings once, months after the year ends: a weekly read is enough
+  # and keeps each counter inside the 30 days the space keeps a TrafficFlowObserved it no longer
+  # writes.
+  schedule: '20 6 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-traffic-counters }
+  targetEndpoint: urn:ngsi-ld:Endpoint:barcelona.cat:barcelona:barcelona
+  output: { type: TrafficFlowObserved, mode: upsert }
+  quotas: { maxMemoryMb: 64, cpuMillicores: 50 }

@@ -1,0 +1,19 @@
+# One KeyPerformanceIndicator per cell of the ŠÚ SR cube cr3802mr, written through the space's one Endpoint with the runner's service account (PL-18, PF-39, T-2783).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: navstevnost
+  namespace: bbsk
+  title:
+    sk: Návštevnosť ubytovacích zariadení kraja a okresov
+    en: Visitors to accommodation in the region and its districts
+spec:
+  class: auto
+  # Monthly data, published with a delay; one read a day finds a new month the day it appears (PL-26).
+  period: 24h
+  schedule: '29 4 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: susr-cr3802mr }
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

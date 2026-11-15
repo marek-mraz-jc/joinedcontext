@@ -1,0 +1,52 @@
+{{- /*
+  T-5931: a plain GET of an Endpoint WebSocket (`/api/endpoint/{slug}/ws`) answers 426, and RFC
+  9110 15.5.22 wants that answer to name the protocol in an `Upgrade` header. The gateway sends
+  it, but `Upgrade` is hop-by-hop (RFC 9110 7.6.1, 7.8): the mesh's HTTP/2 hop and Traefik's
+  reverse proxy each drop it from every answer that is not a 101. Only the hop facing the client
+  can say it, so Traefik sets it again on these paths and on no other. An HTTP/2 client never
+  sees it (RFC 9113 8.2.2 forbids the field), an HTTP/1.1 client does. The route mirrors the
+  edge Ingress (same certificate, TLS option and APISIX Service); its longer rule wins over the
+  Ingress's `/` rule for these paths only.
+*/}}
+{{- $edge := .Values.edge }}
+{{- if and $edge.enabled $edge.websocketHosts (eq $edge.ingressClass "traefik") }}
+{{- $hosts := list }}
+{{- range $edge.websocketHosts }}
+{{- $hosts = append $hosts (printf "Host(`%s`)" .) }}
+{{- end }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: endpoint-ws-upgrade
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "configuration.labels" . | nindent 4 }}
+spec:
+  headers:
+    customResponseHeaders:
+      Upgrade: websocket
+      Connection: Upgrade
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: endpoint-ws
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "configuration.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: {{ printf "(%s) && PathRegexp(`^/api/endpoint/[^/]+/ws$`)" (join " || " $hosts) | quote }}
+      middlewares:
+        - name: endpoint-ws-upgrade
+      services:
+        - name: apisix-gateway
+          port: 80
+  tls:
+    secretName: {{ $edge.secretName | quote }}
+    options:
+      name: bsi-tr-02102
+{{- end }}

@@ -1,0 +1,44 @@
+# Identity card applications received: one public dataset of the hub (T-5274), item a47a1cfe30894a90b61c945e2a0ddf93, written by the statistics-okresy pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-pocet-prijatych-ziadosti-obcianskeho-preukazu
+  namespace: bratislava
+  title:
+    sk: Počet prijatých žiadostí o vydanie občianskeho preukazu
+    en: Identity card applications received
+  description:
+    sk: 'Ukazovatele tabuľky „Počet prijatých žiadostí o vydanie občianskeho preukazu“ z data.bratislava.sk, jeden na okres Bratislava I až V, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Identity card applications received”, one per okres Bratislava I to V, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: e66xk5e5d5sw7i7ydx44kh7kvkpohfup
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-pocet-prijatych-ziadosti-obcianskeho-preukazu
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [GOVE]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/a47a1cfe30894a90b61c945e2a0ddf93
+        title:
+          sk: Počet prijatých žiadostí o vydanie občianskeho preukazu
+          en: Identity card applications received
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet prijatých žiadostí o vydanie občianskeho preukazu. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Identity card applications received. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-okresy }

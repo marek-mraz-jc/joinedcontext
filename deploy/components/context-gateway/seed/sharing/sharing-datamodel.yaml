@@ -1,0 +1,12 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: sharing-bikes
+  namespace: sharing
+  title: { en: Sharing probe }
+spec:
+  contextSpaceRef: sharing-bikes
+  linkml: ./sharing-bikes.linkml.yaml
+  version: 0.1.0
+  lifecycle: draft
+  classes: []

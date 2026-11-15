@@ -1,0 +1,16 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: citybikes-gbfs-info
+  namespace: helsinki
+  title:
+    en: City bike station names and positions, daily
+spec:
+  class: auto
+  period: 24h
+  schedule: '0 4 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: hsl-citybikes-gbfs-info }
+  # Every stream writes through the one endpoint that evaluates the pipelines-write Policy.
+  targetEndpoint: urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all
+  quotas: { maxMemoryMb: 64, cpuMillicores: 100 }

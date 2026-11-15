@@ -1,0 +1,14 @@
+# The operator's own GBFS feed, open, no credential: what every station holds right now.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hsl-citybikes-gbfs
+  namespace: helsinki
+  title: { en: City bike station status (GBFS), fi: Kaupunkipyöräasemien tila (GBFS) }
+spec:
+  type: http
+  http:
+    url: https://gbfs.theta.fifteen.eu/gbfs/2.2/helsinki/en/station_status.json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 15s

@@ -1,0 +1,21 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: ornamental-fountains
+  namespace: barcelona
+  title:
+    ca: Fonts ornamentals de Barcelona, cada setmana
+    es: Fuentes ornamentales de Barcelona, cada semana
+    en: Barcelona ornamental fountains, weekly
+spec:
+  class: auto
+  # The city publishes a new file each March; a weekly run renews each fountain's three-week
+  # expiresAt and picks up the new file within a week of its upload.
+  schedule: '40 5 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-ornamental-fountains }
+  targetEndpoint: urn:ngsi-ld:Endpoint:barcelona.cat:barcelona:barcelona
+  # Upsert: a fountain the file drops leaves by its expiresAt, three weeks after its last listing.
+  output: { type: PointOfInterest, mode: upsert }
+  # A file under 300 kB, read whole.
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

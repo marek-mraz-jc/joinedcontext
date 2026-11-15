@@ -1,0 +1,56 @@
+# One Smart Data Model type per catalogue dataset (T-4344): Event of the space
+# banskabystrica-verejne, read through its own Policy, which narrows the space's public read to these types.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: banskabystrica-podujatia
+  namespace: banskabystrica
+  title: { sk: Podujatia — Banská Bystrica, en: Events — Banská Bystrica }
+  description:
+    sk: 'Podujatia mesta s miestom a časom konania. Zdroj: Mesto Banská Bystrica, CC BY 4.0.'
+    en: "The city's events with their place and time. Source: the City of Banská Bystrica, CC BY 4.0."
+spec:
+  contextSpaceRef: banskabystrica-verejne
+  slug: l3nomvl5q7kikgdhhy4xiq5ofwjp4mfk
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:podujatia-read
+  # facets: the dataset page's builder draws a Town and a Genre select from these (EP-178, T-6768).
+  facets: [address.addressLocality, eventCategory]
+  # ical: the calendars a person subscribes to, /api/endpoint/{slug}/ical/v1/{name}.ics, one per output of
+  # representations.ical (EP-125, EP-159).
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp, ical]
+  representations:
+    ical:
+      - name: vsetky
+        title: { sk: Všetky podujatia v Banskej Bystrici, en: All events in Banská Bystrica }
+        lang: sk
+        timezone: Europe/Bratislava
+        sources:
+          - type: Event
+            preset: sdm-event
+            mapping:
+              SUMMARY:
+                firstOf: [name, type]
+              LAST-MODIFIED: dateModified
+              CATEGORIES: eventCategory
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: banskabystrica }
+      license: cc-by
+  catalog:
+    # The publisher and contact desk are the Project's spec.catalog, its registry IRI (T-4596).
+    # Aggregates of public facilities and readings: no record names a person (T-4596).
+    personalData: does-not-contain
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Mesto Banská Bystrica, CC BY 4.0'
+      en: 'Source: City of Banská Bystrica, CC BY 4.0'
+    themes: [SOCI, EDUC]
+    keywords:
+      sk: [podujatia, kultúra, Banská Bystrica]
+      en: [events, culture, Banská Bystrica]
+    spatial:
+      - SK032
+      - https://data.gov.sk/id/lau2/SK0321508438
+    frequency: DAILY
+    pipelineRef: { kind: Pipeline, name: podujatia }

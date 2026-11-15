@@ -1,0 +1,20 @@
+# The demo sensors' door (T-4857): the organization reads it, nothing publishes it, and the
+# pipeline mqtt-ovzdusie writes through it.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: senzory
+  namespace: banskabystrica
+  title: { sk: Ukážkové senzory ovzdušia, en: Demo air sensors }
+  description:
+    sk: Testovacie merania ukážkových senzorov cez MQTT; nie sú to údaje mesta.
+    en: Test readings of the demo sensors over MQTT; not city data.
+spec:
+  contextSpaceRef: senzory
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:banskabystrica.sk:senzory:senzory-pipelines-write
+    - urn:ngsi-ld:Policy:banskabystrica.sk:senzory:senzory-steward-read
+  slug: yo6wz4xydtpgfhqi7ivj3ixqgxhzjuim
+  audience: organization
+  enabledRepresentations: [ngsi-ld, mcp, ogc-features, websocket]

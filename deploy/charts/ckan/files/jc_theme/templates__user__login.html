@@ -1,0 +1,11 @@
+{% ckan_extends %}
+
+{# Why the last single sign-on failed, above everything else on the page (T-2888):
+   `ckanext-oidc-pkce` keeps its reason in the session and shows it nowhere. #}
+{% block primary_content %}
+  {% set sso_error = h.jc_sso_error() %}
+  {% if sso_error %}
+    <div class="alert alert-danger jc-sso-error" role="alert">{{ sso_error }}</div>
+  {% endif %}
+  {{ super() }}
+{% endblock %}

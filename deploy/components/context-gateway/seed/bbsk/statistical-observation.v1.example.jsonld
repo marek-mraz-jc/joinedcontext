@@ -1,0 +1,21 @@
+{
+  "@context": [
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld",
+    "statistical-observation.v1.context.jsonld"
+  ],
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kraj:zp3803rs-SK032-2023-PROD_TONY-1",
+  "type": "KeyPerformanceIndicator",
+  "dataSet": { "type": "Property", "value": "zp3803rs" },
+  "indicator": { "type": "Property", "value": "PROD_TONY" },
+  "refArea": { "type": "Property", "value": "SK032" },
+  "refPeriod": { "type": "Property", "value": "2023" },
+  "dimensionKey": { "type": "Property", "value": "1" },
+  "kpiValue": { "type": "Property", "value": 5354.3, "unitCode": "TNE" },
+  "unitText": { "type": "Property", "value": "v tonách" },
+  "source": {
+    "type": "Property",
+    "value": "https://data.statistics.sk/api/v2/dataset/zp3803rs/SK032/2023/PROD_TONY/1?lang=sk&type=json"
+  },
+  "dateObserved": { "type": "Property", "value": "2025-10-31T00:00:00Z" },
+  "observedAt": { "type": "Property", "value": "2025-10-31T00:00:00Z" }
+}

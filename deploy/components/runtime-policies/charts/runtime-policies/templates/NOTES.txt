@@ -1,0 +1,5 @@
+Kyverno runtime policies deployed.
+
+  Operator policies (CNPG/Strimzi label protection): {{ .Values.operators.enabled }}
+  Linkerd mesh policies:                             {{ .Values.linkerd.enabled }}
+  Pod Security Standards, scoped to:                 {{ .Values.podSecurity.namespaces | join ", " | default "(nothing — not rendered)" }}

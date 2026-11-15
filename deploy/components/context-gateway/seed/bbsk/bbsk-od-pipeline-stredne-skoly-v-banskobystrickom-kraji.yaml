@@ -1,0 +1,24 @@
+# One Organization per row of "Stredné školy v Banskobystrickom kraji" (T-4255); schools as schema.org organizations.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-stredne-skoly-v-banskobystrickom-kraji
+  namespace: bbsk
+  title:
+    sk: Stredné školy v Banskobystrickom kraji
+    en: Stredné školy v Banskobystrickom kraji
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 56 3 * * 5
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-stredne-skoly-v-banskobystrickom-kraji
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: Organization
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

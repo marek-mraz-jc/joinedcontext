@@ -1,0 +1,45 @@
+# The summer street cleaning areas and dates that TSK hl. m. Prahy maps on the IPR geoportal (T-5677), one RoadSegment per record of the space praha-mesto, read through its own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-letni-udrzba
+  namespace: praha
+  title: { cs: Blokové čištění ulic — Praha, en: Street cleaning dates — Prague }
+  description:
+    cs: 'Letní údržba komunikací: plochy ulic a termíny blokového čištění, kdy jsou zaparkovaná vozidla odtahována. Zdroj: TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0.'
+    en: 'Summer street maintenance: the street areas and the days of the block cleaning, when parked cars are towed away. Source: TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: 7ayxsruulwetkphvajl2j6c2leegqrqe
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-letni-udrzba
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Streets and their maintenance: no record names a person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha, TSK hl. m. Prahy (CC BY 4.0)'
+      en: 'Source: data © IPR Praha, TSK hl. m. Prahy (CC BY 4.0)'
+    themes: [TRAN]
+    keywords:
+      cs: [Praha, blokové čištění, úklid ulic, odtah, parkování]
+      en: [Prague, street cleaning, towing, parking]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: IRREG
+    source:
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/DOP_CUR_DOP_TSK_LU_TERMINY_P/FeatureServer/0?f=json
+        title:
+          cs: Letní údržba komunikací TSK (IPR Praha)
+          en: TSK summer street cleaning dates (IPR Praha)
+        description:
+          cs: Termíny letní údržby (blokového čištění) komunikací TSK z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha, TSK hl. m. Prahy.
+          en: The TSK summer street cleaning dates from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha, TSK hl. m. Prahy.

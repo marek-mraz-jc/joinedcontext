@@ -1,0 +1,19 @@
+# One WasteContainer per sensor-monitored container of `golemio-waste-containers`, its fill level
+# and the collection point it stands at (T-2907).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: waste-fill
+  namespace: praha
+  title: { en: Waste container fill levels }
+spec:
+  class: auto
+  # The sensors report a few times a day; hourly keeps the last reading without refetching 7 MB
+  # for nothing.
+  period: 1h
+  schedule: '20 * * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: golemio-waste-containers }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: WasteContainer, mode: upsert }
+  quotas: { maxMemoryMb: 256, cpuMillicores: 100 }

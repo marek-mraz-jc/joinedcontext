@@ -1,0 +1,92 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "CycleRoute": {
+      "@id": "jc:CycleRoute"
+    },
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "alps": {
+      "@id": "jc:alps"
+    },
+    "ctt": {
+      "@id": "jc:ctt"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "dlzka": {
+      "@id": "jc:dlzka",
+      "@type": "xsd:float"
+    },
+    "fName": {
+      "@id": "jc:fName"
+    },
+    "fNazov": {
+      "@id": "jc:fNazov"
+    },
+    "farba": {
+      "@id": "jc:farba"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "id": "@id",
+    "isPartOf": {
+      "@id": "jc:isPartOf",
+      "@type": "xsd:anyURI"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "layer": {
+      "@id": "jc:layer"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "name": {
+      "@id": "sdm:name"
+    },
+    "nazov": {
+      "@id": "jc:nazov"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "obnRok": {
+      "@id": "jc:obnRok"
+    },
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "povrch": {
+      "@id": "jc:povrch"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "sourceId": {
+      "@id": "jc:sourceId"
+    },
+    "spr": {
+      "@id": "jc:spr"
+    },
+    "spravca": {
+      "@id": "jc:spravca"
+    },
+    "stav": {
+      "@id": "jc:stav"
+    },
+    "typ": {
+      "@id": "jc:typ"
+    },
+    "type": "@type",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "zdroj": {
+      "@id": "jc:zdroj"
+    }
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

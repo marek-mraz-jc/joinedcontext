@@ -1,0 +1,79 @@
+# The mapping of the scitace pipeline (T-5232): one TrafficFlowObserved per active traffic counter
+# of the city, with the vehicles it counted and their mean speed in the last full hour, as the
+# city's open data portal buckets them (opendata.zilina.sk dataset 182 "Počet vozidiel za hodinu").
+#
+# The DataSource's answer (the portal's parking summary) is only the health check that starts the
+# run. The counters come from the portal's item register, class TrafficCounter (56 on 2026-10-22,
+# 4 of them disabled); each active one is then asked for its hourly buckets from the start of the
+# previous hour to the start of this one. Both calls carry a JSON body, which a DataSource cannot.
+# Calls go one a second (rate limit zilina_opendata, pipeline-runner/streams/resources.yaml) to
+# opendata.zilina.sk only, 30 s each; at most 100 counters a run.
+#
+# Ids: urn:ngsi-ld:TrafficFlowObserved:zilina.sk:{space}:invipo-{counter id}, the portal's 24-hex
+# id. intensity and averageVehicleSpeed carry the hour's end as observedAt, so the space records
+# one row per hour and none for a rerun of the same hour (record: observed).
+#
+# Failure: a counter register that does not answer, or answers no counter, fails the run before
+# anything is written. A counter whose own hour does not answer (a 422 or 5xx), or has no bucket
+# for the hour yet, is left out: its entity keeps the hour before.
+
+pipeline:
+  processors:
+    # One failure skips every later step for the message, so a refused register reaches the
+    # runner as a failed run instead of an empty one (Bento runs later processors on an errored
+    # message otherwise).
+    - try:
+        - mapping: |
+            root = if this.free.type() != "number" { throw("the portal did not answer its health check") } else { {"classes": "TrafficCounter"} }
+        - http:
+            url: https://opendata.zilina.sk/api/datasets/v1/core/geojson/items
+            verb: POST
+            headers:
+              Content-Type: application/json
+              User-Agent: joinedcontext-zilina/1.0 (+https://dev.joinedcontext.com)
+            timeout: 30s
+            retries: 1
+            rate_limit: zilina_opendata
+        - mapping: |
+            root = if content().length() > 2097152 { throw("the portal answered %v bytes; more than 2097152 is not the counter register".format(content().length())) } else { this }
+        - mapping: |
+            let counters = this.or([]).filter(f -> f.properties.item.class.or("") == "TrafficCounter" && f.properties.item.operatingStatus.or("") == "Active" && f.properties.item.id.or("").string().re_match("^[0-9a-f]{24}$") && f.geometry.coordinates.type() == "array" && f.geometry.coordinates.length() == 2)
+            let hour = (now().ts_unix() / 3600).floor() * 3600
+            root = if $counters.length() == 0 { throw("the portal listed no active traffic counter") } else { $counters.slice(0, 100).map_each(f -> {
+              "item": f.properties.item,
+              "where": f.geometry.coordinates,
+              "from": ($hour - 3600).ts_format("2006-01-02T15:04:05.000Z", "UTC"),
+              "to": $hour.ts_format("2006-01-02T15:04:05.000Z", "UTC")
+            }) }
+        - unarchive: { format: json_array }
+        - branch:
+            request_map: 'root = { "from": this.from, "to": this.to, "itemId": this.item.id }'
+            processors:
+              - http:
+                  url: https://opendata.zilina.sk/api/datasets/v1/traffic-counters/vehicles/hourly
+                  verb: POST
+                  headers:
+                    Content-Type: application/json
+                    User-Agent: joinedcontext-zilina/1.0 (+https://dev.joinedcontext.com)
+                  timeout: 30s
+                  rate_limit: zilina_opendata
+              - mapping: |
+                  root = if content().length() > 262144 { throw("the portal answered %v bytes; more than 262144 is not one counter's hour".format(content().length())) } else { this }
+              # A counter whose own hour is refused answers no bucket instead of failing the run.
+              - catch:
+                  - mapping: root = []
+            result_map: root.hourly = this
+        - mapping: |
+            let bucket = this.hourly.or([]).filter(b -> b.timestamp.or("").string().ts_parse("2006-01-02T15:04:05.000Z").catch(null) == this.from.ts_parse("2006-01-02T15:04:05.000Z") && b.count.type() == "number" && b.count >= 0).index(0).catch(null)
+            root = if $bucket == null { deleted() } else { {
+              "id": "urn:ngsi-ld:%v:%v:%v:invipo-%v".format("TrafficFlowObserved", "zilina.sk", env("JC_SPACE"), this.item.id),
+              "type": "TrafficFlowObserved",
+              "name": { "type": "LanguageProperty", "languageMap": { "sk": this.item.name.or("").string() } },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": this.where } },
+              "intensity": { "type": "Property", "value": $bucket.count.round(), "observedAt": this.to.ts_parse("2006-01-02T15:04:05.000Z").ts_format("2006-01-02T15:04:05Z", "UTC") },
+              "averageVehicleSpeed": if $bucket.speed.type() == "number" && $bucket.speed >= 0 { { "type": "Property", "value": ($bucket.speed * 10).round() / 10, "unitCode": "KMH", "observedAt": this.to.ts_parse("2006-01-02T15:04:05.000Z").ts_format("2006-01-02T15:04:05Z", "UTC") } } else { null },
+              "dateObservedFrom": { "type": "Property", "value": this.from.ts_parse("2006-01-02T15:04:05.000Z").ts_format("2006-01-02T15:04:05Z", "UTC") },
+              "dateObservedTo": { "type": "Property", "value": this.to.ts_parse("2006-01-02T15:04:05.000Z").ts_format("2006-01-02T15:04:05Z", "UTC") },
+              "dataProvider": { "type": "Property", "value": "Mesto Žilina, ODbL" },
+              "source": { "type": "Property", "value": "https://opendata.zilina.sk/sk/dataset-list/detail/182" }
+            }.filter(kv -> kv.value != null) }

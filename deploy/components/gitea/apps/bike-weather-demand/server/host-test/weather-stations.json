@@ -1,0 +1,1 @@
+[{"id": "urn:ngsi-ld:WeatherObserved:w1", "type": "WeatherObserved", "location": {"type": "Point", "coordinates": [24.94, 60.17]}}, {"id": "urn:ngsi-ld:WeatherObserved:w2", "type": "WeatherObserved", "location": {"type": "Point", "coordinates": [25.6, 60.4]}}]

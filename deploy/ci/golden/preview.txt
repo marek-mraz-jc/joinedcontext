@@ -1,0 +1,10 @@
+apps/v1/Deployment pv-fix-login/portal
+apps/v1/Deployment pv-fix-login/portal-ui
+networking.k8s.io/v1/Ingress pv-fix-login/preview
+networking.k8s.io/v1/NetworkPolicy pv-fix-login/default-deny
+networking.k8s.io/v1/NetworkPolicy pv-fix-login/preview
+v1/LimitRange pv-fix-login/preview
+v1/Namespace -/pv-fix-login
+v1/ResourceQuota pv-fix-login/preview
+v1/Service pv-fix-login/portal
+v1/Service pv-fix-login/portal-ui

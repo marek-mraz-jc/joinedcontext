@@ -1,0 +1,4 @@
+---
+observability:
+  collector:
+    chart: ../../charts/workload

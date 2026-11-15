@@ -1,0 +1,16 @@
+# Stage reads prod's public Endpoint susr-nu-odvetvia for what stage does not hold yet (T-6545).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSourceRegistration
+metadata:
+  name: prod-susr-nu-odvetvia
+  namespace: slovensko
+  title: Prod susr-nu-odvetvia
+spec:
+  contextSpaceRef: susr-nu-odvetvia
+  endpoint: https://api.smartcity.joinedcontext.com/api/endpoint/xe336h6hvltlyatay2dxc4cyncl77mzk
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator
+  mode: auxiliary
+  operations: [retrieveOps]
+  federation: { identity: anonymous }

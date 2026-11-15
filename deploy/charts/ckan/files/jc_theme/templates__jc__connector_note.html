@@ -1,0 +1,11 @@
+{# The note that an assistant seldom uses the connector unasked (T-4735): its name in the question,
+   an example to copy, and why the name matters. `prompt` is the page's example question. #}
+<div class="jc-connector-note" role="note">
+  <svg class="jc-note-icon" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 9v5M10 6v.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  <div>
+    <p>{{ h.jc_t('connector_note') }}</p>
+    <p class="jc-note-prompt"><q id="jc-note-prompt">{{ prompt }}</q>
+      <button type="button" class="btn btn-default" data-jc-copy="jc-note-prompt" data-jc-copied="{{ h.jc_t('copied') }}" data-jc-select="{{ h.jc_t('copy_select') }}"><span class="jc-code-copy-label">{{ h.jc_t('copy') }}</span></button></p>
+    <p>{{ h.jc_t('connector_why') }}</p>
+  </div>
+</div>

@@ -1,0 +1,395 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "values of ckan (T-4956: an unknown key is a typo and fails the render)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "nameOverride": {
+      "type": "string"
+    },
+    "fullnameOverride": {
+      "type": "string"
+    },
+    "siteUrl": {
+      "type": "string"
+    },
+    "ckan": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "replicaCount": {
+          "type": "number"
+        },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repository": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "digest": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "type": "string"
+            }
+          }
+        },
+        "plugins": {
+          "type": "string"
+        },
+        "locales": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "default": {
+              "type": "string"
+            },
+            "offered": {
+              "type": "array"
+            }
+          }
+        },
+        "storage": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "size": {
+              "type": "string"
+            },
+            "storageClass": {
+              "type": "string"
+            }
+          }
+        },
+        "sso": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "clientId": {
+              "type": "string"
+            },
+            "issuer": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string"
+            }
+          }
+        },
+        "dcat": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          }
+        },
+        "env": {
+          "type": "object"
+        },
+        "resources": {
+          "type": "object"
+        },
+        "preStopSleepSeconds": {
+          "type": "number"
+        },
+        "meshDrainSeconds": {
+          "type": "number"
+        },
+        "terminationGracePeriodSeconds": {
+          "type": "number"
+        }
+      }
+    },
+    "solr": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repository": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "digest": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "type": "string"
+            }
+          }
+        },
+        "storage": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "size": {
+              "type": "string"
+            },
+            "storageClass": {
+              "type": "string"
+            }
+          }
+        },
+        "heap": {
+          "type": "string"
+        },
+        "resources": {
+          "type": "object"
+        }
+      }
+    },
+    "redis": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repository": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "digest": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "type": "string"
+            }
+          }
+        },
+        "resources": {
+          "type": "object"
+        }
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "port": {
+          "type": "number"
+        },
+        "name": {
+          "type": "string"
+        },
+        "user": {
+          "type": "string"
+        },
+        "datastoreName": {
+          "type": "string"
+        },
+        "secret": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            }
+          }
+        },
+        "datastoreRead": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "user": {
+              "type": "string"
+            },
+            "secret": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "pool": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "size": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxOverflow": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "datastorePool": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "size": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxOverflow": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "session": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            }
+          }
+        },
+        "admin": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "userKey": {
+              "type": "string"
+            },
+            "passwordKey": {
+              "type": "string"
+            },
+            "emailKey": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "apiToken": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "secret": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "harvestSecret": {
+          "type": "string",
+          "minLength": 1
+        },
+        "harvestUser": {
+          "type": "string",
+          "pattern": "^[a-z0-9_-]{2,100}$"
+        }
+      }
+    },
+    "harvest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schedule": {
+          "type": "string"
+        },
+        "datasetsBase": {
+          "type": "string"
+        },
+        "sources": {
+          "type": "array"
+        },
+        "gateway": {
+          "type": "string"
+        }
+      }
+    },
+    "branding": {
+      "type": "object"
+    },
+    "organizations": {
+      "type": "object"
+    },
+    "hidden": {
+      "type": "object"
+    },
+    "assistantWidget": {
+      "type": "string"
+    },
+    "assistantWidgets": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "mapBasemap": {
+      "type": "object"
+    },
+    "assistants": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gemini": {
+          "type": "boolean"
+        },
+        "sources": {
+          "type": "array"
+        }
+      }
+    },
+    "podSecurityContext": {
+      "type": "object"
+    },
+    "securityContext": {
+      "type": "object"
+    },
+    "serviceMesh": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "vizOrigin": {
+      "type": "string"
+    },
+    "global": {
+      "type": "object"
+    }
+  }
+}

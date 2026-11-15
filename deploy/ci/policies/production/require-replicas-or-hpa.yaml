@@ -1,0 +1,37 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-minimum-replicas
+  annotations:
+    policies.kyverno.io/title: Require Minimum 2 Replicas
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/minversion: 1.8.0
+    policies.kyverno.io/subject: Deployment
+    policies.kyverno.io/scored: 'false'
+    policies.kyverno.io/description: >-
+      Production Deployments should run at least 2 replicas to tolerate a single pod
+      failure or rolling update without a service interruption. This policy validates
+      that `spec.replicas` is set to 2 or more. It is marked as unscored (warning only)
+      because a Deployment managed by a HorizontalPodAutoscaler may legitimately declare
+      fewer static replicas; in that case the HPA controls the actual running count.
+      StatefulSets and DaemonSets are excluded: DaemonSets run one pod per node by
+      design, and StatefulSet replica counts depend on the specific workload requirements.
+spec:
+  background: true
+  rules:
+    - name: require-minimum-replicas
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+      validate:
+        failureAction: Audit
+        message: >-
+          Deployments must have at least 2 replicas for high availability. If this
+          Deployment is managed by an HPA, this warning can be ignored.
+        pattern:
+          spec:
+            replicas: '>=2'

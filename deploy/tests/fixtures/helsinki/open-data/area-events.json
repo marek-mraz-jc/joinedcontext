@@ -1,0 +1,179 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "id": "Tapahtumat_alue.86",
+   "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [
+     [
+      [
+       [
+        24.921817,
+        60.16009903
+       ],
+       [
+        24.922361,
+        60.16042003
+       ],
+       [
+        24.922416,
+        60.16012803
+       ],
+       [
+        24.921817,
+        60.16009903
+       ]
+      ]
+     ]
+    ]
+   },
+   "geometry_name": "singlegeom",
+   "properties": {
+    "id": 86,
+    "hakemus": "Tapahtuma",
+    "hakemuksen_laji": "Ulkoilmatapahtuma",
+    "hakemustunnus": "TP2600842",
+    "nimi": "Helsinki Security Forum",
+    "rakentaminen_alkaa": null,
+    "tapahtuma_alkaa": "2026-10-02",
+    "tapahtuma_paattyy": "2026-10-04",
+    "purkaminen_paattyy": null,
+    "tapahtuman_luonne": "Suljettu",
+    "tapahtuman_www_sivu": "https://helsinkisecurityforum.fi/",
+    "osoite": "Tyynenmerenkatu 2",
+    "kaupunginosa": "20 LÄNSISATAMA",
+    "status": "Tuleva",
+    "hakija": "",
+    "geometrytype": "ST_Polygon",
+    "rakentaminen_alkaa_txt": null,
+    "tapahtuma_alkaa_txt": "02.10.2026",
+    "tapahtuma_paattyy_txt": "04.10.2026",
+    "purkaminen_paattyy_txt": null
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "Tapahtumat_alue.9",
+   "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [
+     [
+      [
+       [
+        24.89233,
+        60.20103003
+       ],
+       [
+        24.893384,
+        60.20111803
+       ],
+       [
+        24.893703,
+        60.20027703
+       ],
+       [
+        24.892639,
+        60.20017803
+       ],
+       [
+        24.89233,
+        60.20103003
+       ]
+      ]
+     ]
+    ]
+   },
+   "geometry_name": "singlegeom",
+   "properties": {
+    "id": 9,
+    "hakemus": "Tapahtuma",
+    "hakemuksen_laji": "Ulkoilmatapahtuma",
+    "hakemustunnus": "TP2501124",
+    "nimi": "Liikuntaleikki, Lasten liikunta 2-7 -vuotiaille",
+    "rakentaminen_alkaa": null,
+    "tapahtuma_alkaa": "2026-05-04",
+    "tapahtuma_paattyy": "2026-10-05",
+    "purkaminen_paattyy": null,
+    "tapahtuman_luonne": "Avoin",
+    "tapahtuman_www_sivu": null,
+    "osoite": "Pikku Huopalahden puisto",
+    "kaupunginosa": "16 RUSKEASUO",
+    "status": "Käynnissä",
+    "hakija": "",
+    "geometrytype": "ST_Polygon",
+    "rakentaminen_alkaa_txt": null,
+    "tapahtuma_alkaa_txt": "04.05.2026",
+    "tapahtuma_paattyy_txt": "05.10.2026",
+    "purkaminen_paattyy_txt": null
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "Tapahtumat_alue.54",
+   "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [
+     [
+      [
+       [
+        24.952684,
+        60.16284303
+       ],
+       [
+        24.95335,
+        60.16283703
+       ],
+       [
+        24.95336,
+        60.16225803
+       ],
+       [
+        24.952685,
+        60.16228003
+       ],
+       [
+        24.952684,
+        60.16284303
+       ]
+      ]
+     ]
+    ]
+   },
+   "geometry_name": "singlegeom",
+   "properties": {
+    "id": 54,
+    "hakemus": "Tapahtuma",
+    "hakemuksen_laji": "Ulkoilmatapahtuma",
+    "hakemustunnus": "TP2600625",
+    "nimi": "Melter railjam - Tähtitorninmäki",
+    "rakentaminen_alkaa": "2026-09-25",
+    "tapahtuma_alkaa": "2026-09-26",
+    "tapahtuma_paattyy": "2026-09-26",
+    "purkaminen_paattyy": "2026-09-27",
+    "tapahtuman_luonne": "Avoin",
+    "tapahtuman_www_sivu": "",
+    "osoite": "Tähtitorninvuori",
+    "kaupunginosa": "7 ULLANLINNA",
+    "status": "Rakentaminen käynnissä",
+    "hakija": "",
+    "geometrytype": "ST_Polygon",
+    "rakentaminen_alkaa_txt": "25.09.2026",
+    "tapahtuma_alkaa_txt": "26.09.2026",
+    "tapahtuma_paattyy_txt": "26.09.2026",
+    "purkaminen_paattyy_txt": "27.09.2026"
+   }
+  }
+ ],
+ "totalFeatures": 152,
+ "numberMatched": 152,
+ "numberReturned": 3,
+ "timeStamp": "2026-09-25T05:12:19.763Z",
+ "crs": {
+  "type": "name",
+  "properties": {
+   "name": "urn:ogc:def:crs:EPSG::4326"
+  }
+ }
+}

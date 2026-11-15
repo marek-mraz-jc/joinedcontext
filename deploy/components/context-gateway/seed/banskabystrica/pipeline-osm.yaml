@@ -1,0 +1,22 @@
+# The district's pharmacies, hospitals, clinics, public defibrillators and charging stations from
+# OpenStreetMap, one PointOfInterest or EVChargingStation per OSM object, into the city's public
+# space once a week (T-4514). Current state only: an entity is overwritten in place, and an
+# object gone from the map is deleted by the mapping itself (verejne-osm-delete).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: osm
+  namespace: banskabystrica
+  title:
+    sk: Zdravotníctvo a nabíjanie z OpenStreetMap
+    en: Health places and charging from OpenStreetMap
+spec:
+  class: auto
+  period: 168h
+  # Monday before dawn: Overpass is least busy, and a week is as fresh as the map needs.
+  schedule: '23 3 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: osm-overpass }
+  targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:banskabystrica-verejne:banskabystrica-verejne
+  output: { type: PointOfInterest, mode: replace }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

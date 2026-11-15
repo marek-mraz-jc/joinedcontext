@@ -1,0 +1,98 @@
+# Helsinki area statistics, employment (T-5258): the KeyPerformanceIndicator entities of the
+# statistics pipeline whose id carries the theme `employment`, one per indicator and area, the newest
+# period as the value and every period since the first run in the history.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-statistics-employment
+  namespace: helsinki
+  title:
+    fi: Työmarkkinat — Helsingin aluesarjat
+    sv: Arbetsmarknad — Helsingfors områdesserier
+    en: Employment — Helsinki area statistics
+  description:
+    fi: 'Helsingin aluesarjojen tilastot: työttömät ja työttömyysaste, kuukausittainen työttömyys, työpaikat ja työllinen työvoima; kaupungin, suurpiirien, peruspiirien ja osa-alueiden tasolla. Yksi Smart Data Models KeyPerformanceIndicator kutakin tunnuslukua ja aluetta kohden. Lähde: Helsingin kaupunki, kaupunkitutkimus ja -tilastot (Aluesarjat), CC BY 4.0.'
+    sv: 'Helsingfors områdesserier: arbetslösa och arbetslöshetsgrad, månatlig arbetslöshet, arbetsplatser och sysselsatt arbetskraft; för staden, stordistrikten, distrikten och delområdena. En Smart Data Models KeyPerformanceIndicator per nyckeltal och område. Källa: Helsingfors stad, stadsforskning och statistik (Aluesarjat), CC BY 4.0.'
+    en: 'Helsinki area statistics: the unemployed and the unemployment rate, monthly unemployment, jobs and the employed labour force; for the city, its major districts, basic districts and sub-districts. One Smart Data Models KeyPerformanceIndicator per indicator and area, the newest period as kpiValue and the earlier periods in its history. Properties beyond the model: districtCode (the code of the area in the statistics of the city), divisionLevel (city, majorDistrict, basicDistrict, subDistrict or cityPart), refArea (the AdministrativeArea of the sub-district), statisticsTable and dimensionKey (the source table and cell). Source: City of Helsinki, Urban Research and Statistics (Aluesarjat), CC BY 4.0.'
+spec:
+  contextSpaceRef: helsinki
+  slug: yvvjivtkvjt7bitgrg34s442gerqo4k2
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-statistics-employment
+  # The NGSI-LD door also answers the temporal API, the series per indicator. An indicator has
+  # no geometry of its own: OGC API Features serves it as a feature without one.
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Helsingin kaupunki, kaupunkitutkimus ja -tilastot (Aluesarjat), CC BY 4.0'
+      sv: 'Källa: Helsingfors stad, stadsforskning och statistik (Aluesarjat), CC BY 4.0'
+      en: 'Source: City of Helsinki, Urban Research and Statistics (Aluesarjat), CC BY 4.0'
+    themes: [ECON, REGI]
+    keywords:
+      fi: [työttömyys, työpaikat, aluesarjat]
+      sv: [arbetslöshet, arbetsplatser, områdesserier]
+      en: [unemployment, jobs, area statistics]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: MONTHLY
+    source:
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__tyo__tyom/alu_tyom_003t.px/
+        title: { fi: Aluesarjat alu_tyom_003t, en: Area statistics table alu_tyom_003t }
+        description:
+          fi: Työttömät ja työttömyysaste
+          en: Unemployed and unemployment rate in Helsinki, Espoo, Vantaa and Kauniainen by gender 31.12.2000-
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__tyo__tyom/alu_tyom_040k.px/
+        title: { fi: Aluesarjat alu_tyom_040k, en: Area statistics table alu_tyom_040k }
+        description:
+          fi: Työttömyystietoja kuukausittain (KEHA-keskus)
+          en: Monthly unemployment figures for the Helsinki region (KEHA Centre)
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__tyo__tyop/alu_tyop_003y.px/
+        title: { fi: Aluesarjat alu_tyop_003y, en: Area statistics table alu_tyop_003y }
+        description:
+          fi: Pääkaupunkiseudun työpaikat (alueella työssäkäyvät)
+          en: Workplaces (employees in the area) in Helsinki, Espoo, Vantaa and Kauniainen by the industry classification 2008-
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__tyo__tyov/alu_tyov_004d.px/
+        title: { fi: Aluesarjat alu_tyov_004d, en: Area statistics table alu_tyov_004d }
+        description:
+          fi: Työllinen työvoima
+          en: Labour force living in Helsinki, Espoo, Vantaa and Kauniainen by gender and age 31.12.1999-
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__tyo__tyom/alu_tyom_003s.px/
+        title: { fi: Aluesarjat alu_tyom_003s, en: Area statistics table alu_tyom_003s }
+        description:
+          fi: Väestö
+          en: Population of Helsinki, Espoo, Vantaa and Kauniainen by primary occupation, gender and age
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__tyo__tyom/alu_tyom_003v.px/
+        title: { fi: Aluesarjat alu_tyom_003v, en: Area statistics table alu_tyom_003v }
+        description:
+          fi: Uudenmaan väestö
+          en: Population of Uusimaa by main activity, age and sex 31.12.2001-
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__tyo__tyom/alu_tyom_003x.px/
+        title: { fi: Aluesarjat alu_tyom_003x, en: Area statistics table alu_tyom_003x }
+        description:
+          fi: '15 vuotta täyttäneet'
+          en: Population of the Helsinki region by level of education, primary occupation, gender and na
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__tyo__tyop/alu_tyop_004a.px/
+        title: { fi: Aluesarjat alu_tyop_004a, en: Area statistics table alu_tyop_004a }
+        description:
+          fi: Työpaikat
+          en: Jobs in Uusimaa (area employed) by industry (TOL 2008) 31.12.2007-
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__tyo__tyov/alu_tyov_004f.px/
+        title: { fi: Aluesarjat alu_tyov_004f, en: Area statistics table alu_tyov_004f }
+        description:
+          fi: Työllinen työvoima
+          en: Employed work force in the Helsinki region by age and gender
+      - url: https://stat.hel.fi/pxweb/fi/Aluesarjat/Aluesarjat__tyo__tyov/alu_tyov_004g.px/
+        title: { fi: Aluesarjat alu_tyov_004g, en: Area statistics table alu_tyov_004g }
+        description:
+          fi: Työllinen työvoima
+          en: Employed labour force in the Helsinki region by the industry classification, age and gende
+    pipelineRef: { kind: Pipeline, name: statistics }

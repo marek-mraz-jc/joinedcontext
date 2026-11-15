@@ -1,0 +1,46 @@
+{
+  "id": "urn:ngsi-ld:CommitteeSeat:joinedcontext.com:example:1",
+  "type": "CommitteeSeat",
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "isPartOf": {
+    "type": "Property",
+    "value": "https://example.org/isPartOf"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "name": {
+    "type": "Property",
+    "value": "name"
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "pozicia": {
+    "type": "Property",
+    "value": "pozicia"
+  },
+  "poznamka": {
+    "type": "Property",
+    "value": "poznamka"
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/CommitteeSeat/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

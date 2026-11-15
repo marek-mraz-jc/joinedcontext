@@ -1,0 +1,21 @@
+# One Alert per HSL service alert, with the lines and stops it affects, every 60 s; an alert HSL
+# withdraws is deleted on the next refresh (T-3892). Beside the Digitraffic Alerts, which keep
+# their own feed and leave by their expiresAt (T-4823).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: hsl-service-alerts
+  namespace: helsinki
+  title:
+    en: HSL service alerts into the space, every 60 s
+spec:
+  class: auto
+  period: 60s
+  source:
+    dataSourceRef: { kind: DataSource, name: hsl-service-alerts }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: Alert, mode: upsert }
+  quotas:
+    # 21 kB of protobuf; Bento held a few MB over its baseline for it (2026-10-12).
+    maxMemoryMb: 64
+    cpuMillicores: 100

@@ -1,0 +1,62 @@
+---
+# Meshed traffic lands on a pod's Linkerd inbound proxy on 4143, not on the service port, so
+# every ingress rule in networkpolicies.yaml has its mirror here.
+argocd-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/part-of: argocd
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+          namespaceFrom: monitoring.monitoring.prometheusNamespace
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+# Argo CD declares an egress policy, so its proxies need identity (8080), destination (8086)
+# and policy (8090) spelled out.
+argocd-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/part-of: argocd
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+
+apisix-linkerd-egress-to-argocd:
+  componentNamespace: apisix
+  podSelector:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/instance: apisix-apisix
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: argocd-server
+          componentNamespace: gitops
+      ports:
+        - protocol: TCP
+          port: 4143

@@ -1,0 +1,42 @@
+# Students commuting to Bratislava's secondary schools from the surrounding municipalities, 2021: one public dataset of the hub (T-5675), item 3c8cb71485494b7bb629195deb7456b4, written by the statistics-obce pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-dochadzajuci-studenti-zo-zazemia
+  namespace: bratislava
+  title:
+    sk: Počet dochádzajúcich študentov na stredné školy v Bratislave z obcí zo zázemia v roku 2021
+    en: Students commuting to Bratislava's secondary schools from the surrounding municipalities, 2021
+  description:
+    sk: 'Ukazovatele tabuľky „Počet dochádzajúcich študentov na stredné školy v Bratislave z obcí zo zázemia v roku 2021“ z data.bratislava.sk, jeden na obec, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: "The figures of the data.bratislava.sk table “Students commuting to Bratislava's secondary schools from the surrounding municipalities, 2021”, one per municipality, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0."
+spec:
+  contextSpaceRef: bratislava
+  slug: sselluhjxadcmxvw3d5gtxpqgzioskov
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-dochadzajuci-studenti-zo-zazemia
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [EDUC]
+    spatial: [SK010]
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/3c8cb71485494b7bb629195deb7456b4
+        title:
+          sk: Počet dochádzajúcich študentov na stredné školy v Bratislave z obcí zo zázemia v roku 2021
+          en: Students commuting to Bratislava's secondary schools from the surrounding municipalities, 2021
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet dochádzajúcich študentov na stredné školy v Bratislave z obcí zo zázemia v roku 2021. Licencia CC BY 4.0.'
+          en: "A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Students commuting to Bratislava's secondary schools from the surrounding municipalities, 2021. Licence CC BY 4.0."
+    pipelineRef: { kind: Pipeline, name: statistics-obce }

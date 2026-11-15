@@ -1,0 +1,18 @@
+# Every public dataset of the data portal (T-3181, T-3054, AG-114): the CKAN at
+# opendata.dev.joinedcontext.com holds the catalogues of all five bodies (Banská Bystrica, the Banská
+# Bystrica region, Prague, Helsinki and Žilina). The source lists it anonymously with
+# package_search, so a private dataset never reaches it, and indexes each dataset's description
+# and resources with its page as the citation. Read once a night to keep the crawl small.
+apiVersion: joinedcontext.com/v1alpha1
+kind: KnowledgeSource
+metadata:
+  name: data-portal
+  namespace: helsinki
+  title: { en: The data portal's public datasets }
+spec:
+  source: ckan
+  ckanInstanceRef: hel-fi
+  schedule: '20 3 * * *'
+  maxPages: 2000
+  languages: [sk, cs, en, fi]
+  visibility: public

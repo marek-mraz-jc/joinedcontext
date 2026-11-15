@@ -1,0 +1,220 @@
+# The mapping of the pocasie pipeline (PL-03, T-4153): the latest minute of SHMÚ's automatic
+# weather stations in and near Banská Bystrica, from the newest five-minute file of
+# opendata.shmu.sk, one WeatherObserved per station.
+#
+# Stations, from SHMÚ's INSPIRE network of climatological stations (geo.shmu.sk ef-swn-cs, read
+# 2026-10-15; `ind_kli` is the number in its identifier): 11898 Banská Bystrica-Zelená, 2.3 km
+# from the square, and 11894 Donovaly, the resort above the city.
+#
+# Units from aws1min_metadata.json: `t` °C, `tlak` hPa, `vlh_rel` % (0 to 100, published as 0 to 1),
+# `vie_pr_rych` m/s, `vie_vp_smer` degrees, `zra_uhrn` mm per minute. `minuta` is called SEČ, but
+# SHMÚ writes Bratislava wall time minus one hour: UTC+1 in summer, UTC in winter (T-5645: on
+# 2026-10-25, the day CEST ended, global radiation `zglo` at Zelená rose at 06:15 on 10-24 and at
+# 05:15-05:30 on 10-25, with sunrise at about 05:30 UTC both days).
+#
+# TLS: opendata.shmu.sk sends its leaf without the intermediate (`openssl s_client`: verify
+# return code 21). The intermediate is pinned below, the public certificate from the leaf's AIA
+# URL http://crt.sectigo.com/SectigoPublicServerAuthenticationCADVR36.crt (Sectigo Public
+# Server Authentication CA DV R36, SHA-256 8C:54:C3:34:B6:6B:A4:E4:26:77:2A:F4:A3:F9:13:6C:
+# 19:A1:AE:C7:29:FD:B2:8C:53:5C:07:A5:A4:EF:22:E0, valid to 2036-03-21). Verification stays on;
+# ponytail: when SHMÚ changes its CA the run fails with a certificate error, and the fix is the
+# new intermediate here.
+
+pipeline:
+  processors:
+    # The newest day folder, then the newest file in it. Both listings are the server's own
+    # index pages; the names sort by time.
+    - branch:
+        request_map: root = ""
+        processors:
+          - http:
+              url: https://opendata.shmu.sk/meteorology/climate/now/data/
+              verb: GET
+              timeout: 30s
+              retries: 2
+              rate_limit: pipeline_egress
+              tls:
+                enabled: true
+                root_cas: |
+                  -----BEGIN CERTIFICATE-----
+                  MIIGTDCCBDSgAwIBAgIQOXpmzCdWNi4NqofKbqvjsTANBgkqhkiG9w0BAQwFADBf
+                  MQswCQYDVQQGEwJHQjEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMTYwNAYDVQQD
+                  Ey1TZWN0aWdvIFB1YmxpYyBTZXJ2ZXIgQXV0aGVudGljYXRpb24gUm9vdCBSNDYw
+                  HhcNMjEwMzIyMDAwMDAwWhcNMzYwMzIxMjM1OTU5WjBgMQswCQYDVQQGEwJHQjEY
+                  MBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMTcwNQYDVQQDEy5TZWN0aWdvIFB1Ymxp
+                  YyBTZXJ2ZXIgQXV0aGVudGljYXRpb24gQ0EgRFYgUjM2MIIBojANBgkqhkiG9w0B
+                  AQEFAAOCAY8AMIIBigKCAYEAljZf2HIz7+SPUPQCQObZYcrxLTHYdf1ZtMRe7Yeq
+                  RPSwygz16qJ9cAWtWNTcuICc++p8Dct7zNGxCpqmEtqifO7NvuB5dEVexXn9RFFH
+                  12Hm+NtPRQgXIFjx6MSJcNWuVO3XGE57L1mHlcQYj+g4hny90aFh2SCZCDEVkAja
+                  EMMfYPKuCjHuuF+bzHFb/9gV8P9+ekcHENF2nR1efGWSKwnfG5RawlkaQDpRtZTm
+                  M64TIsv/r7cyFO4nSjs1jLdXYdz5q3a4L0NoabZfbdxVb+CUEHfB0bpulZQtH1Rv
+                  38e/lIdP7OTTIlZh6OYL6NhxP8So0/sht/4J9mqIGxRFc0/pC8suja+wcIUna0HB
+                  pXKfXTKpzgis+zmXDL06ASJf5E4A2/m+Hp6b84sfPAwQ766rI65mh50S0Di9E3Pn
+                  2WcaJc+PILsBmYpgtmgWTR9eV9otfKRUBfzHUHcVgarub/XluEpRlTtZudU5xbFN
+                  xx/DgMrXLUAPaI60fZ6wA+PTAgMBAAGjggGBMIIBfTAfBgNVHSMEGDAWgBRWc1hk
+                  lfmSGrASKgRieaFAFYghSTAdBgNVHQ4EFgQUaMASFhgOr872h6YyV6NGUV3LBycw
+                  DgYDVR0PAQH/BAQDAgGGMBIGA1UdEwEB/wQIMAYBAf8CAQAwHQYDVR0lBBYwFAYI
+                  KwYBBQUHAwEGCCsGAQUFBwMCMBsGA1UdIAQUMBIwBgYEVR0gADAIBgZngQwBAgEw
+                  VAYDVR0fBE0wSzBJoEegRYZDaHR0cDovL2NybC5zZWN0aWdvLmNvbS9TZWN0aWdv
+                  UHVibGljU2VydmVyQXV0aGVudGljYXRpb25Sb290UjQ2LmNybDCBhAYIKwYBBQUH
+                  AQEEeDB2ME8GCCsGAQUFBzAChkNodHRwOi8vY3J0LnNlY3RpZ28uY29tL1NlY3Rp
+                  Z29QdWJsaWNTZXJ2ZXJBdXRoZW50aWNhdGlvblJvb3RSNDYucDdjMCMGCCsGAQUF
+                  BzABhhdodHRwOi8vb2NzcC5zZWN0aWdvLmNvbTANBgkqhkiG9w0BAQwFAAOCAgEA
+                  YtOC9Fy+TqECFw40IospI92kLGgoSZGPOSQXMBqmsGWZUQ7rux7cj1du6d9rD6C8
+                  ze1B2eQjkrGkIL/OF1s7vSmgYVafsRoZd/IHUrkoQvX8FZwUsmPu7amgBfaY3g+d
+                  q1x0jNGKb6I6Bzdl6LgMD9qxp+3i7GQOnd9J8LFSietY6Z4jUBzVoOoz8iAU84OF
+                  h2HhAuiPw1ai0VnY38RTI+8kepGWVfGxfBWzwH9uIjeooIeaosVFvE8cmYUB4TSH
+                  5dUyD0jHct2+8ceKEtIoFU/FfHq/mDaVnvcDCZXtIgitdMFQdMZaVehmObyhRdDD
+                  4NQCs0gaI9AAgFj4L9QtkARzhQLNyRf87Kln+YU0lgCGr9HLg3rGO8q+Y4ppLsOd
+                  unQZ6ZxPNGIfOApbPVf5hCe58EZwiWdHIMn9lPP6+F404y8NNugbQixBber+x536
+                  WrZhFZLjEkhp7fFXf9r32rNPfb74X/U90Bdy4lzp3+X1ukh1BuMxA/EEhDoTOS3l
+                  7ABvc7BYSQubQ2490OcdkIzUh3ZwDrakMVrbaTxUM2p24N6dB+ns2zptWCva6jzW
+                  r8IWKIMxzxLPv5Kt3ePKcUdvkBU/smqujSczTzzSjIoR5QqQA6lN1ZRSnuHIWCvh
+                  JEltkYnTAH41QJ6SAWO66GrrUESwN/cgZzL4JLEqz1Y=
+                  -----END CERTIFICATE-----
+        result_map: |
+          meta day = content().string().re_find_all_submatch("href=\"([0-9]{8})/\"").map_each(m -> m.index(1)).sort().slice(-1).index(0).catch("")
+    - mapping: |
+        root = if @day.or("") == "" { throw("the SHMÚ data folder lists no day") } else { "" }
+    - branch:
+        request_map: root = ""
+        processors:
+          - http:
+              url: https://opendata.shmu.sk/meteorology/climate/now/data/${! @day }/
+              verb: GET
+              timeout: 30s
+              retries: 2
+              rate_limit: pipeline_egress
+              tls:
+                enabled: true
+                root_cas: |
+                  -----BEGIN CERTIFICATE-----
+                  MIIGTDCCBDSgAwIBAgIQOXpmzCdWNi4NqofKbqvjsTANBgkqhkiG9w0BAQwFADBf
+                  MQswCQYDVQQGEwJHQjEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMTYwNAYDVQQD
+                  Ey1TZWN0aWdvIFB1YmxpYyBTZXJ2ZXIgQXV0aGVudGljYXRpb24gUm9vdCBSNDYw
+                  HhcNMjEwMzIyMDAwMDAwWhcNMzYwMzIxMjM1OTU5WjBgMQswCQYDVQQGEwJHQjEY
+                  MBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMTcwNQYDVQQDEy5TZWN0aWdvIFB1Ymxp
+                  YyBTZXJ2ZXIgQXV0aGVudGljYXRpb24gQ0EgRFYgUjM2MIIBojANBgkqhkiG9w0B
+                  AQEFAAOCAY8AMIIBigKCAYEAljZf2HIz7+SPUPQCQObZYcrxLTHYdf1ZtMRe7Yeq
+                  RPSwygz16qJ9cAWtWNTcuICc++p8Dct7zNGxCpqmEtqifO7NvuB5dEVexXn9RFFH
+                  12Hm+NtPRQgXIFjx6MSJcNWuVO3XGE57L1mHlcQYj+g4hny90aFh2SCZCDEVkAja
+                  EMMfYPKuCjHuuF+bzHFb/9gV8P9+ekcHENF2nR1efGWSKwnfG5RawlkaQDpRtZTm
+                  M64TIsv/r7cyFO4nSjs1jLdXYdz5q3a4L0NoabZfbdxVb+CUEHfB0bpulZQtH1Rv
+                  38e/lIdP7OTTIlZh6OYL6NhxP8So0/sht/4J9mqIGxRFc0/pC8suja+wcIUna0HB
+                  pXKfXTKpzgis+zmXDL06ASJf5E4A2/m+Hp6b84sfPAwQ766rI65mh50S0Di9E3Pn
+                  2WcaJc+PILsBmYpgtmgWTR9eV9otfKRUBfzHUHcVgarub/XluEpRlTtZudU5xbFN
+                  xx/DgMrXLUAPaI60fZ6wA+PTAgMBAAGjggGBMIIBfTAfBgNVHSMEGDAWgBRWc1hk
+                  lfmSGrASKgRieaFAFYghSTAdBgNVHQ4EFgQUaMASFhgOr872h6YyV6NGUV3LBycw
+                  DgYDVR0PAQH/BAQDAgGGMBIGA1UdEwEB/wQIMAYBAf8CAQAwHQYDVR0lBBYwFAYI
+                  KwYBBQUHAwEGCCsGAQUFBwMCMBsGA1UdIAQUMBIwBgYEVR0gADAIBgZngQwBAgEw
+                  VAYDVR0fBE0wSzBJoEegRYZDaHR0cDovL2NybC5zZWN0aWdvLmNvbS9TZWN0aWdv
+                  UHVibGljU2VydmVyQXV0aGVudGljYXRpb25Sb290UjQ2LmNybDCBhAYIKwYBBQUH
+                  AQEEeDB2ME8GCCsGAQUFBzAChkNodHRwOi8vY3J0LnNlY3RpZ28uY29tL1NlY3Rp
+                  Z29QdWJsaWNTZXJ2ZXJBdXRoZW50aWNhdGlvblJvb3RSNDYucDdjMCMGCCsGAQUF
+                  BzABhhdodHRwOi8vb2NzcC5zZWN0aWdvLmNvbTANBgkqhkiG9w0BAQwFAAOCAgEA
+                  YtOC9Fy+TqECFw40IospI92kLGgoSZGPOSQXMBqmsGWZUQ7rux7cj1du6d9rD6C8
+                  ze1B2eQjkrGkIL/OF1s7vSmgYVafsRoZd/IHUrkoQvX8FZwUsmPu7amgBfaY3g+d
+                  q1x0jNGKb6I6Bzdl6LgMD9qxp+3i7GQOnd9J8LFSietY6Z4jUBzVoOoz8iAU84OF
+                  h2HhAuiPw1ai0VnY38RTI+8kepGWVfGxfBWzwH9uIjeooIeaosVFvE8cmYUB4TSH
+                  5dUyD0jHct2+8ceKEtIoFU/FfHq/mDaVnvcDCZXtIgitdMFQdMZaVehmObyhRdDD
+                  4NQCs0gaI9AAgFj4L9QtkARzhQLNyRf87Kln+YU0lgCGr9HLg3rGO8q+Y4ppLsOd
+                  unQZ6ZxPNGIfOApbPVf5hCe58EZwiWdHIMn9lPP6+F404y8NNugbQixBber+x536
+                  WrZhFZLjEkhp7fFXf9r32rNPfb74X/U90Bdy4lzp3+X1ukh1BuMxA/EEhDoTOS3l
+                  7ABvc7BYSQubQ2490OcdkIzUh3ZwDrakMVrbaTxUM2p24N6dB+ns2zptWCva6jzW
+                  r8IWKIMxzxLPv5Kt3ePKcUdvkBU/smqujSczTzzSjIoR5QqQA6lN1ZRSnuHIWCvh
+                  JEltkYnTAH41QJ6SAWO66GrrUESwN/cgZzL4JLEqz1Y=
+                  -----END CERTIFICATE-----
+        result_map: |
+          meta file = content().string().re_find_all_submatch("href=\"(aws1min%20-%20[0-9]{4}-[0-9]{2}-[0-9]{2}%20[0-9]{2}-[0-9]{2}-[0-9]{2}\\.json)\"").map_each(m -> m.index(1)).sort().slice(-1).index(0).catch("")
+    - mapping: |
+        root = if @file.or("") == "" { throw("the SHMÚ folder %v holds no file yet".format(@day)) } else { "" }
+    - http:
+        url: https://opendata.shmu.sk/meteorology/climate/now/data/${! @day }/${! @file }
+        verb: GET
+        timeout: 30s
+        retries: 2
+        rate_limit: pipeline_egress
+        tls:
+          enabled: true
+          root_cas: |
+            -----BEGIN CERTIFICATE-----
+            MIIGTDCCBDSgAwIBAgIQOXpmzCdWNi4NqofKbqvjsTANBgkqhkiG9w0BAQwFADBf
+            MQswCQYDVQQGEwJHQjEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMTYwNAYDVQQD
+            Ey1TZWN0aWdvIFB1YmxpYyBTZXJ2ZXIgQXV0aGVudGljYXRpb24gUm9vdCBSNDYw
+            HhcNMjEwMzIyMDAwMDAwWhcNMzYwMzIxMjM1OTU5WjBgMQswCQYDVQQGEwJHQjEY
+            MBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMTcwNQYDVQQDEy5TZWN0aWdvIFB1Ymxp
+            YyBTZXJ2ZXIgQXV0aGVudGljYXRpb24gQ0EgRFYgUjM2MIIBojANBgkqhkiG9w0B
+            AQEFAAOCAY8AMIIBigKCAYEAljZf2HIz7+SPUPQCQObZYcrxLTHYdf1ZtMRe7Yeq
+            RPSwygz16qJ9cAWtWNTcuICc++p8Dct7zNGxCpqmEtqifO7NvuB5dEVexXn9RFFH
+            12Hm+NtPRQgXIFjx6MSJcNWuVO3XGE57L1mHlcQYj+g4hny90aFh2SCZCDEVkAja
+            EMMfYPKuCjHuuF+bzHFb/9gV8P9+ekcHENF2nR1efGWSKwnfG5RawlkaQDpRtZTm
+            M64TIsv/r7cyFO4nSjs1jLdXYdz5q3a4L0NoabZfbdxVb+CUEHfB0bpulZQtH1Rv
+            38e/lIdP7OTTIlZh6OYL6NhxP8So0/sht/4J9mqIGxRFc0/pC8suja+wcIUna0HB
+            pXKfXTKpzgis+zmXDL06ASJf5E4A2/m+Hp6b84sfPAwQ766rI65mh50S0Di9E3Pn
+            2WcaJc+PILsBmYpgtmgWTR9eV9otfKRUBfzHUHcVgarub/XluEpRlTtZudU5xbFN
+            xx/DgMrXLUAPaI60fZ6wA+PTAgMBAAGjggGBMIIBfTAfBgNVHSMEGDAWgBRWc1hk
+            lfmSGrASKgRieaFAFYghSTAdBgNVHQ4EFgQUaMASFhgOr872h6YyV6NGUV3LBycw
+            DgYDVR0PAQH/BAQDAgGGMBIGA1UdEwEB/wQIMAYBAf8CAQAwHQYDVR0lBBYwFAYI
+            KwYBBQUHAwEGCCsGAQUFBwMCMBsGA1UdIAQUMBIwBgYEVR0gADAIBgZngQwBAgEw
+            VAYDVR0fBE0wSzBJoEegRYZDaHR0cDovL2NybC5zZWN0aWdvLmNvbS9TZWN0aWdv
+            UHVibGljU2VydmVyQXV0aGVudGljYXRpb25Sb290UjQ2LmNybDCBhAYIKwYBBQUH
+            AQEEeDB2ME8GCCsGAQUFBzAChkNodHRwOi8vY3J0LnNlY3RpZ28uY29tL1NlY3Rp
+            Z29QdWJsaWNTZXJ2ZXJBdXRoZW50aWNhdGlvblJvb3RSNDYucDdjMCMGCCsGAQUF
+            BzABhhdodHRwOi8vb2NzcC5zZWN0aWdvLmNvbTANBgkqhkiG9w0BAQwFAAOCAgEA
+            YtOC9Fy+TqECFw40IospI92kLGgoSZGPOSQXMBqmsGWZUQ7rux7cj1du6d9rD6C8
+            ze1B2eQjkrGkIL/OF1s7vSmgYVafsRoZd/IHUrkoQvX8FZwUsmPu7amgBfaY3g+d
+            q1x0jNGKb6I6Bzdl6LgMD9qxp+3i7GQOnd9J8LFSietY6Z4jUBzVoOoz8iAU84OF
+            h2HhAuiPw1ai0VnY38RTI+8kepGWVfGxfBWzwH9uIjeooIeaosVFvE8cmYUB4TSH
+            5dUyD0jHct2+8ceKEtIoFU/FfHq/mDaVnvcDCZXtIgitdMFQdMZaVehmObyhRdDD
+            4NQCs0gaI9AAgFj4L9QtkARzhQLNyRf87Kln+YU0lgCGr9HLg3rGO8q+Y4ppLsOd
+            unQZ6ZxPNGIfOApbPVf5hCe58EZwiWdHIMn9lPP6+F404y8NNugbQixBber+x536
+            WrZhFZLjEkhp7fFXf9r32rNPfb74X/U90Bdy4lzp3+X1ukh1BuMxA/EEhDoTOS3l
+            7ABvc7BYSQubQ2490OcdkIzUh3ZwDrakMVrbaTxUM2p24N6dB+ns2zptWCva6jzW
+            r8IWKIMxzxLPv5Kt3ePKcUdvkBU/smqujSczTzzSjIoR5QqQA6lN1ZRSnuHIWCvh
+            JEltkYnTAH41QJ6SAWO66GrrUESwN/cgZzL4JLEqz1Y=
+            -----END CERTIFICATE-----
+
+    - mapping: |
+        let stations = {
+          "11898": { "sk": "Banská Bystrica - Zelená", "en": "Banská Bystrica - Zelená", "at": [19.115097, 48.733419] },
+          "11894": { "sk": "Donovaly", "en": "Donovaly", "at": [19.223514, 48.875067] }
+        }
+        # SHMÚ's minute (Bratislava wall time minus one hour) to UTC, as RFC 3339: one hour back
+        # where that instant is CEST, none where it is CET. The minutes 01:00-01:59 of the October
+        # change day name both; the later instant wins unless it is still to come. A minute that
+        # names neither (01:xx of the March change day, or one ahead of now) leaves that station out.
+        # ponytail: a file read 00:00-01:00 UTC on the October change day relies on now().
+        map utc {
+          let n = this.ts_parse("2006-01-02T15:04:05").ts_unix()
+          let summer = if ($n - 3600).ts_format("-07:00", "Europe/Bratislava") == "+02:00" { $n - 3600 } else { null }
+          let winter = if $n.ts_format("-07:00", "Europe/Bratislava") == "+01:00" { $n } else { null }
+          root = if $winter != null && $winter <= now().ts_unix() + 600 { $winter } else if $summer != null && $summer <= now().ts_unix() + 600 { $summer } else { throw("the SHMÚ minute %v is no Bratislava time minus one hour".format(this)) }.ts_format("2006-01-02T15:04:05Z", "UTC")
+        }
+        let rows = this.data.or([]).filter(r -> $stations.get(r.ind_kli.string()) != null && r.minuta.type() == "string")
+        root = $stations.keys().sort().map_each(code -> $rows.filter(r -> r.ind_kli.string() == code).sort_by(r -> r.minuta)).filter(rs -> rs.length() > 0).map_each(rs -> rs.slice(-1).index(0).assign({
+          "_at": rs.slice(-1).index(0).minuta.apply("utc").catch(null),
+          # Soil temperature at the depths the station measures (`t_pod{cm}`), one instance per
+          # depth, told apart by its datasetId (NGSI-LD multi-attribute, T-4557).
+          "_soil": [5, 10, 20, 50, 100].filter(d -> rs.slice(-1).index(0).get("t_pod" + d.string()).type() == "number").map_each(d -> { "type": "Property", "value": rs.slice(-1).index(0).get("t_pod" + d.string()), "unitCode": "CEL", "datasetId": "urn:ngsi-ld:Dataset:shmu:soil-depth-%vcm".format(d) }),
+          # The minutes of the ten up to the latest one that measured rain, as far as the file holds
+          # them: none is no reading, never 0 mm (F-BNT1-016).
+          "_rain": rs.filter(r -> r.minuta.ts_parse("2006-01-02T15:04:05").ts_unix() > rs.slice(-1).index(0).minuta.ts_parse("2006-01-02T15:04:05").ts_unix() - 600 && r.zra_uhrn.type() == "number").map_each(r -> r.zra_uhrn)
+        })).filter(r -> r._at != null).map_each(r -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:shmu-%v".format("WeatherObserved", "banskabystrica.sk", env("JC_SPACE"), r.ind_kli),
+          "type": "WeatherObserved",
+          "name": { "type": "LanguageProperty", "languageMap": { "sk": "Stanica SHMÚ " + $stations.get(r.ind_kli.string()).sk, "en": "SHMÚ station " + $stations.get(r.ind_kli.string()).en } },
+          "dateObserved": { "type": "Property", "value": r._at },
+          "temperature": if r.t.type() == "number" { { "type": "Property", "value": r.t, "unitCode": "CEL", "observedAt": r._at } } else { deleted() },
+          "relativeHumidity": if r.vlh_rel.type() == "number" && r.vlh_rel >= 0 && r.vlh_rel <= 100 { { "type": "Property", "value": (r.vlh_rel * 10).round() / 1000, "unitCode": "C62", "observedAt": r._at } } else { deleted() },
+          "atmosphericPressure": if r.tlak.type() == "number" && r.tlak > 0 { { "type": "Property", "value": r.tlak, "unitCode": "A97", "observedAt": r._at } } else { deleted() },
+          "windSpeed": if r.vie_pr_rych.type() == "number" && r.vie_pr_rych >= 0 { { "type": "Property", "value": r.vie_pr_rych, "unitCode": "MTS", "observedAt": r._at } } else { deleted() },
+          "windDirection": if r.vie_vp_smer.type() == "number" && r.vie_vp_smer >= 0 && r.vie_vp_smer <= 360 { { "type": "Property", "value": r.vie_vp_smer, "unitCode": "DD", "observedAt": r._at } } else { deleted() },
+          "precipitation": if r._rain.length() > 0 { { "type": "Property", "value": (r._rain.sum() * 10).round() / 10, "unitCode": "MMT", "observedAt": r._at } } else { deleted() },
+          "soilTemperature": if r._soil.length() > 0 { r._soil.map_each(i -> i.merge({ "observedAt": r._at })) } else { deleted() },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": $stations.get(r.ind_kli.string()).at } },
+          "dataProvider": { "type": "Property", "value": "Slovenský hydrometeorologický ústav (SHMÚ), CC BY 4.0" },
+          "source": { "type": "Property", "value": "https://opendata.shmu.sk/meteorology/climate/now/" }
+        })
+    # A file without the city's stations is a broken file, never weather that stopped.
+    - mapping: |
+        root = if this.length() == 0 { throw("the SHMÚ file %v holds no station of the city".format(@file)) } else { this }

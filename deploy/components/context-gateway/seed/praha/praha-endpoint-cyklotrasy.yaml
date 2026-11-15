@@ -1,0 +1,45 @@
+# Cycle routes of the IPR Praha geoportal (T-5426), BikeLane of the space praha-mesto read through
+# its own Policy, which narrows the public read to the area-cycle-routes- ids.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-cyklotrasy
+  namespace: praha
+  title: { cs: Cyklotrasy — Praha, en: Cycle routes — Prague }
+  description:
+    cs: 'Úseky cyklotras městské sítě: číslo trasy, druh cesty (cyklopruh, stezka, zklidněná ulice) a průběh. Zdroj: IPR Praha, CC BY 4.0.'
+    en: "The stretches of the city's cycle route network: route number, kind of way (cycle lane, shared path, quiet street) and course. Source: IPR Praha, CC BY 4.0."
+spec:
+  contextSpaceRef: praha-mesto
+  slug: cq5rmz2kt7hxw4bdgj3lnse6vofya2pu
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-cyklotrasy
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Mapped areas and lines: no record names a person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha (CC BY 4.0)'
+      en: 'Source: data © IPR Praha (CC BY 4.0)'
+    themes: [TRAN]
+    keywords:
+      cs: [Praha, cyklotrasy, cyklostezky, cyklistika]
+      en: [Prague, cycle routes, cycle paths, cycling]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: IRREG
+    source:
+      - url: https://hub.arcgis.com/api/v3/datasets/45063acce89d4b37afc6d51f03f3ad49_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Cyklistické trasy (IPR Praha), en: Cycle routes (IPR Praha) }
+        description:
+          cs: Cyklistické trasy z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Cycle routes from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+    pipelineRef: { kind: Pipeline, name: area-cycle-routes }

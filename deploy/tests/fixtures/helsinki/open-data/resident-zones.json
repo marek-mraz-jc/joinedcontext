@@ -1,0 +1,123 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "id": "Asukas_ja_yrityspysakointivyohykkeet_alue.14",
+   "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [
+     [
+      [
+       [
+        24.97007495,
+        60.14808466
+       ],
+       [
+        24.97518866,
+        60.15167723
+       ],
+       [
+        24.9922946,
+        60.1517129
+       ],
+       [
+        24.99539383,
+        60.14244646
+       ],
+       [
+        24.98960568,
+        60.13610052
+       ],
+       [
+        24.98314311,
+        60.1368385
+       ],
+       [
+        24.97007495,
+        60.14808466
+       ]
+      ]
+     ]
+    ]
+   },
+   "geometry_name": "geom",
+   "properties": {
+    "id": 14,
+    "linkki": "",
+    "asukaspysakointitunnus": "DC",
+    "alueen_nimi": "Suomenlinna",
+    "datanomistaja": "Helsinki/MAKA LIKE",
+    "paivitetty_tietopalveluun": "2026-09-24"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "Asukas_ja_yrityspysakointivyohykkeet_alue.7",
+   "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [
+     [
+      [
+       [
+        24.85341865,
+        60.16492229
+       ],
+       [
+        24.85338961,
+        60.17144302
+       ],
+       [
+        24.89110621,
+        60.17147937
+       ],
+       [
+        24.896171,
+        60.17059459
+       ],
+       [
+        24.89624713,
+        60.14644274
+       ],
+       [
+        24.88395234,
+        60.14268183
+       ],
+       [
+        24.8515426,
+        60.14264948
+       ],
+       [
+        24.85147158,
+        60.15839935
+       ],
+       [
+        24.85341865,
+        60.16492229
+       ]
+      ]
+     ]
+    ]
+   },
+   "geometry_name": "geom",
+   "properties": {
+    "id": 7,
+    "linkki": "https://www.hel.fi/static/hkr/pysakointi/alue_N.pdf",
+    "asukaspysakointitunnus": "N",
+    "alueen_nimi": "Lauttasaari",
+    "datanomistaja": "Helsinki/MAKA LIKE",
+    "paivitetty_tietopalveluun": "2026-09-24"
+   }
+  }
+ ],
+ "totalFeatures": 16,
+ "numberMatched": 16,
+ "numberReturned": 2,
+ "timeStamp": "2026-09-25T05:12:20.069Z",
+ "crs": {
+  "type": "name",
+  "properties": {
+   "name": "urn:ogc:def:crs:EPSG::4326"
+  }
+ }
+}

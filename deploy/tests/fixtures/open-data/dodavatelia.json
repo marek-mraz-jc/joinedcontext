@@ -1,0 +1,41 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "ICO": "35261838",
+    "Nazov": "PROFIL - A. Moravčíková",
+    "Adresa": "974 01 Banská Bystrica Ruttkaya-Nedeckého 2",
+    "Obec": "Banská Bystrica",
+    "PSC": "97401",
+    "Ulica_a_cislo": "Ruttkaya Nedeckého 2"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "ICO": "42195446",
+    "Nazov": "Spojená škola",
+    "Adresa": "974 05 Banská Bystrica Kremnička 10",
+    "Obec": "Banská Bystrica",
+    "PSC": "97405",
+    "Ulica_a_cislo": "Kremnička 10"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "ICO": "35656743",
+    "Nazov": "Slovenský zväz biatlonu",
+    "Adresa": "974 01 Banská Bystrica Partizánska cesta 71",
+    "Obec": "Banská Bystrica",
+    "PSC": "97401",
+    "Ulica_a_cislo": "Partizánska cesta 71"
+   }
+  }
+ ]
+}

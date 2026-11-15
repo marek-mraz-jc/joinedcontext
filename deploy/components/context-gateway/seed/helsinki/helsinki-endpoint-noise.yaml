@@ -1,0 +1,51 @@
+# One Smart Data Model type per catalogue dataset (T-4344): NoiseZone of the space helsinki, read
+# through its own Policy, which narrows the space's public read to this type (T-5378).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-noise
+  namespace: helsinki
+  title:
+    fi: Meluselvitys 2022, liikennemelualueet — Helsinki
+    en: Traffic noise zones of the 2022 noise survey — Helsinki
+  description:
+    fi: 'Helsingin meluselvityksen 2022 laskennalliset melualueet 5 dB:n vyöhykkeinä: katu- ja tieliikenne, junaliikenne, metro ja raitioliikenne (noiseSource), päivällä klo 7–22 ja yöllä klo 22–7 (assessmentPeriod, LAeq). Vyöhykkeen ala- ja yläraja desibeleinä kentissä noiseLevelLow ja noiseLevelHigh; kovimmalla vyöhykkeellä ei ole ylärajaa. noiseSource on Smart Data Models -laajennuksen NoiseZone ulkopuolinen kenttä. Lähde: Helsingin kaupunki, CC BY 4.0.'
+    en: "The computed noise areas of Helsinki's 2022 noise survey as 5 dB bands: streets and roads, the railway, the metro and the tram (noiseSource), for the day 07-22 and the night 22-07 (assessmentPeriod, LAeq). The band's lower and upper bound in decibels are noiseLevelLow and noiseLevelHigh; the loudest band has no upper bound. noiseSource is a custom property beside the Smart Data Model extension NoiseZone. Source: City of Helsinki, CC BY 4.0."
+spec:
+  contextSpaceRef: helsinki
+  slug: dh54wtluwvyhzmdsaosg3xpmgdadyoxg
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-noise
+  # The contact lines stay in the space, as on helsinki-all (EP-61). A projection only narrows.
+  projection:
+    hiddenAttributes: [contactPoint]
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Helsingin kaupunki, CC BY 4.0'
+      sv: 'Källa: Helsingfors stad, CC BY 4.0'
+      en: 'Source: City of Helsinki, CC BY 4.0'
+    themes: [ENVI, TRAN]
+    keywords:
+      fi: [melu, meluselvitys, liikennemelu, melualueet, ympäristö]
+      sv: [buller, bullerutredning, trafikbuller, bullerområden, miljö]
+      en: [noise, noise survey, traffic noise, noise zones, environment]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: IRREG
+    source:
+      - url: https://hri.fi/data/fi/dataset/helsingin-kaupungin-meluselvitys-2017
+        title: { fi: Helsingin kaupungin meluselvitys, en: City of Helsinki noise survey }
+        description:
+          fi: Helsingin karttapalvelun WFS-tasot Meluselvitys_2022_Helsinki_*_LAeq_7-22_NPM ja _22-7_NPM (katu- ja tieliikenne, juna, metro, raitiovaunu), GeoJSON. Luetaan viikoittain (putket noise-roads-day-0…2, noise-roads-night-0…2 ja noise-rail).
+          en: The WFS layers Meluselvitys_2022_Helsinki_*_LAeq_7-22_NPM and _22-7_NPM of the city map service (streets and roads, railway, metro, tram), as GeoJSON. Read weekly (pipelines noise-roads-day-0…2, noise-roads-night-0…2 and noise-rail).
+    pipelineRef: { kind: Pipeline, name: noise-rail }

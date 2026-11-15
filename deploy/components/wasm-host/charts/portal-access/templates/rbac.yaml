@@ -1,0 +1,55 @@
+{{- $portalNamespace := required "portal.namespace is the Portal's namespace" .Values.portal.namespace }}
+{{- /*
+  What the Portal writes in the WASM host's namespace (AP-157, AP-158): each shard's placement
+  ConfigMap and its store-key Secret, by server-side apply (get + create + patch). `get` and
+  `patch` name the objects; `create` cannot be bound to a name in RBAC, which is why the Portal's
+  own client refuses every ConfigMap but a shard's placement (src/apps/kube.rs). Nothing is
+  listed, watched or deleted, and no other kind is touched: not the shards' database logins.
+*/}}
+{{- $names := list }}
+{{- range $shard := until (int .Values.shards) }}
+{{- $names = append $names (printf "jc-wasm-host-%d-placements" $shard) }}
+{{- end }}
+{{- $secrets := list }}
+{{- range $shard := until (int .Values.shards) }}
+{{- $secrets = append $secrets (printf "apps-host-%d-store" $shard) }}
+{{- end }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: portal-wasm-shards
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: wasm-host
+    app.kubernetes.io/component: portal-access
+    app.kubernetes.io/part-of: joinedcontext
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: {{ $names | toJson }}
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: {{ $secrets | toJson }}
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: portal-wasm-shards
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: wasm-host
+    app.kubernetes.io/component: portal-access
+    app.kubernetes.io/part-of: joinedcontext
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: portal-wasm-shards
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.portal.serviceAccount }}
+    namespace: {{ $portalNamespace }}

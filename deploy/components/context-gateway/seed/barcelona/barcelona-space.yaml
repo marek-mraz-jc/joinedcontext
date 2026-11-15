@@ -1,0 +1,211 @@
+# The open data of Barcelona City Council (Open Data BCN, CC BY 4.0) as Smart Data Models, one
+# space the city's pipelines write (T-5260). The first type is AirQualityObserved; each Open Data
+# BCN batch (T-5262..T-5266) adds its types to the model, the Policies and the retention below.
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: barcelona
+  namespace: barcelona
+  title:
+    ca: Barcelona — dades obertes
+    es: Barcelona — datos abiertos
+    en: Barcelona, open data
+  description:
+    ca: Les dades obertes de l'Ajuntament de Barcelona (Open Data BCN, CC BY 4.0) com a entitats NGSI-LD dels Smart Data Models.
+    es: Los datos abiertos del Ayuntamiento de Barcelona (Open Data BCN, CC BY 4.0) como entidades NGSI-LD de los Smart Data Models.
+    en: The open data of Barcelona City Council (Open Data BCN, CC BY 4.0) as NGSI-LD entities of the Smart Data Models.
+spec:
+  # The space name is the segment its ids carry, pinned so it cannot drift (PF-84).
+  urnSegment: barcelona
+  isSandbox: false
+  # Its one model: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: barcelona }
+  defaultLocale: ca
+  # A measurement series: thirty days of history (the monthly wells keep 400, the public reads the last 30), the seed's default for a measurement, one row
+  # per change and one a day for what a read repeats (DM-82, DM-108, DM-109).
+  retention:
+    - entityType: AirQualityObserved
+      history: P30D
+      attributes:
+        dateObserved: { record: onChange, heartbeat: P1D }
+        location: { record: onChange, heartbeat: P1D }
+        name: { record: onChange, heartbeat: P1D }
+        stationCode: { record: onChange, heartbeat: P1D }
+        address: { record: onChange, heartbeat: P1D }
+        areaServed: { record: onChange, heartbeat: P1D }
+        dataProvider: { record: onChange, heartbeat: P1D }
+        source: { record: onChange, heartbeat: P1D }
+    - entityType: WeatherObserved
+      history: P30D
+      attributes:
+        dateObserved: { record: onChange, heartbeat: P1D }
+        location: { record: onChange, heartbeat: P1D }
+        name: { record: onChange, heartbeat: P1D }
+        stationCode: { record: onChange, heartbeat: P1D }
+        altitude: { record: onChange, heartbeat: P1D }
+        address: { record: onChange, heartbeat: P1D }
+        areaServed: { record: onChange, heartbeat: P1D }
+        dataProvider: { record: onChange, heartbeat: P1D }
+        source: { record: onChange, heartbeat: P1D }
+    # The forecast of each day ahead: every issue is a row (twice a day), what never moves one a day.
+    - entityType: WeatherForecast
+      history: P30D
+      attributes:
+        location: { record: onChange, heartbeat: P1D }
+        name: { record: onChange, heartbeat: P1D }
+        address: { record: onChange, heartbeat: P1D }
+        areaServed: { record: onChange, heartbeat: P1D }
+        dataProvider: { record: onChange, heartbeat: P1D }
+        source: { record: onChange, heartbeat: P1D }
+    # Groundwater is read by hand about once a month: 400 days keep a year's readings.
+    - entityType: PhreaticObserved
+      history: P400D
+      attributes:
+        dateObserved: { record: onChange, heartbeat: P1D }
+        location: { record: onChange, heartbeat: P1D }
+        name: { record: onChange, heartbeat: P1D }
+        stationCode: { record: onChange, heartbeat: P1D }
+        measurementType: { record: onChange, heartbeat: P1D }
+        investigationDepth: { record: onChange, heartbeat: P1D }
+        aquifer: { record: onChange, heartbeat: P1D }
+        address: { record: onChange, heartbeat: P1D }
+        areaServed: { record: onChange, heartbeat: P1D }
+        dataProvider: { record: onChange, heartbeat: P1D }
+        source: { record: onChange, heartbeat: P1D }
+    # A section's state and forecast are levels each 5-minute read repeats: a row when one
+    # changes and at least one an hour; dateObserved changes every read and is the instant of
+    # each row already, so it records none (T-5262).
+    # A section the source stops publishing leaves 30 days after its last write (T-5262 review).
+    - entityType: TrafficFlowObserved
+      current: P30D
+      history: P30D
+      record: onChange
+      heartbeat: PT1H
+      attributes:
+        dateObserved: { record: never }
+    # A charging point's free ports and status are levels each 5-minute read repeats: a row when
+    # one changes and at least one an hour, as for the traffic state (T-5262).
+    - entityType: EVChargingStation
+      current: P30D
+      history: P30D
+      record: onChange
+      heartbeat: PT1H
+      attributes:
+        dateObserved: { record: never }
+    # The register of parking sections changes with a monthly file: no history (T-5262).
+    - entityType: OnStreetParking
+      current: P30D
+      history: 'off'
+    # Reference layers each run rewrites: the current state only (T-5264).
+    - entityType: AdministrativeArea
+      history: 'off'
+    - entityType: CityWork
+      history: 'off'
+    - entityType: PedestrianCrossing
+      history: 'off'
+    - entityType: StreetFurniture
+      history: 'off'
+    # A licence register the weekly file rewrites: the current state only (T-5417).
+    - entityType: TouristRental
+      history: 'off'
+    # A bike lane segment is a reference layer each weekly run rewrites (it leaves by its own
+    # expiresAt); an accident is a record that never changes: current state only (T-5374).
+    - entityType: BikeLane
+      history: 'off'
+    - entityType: RoadAccident
+      history: 'off'
+    # An activity is a record, not a measurement: its current state only (T-5265).
+    - entityType: Event
+      history: 'off'
+    - entityType: PointOfInterest
+      history: 'off'
+    # Official statistics, one row per period (T-5266): ten years, the longest a duration may be
+    # (DM-82); a row when a value or its period changes, never one per daily run, and one a
+    # month at least: the Portal refuses onChange without a heartbeat (DM-109, T-5792).
+    - entityType: KeyPerformanceIndicator
+      history: P3650D
+      record: onChange
+      heartbeat: P30D
+  # The municipality of Barcelona with a 1 km margin (owner 2026-10-22T18:10Z); an entity outside
+  # it is flagged, never refused (DM-87).
+  quality:
+    - name: in-area
+      entityType: AirQualityObserved
+      kind: area
+      attribute: location
+      bbox: [2.04, 41.3, 2.24, 41.48]
+    - name: traffic-in-area
+      entityType: TrafficFlowObserved
+      kind: area
+      attribute: location
+      bbox: [2.04, 41.3, 2.24, 41.48]
+    - name: parking-in-area
+      entityType: OnStreetParking
+      kind: area
+      attribute: location
+      bbox: [2.04, 41.3, 2.24, 41.48]
+    - name: charging-in-area
+      entityType: EVChargingStation
+      kind: area
+      attribute: location
+      bbox: [2.04, 41.3, 2.24, 41.48]
+    - name: in-area-bike-lanes
+      entityType: BikeLane
+      kind: area
+      attribute: location
+      bbox: [2.04, 41.3, 2.24, 41.48]
+    - name: in-area-accidents
+      entityType: RoadAccident
+      kind: area
+      attribute: location
+      bbox: [2.04, 41.3, 2.24, 41.48]
+    - name: in-area-weather
+      entityType: WeatherObserved
+      kind: area
+      attribute: location
+      bbox: [2.04, 41.3, 2.24, 41.48]
+    - name: in-area-weather-forecast
+      entityType: WeatherForecast
+      kind: area
+      attribute: location
+      bbox: [2.04, 41.3, 2.24, 41.48]
+    - name: in-area-groundwater
+      entityType: PhreaticObserved
+      kind: area
+      attribute: location
+      bbox: [2.04, 41.3, 2.24, 41.48]
+    - name: in-area-areas
+      entityType: AdministrativeArea
+      kind: area
+      attribute: location
+      bbox: [2.04, 41.3, 2.24, 41.48]
+    - name: in-area-city-works
+      entityType: CityWork
+      kind: area
+      attribute: location
+      bbox: [2.04, 41.3, 2.24, 41.48]
+    - name: in-area-pedestrian-crossings
+      entityType: PedestrianCrossing
+      kind: area
+      attribute: location
+      bbox: [2.04, 41.3, 2.24, 41.48]
+    - name: in-area-street-furniture
+      entityType: StreetFurniture
+      kind: area
+      attribute: location
+      bbox: [2.04, 41.3, 2.24, 41.48]
+    - name: in-area-tourist-flats
+      entityType: TouristRental
+      kind: area
+      attribute: location
+      bbox: [2.04, 41.3, 2.24, 41.48]
+    - name: in-area-events
+      entityType: Event
+      kind: area
+      attribute: location
+      bbox: [2.04, 41.3, 2.24, 41.48]
+    - name: in-area-places
+      entityType: PointOfInterest
+      kind: area
+      attribute: location
+      bbox: [2.04, 41.3, 2.24, 41.48]

@@ -1,0 +1,88 @@
+# The mapping of the tourist-flats pipeline (PL-03, T-5417): one TouristRental per licensed tourist
+# flat (habitatge d'ús turístic, HUT) of Open Data BCN's register (dataset habitatges-us-turistic,
+# the DataStore resource hut_comunicacio_opendata.csv, CC BY 4.0): the licence file N_EXPEDIENT as
+# the id, the places (NUMERO_PLACES) as `capacity`, the Generalitat's tourism register number
+# (NUMERO_REGISTRE_GENERALITAT, HUTB-nnnnnn), the street and number, the district and barri, and
+# the WGS84 point LONGITUD_X/LATITUD_Y the city geocodes from that address.
+#
+# Privacy (T-5417): BLOC, PORTAL, ESCALA, PIS and PORTA locate one household inside a building and
+# are never read past the parse; the address stops at the street and number and the point is the
+# building's, rounded to 6 decimals (0.1 m, the city's 14 add nothing). No holder is in the file.
+#
+# Plausibility (owner 2026-10-22): a row with no licence id of the form 01-2009-0354, a point that
+# is no number or lies outside the municipality's 1 km margin (the space's in-area bbox), a second
+# row of one licence and a second licence holding a register number already taken are dropped; a
+# place count that is missing or outside 1..100 (the register's largest is 79 on 2026-10-23) and a
+# register number not of the form HUTB-nnnnnn once its blanks are gone (`HUTB- 077183`
+# is read as HUTB-077183) are left out of the entity. Each is counted by reason
+# in `dropped`, which the next step logs. A file with no licence fails the run, and so does one
+# whose newest licence file is older than last year (the city opens files each month: 221 in 2025,
+# 21 by 2026-10-01), so the flats stand instead of going stale. `expiresAt`: a licence the file
+# drops leaves every read three weeks (three update periods) after the file last listed it.
+
+pipeline:
+  processors:
+    - mapping: |
+        let text = if content().length() > 4194304 { throw("the tourist flats file is %d bytes, more than the 4 MiB read".format(content().length())) } else { content().string().trim_prefix("﻿") }
+        let bbox = [2.04, 41.3, 2.24, 41.48]
+        let year = @bcn_now.or(now()).ts_parse("2006-01-02T15:04:05Z07:00").ts_format("2006", "UTC").number()
+        let head = $text.split("\n").index(0).or("").trim()
+        let columns = ["N_EXPEDIENT", "NOM_DISTRICTE", "NOM_BARRI", "TIPUS_CARRER", "CARRER", "NUM1", "LLETRA1", "NUM2", "LLETRA2", "NUMERO_REGISTRE_GENERALITAT", "NUMERO_PLACES", "LONGITUD_X", "LATITUD_Y"]
+        let rows = if $columns.any(c -> !$head.split(",").contains(c)) { throw("the tourist flats file lacks a column of %s".format($columns.join(", "))) } else { $text.parse_csv(true, ",") }
+        let coded = $rows.filter(r -> r.N_EXPEDIENT.or("").trim().re_match("^[0-9]{2}-[0-9]{4}-[0-9]{4}$"))
+        let placed = $coded.map_each(r -> {
+          "id": r.N_EXPEDIENT.trim(),
+          "street": r.TIPUS_CARRER.or("").trim() + " " + r.CARRER.or("").trim(),
+          "number": r.NUM1.or("").trim() + r.LLETRA1.or("").trim() + if r.NUM2.or("").trim() == "" { "" } else { "-" + r.NUM2.trim() + r.LLETRA2.or("").trim() },
+          "district": r.NOM_DISTRICTE.or("").trim(),
+          "barri": r.NOM_BARRI.or("").trim(),
+          "register": r.NUMERO_REGISTRE_GENERALITAT.or("").re_replace_all("[\\s\\x{00A0}]+", "").uppercase(),
+          "places": r.NUMERO_PLACES.or("").trim().number().catch(null),
+          "lon": r.LONGITUD_X.or("").trim().number().catch(null),
+          "lat": r.LATITUD_Y.or("").trim().number().catch(null)
+        }).filter(l -> l.lon != null && l.lat != null)
+        let inside = $placed.filter(l -> l.lon >= $bbox.index(0) && l.lon <= $bbox.index(2) && l.lat >= $bbox.index(1) && l.lat <= $bbox.index(3))
+        # One flat per licence, then per register number: sorted, so a repeat sits beside its first.
+        let by_id = $inside.sort_by(l -> l.id)
+        let ids = $by_id.enumerated().filter(e -> e.index == 0 || $by_id.index(e.index - 1).id != e.value.id).map_each(e -> e.value)
+        let by_register = $ids.sort_by(l -> (if l.register == "" { "~" + l.id } else { l.register }) + " " + l.id)
+        let unique = $by_register.enumerated().filter(e -> e.index == 0 || e.value.register == "" || $by_register.index(e.index - 1).register != e.value.register).map_each(e -> e.value)
+        let newest = $unique.map_each(l -> l.id.slice(3, 7).number()).sort().index(-1).or(0)
+        root.dropped = {
+          "noLicenceId": $rows.length() - $coded.length(),
+          "noPoint": $coded.length() - $placed.length(),
+          "outsideTheCity": $placed.length() - $inside.length(),
+          "duplicateLicence": $inside.length() - $ids.length(),
+          "duplicateRegisterNumber": $ids.length() - $unique.length(),
+          "placesMissing": $unique.filter(l -> l.places == null).length(),
+          "placesOutOfRange": $unique.filter(l -> l.places != null && (l.places < 1 || l.places > 100 || l.places.round() != l.places)).length(),
+          "registerNumberMalformed": $unique.filter(l -> l.register != "" && !l.register.re_match("^HUTB-[0-9]{6}$")).length()
+        }
+        root.flats = if $unique.length() == 0 { throw("the tourist flats file holds no licence") } else if $newest < $year - 1 { throw("the tourist flats file is stale: its newest licence file is from %v".format($newest)) } else { $unique }
+    - log:
+        level: INFO
+        message: 'tourist flats: ${! json("flats").length() } written; dropped ${! json("dropped").format_json(no_indent: true) }'
+    - mapping: root = this.flats
+    - unarchive: { format: json_array }
+    - mapping: |
+        let now = @bcn_now.or(now()).ts_parse("2006-01-02T15:04:05Z07:00").ts_unix()
+        let register = if this.register.re_match("^HUTB-[0-9]{6}$") { this.register } else { null }
+        # The run's clock: a test sets bcn_now to read a recorded file as of its own day.
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("TouristRental", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.id),
+          "type": "TouristRental",
+          "expiresAt": ($now + 21 * 86400).ts_format("2006-01-02T15:04:05Z", "UTC"),
+          "name": { "type": "Property", "value": "Habitatge d'ús turístic %v".format($register.or(this.id)) },
+          "capacity": if this.places == null || this.places < 1 || this.places > 100 || this.places.round() != this.places { null } else { { "type": "Property", "value": this.places.int64() } },
+          "registerNumber": if $register == null { null } else { { "type": "Property", "value": $register } },
+          "address": { "type": "Property", "value": {
+            "streetAddress": if this.number == "" { this.street } else { this.street + ", " + this.number },
+            "district": this.district,
+            "addressLocality": "Barcelona",
+            "addressCountry": "ES"
+          }.filter(entry -> entry.value != "") },
+          "areaServed": if this.barri == "" { null } else { { "type": "Property", "value": this.barri } },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [(this.lon * 1000000).round() / 1000000, (this.lat * 1000000).round() / 1000000] } },
+          "dataProvider": { "type": "Property", "value": "Ajuntament de Barcelona, Open Data BCN (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://opendata-ajuntament.barcelona.cat/data/dataset/habitatges-us-turistic" }
+        }.filter(entry -> entry.value != null)

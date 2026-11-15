@@ -1,0 +1,16 @@
+# The bridged HSL trams (T-5883, PL-76): the runner reads the project's own broker on its
+# internal listener, with no credential. Every topic the bridge may publish.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: mqtt-hsl-bridge
+  namespace: helsinki
+  title: { en: HSL tram positions from the broker hsl-bridge }
+spec:
+  type: mqtt
+  mqtt:
+    brokerRef: { kind: MqttBroker, name: hsl-bridge }
+    topics:
+      - hsl/hfp/v2/journey/ongoing/vp/#
+    qos: 1
+    cleanSession: true

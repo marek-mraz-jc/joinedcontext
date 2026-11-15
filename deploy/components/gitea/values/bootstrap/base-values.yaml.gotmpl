@@ -1,0 +1,178 @@
+---
+{{- $global := .Values.global }}
+{{- $repo := $global.configRepo }}
+# Checklist:
+# - [x] Runs as non-root with `readOnlyRootFilesystem` -> /tmp is the one writable path
+# - [ ] Health probes -> not applicable, a Job either exits 0 or is retried
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege -> two Secrets by name, nothing else
+# - [ ] Named ports, Service, Ingress -> not applicable, it listens on nothing
+
+# The forge in-cluster, not its public URL. Under a self-signed cluster issuer the public
+# host is served with the cluster CA and curl in this image trusts the Mozilla bundle only,
+# so a public URL fails at the handshake for the same reason the Portal needs JC_OIDC_CA_FILE.
+giteaUrl: "http://gitea-http.{{ .Values.gitea.forge.namespace }}.svc.cluster.local:3000"
+
+{{- /* Every team the forge's group map can land a person in, so the team exists before the
+       first login tries to join it (PF-79). */}}
+teams:
+{{- range $group, $teams := .Values.gitea.forge.groupTeams | default dict }}
+{{- range $teams }}
+  {{ . }}: {}
+{{- end }}
+{{- end }}
+{{- if not (.Values.gitea.forge.groupTeams | default dict) }} {}
+{{- end }}
+
+projectTeams: {{ .Values.gitea.forge.projectTeams | default list | toJson }}
+
+repo:
+  owner: {{ $repo.owner | quote }}
+  name: {{ $repo.name | quote }}
+  branch: {{ $repo.branch | quote }}
+# 2: the seed goes into the organization repository and one repository per project (CC-85).
+layout: {{ $repo.layout | default 1 }}
+
+apps:
+  owner: {{ .Values.gitea.forge.appsOrganization | default "" | quote }}
+
+# A token minted at run time cannot be copied by the secrets component, so the Job writes each
+# one where it is read. Under `singleNamespace: true` these are all the same string and the
+# chart renders one Role; under `false` each consumer has its own.
+tokens:
+  portal:
+    namespaces:
+      - {{ .Values.gitea.bootstrap.namespace }}
+      {{- if has "portal" .Values.components }}
+      - {{ .Values.portal.portal.namespace }}
+      {{- end }}
+    restart:
+      {{- if has "portal" .Values.components }}
+      - {{ printf "%s/portal" .Values.portal.portal.namespace }}
+      {{- end }}
+      {{- if has "agent-runner" .Values.components }}
+      - {{ printf "%s/agent-proxy" (index .Values "agent-runner" "proxy" "namespace") }}
+      {{- end }}
+      {{- if not (or (has "portal" .Values.components) (has "agent-runner" .Values.components)) }} []
+      {{- end }}
+  apps:
+    {{- if and .Values.gitea.forge.appsOrganization (has "portal" .Values.components) }}
+    namespaces:
+      - {{ .Values.gitea.bootstrap.namespace }}
+      - {{ .Values.portal.portal.namespace }}
+    restart:
+      - {{ printf "%s/portal" .Values.portal.portal.namespace }}
+    {{- else }}
+    namespaces: []
+    restart: []
+    {{- end }}
+  gateway:
+    namespaces:
+      - {{ .Values.gitea.bootstrap.namespace }}
+      {{- if has "context-gateway" .Values.components }}
+      - {{ index .Values "context-gateway" "gateway" "namespace" }}
+      {{- end }}
+      {{- /* The assistant's crawl worker reads the same repositories with the same read-only
+             token (T-3052). */}}
+      {{- if has "assistant" .Values.components }}
+      - {{ .Values.assistant.worker.namespace }}
+      {{- end }}
+    restart:
+      {{- if or (has "context-gateway" .Values.components) (has "assistant" .Values.components) }}
+      {{- if has "context-gateway" .Values.components }}
+      - {{ printf "%s/context-gateway" (index .Values "context-gateway" "gateway" "namespace") }}
+      {{- end }}
+      {{- if has "assistant" .Values.components }}
+      - {{ printf "%s/jc-assistant" .Values.assistant.worker.namespace }}
+      {{- end }}
+      {{- else }} []
+      {{- end }}
+  registry:
+    # The host a node pulls from: the primary one, whose /v2/ the edge routes to the forge.
+    host: {{ .Values.global.domain | quote }}
+    namespaces:
+      {{- if has "portal" .Values.components }}
+      - {{ .Values.portal.portal.appsNamespace }}
+      {{- else }} []
+      {{- end }}
+  lane:
+    namespaces:
+      {{- if has "gitea-runner" .Values.components }}
+      - {{ .Values.gitea.bootstrap.namespace }}
+      {{- else }} []
+      {{- end }}
+  runner:
+    namespaces:
+      {{- if has "gitea-runner" .Values.components }}
+      - {{ index .Values "gitea-runner" "runner" "namespace" }}
+      {{- else }} []
+      {{- end }}
+    restart:
+      {{- if has "gitea-runner" .Values.components }}
+      - {{ printf "%s/gitea-runner" (index .Values "gitea-runner" "runner" "namespace") }}
+      {{- if index .Values "gitea-runner" "rust" "enabled" }}
+      - {{ printf "%s/gitea-runner-rust" (index .Values "gitea-runner" "rust" "namespace") }}
+      {{- end }}
+      {{- else }} []
+      {{- end }}
+
+# The lane token's refresher, where the runner runs (ADR-N-028 §5, T-2636). The token endpoint
+# is Keycloak's in-cluster Service, the way Grafana exchanges its code: KC_HOSTNAME pins the
+# public issuer into every token, whichever host it was asked on.
+laneToken:
+  enabled: {{ has "gitea-runner" .Values.components }}
+  audience: "https://idm.{{ $global.domain }}/realms/{{ $global.instanceSlug }}"
+  tokenUrl: "http://keycloak-app-keycloakx-http.{{ .Values.keycloak.app.namespace }}.svc.cluster.local:80{{ .Values.keycloak.app.pathPrefix | trimSuffix "/" }}/realms/{{ $global.instanceSlug }}/protocol/openid-connect/token"
+
+# The same image the forge runs, so the Job pulls nothing the node does not already have and
+# there is one digest to re-pin instead of two. It carries curl, sed and base64 and runs as
+# uid 1000; it does not carry jq, which is why nothing here parses a response body it has not
+# first checked the shape of.
+{{- $image := index .Values.images "gitea" "forge" }}
+image:
+  repository: "{{ $image.registry }}/{{ $image.repository }}"
+  tag: "{{ $image.tag }}-rootless"
+  digest: {{ $image.digest }}
+  pullPolicy: IfNotPresent
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}
+
+{{- /* dev's seeds rendered for a production instance that reads dev's values (T-4678): its own
+       hosts, the owner where the seeds name the demo steward, and no other demo person. */}}
+{{- $production := and (eq .Values.global.profile "production") .Values.global.valuesProfile }}
+{{- if or $production .Values.global.presenterUserId }}
+rewrites:
+  {{- with .Values.global.presenterUserId }}
+  # The presenter (T-6542, components/keycloak/presenter.yaml) stands beside the demo steward and
+  # each other Organization's administrator on every member line, before any rule below drops them.
+  - from: '(?m)^([ \t]*)- user: de300000-0000-4000-8000-00000000000[1567]( # demo\.[a-z]+)?\n'
+    to: {{ printf "${1}- user: %s # presenter\n${0}" . | quote }}
+  {{- end }}
+  {{- if $production }}
+  # The seeds name the catalogue opendata.dev.joinedcontext.com, so the domain rule below moves it too (T-4679).
+  - from: 'dev\.joinedcontext\.com'
+    to: {{ .Values.global.domain | quote }}
+  {{- with .Values.global.walkerUserId }}
+  # An environment without demo people still needs a person an agent can sign in as: the owner's
+  # own login is not ours to enrol (T-6449). This id stands beside the steward on every member line.
+  - from: '(?m)^([ \t]*)- user: de300000-0000-4000-8000-000000000001( # demo\.steward)?\n'
+    to: {{ printf "${1}- user: %s\n${0}" . | quote }}
+  {{- end }}
+  # The demo people are named by their fixed Keycloak ids (components/keycloak/demo-users.yaml,
+  # PF-126): the steward's becomes the owner's id and every other demo member line goes.
+  - from: 'de300000-0000-4000-8000-000000000001( # demo\.steward)?'
+    to: {{ .Values.global.initialUserId | quote }}
+  - from: '(?m)^[ \t]*- user: de300000-0000-4000-8000-[0-9a-f]{12}[^\n]*\n'
+    to: ''
+  # What else a demo person owns (a ServiceAccount's accountable owner) is the owner's.
+  - from: 'de300000-0000-4000-8000-[0-9a-f]{12}( # demo\.[a-z]+)?'
+    to: {{ .Values.global.initialUserId | quote }}
+{{- end }}
+{{- end }}

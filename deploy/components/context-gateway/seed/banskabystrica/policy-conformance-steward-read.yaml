@@ -1,0 +1,24 @@
+# The city's steward reads what the conformance suite left in its space (T-2456, F-BNT1-002):
+# the Portal shows every space of the project, and a space no signed-in person may read answers
+# 403 for every row. Read only, the fixture type only.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: conformance-steward-read
+  namespace: banskabystrica
+  title: { sk: Správca údajov číta testovacie entity, en: The data steward reads the test fixtures }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: conformance }
+  assigner: did:web:banskabystrica.sk
+  assignee:
+    kind: user
+    id: de300000-0000-4000-8000-000000000001 # demo.steward
+  operations:
+    - retrieveOps
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: AirQualityObserved

@@ -1,0 +1,207 @@
+id: https://joinedcontext.com/models/zilina/zilina-uniza
+name: zilina-uniza
+title: Open research of the University of Žilina
+description: >-
+  What the university's space carries (DM-01, DM-61): one entity per item of DREPO, the
+  university's digital library, that carries an open licence of its own, described by its title,
+  kind, year, collection and licence. Authors are people, so the model has no slot for them: an
+  application counts and lists works, it does not list who wrote them. Sources:
+  Research/zilina-open-data-sources.md.
+license: https://joinedcontext.com/licenses/cc-by-4.0
+prefixes:
+  linkml: https://w3id.org/linkml/
+  jc: https://joinedcontext.com/models/
+  sdm: https://smartdatamodels.org/
+  ngsi-ld: https://uri.etsi.org/ngsi-ld/
+default_prefix: sdm
+default_range: string
+imports:
+  - linkml:types
+  - ngsi-ld-core
+
+slots:
+  identifier:
+    slot_uri: https://smartdatamodels.org/dataModel.CPSV-AP/identifier
+    description: The work's handle in the repository (`hdluniza/936`), the identifier the Article extension requires.
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Identifikátor
+          cs: Identifikátor
+          en: Identifier
+          de: Kennung
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/dataModel.CPSV-AP
+  name:
+    slot_uri: schema:name
+    description: The work's title, per language, as the repository records it.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Názov
+          cs: Název
+          en: Name
+          de: Name
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: LanguageProperty
+      upstream_source: https://schema.org/name
+  workType:
+    slot_uri: jc:workType
+    description: What the work is, in the repository's words (Article, Conference paper, Thesis, …).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Druh práce
+          cs: Druh práce
+          en: Type of work
+          de: Art der Arbeit
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  yearPublished:
+    slot_uri: jc:yearPublished
+    description: The year the work was issued.
+    range: integer
+    minimum_value: 1900
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Rok vydania
+          cs: Rok vydání
+          en: Year published
+          de: Erscheinungsjahr
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  isPartOf:
+    slot_uri: schema:isPartOf
+    description: >-
+      The address of the repository collection the work was deposited in
+      (`https://dspace.uniza.sk/handle/hdluniza/556`).
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Dataset
+          cs: Datová sada
+          en: Dataset
+          de: Datensatz
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  collectionName:
+    slot_uri: jc:collectionName
+    description: >-
+      The repository collection the work was deposited in, as DREPO names it: a journal issue,
+      a proceedings volume or a series (`Krízový manažment - Ročník 24.; Číslo 2/2025`).
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Kolekcia
+          cs: Kolekce
+          en: Collection
+          de: Sammlung
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+  publisher:
+    slot_uri: schema:publisher
+    description: Who issued the work, as the repository records it.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Vydavateľ
+          cs: Vydavatel
+          en: Publisher
+          de: Herausgeber
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/publisher
+  license:
+    slot_uri: schema:license
+    description: >-
+      The licence the work itself carries (`dc.rights.uri`); only open licences reach the space.
+    range: uri
+    required: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Licencia
+          cs: Licence
+          en: Licence
+          de: Lizenz
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/license
+  url:
+    slot_uri: schema:url
+    description: The work's persistent handle in the repository.
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Webová stránka
+          cs: Webová stránka
+          en: Web page
+          de: Webseite
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/url
+  dataProvider:
+    slot_uri: sdm:dataProvider
+    description: Who publishes the record, with the credit its licence asks for.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Poskytovateľ údajov
+          cs: Poskytovatel dat
+          en: Data provider
+          de: Datenanbieter
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models
+  source:
+    slot_uri: sdm:source
+    description: The repository service the entity was read from.
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Zdroj
+          cs: Zdroj
+          en: Source
+          de: Quelle
+        annotations: { generated: sk cs en de }
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models
+
+classes:
+  Article:
+    class_uri: jc:Article
+    description: >-
+      One openly licensed work of the University of Žilina's digital library, as the Smart Data
+      Model extension Article (CPSV-AP Evidence base).
+    is_a: Entity
+    annotations:
+      upstream_source: https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/Article
+    slots:
+      - identifier
+      - name
+      - workType
+      - yearPublished
+      - isPartOf
+      - collectionName
+      - publisher
+      - license
+      - url
+      - dataProvider
+      - source

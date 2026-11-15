@@ -1,0 +1,14 @@
+# Žilina's readers (PF-61 inside ADR-N-058 2.4): the members of the Keycloak group /zilina, the
+# root of the Organization's subtree, read its projects. Helsinki's viewers.yaml names its
+# people one by one at `hel` (T-6415), so no group reads both Organizations.
+apiVersion: joinedcontext.com/v1alpha1
+kind: RoleBinding
+metadata:
+  name: zilina-viewers
+  namespace: org
+spec:
+  subjects:
+    - group: zilina
+      source: provider
+  role: viewer
+  scope: { organization: zilina }

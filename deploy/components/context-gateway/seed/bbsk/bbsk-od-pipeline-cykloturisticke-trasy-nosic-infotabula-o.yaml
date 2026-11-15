@@ -1,0 +1,24 @@
+# One PointOfInterest per row of "Cykloturistické trasy - nosič/infotabuľa/odpočívadlo/značenie" (T-4255); signposts, boards and rest stops.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-cykloturisticke-trasy-nosic-infotabula-o
+  namespace: bbsk
+  title:
+    sk: Cykloturistické trasy - nosič/infotabuľa/odpočívadlo/značenie
+    en: Cykloturistické trasy - nosič/infotabuľa/odpočívadlo/značenie
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 35 1 * * 5
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-cykloturisticke-trasy-nosic-infotabula-o
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: PointOfInterest
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

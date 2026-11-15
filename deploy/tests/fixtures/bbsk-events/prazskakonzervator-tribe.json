@@ -1,0 +1,47 @@
+{
+ "events": [
+  {
+   "id": 28486,
+   "title": "Koncert pěveckého oddělení",
+   "url": "https://prazskakonzervator.cz/akce/koncert-peveckeho-oddeleni-4/",
+   "start_date": "2026-10-26 18:30:00",
+   "end_date": "2026-10-26 20:00:00",
+   "all_day": false,
+   "utc_start_date": "2026-10-26 17:30:00",
+   "timezone": "Europe/Prague",
+   "venue": {
+    "venue": "Komorní sál Pálffyovský palác",
+    "address": "Valdštejnská 14",
+    "city": "Praha 1",
+    "zip": "110 00",
+    "country": null,
+    "geo_lat": null,
+    "geo_lng": null,
+    "url": "https://prazskakonzervator.cz/misto-konani/komorni-sal-palffyovsky-palac/"
+   },
+   "organizer": []
+  },
+  {
+   "id": 28176,
+   "title": "Masterclass Joseph Alessi",
+   "url": "https://prazskakonzervator.cz/akce/masterclass-joseph-alessi/",
+   "start_date": "2026-10-27 13:00:00",
+   "end_date": "2026-10-27 16:00:00",
+   "all_day": false,
+   "utc_start_date": "2026-10-27 12:00:00",
+   "timezone": "Europe/Prague",
+   "venue": {
+    "venue": "Koncertní sál Na Rejdišti",
+    "address": "Dvořákovo nábřeží 77/2",
+    "city": "Praha 1",
+    "zip": "110 00",
+    "country": null,
+    "geo_lat": null,
+    "geo_lng": null,
+    "url": "https://prazskakonzervator.cz/misto-konani/koncertni-sal-na-rejdisti/"
+   },
+   "organizer": []
+  }
+ ],
+ "total": 2
+}

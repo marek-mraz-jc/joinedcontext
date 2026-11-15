@@ -1,0 +1,473 @@
+{
+ "count": 8,
+ "next": null,
+ "previous": null,
+ "results": [
+  {
+   "id": 10037,
+   "connections": [
+    {
+     "section_type": "OPENING_HOURS",
+     "name": {
+      "fi": "Normaaliaukioloaika:\n– ma, ke-to, la-su suljettu\n– ti 12.00-18.00\n– pe 9.00-15.00",
+      "sv": "Normaaliaukioloaika:\n– mån, ons-tor, lör-sön stängt\n– tis 12.00-18.00\n– fre 9.00-15.00",
+      "en": "Normaaliaukioloaika:\n– Mon, Wed-Thu, Sat-Sun closed\n– Tue 12.00-18.00\n– Fri 9.00-15.00"
+     },
+     "www": null,
+     "email": null,
+     "phone": null,
+     "contact_person": null,
+     "tags": []
+    }
+   ],
+   "name": {
+    "fi": "Sakarinmäen lastenkirjasto",
+    "sv": "Östersundom barnbibliotek",
+    "en": "Sakarinmäki Children's Library"
+   },
+   "street_address": {
+    "fi": "Knutersintie 924",
+    "sv": "Knutersvägen 924",
+    "en": "Knutersintie 924"
+   },
+   "www": {
+    "fi": "http://www.helmet.fi/sakarinmaenlastenkirjasto",
+    "sv": "http://www.helmet.fi/ostersundombarnbibliotek",
+    "en": "http://www.helmet.fi/sakarinmakichildren"
+   },
+   "address_zip": "00890",
+   "last_modified_time": "2026-08-13T07:31:58.906471+03:00",
+   "services": [
+    813
+   ],
+   "location": {
+    "type": "Point",
+    "coordinates": [
+     25.211632,
+     60.262024
+    ]
+   },
+   "service_nodes": [
+    328,
+    349
+   ],
+   "root_service_nodes": [
+    1402,
+    1403
+   ],
+   "contract_type": {
+    "id": "MUNICIPAL_SERVICE",
+    "description": {
+     "fi": "kunnallinen palvelu, Kulttuurin ja vapaa-ajan toimiala, Helsingin kaupunki",
+     "sv": "kommunal tjänst, Kultur- och fritidssektorn, Helsingfors stad",
+     "en": "municipal service, Culture and Leisure Division, City of Helsinki"
+    }
+   }
+  },
+  {
+   "id": 6247,
+   "connections": [
+    {
+     "section_type": "OPENING_HOURS",
+     "name": {
+      "fi": "Voimassa toistaiseksi:\n– ma-pe 8.00-16.00",
+      "sv": "Gäller tills vidare:\n– mån-fre 8.00-16.00",
+      "en": "Valid for the time being:\n– Mon-Fri 8.00-16.00"
+     },
+     "www": null,
+     "email": null,
+     "phone": null,
+     "contact_person": null,
+     "tags": []
+    }
+   ],
+   "name": {
+    "fi": "Keskisen terveysasema/Laajasalo",
+    "sv": "Degerö hälsostation",
+    "en": "Laajasalo Health Station"
+   },
+   "street_address": {
+    "fi": "Koulutanhua 2 A",
+    "sv": "Skoltået 2 A",
+    "en": "Koulutanhua 2 A"
+   },
+   "www": {
+    "fi": "https://www.hel.fi/fi/sosiaali-ja-terveyspalvelut/terveydenhoito/terveysasemat/laajasalon-terveysasema",
+    "sv": "https://www.hel.fi/sv/social-och-halsovardstjanster/halsovard/halsostationer/degero-halsostation",
+    "en": "https://www.hel.fi/en/health-and-social-services/health-care/health-stations/laajasalo-health-station"
+   },
+   "address_zip": "00840",
+   "last_modified_time": "2026-09-03T09:01:41.193694+03:00",
+   "services": [
+    703,
+    702,
+    417
+   ],
+   "location": {
+    "type": "Point",
+    "coordinates": [
+     25.055822,
+     60.178677
+    ]
+   },
+   "service_nodes": [
+    992,
+    993,
+    991
+   ],
+   "root_service_nodes": [
+    986
+   ],
+   "contract_type": {
+    "id": "MUNICIPAL_SERVICE",
+    "description": {
+     "fi": "kunnallinen palvelu, Sosiaali-, terveys- ja pelastustoimiala, Helsingin kaupunki",
+     "sv": "kommunal tjänst, Social-, hälsovårds- och räddningssektorn, Helsingfors stad",
+     "en": "municipal service, The Social Services, Health Care and Rescue Services Division, City of Helsinki"
+    }
+   }
+  },
+  {
+   "id": 80486,
+   "connections": [],
+   "name": {
+    "fi": "Kellumo",
+    "en": "Kellumo - Floating and Relaxation Center"
+   },
+   "street_address": {
+    "fi": "Hietaniemenkatu 3",
+    "sv": "Sanduddsgatan 3",
+    "en": "Hietaniemenkatu 3"
+   },
+   "www": {
+    "fi": "https://kellumo.fi/",
+    "sv": "https://kellumo.fi/",
+    "en": "https://evaraus.fi/kellumo/kalenteri/en/"
+   },
+   "address_zip": "00100",
+   "last_modified_time": "2026-06-24T07:36:23.699117+03:00",
+   "services": [
+    864,
+    804,
+    729
+   ],
+   "location": {
+    "type": "Point",
+    "coordinates": [
+     24.925314,
+     60.17006
+    ]
+   },
+   "service_nodes": [
+    2168,
+    155,
+    264,
+    511,
+    693
+   ],
+   "root_service_nodes": [
+    1400,
+    1401,
+    1403
+   ],
+   "contract_type": {
+    "id": "PRIVATE_SERVICE",
+    "description": {
+     "fi": "yksityinen palvelu",
+     "sv": "privat tjänst",
+     "en": "private service"
+    }
+   }
+  },
+  {
+   "id": 62953,
+   "connections": [
+    {
+     "section_type": "OPENING_HOURS",
+     "name": {
+      "fi": "Avoinna kesäkaudella",
+      "sv": "Öppet under sommarsäsongen",
+      "en": "Open in summer season"
+     },
+     "www": null,
+     "email": null,
+     "phone": null,
+     "contact_person": null,
+     "tags": []
+    }
+   ],
+   "name": {
+    "fi": "Cafe Kobben",
+    "sv": "Cafe Kobben",
+    "en": "Cafe Kobben"
+   },
+   "street_address": {
+    "fi": "Katajanokanluoto",
+    "sv": "Skatakobben",
+    "en": "Katajanokanluoto"
+   },
+   "www": {
+    "fi": "https://katajanokanluoto.fi/",
+    "sv": "https://katajanokanluoto.fi/",
+    "en": "https://katajanokanluoto.fi/"
+   },
+   "address_zip": "00140",
+   "last_modified_time": "2026-09-25T07:36:02.080427+03:00",
+   "services": [
+    881,
+    804,
+    731,
+    577,
+    239
+   ],
+   "location": {
+    "type": "Point",
+    "coordinates": [
+     24.982311,
+     60.161896
+    ]
+   },
+   "service_nodes": [
+    738,
+    751,
+    155,
+    511,
+    264,
+    689,
+    2198,
+    2199
+   ],
+   "root_service_nodes": [
+    1400,
+    1401,
+    1402,
+    1403
+   ],
+   "contract_type": {
+    "id": "PRIVATE_SERVICE",
+    "description": {
+     "fi": "yksityinen palvelu",
+     "sv": "privat tjänst",
+     "en": "private service"
+    }
+   }
+  },
+  {
+   "id": 7010,
+   "connections": [],
+   "name": {
+    "fi": "Suomalais-venäläinen koulu",
+    "sv": "Suomalais-venäläinen koulu",
+    "en": "Finnish-Russian School"
+   },
+   "street_address": {
+    "fi": "Kaarelankuja 2b",
+    "sv": "Kårbölegränden 2b",
+    "en": "Kaarelankuja 2b"
+   },
+   "www": {
+    "fi": "https://www.svk-edu.fi/",
+    "sv": "https://www.svk-edu.fi/",
+    "en": "https://www.svk-edu.fi/"
+   },
+   "address_zip": "00430",
+   "last_modified_time": "2026-06-01T08:01:56.649400+03:00",
+   "services": [
+    772,
+    771,
+    770,
+    662,
+    661,
+    658
+   ],
+   "location": {
+    "type": "Point",
+    "coordinates": [
+     24.900393,
+     60.23882
+    ]
+   },
+   "service_nodes": [
+    1259,
+    1110,
+    1100,
+    1263,
+    1104,
+    1114
+   ],
+   "root_service_nodes": [
+    1087
+   ],
+   "contract_type": {
+    "id": "NOT_DISPLAYED",
+    "description": {
+     "fi": null,
+     "sv": null,
+     "en": null
+    }
+   }
+  },
+  {
+   "id": 80752,
+   "connections": [
+    {
+     "section_type": "OTHER_INFO",
+     "name": {
+      "fi": "Palvelut Suomi.fi-verkkopalvelussa",
+      "sv": "Tjänsterna i Suomi.fi-webbtjänsten",
+      "en": "Services in the Suomi.fi Web Service"
+     },
+     "www": {
+      "fi": "https://www.suomi.fi/palvelut/palvelupiste/xxx/30a573a1-f702-4cdd-9501-61e3909aaa71/palvelut?p=0",
+      "sv": "https://www.suomi.fi/service/servicestalle/xxx/30a573a1-f702-4cdd-9501-61e3909aaa71/service?p=0",
+      "en": "https://www.suomi.fi/services/servicepoint/xxx/30a573a1-f702-4cdd-9501-61e3909aaa71/services?p=0"
+     },
+     "email": null,
+     "phone": null,
+     "contact_person": null,
+     "tags": []
+    }
+   ],
+   "contract_type": {
+    "id": "SERVICE_BY_JOINT_MUNICIPAL_AUTHORITY",
+    "description": {
+     "fi": "kuntayhtymän palvelu",
+     "sv": "tjänst från samkommunen",
+     "en": "service by joint municipal authority"
+    }
+   },
+   "name": {
+    "fi": "Kardiologiset vastaanotot, Haartmanin sairaala",
+    "en": "Cardiology Outpatient Clinic, Haartman Hospital"
+   },
+   "street_address": {
+    "fi": "Haartmaninkatu 4",
+    "sv": "Haartmansgatan 4",
+    "en": "Haartmaninkatu 4"
+   },
+   "www": {
+    "fi": "https://www.hus.fi/potilaalle/sairaalat-ja-toimipisteet/kardiologiset-vastaanotot-haartmanin-sairaala",
+    "sv": "https://www.hus.fi/potilaalle/sairaalat-ja-toimipisteet/kardiologiset-vastaanotot-haartmanin-sairaala",
+    "en": "https://www.hus.fi/en/patient/hospitals-and-other-units/cardiology-outpatient-clinic-haartman-hospital"
+   },
+   "address_zip": "00290",
+   "last_modified_time": "2026-10-18T07:38:38.051117+03:00",
+   "root_service_nodes": [
+    986
+   ],
+   "service_nodes": [
+    1010
+   ],
+   "services": [
+    820
+   ],
+   "location": {
+    "type": "Point",
+    "coordinates": [
+     24.907015,
+     60.189083
+    ]
+   }
+  },
+  {
+   "id": 80964,
+   "connections": [],
+   "contract_type": {
+    "id": "MUNICIPAL_SERVICE",
+    "description": {
+     "fi": "kunnallinen palvelu, Kasvatuksen ja koulutuksen toimiala, Helsingin kaupunki",
+     "sv": "kommunal tjänst, Fostrans- och utbildningssektorn, Helsingfors stad",
+     "en": "municipal service, Education Division, City of Helsinki"
+    }
+   },
+   "name": {
+    "fi": "Leikkipuisto Lehdokki, leikkipiha",
+    "sv": "Lekparken Nattviolen, utomhusområden",
+    "en": "Playground Lehdokki, outdooor area"
+   },
+   "street_address": {
+    "fi": "Pakkamestarinkatu 4",
+    "sv": "Packmästargatan 4",
+    "en": "Pakkamestarinkatu 4"
+   },
+   "www": {
+    "fi": "https://www.hel.fi/fi/kasvatus-ja-koulutus/leikkipuisto-lehdokki",
+    "sv": "https://www.hel.fi/fi/kasvatus-ja-koulutus/leikkipuisto-lehdokki",
+    "en": "https://www.hel.fi/fi/kasvatus-ja-koulutus/leikkipuisto-lehdokki"
+   },
+   "address_zip": "00520",
+   "last_modified_time": "2026-10-14T18:09:35.269504+03:00",
+   "root_service_nodes": [
+    1405
+   ],
+   "service_nodes": [
+    976
+   ],
+   "services": [
+    86
+   ],
+   "location": {
+    "type": "Point",
+    "coordinates": [
+     24.944923,
+     60.198128
+    ]
+   }
+  },
+  {
+   "id": 81019,
+   "connections": [],
+   "contract_type": {
+    "id": "PRIVATE_SERVICE",
+    "description": {
+     "fi": "yksityinen palvelu",
+     "sv": "privat tjänst",
+     "en": "private service"
+    }
+   },
+   "name": {
+    "fi": "M8S Hub & Studio",
+    "sv": "M8S Hub & Studio",
+    "en": "M8S Hub & Studio"
+   },
+   "street_address": {
+    "fi": "Arielinkatu 16",
+    "sv": "Arielgatan 16",
+    "en": "Arielinkatu 16"
+   },
+   "www": {
+    "fi": "https://m8s.fi/",
+    "sv": "https://m8s.fi/",
+    "en": "https://m8s.fi/"
+   },
+   "address_zip": "00540",
+   "last_modified_time": "2026-10-25T03:16:35.177755+03:00",
+   "root_service_nodes": [
+    1400,
+    1401,
+    1403
+   ],
+   "service_nodes": [
+    737,
+    261,
+    508,
+    152,
+    507,
+    742,
+    260,
+    151
+   ],
+   "services": [
+    326,
+    214
+   ],
+   "location": {
+    "type": "Point",
+    "coordinates": [
+     24.977337,
+     60.183582
+    ]
+   }
+  }
+ ]
+}

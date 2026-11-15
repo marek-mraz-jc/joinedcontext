@@ -1,0 +1,38 @@
+.idea
+tests/.venv
+/deployment
+.env
+.gitlab-ci-local/
+__pycache__/
+.secrets/
+dev-deployment/.ssl/jc.key
+dev-deployment/.ssl/jc.crl
+dev-deployment/.ssl/jc.crl.pem
+dev-deployment/.ssl/index.txt*
+dev-deployment/.ssl/crlnumber*
+
+# Agent worktrees, never part of the repository
+.claude/
+
+# pytest leaves this behind when the suite runs in the checkout
+.pytest_cache/
+
+# The render the golden check compares against; CI writes it into the checkout and so does
+# anyone reproducing a golden failure by hand (ci.yml, `just golden-update`).
+/golden-check.yaml
+
+# The catalogue smoke's tables (T-4716): the next run rotates from the newest one.
+/.smoke/
+
+# Playwright runs of components/viz/tests (T-5129): installed browsers driver and result shots, never committed.
+node_modules/
+test-results/
+# scripts/temporal-audit.py writes its report here by default (ci.yml uploads it as an artifact)
+/temporal-audit.json
+
+# Hetzner clusters (T-6444): state, plans and keys live in CLUSTER_STATE_DIR, never here.
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform/
+*_kubeconfig.yaml

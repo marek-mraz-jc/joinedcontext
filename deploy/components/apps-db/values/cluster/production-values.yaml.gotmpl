@@ -1,0 +1,22 @@
+---
+cluster:
+  instances: 3
+  resources:
+    requests:
+      cpu: "1"
+      memory: "4Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+  storage:
+    size: 50Gi
+  postgresql:
+    parameters:
+      # T-5553: two shards of two replicas at 20 (JC_WASM_DB_POOL), the Portal's 4 and an App
+      # owner login per shard: 86 x 1.2 + 3 reserved = 107, and 86 stays under 80 % of 110.
+      # 110 x 8 MiB + 128 MB shared_buffers = 1008 MiB of the 4Gi limit.
+      max_connections: "110"
+  affinity:
+    enablePodAntiAffinity: true
+    podAntiAffinityType: required
+    topologyKey: kubernetes.io/hostname

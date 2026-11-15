@@ -1,0 +1,18 @@
+# What each Slovnaft BAjk station of `nextbike-station-status` holds, written onto the station (T-5273).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: bike-availability
+  namespace: bratislava
+  title: { sk: Dostupnosť bicyklov Slovnaft BAjk, en: Slovnaft BAjk bike availability }
+spec:
+  class: auto
+  # Every five minutes, as Prague's: the publisher's 60 s would be five times the writes for a
+  # number a rider reads at the station anyway (Development/12 section 4).
+  period: 5m
+  schedule: '*/5 * * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: nextbike-station-status }
+  targetEndpoint: urn:ngsi-ld:Endpoint:bratislava.sk:bratislava:bratislava
+  output: { type: BikeHireDockingStation, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

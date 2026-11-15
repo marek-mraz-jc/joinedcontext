@@ -1,0 +1,37 @@
+# The residue sweep's role on dev (T-2627, PF-49): it approves and deletes only what a live journey
+# or a recorded take named as its own, and proposes nothing, so a removal the steward proposes is
+# approved by somebody else and no demo person gains a delete. The pattern is the sweep's own
+# (joinedcontext-portal ui/e2e/live/residue.spec.ts): a journey's `t1234-…` or `t1234r-…` (any
+# four-digit task, T-4993), a take's `…-0915`, the policy-new-user journey's `newuser-policy-…`, and
+# the fixed names a take's acts create. It matches the whole name, and no
+# seeded name falls inside it (tests/test_seed_identity_contract.py): `city-bikes`, which a take
+# once created, is the seeded dashboard now.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Role
+metadata:
+  name: janitor
+  namespace: org
+spec:
+  rules:
+    - kinds:
+        - ContextSpace
+        - DataModel
+        - Endpoint
+        - ModelProjection
+        - Policy
+        - Pipeline
+        - DataSource
+        - Dashboard
+        - Layer
+        - ContextSourceRegistration
+        - CkanInstance
+        - App
+        - ServiceAccount
+        - Subscription
+        - SyncSource
+        - KnowledgeSource
+        - AssistantDeployment
+      verbs: [approve, delete]
+      constraints:
+        - field: metadata.name
+          pattern: t[0-9]{4}[a-z]?-[a-z0-9-]+|newuser-policy-[a-z0-9]+|[a-z0-9-]+-[0-9]{4}|bikes-regional-[a-z0-9]+|large-map-city

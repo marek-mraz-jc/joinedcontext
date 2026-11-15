@@ -1,0 +1,163 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "id": "Kaivuilmoitus_alue.2894",
+   "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [
+     [
+      [
+       [
+        24.91617354,
+        60.23644137
+       ],
+       [
+        24.91611101,
+        60.23643426
+       ],
+       [
+        24.91615639,
+        60.2364767
+       ],
+       [
+        24.91617354,
+        60.23644137
+       ]
+      ]
+     ]
+    ]
+   },
+   "geometry_name": "singlegeom",
+   "properties": {
+    "id": 2894,
+    "hakemus": "Kaivuilmoitus",
+    "hakemustunnus": "KP2602482",
+    "tyo_alkaa": "2026-09-14",
+    "tyo_paattyy": "2026-09-17",
+    "toiminnallinen_kunto": null,
+    "tyon_tarkoitus": "Vesi- ja viemäriputket",
+    "osoite": "Rapparinkuja 8b",
+    "kaupunginosa": "34 PAKILA",
+    "status": "Käynnissä",
+    "hakija": "",
+    "tyon_suorittaja": "",
+    "geometrytype": "ST_Polygon",
+    "tyo_alkaa_txt": "14.09.2026",
+    "tyo_paattyy_txt": "17.09.2026",
+    "toiminnallinen_kunto_txt": null
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "Kaivuilmoitus_alue.2895",
+   "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [
+     [
+      [
+       [
+        24.91616617,
+        60.23644413
+       ],
+       [
+        24.9161312,
+        60.23644243
+       ],
+       [
+        24.91615596,
+        60.236466
+       ],
+       [
+        24.91616617,
+        60.23644413
+       ]
+      ]
+     ]
+    ]
+   },
+   "geometry_name": "singlegeom",
+   "properties": {
+    "id": 2895,
+    "hakemus": "Kaivuilmoitus",
+    "hakemustunnus": "KP2602482",
+    "tyo_alkaa": "2026-09-14",
+    "tyo_paattyy": "2026-09-17",
+    "toiminnallinen_kunto": null,
+    "tyon_tarkoitus": "Vesi- ja viemäriputket",
+    "osoite": "Rapparinkuja 8b",
+    "kaupunginosa": "34 PAKILA",
+    "status": "Käynnissä",
+    "hakija": "",
+    "tyon_suorittaja": "",
+    "geometrytype": "ST_Polygon",
+    "tyo_alkaa_txt": "14.09.2026",
+    "tyo_paattyy_txt": "17.09.2026",
+    "toiminnallinen_kunto_txt": null
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "Kaivuilmoitus_alue.2845",
+   "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [
+     [
+      [
+       [
+        25.03815,
+        60.17526203
+       ],
+       [
+        25.037937,
+        60.17523503
+       ],
+       [
+        25.038013,
+        60.17504103
+       ],
+       [
+        25.038253,
+        60.17504703
+       ],
+       [
+        25.03815,
+        60.17526203
+       ]
+      ]
+     ]
+    ]
+   },
+   "geometry_name": "singlegeom",
+   "properties": {
+    "id": 2845,
+    "hakemus": "Kaivuilmoitus",
+    "hakemustunnus": "KP2602451-3",
+    "tyo_alkaa": "2026-09-28",
+    "tyo_paattyy": "2026-10-18",
+    "toiminnallinen_kunto": null,
+    "tyon_tarkoitus": "Keskikorokkeen siirto (Henrik Borgströmin tie); käytävän asfaltointi, reunakivimuutokset ja kaivon siirto (Päätie).\n\nLISÄYS 18.9.2026: lisäalueet Henrik Borgströmintie (suojatien rakentaminen Kumianpäälle ja Orisaarentielle); uusi liikennejärjestelysuunnitelma.\nMUUTOS 23.9.2026: aloituspäivä 21.9.2026 –> 28.9.2026.",
+    "osoite": "Henrik Borgströmin tie 3, Päätie 22-24 - Hopeakaivoksentie 1-3",
+    "kaupunginosa": "49 LAAJASALO",
+    "status": "Tuleva",
+    "hakija": "",
+    "tyon_suorittaja": "",
+    "geometrytype": "ST_Polygon",
+    "tyo_alkaa_txt": "28.09.2026",
+    "tyo_paattyy_txt": "18.10.2026",
+    "toiminnallinen_kunto_txt": null
+   }
+  }
+ ],
+ "totalFeatures": 3266,
+ "numberMatched": 3266,
+ "numberReturned": 3,
+ "timeStamp": "2026-09-25T05:12:16.638Z",
+ "crs": {
+  "type": "name",
+  "properties": {
+   "name": "urn:ogc:def:crs:EPSG::4326"
+  }
+ }
+}

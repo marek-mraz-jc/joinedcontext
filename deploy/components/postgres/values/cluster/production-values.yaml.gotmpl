@@ -1,0 +1,34 @@
+---
+{{- $this := .Values.postgres.cluster -}}
+{{- $global := .Values.global }}
+# - [x] Resources (requests and limits)
+# - [x] Larger Storage
+# - [x] 2+ Replicas or HorizontalPodAutoscaler
+# - [x] Rolling updates `maxUnavailable: 0`, `maxSurge: 25%` -> automatic in CloudNativePG
+# - [x] PodDisruptionBudget (at least `minAvailable: 1`) -> automatic in CloudNativePG
+
+cluster:
+  instances: 3
+
+  resources:
+    requests:
+      cpu: "2"
+      memory: "8Gi"
+    limits:
+      cpu: "2"
+      memory: "8Gi"
+
+  storage:
+    size: 50Gi
+
+  affinity:
+    enablePodAntiAffinity: true
+    podAntiAffinityType: required
+    topologyKey: kubernetes.io/hostname
+
+  postgresql:
+    parameters:
+      # 250, not 500: each connection holds about 19MiB of its own, and 500 of them are 11GiB in
+      # an 8Gi pod (T-4933, tests/test_postgres_memory_budget.py).
+      max_connections: "250"
+      max_worker_processes: "4"

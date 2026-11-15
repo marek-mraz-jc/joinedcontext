@@ -1,0 +1,14 @@
+# A WordPress REST list of an events post type that holds no dates: Modern Events Calendar (`mec-events`), LSVR
+# Events (`lsvr_event`), EventON (`ajde_events`) or a site's own type. Each item's page is read by
+# jsonld-pages.yaml, which follows (T-4896, T-5047).
+- mapping: |
+    root = if this.type() != "array" { throw("the events API answered no list") } else { this }
+- mapping: |
+    root = this.map_each(e -> {
+      "name": e.title.rendered.or(null),
+      "url": e.link.or(null),
+      "sourceId": e.id.or(null),
+      "modified": e.modified_gmt.or(null).(m -> if m != null { m + "Z" } else { null })
+    })
+- unarchive:
+    format: json_array

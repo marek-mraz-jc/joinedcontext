@@ -1,0 +1,21 @@
+# The census 2021 table of the residents of the basic settlement units (ZSJ) of the city by single
+# year of age as KeyPerformanceIndicator, one entity per age, ZSJ and period (T-5675), with the same
+# mapping text as the statistics pipeline; a pipeline of its own because it alone needs a full
+# quota. 27,878 figures on 2026-10-25; the run fits 320 MiB (docker --memory: killed at 256).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: statistics-zsj-vek
+  namespace: bratislava
+  title:
+    sk: Obyvatelia základných sídelných jednotiek podľa veku
+    en: Residents of the basic settlement units by age
+spec:
+  class: auto
+  period: 168h
+  schedule: '45 5 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: bratislava-hub }
+  targetEndpoint: urn:ngsi-ld:Endpoint:bratislava.sk:bratislava:bratislava
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 384, cpuMillicores: 100 }

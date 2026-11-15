@@ -1,0 +1,53 @@
+# One Smart Data Model type per catalogue dataset (T-4344): the regulated surface parking
+# sections of B:SM, read through their own Policy, which narrows the space's public read to them.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: barcelona-parking
+  namespace: barcelona
+  title:
+    ca: Trams d'aparcament en superfície — Barcelona
+    es: Tramos de aparcamiento en superficie — Barcelona
+    en: Surface parking sections — Barcelona
+  description:
+    ca: "Cada tram d'aparcament regulat en superfície (àrea blava, àrea verda, DUM, zona bus) amb les seves línies de vorera, places i codis de tarifa i horari. Font: Ajuntament de Barcelona (B:SM), Open Data BCN, CC BY 4.0."
+    es: 'Cada tramo de aparcamiento regulado en superficie (área azul, área verde, DUM, zona bus) con sus líneas de bordillo, plazas y códigos de tarifa y horario. Fuente: Ayuntamiento de Barcelona (B:SM), Open Data BCN, CC BY 4.0.'
+    en: 'Each regulated surface parking section (blue zone, green zone, loading zone, coach zone) with its curb lines, places and rate and timetable codes. Source: Barcelona City Council (B:SM), Open Data BCN, CC BY 4.0.'
+spec:
+  contextSpaceRef: barcelona
+  slug: ackffz6oyybxux232kqfvklr4llwdeh4
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:barcelona.cat:barcelona:public-parking
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: barcelona }
+      license: cc-by
+  catalog:
+    publisher:
+      name:
+        ca: Ajuntament de Barcelona
+        es: Ayuntamiento de Barcelona
+        en: Barcelona City Council
+      uri: http://datos.gob.es/recurso/sector-publico/org/Organismo/L01080193
+    license: CC_BY_4_0
+    attribution:
+      ca: 'Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0'
+      es: 'Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0'
+      en: 'Source: Barcelona City Council (Ajuntament de Barcelona), Open Data BCN, CC BY 4.0'
+    themes: [TRAN]
+    keywords:
+      ca: [aparcament, àrea blava, àrea verda, DUM]
+      es: [aparcamiento, área azul, área verde, DUM]
+      en: [parking, blue zone, green zone, loading zone]
+    spatial:
+      - ES511
+      - https://sws.geonames.org/3128760/
+    frequency: MONTHLY
+    source:
+      - url: https://opendata-ajuntament.barcelona.cat/data/ca/dataset/trams-aparcament-superficie
+        title: { ca: Trams d'aparcament en superfície, en: Surface parking sections }
+        description:
+          ca: Un fitxer CSV mensual, una fila per tros de vorera.
+          en: A monthly CSV file, one row per curb piece.
+    pipelineRef: { kind: Pipeline, name: parking-sections }

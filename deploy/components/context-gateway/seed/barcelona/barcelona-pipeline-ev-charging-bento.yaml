@@ -1,0 +1,81 @@
+# The mapping of the ev-charging pipeline (PL-03, T-5262): one EVChargingStation per public
+# charging point of Endolla Barcelona, from Open Data BCN informacio-punts-recarrega-electric (134
+# points, 872 stations, 1,366 ports on 2026-10-23).
+#
+# The file nests location -> stations -> ports; the stations of a location stand at its own
+# coordinates (0 m apart on 2026-10-23), so the location is the charging point and its ports are
+# its sockets: capacity and socketNumber count them, availableCapacity counts those AVAILABLE now.
+# Sockets: CCS_TYPE_2 is CCS/SAE, CHADEMO CHAdeMO, MENNEKES and a WALL_OUTLET over 3.7 kW (the
+# 22 kW AC outlets) Type2, a WALL_OUTLET up to 3.7 kW (the 3.6 kW household sockets Endolla offers
+# motorcycles) Wall_Euro. A car may use the first three, and a household socket in a car park
+# (onstreet_location false: cars and motorcycles share them there); a motorcycle a household
+# socket, which on the street stands in a motorcycle bay. Status: working
+# while a port is free, full when none is free and one charges, outOfService otherwise.
+#
+# Plausibility (owner 2026-10-22): a point without a numeric id, coordinates or stations, a point
+# outside Barcelona (lon 2.04..2.24, lat 41.30..41.48, the space's area; a swapped or 0,0 position
+# falls outside it), a port with an unknown socket or state or a power outside 0..400 kW, a point
+# with no port left, a point whose newest port change is more than a day ahead, and a point listed
+# twice (the same id, or the same address within 20 m) are left out, each counted by its reason in
+# the run's log line. A file with no point, or whose newest port change is more than six hours old
+# (the network changes about 60 ports in 15 minutes by day), fails the run and writes nothing.
+
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 2097152 { throw("the charging point file is %d bytes, more than the 2 MB read".format(content().length())) } else { content().string() }
+        - mapping: |
+            let all = content().string().parse_json().catch({}).(d -> d.locations.catch(null))
+            root = if $all.type() != "array" || $all.length() == 0 { throw("the charging point file names no charging point") } else { $all }
+        - mapping: |
+            let sockets = { "CCS_TYPE_2": "CCS/SAE", "CHADEMO": "CHAdeMO", "MENNEKES": "Type2" }
+            let states = ["AVAILABLE", "IN_USE", "OUT_OF_ORDER", "UNAVAILABLE", "UNKNOWN"]
+            let days = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
+            let shaped = this.filter(l -> (l.id.string().re_match("^[0-9]{1,8}$") && l.coordinates.latitude.type() == "number" && l.coordinates.longitude.type() == "number" && l.stations.type() == "array").catch(false))
+            let inside = $shaped.filter(l -> l.coordinates.longitude >= 2.04 && l.coordinates.longitude <= 2.24 && l.coordinates.latitude >= 41.30 && l.coordinates.latitude <= 41.48)
+            let ported = $inside.map_each(l -> l.merge({ "all": l.stations.map_each(s -> s.ports.catch([])).flatten() }))
+            let checked = $ported.map_each(l -> l.merge({ "ok": l.all.filter(p -> (($sockets.exists(p.connector_type) || p.connector_type == "WALL_OUTLET") && p.power_kw > 0 && p.power_kw <= 400 && $states.contains(p.port_status.index(0).status) && p.last_updated.ts_parse("2006-01-02T15:04:05Z07:00").ts_unix() > 0).catch(false)) }))
+            let usable = $checked.filter(l -> l.ok.length() > 0).map_each(l -> l.merge({ "at": l.ok.map_each(p -> p.last_updated.ts_parse("2006-01-02T15:04:05Z07:00").ts_unix()).fold(0, t -> if t.value > t.tally { t.value } else { t.tally }) }))
+            let present = $usable.filter(l -> l.at <= now().ts_unix() + 86400)
+            let unique = $present.fold({ "ids": {}, "kept": [] }, t -> if t.tally.ids.exists(t.value.id.string()) || t.tally.kept.any(k -> k.address.address_string.or("").lowercase().trim() == t.value.address.address_string.or("").lowercase().trim() && (k.coordinates.latitude - t.value.coordinates.latitude).abs() < 0.00018 && (k.coordinates.longitude - t.value.coordinates.longitude).abs() < 0.00024) { t.tally } else { { "ids": t.tally.ids.merge({ t.value.id.string(): true }), "kept": t.tally.kept.append(t.value) } }).kept
+            let newest = $unique.fold(0, t -> if t.value.at > t.tally { t.value.at } else { t.tally })
+            let entities = $unique.map_each(l -> l.at.ts_format("2006-01-02T15:04:05Z", "UTC").(at -> l.ok.map_each(p -> p.port_status.index(0).status).(st -> l.ok.map_each(p -> if $sockets.exists(p.connector_type) { $sockets.get(p.connector_type) } else if p.power_kw > 3.7 { "Type2" } else { "Wall_Euro" }).unique().sort().(kinds -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:endolla-%v".format("EVChargingStation", env("JC_ORG_DOMAIN"), env("JC_SPACE"), l.id.string()),
+              "type": "EVChargingStation",
+              "name": { "type": "Property", "value": l.address.address_string.or("Endolla %v".format(l.id.string())).trim() },
+              "address": { "type": "Property", "value": {
+                "streetAddress": l.address.address_string.or("").trim(),
+                "postalCode": l.address.postal_code.or("").string().trim(),
+                "addressLocality": l.address.locality.or("").trim(),
+                "addressCountry": l.address.country_code.or("").trim()
+              }.filter(kv -> kv.value != "") },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [l.coordinates.longitude, l.coordinates.latitude] } },
+              "dateObserved": { "type": "Property", "value": at },
+              "capacity": { "type": "Property", "value": l.ok.length() },
+              "socketNumber": { "type": "Property", "value": l.ok.length() },
+              "availableCapacity": { "type": "Property", "value": st.filter(s -> s == "AVAILABLE").length(), "observedAt": at },
+              "status": { "type": "Property", "value": if st.contains("AVAILABLE") { "working" } else if st.contains("IN_USE") { "full" } else { "outOfService" }, "observedAt": at },
+              "socketType": { "type": "Property", "value": kinds },
+              "allowedVehicleType": { "type": "Property", "value": (if kinds.any(k -> k != "Wall_Euro") || l.onstreet_location.or(true) == false { ["car"] } else { [] }).concat(if kinds.contains("Wall_Euro") { ["motorcycle"] } else { [] }) },
+              "network": { "type": "Property", "value": l.network_brand_name.or("Endolla Barcelona") },
+              "operator": { "type": "Property", "value": l.network_name.or("Barcelona de Serveis Municipals S.A.") },
+              "openingHours": l.opening_hours.map_each(o -> $days.index(o.weekday_begin - 1) + (if o.weekday_end != o.weekday_begin { "-" + $days.index(o.weekday_end - 1) } else { "" }) + " " + o.hour_begin + "-" + o.hour_end).join("; ").(h -> { "type": "Property", "value": h }).catch(deleted()),
+              "source": { "type": "Property", "value": "https://opendata-ajuntament.barcelona.cat/data/ca/dataset/informacio-punts-recarrega-electric" }
+            }))))
+            root = if $entities.length() == 0 { throw("the charging point file names no usable charging point") } else if $newest < now().ts_unix() - 21600 { throw("the charging point file's newest port change is from %v, more than six hours ago".format($newest.ts_format("2006-01-02T15:04:05Z", "UTC"))) } else { {
+              "entities": $entities,
+              "dropped": {
+                "pointMalformed": this.length() - $shaped.length(),
+                "pointOutOfArea": $shaped.length() - $inside.length(),
+                "portOutOfRange": $checked.map_each(l -> l.all.length() - l.ok.length()).sum(),
+                "pointWithoutPort": $checked.length() - $usable.length(),
+                "timeInFuture": $usable.length() - $present.length(),
+                "duplicatePoint": $present.length() - $unique.length()
+              }
+            } }
+        - log:
+            level: INFO
+            message: 'ev-charging: ${! json("entities").length() } charging points written, left out by reason ${! json("dropped").format_json(no_indent: true) }'
+        - mapping: root = this.entities
+        - unarchive: { format: json_array }

@@ -1,0 +1,415 @@
+# The mapping of the statistics pipeline (T-5258): one Smart Data Model KeyPerformanceIndicator per
+# (indicator, area) of the City of Helsinki's area statistics (Aluesarjat, stat.hel.fi PXWEB), the
+# newest period of each table. One pipeline for every table: the tables below share the PXWEB JSON
+# query API, and each one names only its own path, dimensions and the breakdown it keeps.
+#
+# The DataSource's answer is the description of one Aluesarjat table (alu_vaerak_004r): an answer
+# that names no variable means stat.hel.fi is not serving its API, and the run fails at once. The
+# second read is the space's own sub-districts (the helsinki-subdistricts pipeline writes them from
+# the city's layer Piirijako_osaalue): an indicator of a sub-district links it as `refArea` only when
+# the space holds that code, because the space refuses a whole entity whose relationship names an
+# entity it does not hold. kartta.hel.fi, read here before for the codes, stopped answering the
+# cluster in October 2026 and every run then ended with nothing written (T-5667).
+# Each table is then asked for its newest period over every Helsinki area (codes 091*), one call a
+# second (rate limit hel_stat) to stat.hel.fi only, 30 s and 4 MiB each.
+#
+# Ids: urn:ngsi-ld:KeyPerformanceIndicator:hel.fi:{space}:stat-{theme}-{table}-{kept codes}-{area
+# code}; the theme segment is what each theme's Endpoint Policy selects by idPattern. kpiValue
+# carries the period's last day as observedAt, so the space records one history row per period
+# and none for a rerun of the same one (record: observed, DM-132).
+#
+# Plausibility (owner 2026-10-22): a cell is dropped and counted by reason when it is empty, of an
+# area outside Helsinki or the source's "unknown area", a percentage outside 0..100, a negative
+# count or amount (a net migration, surplus or correction may be negative), or a second cell with the same id; a sub-district the register lacks is written
+# without refArea and counted. A table whose newest period is older than its maxAgeDays, that
+# answers nothing, or that answers no usable cell fails its message (the run is failed, nothing
+# is deleted); the counts go to the runner log, one line per table.
+
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 4194304 || this.variables.or([]).length() == 0 { throw("stat.hel.fi described no variable of alu_vaerak_004r: its API is not answering") } else { {} }
+        - branch:
+            # The sub-districts the space holds, read through the space's public Endpoint
+            # (helsinki-all) as anybody reads it.
+            request_map: |
+              root = { "type": "Query", "entities": [{ "type": "AdministrativeArea", "idPattern": "^urn:ngsi-ld:AdministrativeArea:[^:]+:[^:]+:subdistrict-091[1-8][0-9]{6}$" }], "attrs": ["districtCode"] }
+            processors:
+              - http:
+                  url: ${JC_GATEWAY_URL}/api/endpoint/si6epqkx364lprho5uaigutk274r5grb/ngsi-ld/v1/entityOperations/query?limit=1000&options=keyValues
+                  verb: POST
+                  headers: { Content-Type: application/json }
+                  timeout: 20s
+                  rate_limit: pipeline_egress
+              - mapping: |
+                  root = if content().length() > 4194304 { throw("the space answered %v bytes for its sub-districts; more than 4 MiB is not 148 codes".format(content().length())) } else { this }
+            result_map: root.held = this.or([]).map_each(e -> e.id.or("").string().re_replace_all("^.*:subdistrict-", ""))
+        - mapping: |
+            let register = this.held.or([]).filter(c -> c.re_match("^091[1-8][0-9]{6}$"))
+            # Keep codes: "*" for every value of the dimension, else the listed codes. The area and
+            # time dimensions are named apart; the query asks every 091* area and the newest period.
+            # The first 16 tables are the sub-district series; the rest add one breakdown to a theme
+            # or are the Helsinki row of a region table, and "depth" stops a by-area breakdown at the
+            # basic or major districts. Tables of the welfare (Hyvinvointitilastot), environment
+            # (Ymparistotilasto) and sustainable development (SDG) databases name their "db"; a
+            # city-wide table without an area dimension has "area": null.
+            let tables = [
+              {"id": "alu_vaerak_004r", "theme": "population", "path": "vrm/vaerak/alu_vaerak_004r.px", "area": "Osa-alue", "time": "Vuosi", "every": "yearly", "keep": {"Ikä": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_vaerak_004p", "theme": "population", "path": "vrm/vaerak/alu_vaerak_004p.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Äidinkieli": ["1", "2", "3"], "Ikä": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_vamuu_010h", "theme": "population", "path": "vrm/vamuu/alu_vamuu_010h.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "alu_vamuu_010o", "theme": "population", "path": "vrm/vamuu/alu_vamuu_010o.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "alu_perh_006t", "theme": "population", "path": "vrm/perh/alu_perh_006t.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Ikä": ["1", "4"]}},
+              {"id": "alu_askan_005r", "theme": "housing", "path": "asu/askan/alu_askan_005r.px", "area": "Osa-alue", "time": "Vuosi", "every": "yearly", "keep": {"Huoneistotyyppi": ["ALL"], "Hallintaperuste": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_astuo_039f", "theme": "housing", "path": "rak/astuo/alu_astuo_039f.px", "area": "alue", "time": "vuonel", "every": "quarterly", "keep": {"raktoimpide": ["0"], "rakluokka": ["0000"], "huonlkm": ["0"], "Tiedot": ["*"]}},
+              {"id": "alu_astuo_039g", "theme": "housing", "path": "rak/astuo/alu_astuo_039g.px", "area": "alue", "time": "vuonel", "every": "quarterly", "keep": {"raktoimpide": ["0"], "rakluokka": ["0000"], "huonlkm": ["0"], "Tiedot": ["*"]}},
+              {"id": "alu_astuo_039i", "theme": "housing", "path": "rak/astuo/alu_astuo_039i.px", "area": "alue", "time": "vuonel", "every": "quarterly", "keep": {"raktoimpide": ["0"], "rakluokka": ["0000"], "huonlkm": ["0"], "Tiedot": ["*"]}},
+              {"id": "alu_tyom_003t", "theme": "employment", "path": "tyo/tyom/alu_tyom_003t.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_tyom_040k", "theme": "employment", "path": "tyo/tyom/alu_tyom_040k.px", "area": "Alue", "areas": ["091"], "time": "Kuukausi", "every": "monthly", "keep": {"Tiedot": ["*"]}},
+              # Employment by workplace lags two years at Statistics Finland: four years before stale.
+              {"id": "alu_tyop_003y", "theme": "employment", "path": "tyo/tyop/alu_tyop_003y.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Toimiala": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_tyov_004d", "theme": "employment", "path": "tyo/tyov/alu_tyov_004d.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Ikä": ["ALL"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_astul_006f", "theme": "income", "path": "tul/astul/alu_astul_006f.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Elinvaihe": ["ALL"], "Tiedot": ["Sum_lkm", "Mean_svatv", "Median_svatv", "Median_kturaha", "Median_ktukyk", "K_sum_lkm"]}},
+              {"id": "alu_vatul_011r", "theme": "income", "path": "tul/vatul/alu_vatul_011r.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["valtve_ka"]}},
+              {"id": "alu_kou_005n", "theme": "education", "path": "kou/alu_kou_005n.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Koulutusaste": ["*"], "Ikä": ["ALL"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_ennak_006r", "theme": "population", "path": "vrm/ennak/alu_ennak_006r.px", "area": "Alue", "areas": ["91"], "time": "Vuosineljännes", "every": "quarterly", "keep": {"Tiedot": ["*"]}},
+              {"id": "alu_ennak_006u", "theme": "population", "path": "vrm/ennak/alu_ennak_006u.px", "area": "Alue", "time": "Vuosineljännes", "every": "quarterly", "keep": {"Muuttosuunta": ["*"], "Kansalaisuus": ["Y"], "Lähtö- tai kohdealue": ["YHT"], "Tiedot": ["*"]}},
+              {"id": "alu_mutau_009o", "theme": "population", "path": "vrm/mutau/alu_mutau_009o.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Sukupuoli": ["*"], "Koulutusaste": ["all"], "Tiedot": ["*"]}},
+              {"id": "alu_mutau_009p", "theme": "population", "path": "vrm/mutau/alu_mutau_009p.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Sukupuoli": ["*"], "Koulutusaste": ["all"], "Tiedot": ["*"]}},
+              {"id": "alu_perh_005y", "theme": "population", "path": "vrm/perh/alu_perh_005y.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "depth": "basicDistrict", "keep": {"Perhetyyppi": ["*"], "Tiedot": ["*"]}},
+              {"id": "alu_perh_007h", "theme": "population", "path": "vrm/perh/alu_perh_007h.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "depth": "basicDistrict", "keep": {"Lasten lukumäärä": ["*"], "Tiedot": ["*"]}},
+              {"id": "alu_perh_009k", "theme": "population", "path": "vrm/perh/alu_perh_009k.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "depth": "basicDistrict", "keep": {"Lasten määrä perheessä": ["*"], "Tiedot": ["*"]}},
+              {"id": "alu_perh_009x", "theme": "population", "path": "vrm/perh/alu_perh_009x.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Perhetyyppi": ["*"], "Tiedot": ["*"]}},
+              {"id": "alu_perh_009z", "theme": "population", "path": "vrm/perh/alu_perh_009z.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Lapsen ikä": ["*"], "Perhetyyppi": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_perh_010a", "theme": "population", "path": "vrm/perh/alu_perh_010a.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "alu_vaerak_004q", "theme": "population", "path": "vrm/vaerak/alu_vaerak_004q.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "depth": "basicDistrict", "keep": {"Äidinkieli": ["ALL"], "Sukupuoli": ["*"], "Ikä": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_vaerak_004s", "theme": "population", "path": "vrm/vaerak/alu_vaerak_004s.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Äidinkieli": ["*"], "Sukupuoli": ["ALL"], "Ikä": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_vaerak_004t", "theme": "population", "path": "vrm/vaerak/alu_vaerak_004t.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Ikä": ["*"], "Tiedot": ["*"]}},
+              {"id": "alu_vamuu_010g", "theme": "population", "path": "vrm/vamuu/alu_vamuu_010g.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "depth": "majorDistrict", "keep": {"Ikä": ["*"], "Tiedot": ["*"]}},
+              {"id": "alu_vamuu_010r", "theme": "population", "path": "vrm/vamuu/alu_vamuu_010r.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Lähtö- tai kohdealue": ["ALL"], "Ikä": ["*"], "Äidinkieli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_vamuu_010t", "theme": "population", "path": "vrm/vamuu/alu_vamuu_010t.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Äidin ikä": ["*"], "Tiedot": ["*"]}},
+              {"id": "alu_vamuu_010u", "theme": "population", "path": "vrm/vamuu/alu_vamuu_010u.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Sukupuoli": ["*"], "Ikä": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_vamuu_010v", "theme": "population", "path": "vrm/vamuu/alu_vamuu_010v.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "alu_vamuu_010w", "theme": "population", "path": "vrm/vamuu/alu_vamuu_010w.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Lähtö- tai kohdealue": ["*"], "Tiedot": ["*"]}},
+              {"id": "alu_vamuu_010x", "theme": "population", "path": "vrm/vamuu/alu_vamuu_010x.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Ikä": ["99V"], "Tiedot": ["*"]}},
+              {"id": "alu_vamuu_010z", "theme": "population", "path": "vrm/vamuu/alu_vamuu_010z.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Ikä": ["*"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_asas_005d", "theme": "housing", "path": "asu/asas/alu_asas_005d.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "depth": "basicDistrict", "keep": {"Asuntokunnan koko": ["*"], "Tiedot": ["*"]}},
+              {"id": "alu_asas_005e", "theme": "housing", "path": "asu/asas/alu_asas_005e.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Asuntokunnan vanhimman ikä": ["*"], "Henkilöluku": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_asas_005f", "theme": "housing", "path": "asu/asas/alu_asas_005f.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Asuntokunnan koko": ["*"], "Talotyyppi": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_asas_005g", "theme": "housing", "path": "asu/asas/alu_asas_005g.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "alu_asas_005h", "theme": "housing", "path": "asu/asas/alu_asas_005h.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Henkilöluku": ["*"], "Tiedot": ["*"]}},
+              {"id": "alu_askan_005k", "theme": "housing", "path": "asu/askan/alu_askan_005k.px", "area": "Kunta", "time": "Vuosi", "every": "yearly", "keep": {"Talotyyppi": ["*"], "Valmistumisvuosi": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_askan_005l", "theme": "housing", "path": "asu/askan/alu_askan_005l.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "depth": "basicDistrict", "keep": {"Talotyyppi": ["*"], "Valmistumisvuosi": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_askan_005q", "theme": "housing", "path": "asu/askan/alu_askan_005q.px", "area": "Osa-alue", "time": "Vuosi", "every": "yearly", "depth": "basicDistrict", "keep": {"Käytössäolotilanne": ["*"], "Talotyyppi": ["ALL"], "Hallintaperuste": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_askan_005s", "theme": "housing", "path": "asu/askan/alu_askan_005s.px", "area": "Kunta", "time": "Vuosi", "every": "yearly", "keep": {"Hallintaperuste": ["*"], "Huoneistotyyppi": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_astuo_039h", "theme": "housing", "path": "rak/astuo/alu_astuo_039h.px", "area": "alue", "time": "vuonel", "every": "quarterly", "depth": "majorDistrict", "keep": {"raktoimpide": ["*"], "rakluokka": ["0000"], "huonlkm": ["0"], "Tiedot": ["*"]}},
+              {"id": "alu_astuo_039j", "theme": "housing", "path": "rak/astuo/alu_astuo_039j.px", "area": "Alue", "time": "Vuosineljännes", "every": "quarterly", "depth": "basicDistrict", "keep": {"Rakennustoimenpide": ["*"], "Rakennusluokka": ["0000"], "Huoneiden lukumäärä": ["0"], "Rahoitus ja hallintaperuste": ["10yhteen"], "Rakennuttaja": ["0"], "Tiedot": ["*"]}},
+              {"id": "alu_rakan_005v", "theme": "housing", "path": "asu/rakan/alu_rakan_005v.px", "area": "Kunta", "time": "Vuosi", "every": "yearly", "keep": {"Rakennuksen käyttötarkoitus": ["*"], "Valmistumisvuosi": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_rakan_005w", "theme": "housing", "path": "asu/rakan/alu_rakan_005w.px", "area": "Kunta", "time": "Vuosi", "every": "yearly", "keep": {"Rakennuksen käyttötarkoitus": ["*"], "Rakennuksen lämmitystapa": ["ALL"], "Rakennuksen lämmitysaine": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_rakan_005x", "theme": "housing", "path": "asu/rakan/alu_rakan_005x.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "depth": "basicDistrict", "keep": {"Rakennuksen käyttötarkoitus": ["ALL"], "Valmistumisvuosi": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_ratuo_039k", "theme": "housing", "path": "rak/ratuo/alu_ratuo_039k.px", "area": "alue", "time": "vuonel", "every": "quarterly", "depth": "basicDistrict", "keep": {"raktoimpide": ["*"], "rakluokka": ["YHT"], "Tiedot": ["*"]}},
+              {"id": "alu_ratuo_039l", "theme": "housing", "path": "rak/ratuo/alu_ratuo_039l.px", "area": "alue", "time": "vuonel", "every": "quarterly", "depth": "basicDistrict", "keep": {"raktoimpide": ["*"], "rakluokka": ["YHT"], "Tiedot": ["*"]}},
+              {"id": "alu_ratuo_039m", "theme": "housing", "path": "rak/ratuo/alu_ratuo_039m.px", "area": "alue", "time": "vuonel", "every": "quarterly", "depth": "basicDistrict", "keep": {"raktoimpide": ["*"], "rakluokka": ["YHT"], "Tiedot": ["*"]}},
+              {"id": "alu_ratuo_039n", "theme": "housing", "path": "rak/ratuo/alu_ratuo_039n.px", "area": "alue", "time": "vuonel", "every": "quarterly", "depth": "basicDistrict", "keep": {"raktoimpide": ["*"], "rakluokka": ["YHT"], "Tiedot": ["*"]}},
+              {"id": "alu_tyom_003s", "theme": "employment", "path": "tyo/tyom/alu_tyom_003s.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "depth": "basicDistrict", "keep": {"Pääasiallinen toiminta": ["*"], "Ikä": ["ALL"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_tyom_003v", "theme": "employment", "path": "tyo/tyom/alu_tyom_003v.px", "area": "Kunta", "time": "Vuosi", "every": "yearly", "keep": {"Pääasiallinen toiminta": ["*"], "Ikä": ["ALL"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_tyom_003x", "theme": "employment", "path": "tyo/tyom/alu_tyom_003x.px", "area": "Kunta", "time": "Vuosi", "every": "yearly", "keep": {"Pääasiallinen toiminta": ["*"], "Koulutusaste": ["ALL"], "Kieli": ["ALL"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_tyop_004a", "theme": "employment", "path": "tyo/tyop/alu_tyop_004a.px", "area": "Työpaikan alue", "time": "Vuosi", "every": "yearly", "keep": {"Toimiala": ["*"], "Tiedot": ["*"]}},
+              {"id": "alu_tyov_004f", "theme": "employment", "path": "tyo/tyov/alu_tyov_004f.px", "area": "Kunta", "time": "Vuosi", "every": "yearly", "keep": {"Ikä": ["*"], "Sukupuoli": ["ALL"], "Pääasiallinen toiminta": ["lkm_tytyov"]}},
+              {"id": "alu_tyov_004g", "theme": "employment", "path": "tyo/tyov/alu_tyov_004g.px", "area": "Kunta", "time": "Vuosi", "every": "yearly", "keep": {"Toimiala": ["*"], "Ikä": ["ALL"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "alu_astul_011y", "theme": "income", "path": "tul/astul/alu_astul_011y.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "depth": "majorDistrict", "keep": {"Kvintiilien määrittelyperuste": ["*"], "Tuloluokka": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "sdg_sdg_037b", "theme": "environment", "db": "SDG", "path": "SDG/sdg_sdg_037b.px", "area": null, "time": "Vuosi", "top": 2, "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_autka_003j", "theme": "environment", "db": "Ymparistotilasto", "path": "lii/autka/ymp_autka_003j.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_autka_003l", "theme": "environment", "db": "Ymparistotilasto", "path": "lii/autka/ymp_autka_003l.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Käyttövoima": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_enek_010b", "theme": "environment", "db": "Ymparistotilasto", "path": "kukau/enek/ymp_enek_010b.px", "area": "Kaupunki", "areas": ["hki"], "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_eneku_002z", "theme": "environment", "db": "Ymparistotilasto", "path": "ene/eneku/ymp_eneku_002z.px", "area": "Alue", "areas": ["hki"], "time": "Vuosi", "every": "yearly", "keep": {"Sektori": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_eneku_003a", "theme": "environment", "db": "Ymparistotilasto", "path": "ene/eneku/ymp_eneku_003a.px", "area": "Alue", "areas": ["hki"], "time": "Vuosi", "every": "yearly", "keep": {"Kuluttajaryhmä": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_enep_002u", "theme": "environment", "db": "Ymparistotilasto", "path": "ene/enep/ymp_enep_002u.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_enep_002x", "theme": "environment", "db": "Ymparistotilasto", "path": "ene/enep/ymp_enep_002x.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Energiayritys": ["helen"], "Tiedot": ["*"]}},
+              {"id": "ymp_enetu_037k", "theme": "environment", "db": "Ymparistotilasto", "path": "ene/enetu/ymp_enetu_037k.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_ilmla_001t", "theme": "environment", "db": "Ymparistotilasto", "path": "ilm/ilmla/ymp_ilmla_001t.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_ilmlk_010m", "theme": "environment", "db": "Ymparistotilasto", "path": "kukau/ilmlk/ymp_ilmlk_010m.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Kaupunki": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_ilmlk_010n", "theme": "environment", "db": "Ymparistotilasto", "path": "kukau/ilmlk/ymp_ilmlk_010n.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Kaupunki": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_jatk_009m", "theme": "environment", "db": "Ymparistotilasto", "path": "kukau/jatk/ymp_jatk_009m.px", "area": "Kaupunki", "areas": ["hki"], "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_jatk_009n", "theme": "environment", "db": "Ymparistotilasto", "path": "kukau/jatk/ymp_jatk_009n.px", "area": "Kaupunki", "areas": ["hki"], "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_jatma_003c", "theme": "environment", "db": "Ymparistotilasto", "path": "jat/jatma/ymp_jatma_003c.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_jatma_037n", "theme": "environment", "db": "Ymparistotilasto", "path": "jat/jatma/ymp_jatma_037n.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_kaspa_003k", "theme": "environment", "db": "Ymparistotilasto", "path": "ilmas/kaspa/ymp_kaspa_003k.px", "area": "Alue", "areas": ["hki"], "time": "Vuosi", "every": "yearly", "keep": {"Sektori": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_kasvk_037l", "theme": "environment", "db": "Ymparistotilasto", "path": "kukau/kasvk/ymp_kasvk_037l.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Sektori": ["*"], "Kaupunki": ["espoo"], "Tiedot": ["*"]}},
+              {"id": "ymp_kauen_002f", "theme": "environment", "db": "Ymparistotilasto", "path": "ene/kauen/ymp_kauen_002f.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_kauen_002g", "theme": "environment", "db": "Ymparistotilasto", "path": "ene/kauen/ymp_kauen_002g.px", "area": null, "time": "vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_kauen_002h", "theme": "environment", "db": "Ymparistotilasto", "path": "ene/kauen/ymp_kauen_002h.px", "area": null, "time": "Sopimusvuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_kauen_002i", "theme": "environment", "db": "Ymparistotilasto", "path": "ene/kauen/ymp_kauen_002i.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Rakennustyypit": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_kauen_002j", "theme": "environment", "db": "Ymparistotilasto", "path": "ene/kauen/ymp_kauen_002j.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_kauen_002k", "theme": "environment", "db": "Ymparistotilasto", "path": "ene/kauen/ymp_kauen_002k.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_kauen_002l", "theme": "environment", "db": "Ymparistotilasto", "path": "ene/kauen/ymp_kauen_002l.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_kierto_001q", "theme": "environment", "db": "Ymparistotilasto", "path": "kierto/ymp_kierto_001q.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_kierto_001r", "theme": "environment", "db": "Ymparistotilasto", "path": "kierto/ymp_kierto_001r.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_kierto_002e", "theme": "environment", "db": "Ymparistotilasto", "path": "kierto/ymp_kierto_002e.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_kierto_002l", "theme": "environment", "db": "Ymparistotilasto", "path": "kierto/ymp_kierto_002l.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_liik_011o", "theme": "environment", "db": "Ymparistotilasto", "path": "kukau/liik/ymp_liik_011o.px", "area": "Kaupunki", "areas": ["hki"], "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_liik_011s", "theme": "environment", "db": "Ymparistotilasto", "path": "kukau/liik/ymp_liik_011s.px", "area": "Kaupunki", "areas": ["hki"], "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_liik_011t", "theme": "environment", "db": "Ymparistotilasto", "path": "kukau/liik/ymp_liik_011t.px", "area": "Kaupunki", "areas": ["hki"], "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_liima_002o", "theme": "environment", "db": "Ymparistotilasto", "path": "lii/liima/ymp_liima_002o.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Mittauspiste": ["*"], "Kuukausi": ["keselyht"], "Tiedot": ["*"]}},
+              {"id": "ymp_liima_002p", "theme": "environment", "db": "Ymparistotilasto", "path": "lii/liima/ymp_liima_002p.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Mittauspiste": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_liima_002q", "theme": "environment", "db": "Ymparistotilasto", "path": "lii/liima/ymp_liima_002q.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Laskentalinja": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_liima_002r", "theme": "environment", "db": "Ymparistotilasto", "path": "lii/liima/ymp_liima_002r.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Vuorokaudenaika": ["vrkmp"], "Laskentapiste": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_liima_003o", "theme": "environment", "db": "Ymparistotilasto", "path": "lii/liima/ymp_liima_003o.px", "area": "Alue", "areas": ["hki"], "time": "Vuosi", "every": "yearly", "keep": {"Kulkutapa": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_liipa_003f", "theme": "environment", "db": "Ymparistotilasto", "path": "lii/liipa/ymp_liipa_003f.px", "area": null, "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_liipa_003g", "theme": "environment", "db": "Ymparistotilasto", "path": "lii/liipa/ymp_liipa_003g.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Ajoneuvoluokka": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_liipa_003n", "theme": "environment", "db": "Ymparistotilasto", "path": "lii/liipa/ymp_liipa_003n.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Sektori": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_lumo_001c", "theme": "environment", "db": "Ymparistotilasto", "path": "luo/lumo/ymp_lumo_001c.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Luokka": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_lumo_001k", "theme": "environment", "db": "Ymparistotilasto", "path": "luo/lumo/ymp_lumo_001k.px", "area": null, "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Kohde": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_lumo_001l", "theme": "environment", "db": "Ymparistotilasto", "path": "luo/lumo/ymp_lumo_001l.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Alue": ["*"], "Laji": ["sinsor"], "Tiedot": ["*"]}},
+              {"id": "ymp_lumo_001n", "theme": "environment", "db": "Ymparistotilasto", "path": "luo/lumo/ymp_lumo_001n.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_lumo_001v", "theme": "environment", "db": "Ymparistotilasto", "path": "luo/lumo/ymp_lumo_001v.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_lumo_001w", "theme": "environment", "db": "Ymparistotilasto", "path": "luo/lumo/ymp_lumo_001w.px", "area": null, "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_lumo_001x", "theme": "environment", "db": "Ymparistotilasto", "path": "luo/lumo/ymp_lumo_001x.px", "area": null, "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_lumo_001y", "theme": "environment", "db": "Ymparistotilasto", "path": "luo/lumo/ymp_lumo_001y.px", "area": null, "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_lumo_003e", "theme": "environment", "db": "Ymparistotilasto", "path": "luo/lumo/ymp_lumo_003e.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_luok_011n", "theme": "environment", "db": "Ymparistotilasto", "path": "kukau/luok/ymp_luok_011n.px", "area": "Kaupunki", "areas": ["hki"], "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_luosu_001j", "theme": "environment", "db": "Ymparistotilasto", "path": "luo/luosu/ymp_luosu_001j.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_luosu_001m", "theme": "environment", "db": "Ymparistotilasto", "path": "luo/luosu/ymp_luosu_001m.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Indikaattori": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_luosu_037c", "theme": "environment", "db": "Ymparistotilasto", "path": "luo/luosu/ymp_luosu_037c.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Kohde": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_luosu_037d", "theme": "environment", "db": "Ymparistotilasto", "path": "luo/luosu/ymp_luosu_037d.px", "area": null, "time": "vuosi", "every": "yearly", "keep": {"tiedot": ["*"]}},
+              {"id": "ymp_luovi_003d", "theme": "environment", "db": "Ymparistotilasto", "path": "maa/luovi/ymp_luovi_003d.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_maak_012b", "theme": "environment", "db": "Ymparistotilasto", "path": "kukau/maak/ymp_maak_012b.px", "area": "Kaupunki", "areas": ["hki"], "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Palvelu": ["*"], "Etäisyys palvelusta": ["300"], "Tiedot": ["*"]}},
+              {"id": "ymp_maapu_037e", "theme": "environment", "db": "Ymparistotilasto", "path": "maap/maapu/ymp_maapu_037e.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_makja_002t", "theme": "environment", "db": "Ymparistotilasto", "path": "maa/makja/ymp_makja_002t.px", "area": null, "time": "vuosi", "every": "yearly", "keep": {"vyöhyke": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_makja_038j", "theme": "environment", "db": "Ymparistotilasto", "path": "maa/makja/ymp_makja_038j.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_melti_001f", "theme": "environment", "db": "Ymparistotilasto", "path": "mel/melti/ymp_melti_001f.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_orgyv_038q", "theme": "environment", "db": "Ymparistotilasto", "path": "ympti/orgyv/ymp_orgyv_038q.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Toimiala": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_paave_003p", "theme": "environment", "db": "Ymparistotilasto", "path": "ved/paave/ymp_paave_003p.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Puhdistamo": ["viikma"], "Tiedot": ["*"]}},
+              {"id": "ymp_pysve_002m", "theme": "environment", "db": "Ymparistotilasto", "path": "lii/pysve/ymp_pysve_002m.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_sopin_001u", "theme": "environment", "db": "Ymparistotilasto", "path": "maa/sopin/ymp_sopin_001u.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_sopin_038p", "theme": "environment", "db": "Ymparistotilasto", "path": "maa/sopin/ymp_sopin_038p.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_tunlu_037j", "theme": "environment", "db": "Ymparistotilasto", "path": "ymta/tunlu/ymp_tunlu_037j.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Sektori": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_vedk_010j", "theme": "environment", "db": "Ymparistotilasto", "path": "kukau/vedk/ymp_vedk_010j.px", "area": "Kaupunki", "areas": ["hki"], "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_vedk_010k", "theme": "environment", "db": "Ymparistotilasto", "path": "kukau/vedk/ymp_vedk_010k.px", "area": "Kaupunki", "areas": ["hki"], "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_vedk_010l", "theme": "environment", "db": "Ymparistotilasto", "path": "kukau/vedk/ymp_vedk_010l.px", "area": "Kaupunki", "areas": ["hki"], "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_vesti_001e", "theme": "environment", "db": "Ymparistotilasto", "path": "ved/vesti/ymp_vesti_001e.px", "area": null, "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Vesialue": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_vesti_001o", "theme": "environment", "db": "Ymparistotilasto", "path": "ved/vesti/ymp_vesti_001o.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Levälaji": ["*"], "Mittauspiste": ["länsit"], "Tiedot": ["*"]}},
+              {"id": "ymp_vesti_001p", "theme": "environment", "db": "Ymparistotilasto", "path": "ved/vesti/ymp_vesti_001p.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Mittausasema": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_vesti_002a", "theme": "environment", "db": "Ymparistotilasto", "path": "ved/vesti/ymp_vesti_002a.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Puro": ["*"], "Tiedot": ["*"]}},
+              {"id": "ymp_ympka_002d", "theme": "environment", "db": "Ymparistotilasto", "path": "ympti/ympka/ymp_ympka_002d.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_ymplu_006a", "theme": "environment", "db": "Ymparistotilasto", "path": "maa/ymplu/ymp_ymplu_006a.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_ymvak_011m", "theme": "environment", "db": "Ymparistotilasto", "path": "kukau/ymvak/ymp_ymvak_011m.px", "area": "Kaupunki", "areas": ["hki"], "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_ymvak_011u", "theme": "environment", "db": "Ymparistotilasto", "path": "kukau/ymvak/ymp_ymvak_011u.px", "area": "Kaupunki", "areas": ["hki"], "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "ymp_ymvak_011z", "theme": "environment", "db": "Ymparistotilasto", "path": "kukau/ymvak/ymp_ymvak_011z.px", "area": "Kaupunki", "areas": ["hki"], "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "hyv_alue_006g", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/alue/hyv_alue_006g.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Ikä": ["*"], "Äidinkieli": ["ALL"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_alue_006h", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/alue/hyv_alue_006h.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "hyv_alue_006i", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/alue/hyv_alue_006i.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Ikäluokka": ["*"], "Tiedot": ["*"]}},
+              {"id": "hyv_alue_006j", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/alue/hyv_alue_006j.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Ikä": ["*"], "Hoitomuoto": ["yht"], "Tiedot": ["*"]}},
+              {"id": "hyv_alue_006k", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/alue/hyv_alue_006k.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Koulutus": ["*"], "Tiedot": ["*"]}},
+              {"id": "hyv_alue_006l", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/alue/hyv_alue_006l.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Tutkinto": ["*"], "Tiedot": ["*"]}},
+              {"id": "hyv_alue_006m", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/alue/hyv_alue_006m.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "hyv_alue_006n", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/alue/hyv_alue_006n.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "hyv_alue_006o", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/alue/hyv_alue_006o.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Indikaattori": ["0"]}},
+              {"id": "hyv_alue_039p", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/alue/hyv_alue_039p.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Syntyperä ja sukupuoli": ["*"], "Ikäryhmä": ["lapset"], "Tiedot": ["*"]}},
+              {"id": "hyv_alue_039q", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/alue/hyv_alue_039q.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Ikäryhmä": ["*"], "Perhetyyppi": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_alue_039r", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/alue/hyv_alue_039r.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Perheen koettu taloudellinen tilanne": ["*"], "Tiedot": ["*"]}},
+              {"id": "hyv_alue_039s", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/alue/hyv_alue_039s.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "depth": "majorDistrict", "keep": {"Ikäryhmä": ["*"], "Tiedot": ["*"]}},
+              {"id": "hyv_koul_007p", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/koul/hyv_koul_007p.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Ikä": ["*"], "Hoitomuoto": ["kv"], "Tiedot": ["*"]}},
+              {"id": "hyv_koul_007q", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/koul/hyv_koul_007q.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tuen muoto": ["*"], "Oppiaste": ["0"], "Sukupuoli": ["0"], "Tiedot": ["*"]}},
+              {"id": "hyv_koul_007r", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/koul/hyv_koul_007r.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Toiminta": ["*"], "Ikä": ["16"], "Äidinkieli": ["ALL"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_koul_007s", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/koul/hyv_koul_007s.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Koulutus": ["*"], "Sukupuoli": ["ALL"], "Äidinkieli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_koul_007t", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/koul/hyv_koul_007t.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "hyv_koul_007u", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/koul/hyv_koul_007u.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Ikä": ["*"], "Sukupuoli": ["ALL"], "Äidinkieli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_koul_007v", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/koul/hyv_koul_007v.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Oppiaste": ["*"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_koul_007w", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/koul/hyv_koul_007w.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Oppiaste": ["*"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_koul_007x", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/koul/hyv_koul_007x.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Oppiaste": ["*"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_koul_007y", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/koul/hyv_koul_007y.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Oppiaste": ["*"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_koul_039o", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/koul/hyv_koul_039o.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Ikä": ["*"], "Sukupuoli": ["ALL"], "Äidinkieli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_kout_038f", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "tyik/kout/hyv_kout_038f.px", "area": "Alue", "areas": ["910000000"], "time": "Vuosi", "every": "yearly", "keep": {"Sukupuoli": ["ALL"], "Ikäryhmä": ["*"], "Tiedot": ["*"]}},
+              {"id": "hyv_kout_038g", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "tyik/kout/hyv_kout_038g.px", "area": null, "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Sukupuoli": ["*"], "Ikä": ["18-29"], "Kesto": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_kout_038i", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "tyik/kout/hyv_kout_038i.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Ikäryhmä": ["*"], "Tiedot": ["*"]}},
+              {"id": "hyv_kout_038y", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "vanh/kout/hyv_kout_038y.px", "area": "Alue", "areas": ["910000000"], "time": "Vuosi", "every": "yearly", "keep": {"Sukupuoli": ["ALL"], "Ikäryhmä": ["*"], "Tiedot": ["*"]}},
+              {"id": "hyv_kout_038z", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "vanh/kout/hyv_kout_038z.px", "area": null, "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Sukupuoli": ["*"], "Ikä": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_sova_007j", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/sova/hyv_sova_007j.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Oppiaste": ["*"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_sova_007k", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/sova/hyv_sova_007k.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Oppiaste": ["*"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_sova_007l", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/sova/hyv_sova_007l.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Oppiaste": ["*"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_sova_007m", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/sova/hyv_sova_007m.px", "area": null, "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Oppiaste": ["*"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_teel_038k", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "tyik/teel/hyv_teel_038k.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "hyv_teel_038l", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "tyik/teel/hyv_teel_038l.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Ikä": ["*"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_teel_038m", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "tyik/teel/hyv_teel_038m.px", "area": null, "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Sukupuoli": ["*"], "Tiedot": ["*"]}},
+              {"id": "hyv_teel_038n", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "tyik/teel/hyv_teel_038n.px", "area": null, "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Sukupuoli": ["*"], "Tiedot": ["*"]}},
+              {"id": "hyv_teel_038r", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "vanh/teel/hyv_teel_038r.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Ikä": ["*"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_teel_038t", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "vanh/teel/hyv_teel_038t.px", "area": null, "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Ikäryhmä": ["*"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_terv_009f", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/terv/hyv_terv_009f.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Oppiaste": ["*"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_terv_009g", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/terv/hyv_terv_009g.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Oppiaste": ["*"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_terv_009h", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/terv/hyv_terv_009h.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Koulutus": ["*"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_terv_009i", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/terv/hyv_terv_009i.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Oppiaste": ["*"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_terv_009j", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/terv/hyv_terv_009j.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Oppiaste": ["*"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_turv_008x", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/turv/hyv_turv_008x.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Sukupuoli": ["*"], "Tiedot": ["*"]}},
+              {"id": "hyv_turv_008y", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/turv/hyv_turv_008y.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Sukupuoli": ["*"], "Tiedot": ["*"]}},
+              {"id": "hyv_turv_008z", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/turv/hyv_turv_008z.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Oppiaste": ["*"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_turv_009a", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/turv/hyv_turv_009a.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Ikä": ["*"], "Tiedot": ["*"]}},
+              {"id": "hyv_turv_009b", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/turv/hyv_turv_009b.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Ikäryhmä": ["0-17"], "Tiedot": ["*"]}},
+              {"id": "hyv_turv_009c", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/turv/hyv_turv_009c.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Tiedot": ["*"]}},
+              {"id": "hyv_turv_009d", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/turv/hyv_turv_009d.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Ikä": ["*"], "Tiedot": ["*"]}},
+              {"id": "hyv_turv_009e", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/turv/hyv_turv_009e.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Ikä": ["*"], "Tiedot": ["*"]}},
+              {"id": "hyv_tyty_008u", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/tyty/hyv_tyty_008u.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Ikä": ["*"], "Sukupuoli": ["ALL"], "Äidinkieli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_tyty_008v", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/tyty/hyv_tyty_008v.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Ikäryhmä": ["*"], "Tiedot": ["*"]}},
+              {"id": "hyv_vael_006w", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/vael/hyv_vael_006w.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Syntyperä": ["*"], "Maassaoloaika": ["ALL"], "Ikä": ["0-4"], "Tiedot": ["*"]}},
+              {"id": "hyv_vael_006x", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/vael/hyv_vael_006x.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Perhetyyppi": ["*"], "Tiedot": ["*"]}},
+              {"id": "hyv_vael_006y", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/vael/hyv_vael_006y.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Perhetyyppi": ["*"], "Ikä": ["0-17"], "Tiedot": ["*"]}},
+              {"id": "hyv_vael_006z", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/vael/hyv_vael_006z.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Perheasema": ["*"], "Ikä": ["15-19"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_vael_007a", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/vael/hyv_vael_007a.px", "area": null, "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Hallintaperuste": ["*"], "Ikä": ["0-19"], "Tiedot": ["*"]}},
+              {"id": "hyv_vael_007b", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/vael/hyv_vael_007b.px", "area": null, "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Perhetyyppi": ["*"], "Hallintaperuste": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_vael_007c", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/vael/hyv_vael_007c.px", "area": null, "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Perhetyyppi": ["*"], "Hallintaperuste": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_vael_007d", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/vael/hyv_vael_007d.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Asuntokunnan elinvaihe": ["*"], "Tiedot": ["*"]}},
+              {"id": "hyv_vael_007e", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/vael/hyv_vael_007e.px", "area": null, "time": "Vuosi", "every": "yearly", "maxAgeDays": 1461, "keep": {"Ikä": ["*"], "Tiedot": ["*"]}},
+              {"id": "hyv_vael_007g", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "lanu/vael/hyv_vael_007g.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Syntyperä": ["*"], "Ikä": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_vaes_037z", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "tyik/vaes/hyv_vaes_037z.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Äidinkieli": ["*"], "Ikä": ["25-29"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_vaes_038b", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "tyik/vaes/hyv_vaes_038b.px", "area": null, "time": "Vuosi", "every": "yearly", "keep": {"Perheasema": ["*"], "Ikä": ["25-29"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_vaes_038c", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "tyik/vaes/hyv_vaes_038c.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Ikä": ["*"], "Sukupuoli": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_vaes_038d", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "tyik/vaes/hyv_vaes_038d.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Syntyperä": ["*"], "Ikä": ["25-29"], "Tiedot": ["*"]}},
+              {"id": "hyv_vaes_039b", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "vanh/vaes/hyv_vaes_039b.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Äidinkieli": ["*"], "Sukupuoli": ["ALL"], "Ikä": ["65-69"], "Tiedot": ["*"]}},
+              {"id": "hyv_vaes_039d", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "vanh/vaes/hyv_vaes_039d.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Vanhusasuntokuntatyyppi": ["*"], "Ikä": ["ALL"], "Tiedot": ["*"]}},
+              {"id": "hyv_vaes_039e", "theme": "welfare", "db": "Hyvinvointitilastot", "path": "vanh/vaes/hyv_vaes_039e.px", "area": "Alue", "time": "Vuosi", "every": "yearly", "keep": {"Äidinkieli": ["ALL"], "Tiedot": ["*"]}}
+            ]
+            root = if $register.length() == 0 { throw("the space holds no sub-district (AdministrativeArea subdistrict-*): run helsinki-subdistricts first") } else { $tables.map_each(t -> { "table": t, "register": $register }) }
+        - unarchive: { format: json_array }
+        - branch:
+            request_map: |
+              meta stat_path = if this.table.path.re_match("^[A-Za-z]+(/[a-z]+)?/[a-z]+_[a-z]+_[0-9]{3}[a-z]\\.px$") { this.table.path } else { throw("not a statistics table path: %v".format(this.table.path)) }
+              # The city's statistics databases on stat.hel.fi, by name only.
+              meta stat_db = if ["Aluesarjat", "Hyvinvointitilastot", "Ymparistotilasto", "SDG"].contains(this.table.db.or("Aluesarjat")) { this.table.db.or("Aluesarjat") } else { throw("not a statistics database: %v".format(this.table.db)) }
+              root = {
+                "query": [
+                  # A city-wide table without an area dimension names none ("area": null).
+                  if this.table.area == null { deleted() } else { { "code": this.table.area, "selection": if this.table.areas != null { { "filter": "item", "values": this.table.areas } } else { { "filter": "all", "values": ["091*"] } } } },
+                  # The newest period, or the newest few ("top") where the source lists a year that has
+                  # not ended yet (the sustainable development edition of the running year).
+                  { "code": this.table.time, "selection": { "filter": "top", "values": [this.table.top.or(1).string()] } }
+                ].concat(this.table.keep.key_values().sort_by(kv -> kv.key).map_each(kv -> { "code": kv.key, "selection": if kv.value == ["*"] { { "filter": "all", "values": ["*"] } } else { { "filter": "item", "values": kv.value } } })),
+                "response": { "format": "json-stat2" }
+              }
+            processors:
+              - http:
+                  url: https://stat.hel.fi/api/v1/fi/${! @stat_db }/${! @stat_path }
+                  verb: POST
+                  headers:
+                    Content-Type: application/json
+                    Accept: application/json
+                    User-Agent: joinedcontext-helsinki/1.0 (+https://dev.joinedcontext.com)
+                  timeout: 30s
+                  retries: 1
+                  rate_limit: hel_stat
+              - mapping: |
+                  root = if content().length() > 4194304 { throw("stat.hel.fi answered %v bytes; more than 4194304 is not one period of one table".format(content().length())) } else { this }
+            result_map: root.answer = this
+        - mapping: |
+            # The level of a Helsinki area code: 091, 91, hki, 910000000 or 0910000000 the city, 091{s}000000 a major
+            # district, 091{s}{ppp}000 a basic district, 091{s}{ppp}{ooo} a sub-district, 09199{x}0000
+            # the inner city or the suburbs; anything else (another town, 0919999999 "Muut") none.
+            # A code or dimension name as one path segment: get() reads "1.1" (a building measure) or
+            # "(0-17 v.)" as a path, so "~" and "." are escaped as ~0 and ~1.
+            map key {
+              root = this.string().replace_all("~", "~0").replace_all(".", "~1")
+            }
+            # The last day of a year (2025), a quarter (2026Q3) or a month (2026M08).
+            map period_end {
+              let y = this.slice(0, 4).number().int64().catch(0)
+              let q = if this.re_match("^[0-9]{4}Q[1-4]$") { this.slice(5).number().int64() } else { 0 }
+              let m = if this.re_match("^[0-9]{4}M(0[1-9]|1[0-2])$") { this.slice(5).number().int64() } else { 0 }
+              let next_month = if $q > 0 { $q * 3 + 1 } else if $m > 0 { $m + 1 } else { 13 }
+              let next = if $next_month > 12 { "%04d-01-01".format($y + 1) } else { "%04d-%02d-01".format($y, $next_month) }
+              root = ($next.ts_parse("2006-01-02").ts_unix() - 86400).ts_format("2006-01-02", "UTC")
+            }
+            map depth_rank {
+              root = if this == "subDistrict" { 3 } else if this == "basicDistrict" { 2 } else if this == "majorDistrict" || this == "cityPart" { 1 } else { 0 }
+            }
+            map area_level {
+              root = if ["091", "91", "hki", "0910000000", "910000000"].contains(this) { "city" } else if this.re_match("^091[1-8]000000$") { "majorDistrict" } else if this.re_match("^091[1-8][0-9]{3}000$") { "basicDistrict" } else if this.re_match("^091[1-8][0-9]{6}$") { "subDistrict" } else if this.re_match("^09199[0-8]0000$") { "cityPart" } else { "" }
+            }
+            let t = this.table
+            let ds = this.answer
+            let register = this.register
+            let ids = $ds.id.or([])
+            let sizes = $ds.size.or([])
+            let n = $ids.length()
+            # JSON-stat 2.0 by the index and never by the order (T-2304): the position of a code is
+            # dimension.{id}.category.index, and `value` is row-major over `size`.
+            let codes = $ids.map_each(d -> $ds.dimension.get(d.apply("key")).category.index.key_values().sort_by(kv -> kv.value).map_each(kv -> kv.key))
+            let strides = range(0, $n, 1).map_each(k -> if k + 1 >= $n { 1 } else { $sizes.slice(k + 1, $n).fold(1, x -> x.tally * x.value) })
+            let breakdown = $ids.filter(d -> d != $t.area && d != $t.time)
+            let named = $breakdown.filter(d -> d == "Tiedot" || $ds.dimension.get(d.apply("key")).category.index.keys().length() > 1)
+            let cells = range(0, $ds.value.or([]).length(), 1).map_each(p -> { "at": range(0, $n, 1).map_each(k -> { $ids.index(k): $codes.index(k).index(((p / $strides.index(k)).floor().int64()) % $sizes.index(k)) }).squash(), "value": $ds.value.index(p) })
+            # The newest period that has ended: a period still running is never written.
+            let today = now().ts_format("2006-01-02", "UTC")
+            let ended = $ds.dimension.get($t.time.apply("key")).category.index.or({}).keys().filter(x -> x.apply("period_end") < $today).sort()
+            let period = if $ended.length() == 0 { "" } else { $ended.index(-1) }
+            let cells = $cells.filter(c -> c.at.get($t.time.apply("key")).string() == $period)
+            # The period's first and last day: a year (2025), a quarter (2026Q3) or a month (2026M08).
+            let y = $period.slice(0, 4).number().int64().catch(0)
+            let q = if $period.re_match("^[0-9]{4}Q[1-4]$") { $period.slice(5).number().int64() } else { 0 }
+            let m = if $period.re_match("^[0-9]{4}M(0[1-9]|1[0-2])$") { $period.slice(5).number().int64() } else { 0 }
+            let first_month = if $q > 0 { $q * 3 - 2 } else if $m > 0 { $m } else { 1 }
+            let next_month = if $q > 0 { $q * 3 + 1 } else if $m > 0 { $m + 1 } else { 13 }
+            let from = "%04d-%02d-01".format($y, $first_month)
+            let next = if $next_month > 12 { "%04d-01-01".format($y + 1) } else { "%04d-%02d-01".format($y, $next_month) }
+            let to = ($next.ts_parse("2006-01-02").ts_unix() - 86400).ts_format("2006-01-02", "UTC")
+            let observed = "%vT00:00:00Z".format($to)
+            let age_days = ((now().ts_unix() - $to.ts_parse("2006-01-02").ts_unix()) / 86400).floor()
+            let max_age = $t.maxAgeDays.or(if $t.every == "monthly" { 92 } else if $t.every == "quarterly" { 276 } else { 1096 })
+            let updated = $ds.updated.or("").ts_parse("2006-01-02T15:04:05Z07:00").ts_format("2006-01-02T15:04:05Z", "UTC").catch(null)
+            let rows = $cells.map_each(c -> c.merge({
+              "areaCode": if $t.area == null { "091" } else { c.at.get($t.area.apply("key")).string() },
+              "areaName": if $t.area == null { "Helsinki" } else { $ds.dimension.get($t.area.apply("key")).category.label.get(c.at.get($t.area.apply("key")).apply("key")).or(c.at.get($t.area.apply("key"))).string().re_replace_all("^091( [0-9]+)? ", "") },
+              "level": if $t.area == null { "city" } else { c.at.get($t.area.apply("key")).string().apply("area_level") },
+              "measure": $breakdown.map_each(d -> $ds.dimension.get(d.apply("key")).category.label.get(c.at.get(d.apply("key")).apply("key"))).join(", "),
+              # The name leaves out a breakdown of one value (a total such as Yhteensä) but the measure.
+              "label": $named.map_each(d -> $ds.dimension.get(d.apply("key")).category.label.get(c.at.get(d.apply("key")).apply("key"))).join(", "),
+              "key": $breakdown.map_each(d -> c.at.get(d.apply("key")).string().re_replace_all("[^A-Za-z0-9._]", "_")).join("-")
+            })).map_each(c -> c.merge({
+              "unit": if c.measure.contains("%") { "P1" } else if c.measure.contains("euroa") { "EUR" } else if c.measure.contains("µg/m3") { "GQ" } else if c.measure.contains("m2") { "MTK" } else if c.measure.contains("GWh") { "GWH" } else if c.measure.contains("kWh") { "KWH" } else if c.measure.contains("(ha)") { "HAR" } else if c.measure.contains("1000t") || c.measure.contains("1000 t") { "KTN" } else if c.measure.contains("(t ") { "TNE" } else { "C62" },
+              "id": "urn:ngsi-ld:%v:%v:%v:stat-%v-%v-%v-%v".format("KeyPerformanceIndicator", env("JC_ORG_DOMAIN"), env("JC_SPACE"), $t.theme, $t.id, c.key, c.areaCode)
+            })).map_each(c -> c.merge({
+              "reason": if c.value == null { "no value" } else if c.level == "" { "not a Helsinki area" } else if c.value.type() != "number" { "not a number" } else if c.unit == "P1" && (c.value < 0 || c.value > 100) { "percentage outside 0..100" } else if c.value < 0 && !c.measure.lowercase().re_match("netto|korjaus|enemmyys|lisäys") { "negative count or amount" } else { "" }
+            }))
+            # A breakdown table may stop at a coarser level ("depth": majorDistrict or basicDistrict):
+            # its sub-district totals are the integrated tables, and its breakdown by every sub-district
+            # would multiply the indicators by about 150. Cells below the depth are out of scope, not dropped.
+            let rows = if $t.depth == null { $rows } else { $rows.filter(c -> c.level.apply("depth_rank") <= $t.depth.apply("depth_rank")) }
+            let kept = $rows.filter(c -> c.reason == "")
+            let unique = $kept.unique(c -> c.id)
+            let reasons = $rows.filter(c -> c.reason != "").map_each(c -> c.reason)
+            let dropped = $reasons.unique().map_each(r -> { r: $reasons.filter(x -> x == r).length() }).squash()
+            let dropped = if $kept.length() > $unique.length() { $dropped.merge({ "duplicate id": $kept.length() - $unique.length() }) } else { $dropped }
+            let unlinked = $unique.filter(c -> c.level == "subDistrict" && !$register.contains(c.areaCode)).length()
+            let dropped = if $unlinked > 0 { $dropped.merge({ "sub-district not in the register (written without refArea)": $unlinked }) } else { $dropped }
+            let title = $ds.label.or($t.id).string().re_replace_all(" muuttujina .*$", "")
+            let db = $t.db.or("Aluesarjat")
+            let source = "https://stat.hel.fi/pxweb/fi/%v/%v__%v/%v/".format($db, $db, $t.path.re_replace_all("/[^/]+$", "").replace_all("/", "__"), $t.path.re_replace_all("^.*/", ""))
+            let by = if $db == "Ymparistotilasto" { "City of Helsinki, Environmental Services" } else { "City of Helsinki, Urban Research and Statistics" }
+            root = if $cells.length() == 0 { throw("%v answered no cell".format($t.id)) } else if $y == 0 { throw("%v answered the period %v, which is no year, quarter or month".format($t.id, $period)) } else if $age_days > $max_age { throw("%v is stale: its newest period %v ended %v days ago, more than %v".format($t.id, $period, $age_days, $max_age)) } else if $unique.length() == 0 { throw("%v answered no usable cell: %v".format($t.id, $dropped.format_json(no_indent: true))) } else { {
+              "table": $t.id,
+              "period": $period,
+              "dropped": $dropped,
+              "entities": $unique.map_each(c -> {
+                "id": c.id,
+                "type": "KeyPerformanceIndicator",
+                "name": { "type": "LanguageProperty", "languageMap": { "fi": "%v: %v – %v".format($title, c.label, c.areaName) } },
+                "description": { "type": "LanguageProperty", "languageMap": { "fi": $ds.label.or($t.id).string() } },
+                "kpiValue": { "type": "Property", "value": c.value, "unitCode": c.unit, "observedAt": $observed },
+                "calculationPeriod": { "type": "Property", "value": { "from": $from, "to": $to } },
+                "calculationFrequency": { "type": "Property", "value": $t.every },
+                "calculatedBy": { "type": "Property", "value": $by },
+                "organization": { "type": "Property", "value": "City of Helsinki" },
+                "process": { "type": "Property", "value": $ds.label.or($t.id).string() },
+                "area": { "type": "Property", "value": c.areaName },
+                "districtCode": { "type": "Property", "value": if c.level == "city" { "0910000000" } else { c.areaCode } },
+                "divisionLevel": { "type": "Property", "value": c.level },
+                "refArea": if c.level == "subDistrict" && $register.contains(c.areaCode) { { "type": "Relationship", "object": "urn:ngsi-ld:%v:%v:%v:subdistrict-%v".format("AdministrativeArea", env("JC_ORG_DOMAIN"), env("JC_SPACE"), c.areaCode) } } else { null },
+                "statisticsTable": { "type": "Property", "value": $t.id },
+                "dimensionKey": { "type": "Property", "value": $breakdown.map_each(d -> "%v=%v".format(d, c.at.get(d.apply("key")))).join(";") },
+                "updatedAt": if $updated == null { null } else { { "type": "Property", "value": $updated } },
+                "dataProvider": { "type": "Property", "value": "%v (%v), CC BY 4.0".format($by, $db) },
+                "source": { "type": "Property", "value": $source }
+              }.filter(kv -> kv.value != null))
+            } }
+        - log:
+            level: INFO
+            message: 'statistics ${! this.table } ${! this.period }: ${! this.entities.length() } written, dropped ${! this.dropped.format_json(no_indent: true) }'
+        - mapping: root = this.entities

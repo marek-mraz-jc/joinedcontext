@@ -1,0 +1,23 @@
+# The one attribute of a region row a person may write (AP-62, EP-14, GW16): the steward's note.
+# Every figure beside it is the publisher's and is replaced by the next pipeline run, so the
+# grant names `stewardNote` and nothing else — a PATCH of `kpiValue` from the same person is the
+# gateway's own 403 (GW17), not a silent loss on the next run.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: kraj-steward-note
+  namespace: bbsk
+  title:
+    sk: Správca údajov píše poznámku k riadku kraja
+    en: The data steward writes a note on a region row
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bbsk-kraj }
+  assigner: did:web:bbsk.sk
+  assignee:
+    kind: user
+    id: de300000-0000-4000-8000-000000000001 # demo.steward
+  operations: [updateAttrs]
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator
+      propertyNames: [stewardNote]

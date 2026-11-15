@@ -1,0 +1,20 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: weather
+  namespace: barcelona
+  title:
+    ca: Temps a les estacions de Barcelona, cada dia
+    es: Tiempo en las estaciones de Barcelona, cada día
+    en: Barcelona weather stations, daily
+spec:
+  class: auto
+  # The city rewrites the file at about 03:00 UTC; a run at 05:15 and one at 11:15 catch it. No
+  # `period`: the runner reads a period before the schedule and would run at 00, 06, 12, 18 UTC.
+  schedule: '15 5,11 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-weather }
+  targetEndpoint: urn:ngsi-ld:Endpoint:barcelona.cat:barcelona:barcelona
+  # Upsert, never replace: a station missing from one file keeps its last day (T-5263).
+  output: { type: WeatherObserved, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

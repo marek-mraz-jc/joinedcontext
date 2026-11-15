@@ -1,0 +1,282 @@
+---
+# Meshed traffic reaches a pod through its Linkerd inbound proxy on 4143, not on the service
+# port, so the rules in networkpolicies.yaml alone would leave every one of these
+# connections blocked.
+ckan-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: ckan
+    app.kubernetes.io/instance: ckan-catalogue
+    app.kubernetes.io/component: ckan
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: api-token
+          componentNamespace: ckan
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: harvest
+          componentNamespace: ckan
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+ckan-solr-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: ckan
+    app.kubernetes.io/instance: ckan-catalogue
+    app.kubernetes.io/component: solr
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: ckan
+          componentNamespace: ckan
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+ckan-redis-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: ckan
+    app.kubernetes.io/instance: ckan-catalogue
+    app.kubernetes.io/component: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: ckan
+          componentNamespace: ckan
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+postgres-linkerd-from-ckan:
+  componentNamespace: postgres
+  podSelector:
+    cnpg.io/cluster: postgres-cluster
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: ckan
+          componentNamespace: ckan
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+# Each of the three declares an egress policy, so its Linkerd proxy needs identity (8080),
+# destination (8086) and policy (8090) spelled out. Without them the proxy never learns the
+# inbound policy for its own admin port, the kubelet startup probe gets a 403 and the pod
+# never leaves Init. One policy per workload, matching the selector its own egress policy
+# uses: a broader selector would be a second egress group with no route to CoreDNS.
+ckan-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: ckan
+    app.kubernetes.io/instance: ckan-catalogue
+    app.kubernetes.io/component: ckan
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: solr
+          componentNamespace: ckan
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: redis
+          componentNamespace: ckan
+      ports:
+        - protocol: TCP
+          port: 4143
+
+ckan-solr-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: ckan
+    app.kubernetes.io/instance: ckan-catalogue
+    app.kubernetes.io/component: solr
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+
+ckan-redis-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: ckan
+    app.kubernetes.io/instance: ckan-catalogue
+    app.kubernetes.io/component: redis
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+
+ckan-api-token-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: ckan
+    app.kubernetes.io/instance: ckan-catalogue
+    app.kubernetes.io/component: api-token
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: ckan
+          componentNamespace: ckan
+      ports:
+        - protocol: TCP
+          port: 4143
+
+ckan-harvest-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: ckan
+    app.kubernetes.io/instance: ckan-catalogue
+    app.kubernetes.io/component: harvest
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: ckan
+          componentNamespace: ckan
+      ports:
+        - protocol: TCP
+          port: 4143
+
+# Meshed traffic lands on the peer's inbound proxy, not on the service port, so the plain
+# rule beside this one allows a connection the proxy never makes.
+apisix-linkerd-egress-to-ckan:
+  componentNamespace: apisix
+  podSelector:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/instance: apisix-apisix
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ckan
+              app.kubernetes.io/instance: ckan-catalogue
+              app.kubernetes.io/component: ckan
+          componentNamespace: ckan
+      ports:
+        - protocol: TCP
+          port: 4143

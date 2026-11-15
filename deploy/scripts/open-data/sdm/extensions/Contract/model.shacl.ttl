@@ -1,0 +1,222 @@
+@prefix geojson: <https://purl.org/geojson/vocab#> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix ns1: <https://w3id.org/linkml/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sdm: <https://smartdatamodels.org/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://joinedcontext.com/models/sdm/extensions/Contract> ns1:generator_version "linkml-1.11.1" .
+
+jc:Contract a sh:NodeShape ;
+    rdfs:comment "A contract the publisher signed and published." ;
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) ;
+    sh:property [ sh:datatype xsd:dateTime ;
+            sh:description "When the observation the entity reports was made." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 37 ;
+            sh:path ngsi-ld:observedAt ],
+        [ sh:datatype xsd:integer ;
+            sh:description "The source column `Rok`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 25 ;
+            sh:path jc:rok ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Centrálne_číslo_zmluvy`, `Číslo_zmluvy`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 15 ;
+            sh:path <https://smartdatamodels.org/dataModel.CPSV-AP/identifier> ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Suma_v_EUR`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 29 ;
+            sh:path jc:sumaVEUR ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Názov_zmluvy`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 18 ;
+            sh:path sdm:name ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `IČO_dodávateľa`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 11 ;
+            sh:path jc:iCODodavatela ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Druh`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 10 ;
+            sh:path jc:druh ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Príloha`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 23 ;
+            sh:path jc:priloha ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Zmluvné_strany_s_údajom_IČO`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 33 ;
+            sh:path jc:zmluvneStranySUdajomICO ],
+        [ sh:datatype xsd:date ;
+            sh:description "The source column `Dátum_prílohy`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 6 ;
+            sh:path jc:datumPrilohy ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Rezort`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 24 ;
+            sh:path jc:rezort ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Index_`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 16 ;
+            sh:path jc:index ],
+        [ sh:datatype xsd:date ;
+            sh:description "The source column `Dátum_platnosti_do`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 4 ;
+            sh:path jc:datumPlatnostiDo ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Poznámka`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 21 ;
+            sh:path jc:poznamka ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Dátum_zverejnenia`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 9 ;
+            sh:path jc:datumZverejnenia ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Zdroj_Názov`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 31 ;
+            sh:path jc:zdrojNazov ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Suma_spolu_v_EUR`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 28 ;
+            sh:path jc:sumaSpoluVEUR ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `IČO_objednávateľa`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 12 ;
+            sh:path jc:iCOObjednavatela ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `ID_zmluvy`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 14 ;
+            sh:path jc:iDZmluvy ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `IČO_organizácie`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 13 ;
+            sh:path jc:iCOOrganizacie ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Typ`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 30 ;
+            sh:path jc:typ ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Sídlo_dodávateľa`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 26 ;
+            sh:path jc:sidloDodavatela ],
+        [ sh:datatype xsd:date ;
+            sh:description "The source column `Dátum_uzavretia`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 8 ;
+            sh:path jc:datumUzavretia ],
+        [ sh:datatype xsd:string ;
+            sh:description "Who published the row, with the credit its licence asks for." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 0 ;
+            sh:path sdm:dataProvider ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Predmet`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 22 ;
+            sh:path jc:predmet ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Dátum_podpisu`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 5 ;
+            sh:path jc:datumPodpisu ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Názov_dodávateľa`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 19 ;
+            sh:path jc:nazovDodavatela ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Názov_objednávateľa`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 20 ;
+            sh:path jc:nazovObjednavatela ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Mena`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 17 ;
+            sh:path jc:mena ],
+        [ sh:datatype xsd:date ;
+            sh:description "The source column `Dátum_účinnosti`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 7 ;
+            sh:path jc:datumUcinnosti ],
+        [ sh:datatype xsd:string ;
+            sh:description "The source column `Cena_celkom`." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 3 ;
+            sh:path jc:cenaCelkom ] ;
+    sh:targetClass jc:Contract .
+
+ngsi-ld:Entity a sh:NodeShape ;
+    rdfs:comment "The root every NGSI-LD entity class specialises." ;
+    sh:closed true ;
+    sh:ignoredProperties ( jc:iDZmluvy sdm:name sdm:source jc:datumPlatnostiDo jc:datumPodpisu jc:typ jc:nazovObjednavatela jc:iCODodavatela jc:iCOOrganizacie jc:zmluvneStrany jc:mena jc:datumZverejnenia jc:cenaCelkom <https://smartdatamodels.org/dataModel.CPSV-AP/identifier> jc:datumUcinnosti jc:predmet jc:rok jc:poznamka jc:index jc:datumUzavretia jc:rezort rdf:type jc:sumaSpoluVEUR jc:zdrojNazov jc:datumPrilohy jc:sidloObjednavatela jc:zmluvneStranySUdajomICO jc:isPartOf sdm:dataProvider jc:iCOObjednavatela jc:druh jc:sumaVEUR jc:nazovDodavatela jc:priloha jc:sidloDodavatela ) ;
+    sh:property [ sh:datatype xsd:dateTime ;
+            sh:description "When the observation the entity reports was made." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 3 ;
+            sh:path ngsi-ld:observedAt ],
+        [ sh:datatype xsd:string ;
+            sh:description "Where the entity is, as GeoJSON geometry." ;
+            sh:maxCount 1 ;
+            sh:nodeKind sh:Literal ;
+            sh:order 2 ;
+            sh:path geojson:geometry ] ;
+    sh:targetClass ngsi-ld:Entity .
+

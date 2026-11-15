@@ -1,0 +1,24 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: AssistantDeployment
+metadata:
+  name: knowledge
+  namespace: helsinki
+spec:
+  # The staff assistant over the city's own website (T-3067): what the answer-quality evals ask,
+  # through the Portal as a signed-in person. Internal, so nothing is published; capped at 3 USD a
+  # day and 0.15 USD a conversation (google/gemini-3.8-flash; usage measured about 0.1 USD a day, 2026-10-07).
+  publicId: helsinki-knowledge
+  channel: internal
+  systemPrompt: >-
+    You answer the questions of Helsinki's staff and residents from what the city publishes on its
+    website, and how to work in the joinedcontext platform from its User Guide: give the steps
+    and the link into the Portal's form of each. Answer in the language of the question, cite the
+    passages you used, and say plainly when your sources do not cover the question.
+  # The User Guide (T-3226): the workflow evals ask this deployment.
+  sources: [web, guide]
+  budget:
+    tokensPerDay: 5000000
+    tokensPerConversation: 100000
+    costPerDayUsd: 3
+    costPerConversationUsd: 0.15
+  languages: [fi, sv, en]

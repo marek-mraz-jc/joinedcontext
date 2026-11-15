@@ -1,0 +1,336 @@
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix jc: <https://joinedcontext.com/models/> .
+@prefix linkml: <https://w3id.org/linkml/> .
+@prefix ngsi-ld: <https://uri.etsi.org/ngsi-ld/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+jc:Boolean a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:Boolean ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:Curie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:Curie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:Date a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:Date ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:DateOrDatetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:DateOrDatetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:Decimal a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:Decimal ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:Double a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:Double ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:EmissionSource a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "EmissionSource" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:vocEmission ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:name ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:dataProvider ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:pm25Emission ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:coEmission ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:so2Emission ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:noxEmission ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:registerCategory ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:fuelType ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:pm10Emission ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:source ],
+        jc:Entity ;
+    skos:definition "One stationary source of air pollution of a city's emission register: where it is, its fuel and its yearly emissions." ;
+    skos:exactMatch jc:EmissionSource ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/EmissionSource> ;
+    jc:upstream_source "https://smart-data-models.github.io/dataModel.PointOfInterest/PointOfInterest/schema.json" .
+
+jc:Entity a owl:Class,
+        linkml:ClassDefinition ;
+    rdfs:label "Entity" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:type ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:observedAt ],
+        [ a owl:Restriction ;
+            owl:cardinality 1 ;
+            owl:onProperty jc:id ],
+        [ a owl:Restriction ;
+            owl:maxCardinality 1 ;
+            owl:onProperty jc:location ] ;
+    skos:definition "The root every NGSI-LD entity class specialises." ;
+    skos:exactMatch ngsi-ld:Entity ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/EmissionSource> ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:Integer a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:Integer ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:Jsonpath a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:Jsonpath ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:Jsonpointer a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:Jsonpointer ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:Ncname a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:Ncname ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:Nodeidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:Nodeidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:Objectidentifier a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:Objectidentifier ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:Sparqlpath a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:Sparqlpath ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:Time a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:Time ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:Uriorcurie a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:Uriorcurie ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:coEmission a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "coEmission" ;
+    rdfs:range jc:Float ;
+    skos:definition "The source's yearly emission of carbon monoxide, in tonnes a year." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/EmissionSource> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:dataProvider a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "dataProvider" ;
+    skos:definition "Who published the row, with the credit its licence asks for." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/EmissionSource> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.PointOfInterest/7e5e24963a142b9bf6fd15b144a0e24588217608/context.jsonld" .
+
+jc:fuelType a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "fuelType" ;
+    skos:definition "The fuel group that dominates the source as the register writes it, such as zemní plyn, nafta or technologie (a process, not a fuel)." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/EmissionSource> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:id a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "id" ;
+    skos:definition "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/EmissionSource> ;
+    jc:jsonld_keyword "@id" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:location a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "location" ;
+    rdfs:range jc:String ;
+    skos:definition "Where the entity is, as GeoJSON geometry." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/EmissionSource> ;
+    jc:ngsi_ld_kind "GeoProperty" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:name a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "name" ;
+    skos:definition "The name, per language, as the publisher writes it." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/EmissionSource> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.PointOfInterest/7e5e24963a142b9bf6fd15b144a0e24588217608/context.jsonld" .
+
+jc:noxEmission a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "noxEmission" ;
+    rdfs:range jc:Float ;
+    skos:definition "The source's yearly emission of nitrogen oxides (NOx), in tonnes a year." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/EmissionSource> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:observedAt a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "observedAt" ;
+    rdfs:range jc:Datetime ;
+    skos:definition "When the observation the entity reports was made." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/EmissionSource> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:pm10Emission a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "pm10Emission" ;
+    rdfs:range jc:Float ;
+    skos:definition "The source's yearly emission of PM10, in tonnes a year, as the register states it." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/EmissionSource> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:pm25Emission a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "pm25Emission" ;
+    rdfs:range jc:Float ;
+    skos:definition "The source's yearly emission of PM2.5, in tonnes a year (REZZO 2 only)." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/EmissionSource> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:registerCategory a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "registerCategory" ;
+    skos:definition "Which part of the Prague emission register lists the source: REZZO 1 (large stationary sources, rezzo1) or REZZO 2 (medium sources, rezzo2), as IPR Praha publishes them." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/EmissionSource> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:so2Emission a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "so2Emission" ;
+    rdfs:range jc:Float ;
+    skos:definition "The source's yearly emission of sulphur dioxide, in tonnes a year." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/EmissionSource> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:source a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "source" ;
+    rdfs:range jc:Uri ;
+    skos:definition "The service the row was read from." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/EmissionSource> ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "https://raw.githubusercontent.com/smart-data-models/dataModel.PointOfInterest/7e5e24963a142b9bf6fd15b144a0e24588217608/context.jsonld" .
+
+jc:type a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "type" ;
+    skos:definition "The entity type, one class of a published data model." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/EmissionSource> ;
+    jc:jsonld_keyword "@type" ;
+    jc:ngsi_ld_kind "Property" ;
+    jc:upstream_source "ETSI NGSI-LD core context v1.8" .
+
+jc:vocEmission a owl:ObjectProperty,
+        linkml:SlotDefinition ;
+    rdfs:label "vocEmission" ;
+    rdfs:range jc:Float ;
+    skos:definition "The source's yearly emission of volatile organic compounds, in tonnes a year." ;
+    skos:inScheme <https://joinedcontext.com/models/sdm/extensions/EmissionSource> ;
+    jc:ngsi_ld_kind "Property" .
+
+jc:Datetime a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:Datetime ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:String a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:String ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:Uri a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:Uri ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+jc:Float a owl:Class,
+        linkml:TypeDefinition ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onDataRange jc:Float ;
+            owl:onProperty linkml:topValue ;
+            owl:qualifiedCardinality 1 ] .
+
+<https://joinedcontext.com/models/sdm/extensions/EmissionSource> a owl:Ontology ;
+    rdfs:label "EmissionSource" ;
+    dcterms:license "https://joinedcontext.com/licenses/cc-by-4.0" ;
+    dcterms:title "EmissionSource, an extension of dataModel.PointOfInterest/PointOfInterest" ;
+    skos:definition "One stationary source of air pollution of a city's emission register: where it is, its fuel and its yearly emissions. Extends dataModel.PointOfInterest/PointOfInterest: Environment's AirQualityObserved and EnvironmentObserved hold concentrations measured at a station; no model holds a register entry of yearly emissions." .
+
+linkml:topValue a owl:DatatypeProperty ;
+    rdfs:label "value" .
+

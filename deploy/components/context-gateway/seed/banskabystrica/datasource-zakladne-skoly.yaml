@@ -1,0 +1,16 @@
+# Basic schools in the city by founder: schools, pupils, classes and teachers, 1996 on. No key, CC-BY-SA-4.0 (NKOD, the sv5002rr record).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: susr-sv5002rr
+  namespace: banskabystrica
+  title:
+    sk: Základné školy (ŠÚ SR, sv5002rr)
+    en: Basic schools (ŠÚ SR, sv5002rr)
+spec:
+  type: http
+  http:
+    url: https://data.statistics.sk/api/v2/dataset/sv5002rr/SK0321508438/*/*?lang=sk&type=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

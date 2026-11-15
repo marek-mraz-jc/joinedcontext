@@ -1,0 +1,105 @@
+{
+  "@context": {
+    "@vocab": "https://smartdatamodels.org/",
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "OffStreetParking": {
+      "@id": "sdm:OffStreetParking"
+    },
+    "Streetlight": {
+      "@id": "sdm:Streetlight"
+    },
+    "TrafficFlowObserved": {
+      "@id": "sdm:TrafficFlowObserved"
+    },
+    "Vehicle": {
+      "@id": "sdm:Vehicle"
+    },
+    "availableSpotNumber": {
+      "@id": "sdm:availableSpotNumber",
+      "@type": "xsd:integer"
+    },
+    "averageVehicleSpeed": {
+      "@id": "sdm:averageVehicleSpeed",
+      "@type": "xsd:float"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "dateObserved": {
+      "@id": "sdm:dateObserved",
+      "@type": "xsd:dateTime"
+    },
+    "dateObservedFrom": {
+      "@id": "sdm:dateObservedFrom",
+      "@type": "xsd:dateTime"
+    },
+    "dateObservedTo": {
+      "@id": "sdm:dateObservedTo",
+      "@type": "xsd:dateTime"
+    },
+    "delay": {
+      "@id": "jc:delay",
+      "@type": "xsd:integer"
+    },
+    "direction": {
+      "@id": "jc:direction"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "heading": {
+      "@id": "sdm:heading",
+      "@type": "xsd:integer"
+    },
+    "id": "@id",
+    "intensity": {
+      "@id": "sdm:intensity",
+      "@type": "xsd:integer"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "lineName": {
+      "@id": "jc:lineName"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "name": {
+      "@container": "@language",
+      "@id": "schema:name"
+    },
+    "nextStop": {
+      "@id": "jc:nextStop"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "occupancy": {
+      "@id": "jc:occupancy",
+      "@type": "xsd:integer"
+    },
+    "occupiedSpotNumber": {
+      "@id": "sdm:occupiedSpotNumber",
+      "@type": "xsd:integer"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "totalSpotNumber": {
+      "@id": "sdm:totalSpotNumber",
+      "@type": "xsd:integer"
+    },
+    "type": "@type",
+    "vehicleType": {
+      "@id": "sdm:vehicleType"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "x-generator-version": "linkml-1.12.0"
+}

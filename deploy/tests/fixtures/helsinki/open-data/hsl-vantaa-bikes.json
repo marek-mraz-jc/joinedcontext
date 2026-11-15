@@ -1,0 +1,225 @@
+{
+ "type": "FeatureCollection",
+ "name": "City bicycle stations of Vantaa, 2026-10-22: 5 real records and 4 made bad",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 1,
+    "ID": "1001",
+    "Nimi": "Rillitori",
+    "Namn": "Rilltorget",
+    "Name": "Rillitori",
+    "Osoite": "Tikkurilantie 30",
+    "Adress": "Dickursbyvägen 30",
+    "Kaupunki": "Vantaa",
+    "Stad": "Vantaa",
+    "Operaattor": "City Bike Vantaa",
+    "Kapasiteet": 20,
+    "x": 25.0515797305299,
+    "y": 60.2930266453553
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     25.05157973100006,
+     60.293026645000054
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 2,
+    "ID": "1003",
+    "Nimi": "Männistönpolku",
+    "Namn": "Männistöstigen",
+    "Name": "Männistönpolku",
+    "Osoite": "Männistönpolku 3",
+    "Adress": "Männistöstigen 3",
+    "Kaupunki": "Vantaa",
+    "Stad": "Vantaa",
+    "Operaattor": "City Bike Vantaa",
+    "Kapasiteet": 20,
+    "x": 25.0424261327172,
+    "y": 60.293215872088
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     25.04242613300005,
+     60.293215872000076
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 3,
+    "ID": "1005",
+    "Nimi": "Tikkurilan asema",
+    "Namn": "Dickursby station",
+    "Name": "Tikkurila station",
+    "Osoite": "Ratatie 13",
+    "Adress": "Banvägen 13",
+    "Kaupunki": "Vantaa",
+    "Stad": "Vantaa",
+    "Operaattor": "City Bike Vantaa",
+    "Kapasiteet": 30,
+    "x": 25.0445870486865,
+    "y": 60.2947747310183
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     25.04458704900003,
+     60.294774731000075
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 4,
+    "ID": "1007",
+    "Nimi": "Tikkuraitti",
+    "Namn": "Dickurstråket",
+    "Name": "Tikkuraitti",
+    "Osoite": "Tikkuraitti 18",
+    "Adress": "Dickurstråket 18",
+    "Kaupunki": "Vantaa",
+    "Stad": "Vantaa",
+    "Operaattor": "City Bike Vantaa",
+    "Kapasiteet": 20,
+    "x": 25.0364107363973,
+    "y": 60.2934127240145
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     25.03641073600005,
+     60.29341272400006
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 5,
+    "ID": "1009",
+    "Nimi": "Maalitori",
+    "Namn": "Målfärgstorget",
+    "Name": "Maalitori",
+    "Osoite": "Maalipolku 11",
+    "Adress": "Målfärgsstigen 11",
+    "Kaupunki": "Vantaa",
+    "Stad": "Vantaa",
+    "Operaattor": "City Bike Vantaa",
+    "Kapasiteet": 20,
+    "x": 25.0449516168152,
+    "y": 60.2918633585749
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     25.044951617000038,
+     60.29186335900005
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 1,
+    "ID": "9001",
+    "Nimi": "Rillitori",
+    "Namn": "Rilltorget",
+    "Name": "Rillitori",
+    "Osoite": "Tikkurilantie 30",
+    "Adress": "Dickursbyvägen 30",
+    "Kaupunki": "Vantaa",
+    "Stad": "Vantaa",
+    "Operaattor": "City Bike Vantaa",
+    "Kapasiteet": 20,
+    "x": 25.0515797305299,
+    "y": 60.2930266453553
+   },
+   "geometry": null
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 2,
+    "ID": "9002",
+    "Nimi": "Männistönpolku",
+    "Namn": "Männistöstigen",
+    "Name": "Männistönpolku",
+    "Osoite": "Männistönpolku 3",
+    "Adress": "Männistöstigen 3",
+    "Kaupunki": "Vantaa",
+    "Stad": "Vantaa",
+    "Operaattor": "City Bike Vantaa",
+    "Kapasiteet": 20,
+    "x": 25.0424261327172,
+    "y": 60.293215872088
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     60.293215872000076,
+     25.04242613300005
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 3,
+    "ID": "9003",
+    "Nimi": "Tikkurilan asema",
+    "Namn": "Dickursby station",
+    "Name": "Tikkurila station",
+    "Osoite": "Ratatie 13",
+    "Adress": "Banvägen 13",
+    "Kaupunki": "Vantaa",
+    "Stad": "Vantaa",
+    "Operaattor": "City Bike Vantaa",
+    "Kapasiteet": -4,
+    "x": 25.0445870486865,
+    "y": 60.2947747310183
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     25.04458704900003,
+     60.294774731000075
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "OBJECTID": 4,
+    "ID": "9004",
+    "Nimi": "Tikkuraitti",
+    "Namn": "Dickurstråket",
+    "Name": "Tikkuraitti",
+    "Osoite": "Tikkuraitti 18",
+    "Adress": "Dickurstråket 18",
+    "Kaupunki": "Vantaa",
+    "Stad": "Vantaa",
+    "Operaattor": "City Bike Vantaa",
+    "Kapasiteet": 20,
+    "x": 25.0364107363973,
+    "y": 60.2934127240145
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     25.03641073600005,
+     60.29341272400006
+    ]
+   }
+  }
+ ]
+}

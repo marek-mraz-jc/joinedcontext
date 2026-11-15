@@ -1,0 +1,18 @@
+# The city's pipelines write the air-quality space behind `public-air` (T-3120): pipeline
+# public-air upserts the station's hourly reading, and its expiry sweep (PL-64) reads the
+# timestamps (queryBatch) and deletes a reading not renewed for seven days (deleteBatch), which
+# is how the 13 seeded test stations leave the dataset. No person holds a delete grant here.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: ovzdusie-pipelines-write
+  namespace: banskabystrica
+  title: { sk: Kanály zapisujú ovzdušie, en: The ingestion pipelines write the air-quality space }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: ovzdusie }
+  assigner: did:web:banskabystrica.sk
+  assignee: { kind: serviceAccount, id: pipelines }
+  operations: [upsertBatch, createBatch, queryBatch, deleteBatch]
+  information:
+    - entities:
+        - type: AirQualityObserved

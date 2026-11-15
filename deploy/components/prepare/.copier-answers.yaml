@@ -1,0 +1,8 @@
+---
+# Changes here will be overwritten by Copier.
+_commit: 99a87af
+_src_path: ..
+componentName: Prepare
+componentSlug: prepare
+releases: prepare
+shortDescription: 'Prepares the cluster before deployment (namespaces).'
