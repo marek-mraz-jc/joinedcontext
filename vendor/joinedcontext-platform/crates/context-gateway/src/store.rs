@@ -11,6 +11,7 @@ use crate::auth::accounts::{accounts_of, ServiceAccounts};
 use crate::auth::dataspace_token::{agreements_of, Agreements};
 use crate::federation::{federations_of, Federations};
 use crate::mcp::server::{McpServer, McpServers};
+use crate::middleware::tenancy::Tenant;
 use crate::relationships::RelationshipRules;
 use crate::resolver::{DeclaredTypes, Endpoint, EndpointRoles, Model, Space};
 use crate::units::UnitRules;
@@ -218,11 +219,87 @@ pub struct SpaceBrokers {
     /// Each space's own name, by its tenant segment: the Activity names a space as the Portal
     /// does (T-5322).
     pub names: BTreeMap<String, String>,
+    /// Each space's broker by its organization tenant (`JC_TENANT_NAMES=organization`, PF-130),
+    /// beside [`Self::by_space`], which keys it by segment.
+    pub tenants: BTreeMap<String, String>,
+}
+
+/// How the gateway names a space at the broker (`JC_TENANT_NAMES`, PF-130): `segment` (the
+/// default) pins the space's segment as before, `organization` pins `{organization id}__{segment}`.
+/// Set per broker once its rename is done (design 10.6), so one release carries both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TenantNames {
+    /// `{segment}`, the name every space has today.
+    #[default]
+    Segment,
+    /// `{organization id}__{segment}` ([`jc_core::names::TenantName`]).
+    Organization,
+}
+
+impl TenantNames {
+    /// Unset or empty is `segment`; anything but the two names is refused, naming the variable.
+    pub fn parse(value: Option<&str>) -> Result<Self, String> {
+        match value.map(str::trim).unwrap_or_default() {
+            "" | "segment" => Ok(Self::Segment),
+            "organization" => Ok(Self::Organization),
+            other => Err(format!(
+                "JC_TENANT_NAMES must be `segment` or `organization`, not `{other}`"
+            )),
+        }
+    }
+
+    /// The process's setting; the configuration refused a bad value at start
+    /// ([`crate::config::Config`]), so one here reads as the default.
+    pub fn from_env() -> Self {
+        Self::parse(std::env::var("JC_TENANT_NAMES").ok().as_deref()).unwrap_or_default()
+    }
+}
+
+/// The tenant of the space `segment` of `project` (PF-130, EP-22): the segment under
+/// [`TenantNames::Segment`]; under `Organization`, the project's Organization from the repository
+/// alone ([`Repository::space_organization`], no installation fallback) joined to the segment.
+/// `Err` names the missing link.
+pub fn space_tenant(
+    repo: &Repository,
+    project: &str,
+    segment: &str,
+    names: TenantNames,
+) -> Result<Tenant, String> {
+    match names {
+        TenantNames::Segment => Tenant::segment(segment).map_err(|err| err.to_string()),
+        TenantNames::Organization => {
+            let organization = repo.space_organization(project)?;
+            jc_core::names::TenantName::new(&organization, segment)
+                .and_then(|name| Tenant::named(&name))
+                .map_err(|err| err.to_string())
+        }
+    }
+}
+
+/// [`space_tenant`], with the operator event for a space that gets none: its Endpoints answer
+/// 503 until the Project names a resolving Organization.
+fn tenant_or_event(
+    repo: &Repository,
+    project: &str,
+    segment: &str,
+    names: TenantNames,
+) -> Option<Tenant> {
+    space_tenant(repo, project, segment, names)
+        .map_err(|reason| {
+            tracing::error!(
+                %project,
+                space = %segment,
+                %reason,
+                "the space has no tenant: its Endpoints answer 503 until the Project names an \
+                 Organization with a verified domain"
+            );
+        })
+        .ok()
 }
 
 /// [`SpaceBrokers`] of a repository, through the one lookup every component shares
 /// ([`jc_core::kinds::broker_of`]).
-pub fn brokers_of(repo: &Repository, endpoints: &[Endpoint]) -> SpaceBrokers {
+pub fn brokers_of(repo: &Repository, endpoints: &[Endpoint], names: TenantNames) -> SpaceBrokers {
     let brokers: Vec<(String, jc_core::kinds::ContextBrokerSpec)> = repo
         .iter()
         .filter(|(id, _)| id.kind == "ContextBroker")
@@ -250,9 +327,18 @@ pub fn brokers_of(repo: &Repository, endpoints: &[Endpoint]) -> SpaceBrokers {
             .get("annotations")
             .and_then(|annotations| annotations.get(jc_core::envelope::annotations::MOVING_TO))
             .is_some();
+        // An organization tenant routes and holds by its own name (PF-130).
+        let tenant = space_tenant(repo, &project, &segment, names)
+            .ok()
+            .map(|tenant| tenant.as_str().to_owned())
+            .filter(|tenant| *tenant != segment);
         if moving {
             table.moving.insert(segment.clone());
             table.moving.insert(crate::resolver::space_view(&segment));
+            table.moving.extend(tenant.clone());
+        }
+        if let Some(tenant) = tenant {
+            table.tenants.insert(tenant, broker.clone());
         }
         table
             .by_view
@@ -360,8 +446,16 @@ pub struct Checkouts {
 /// Loads the endpoint table and the identity table from the repository under `dir`
 /// (CC-08, PF-46).
 pub fn load(dir: &Path) -> Result<Tables, jc_manifest::loader::LoadError> {
+    load_named(dir, TenantNames::from_env())
+}
+
+/// [`load`] with the tenants named as `names` says, whatever the environment holds.
+pub fn load_named(
+    dir: &Path,
+    names: TenantNames,
+) -> Result<Tables, jc_manifest::loader::LoadError> {
     let repo = Repository::load(dir)?;
-    Ok(tables(&repo, dir))
+    Ok(tables(&repo, dir, names))
 }
 
 /// [`load`] of the organization checked out at `dir`: a layout 1 repository as it is, a
@@ -436,19 +530,23 @@ pub fn load_from(
             "a registered project does not load: its last render serves, the others go on"
         );
     }
-    Ok(tables(&assembly.repository, &checkouts.assembly))
+    Ok(tables(
+        &assembly.repository,
+        &checkouts.assembly,
+        TenantNames::from_env(),
+    ))
 }
 
-fn tables(repo: &Repository, root: &Path) -> Tables {
+fn tables(repo: &Repository, root: &Path, names: TenantNames) -> Tables {
     // Read and compiled once per reload, then shared by every Endpoint and Space (T-4352).
     let models = ModelSet::of(repo, Some(root));
-    let endpoints = endpoints_from(repo, Some(root), &models);
-    let homes = brokers_of(repo, &endpoints);
+    let endpoints = endpoints_from(repo, Some(root), &models, names);
+    let homes = brokers_of(repo, &endpoints, names);
     let mappings = mappings_of(repo, Some(root), &endpoints);
     let servers = servers_of(repo, &endpoints);
     (
         endpoints,
-        spaces_from(repo, &models),
+        spaces_from(repo, &models, names),
         accounts_of(repo),
         federations_of(repo),
         agreements_of(repo),
@@ -707,7 +805,8 @@ pub fn load_with_previews(
                 },
             );
         };
-        for mut endpoint in endpoints_from(&repo, Some(&root), &models) {
+        let names = TenantNames::from_env();
+        for mut endpoint in endpoints_from(&repo, Some(&root), &models, names) {
             if slugs.contains(&endpoint.slug) || segments.contains(&endpoint.space) {
                 continue;
             }
@@ -716,7 +815,7 @@ pub fn load_with_previews(
             endpoint.allowed_projects.clear();
             endpoints.push(endpoint);
         }
-        for mut space in spaces_from(&repo, &models) {
+        for mut space in spaces_from(&repo, &models, names) {
             if segments.contains(&space.endpoint.space) {
                 continue;
             }
@@ -790,7 +889,12 @@ fn dataset_page(
 /// The endpoint table, with the model artifacts read from `root` when one is given (DM-02,
 /// EP-46). Deterministic: the repository is indexed by resource identity, so two runs on the same
 /// commit build the same table in the same order (CC-27).
-fn endpoints_from(repo: &Repository, root: Option<&Path>, models: &ModelSet) -> Vec<Endpoint> {
+fn endpoints_from(
+    repo: &Repository,
+    root: Option<&Path>,
+    models: &ModelSet,
+    names: TenantNames,
+) -> Vec<Endpoint> {
     let ModelSet { models, declared } = models;
     let publishers = publishers_of(repo);
     let policies = policies_by_space(repo);
@@ -814,9 +918,10 @@ fn endpoints_from(repo: &Repository, root: Option<&Path>, models: &ModelSet) -> 
         };
         let project = id.namespace.clone().unwrap_or_default();
         let space_name = spec.context_space_ref.name().to_owned();
-        // Tenant, entity ids and policy URNs all carry the rendered segment (PF-84); the
-        // manifests beside the endpoint name the space locally.
+        // Entity ids and policy URNs carry the rendered segment (PF-84), the tenant its
+        // Organization too (PF-130); the manifests beside the endpoint name the space locally.
         let space = repo.space_segment(&project, &space_name);
+        let tenant = tenant_or_event(repo, &project, &space, names);
         let key = (project.clone(), space_name.clone());
         let named = policies.get(&key).map(Vec::as_slice).unwrap_or_default();
         let app_client = app_of(repo, &project, &id.name);
@@ -904,6 +1009,7 @@ fn endpoints_from(repo: &Repository, root: Option<&Path>, models: &ModelSet) -> 
             models: models.get(&key).cloned().unwrap_or_default(),
             declared_types: declared.get(&key).cloned(),
             space,
+            tenant,
             project,
             audience: spec.audience,
             allowed_projects: spec.allowed_projects,
@@ -1066,7 +1172,7 @@ fn view_mappings(
 /// the same grants because they read the same `Vec<PolicySpec>`. The audience is `public`
 /// so that the decision belongs to the policy set alone: a space with no grant for the
 /// caller answers 404, which is what a space that does not exist answers (SP-06, SP-11).
-fn spaces_from(repo: &Repository, models: &ModelSet) -> Vec<Space> {
+fn spaces_from(repo: &Repository, models: &ModelSet, names: TenantNames) -> Vec<Space> {
     let ModelSet { models, declared } = models;
     let policies = policies_by_space(repo);
     let assigner = format!("did:web:{}", repo.org_domain().unwrap_or_default());
@@ -1108,6 +1214,7 @@ fn spaces_from(repo: &Repository, models: &ModelSet) -> Vec<Space> {
                 title: BTreeMap::new(),
                 description: BTreeMap::new(),
                 space: segment.clone(),
+                tenant: tenant_or_event(repo, &project, &segment, names),
                 project,
                 audience: Audience::Public,
                 allowed_projects: Vec::new(),

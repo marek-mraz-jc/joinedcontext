@@ -68,6 +68,11 @@ fn endpoint(slug: &str, audience: Audience, policies: Vec<PolicySpec>) -> Endpoi
         title: [("en".to_owned(), format!("Air {slug}"))].into(),
         description: Default::default(),
         space: format!("space-{}", &slug[..4]),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment(&format!(
+            "space-{}",
+            &slug[..4]
+        ))
+        .ok(),
         project: "ovzdusie".to_owned(),
         audience,
         allowed_projects: Vec::new(),

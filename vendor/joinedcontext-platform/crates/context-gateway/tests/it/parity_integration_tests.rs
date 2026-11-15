@@ -80,6 +80,7 @@ fn endpoint(
         title: std::collections::BTreeMap::new(),
         description: std::collections::BTreeMap::new(),
         space: space.to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment(space).ok(),
         project: space.to_owned(),
         audience: Audience::Public,
         allowed_projects: Vec::new(),

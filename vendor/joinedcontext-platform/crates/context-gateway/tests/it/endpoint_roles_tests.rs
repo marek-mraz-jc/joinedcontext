@@ -96,6 +96,7 @@ fn endpoint(slug: &str, audience: Audience, roles: EndpointRoles) -> Endpoint {
         title: Default::default(),
         description: Default::default(),
         space: "helsinki".to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment("helsinki").ok(),
         project: PROJECT.to_owned(),
         audience,
         allowed_projects: Vec::new(),

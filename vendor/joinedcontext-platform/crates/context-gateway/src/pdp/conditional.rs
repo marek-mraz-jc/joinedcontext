@@ -13,9 +13,6 @@ use axum::http::{HeaderMap, HeaderValue, Method};
 use jc_core::ProblemDetails;
 use serde_json::Value;
 
-/// The tenant the gateway pinned, which the reads before a write carry too (GW20).
-const TENANT: &str = "NGSILD-Tenant";
-
 /// The largest answer a pre-write read will hold. One entity, generously.
 const MAX_PROBE: usize = 1024 * 1024;
 
@@ -41,9 +38,8 @@ pub(crate) async fn retrieve(
     headers: &HeaderMap,
 ) -> Result<Read, Box<ProblemDetails>> {
     let mut probe = HeaderMap::new();
-    if let Some(tenant) = headers.get(TENANT) {
-        probe.insert(TENANT, tenant.clone());
-    }
+    // The tenant the gateway pinned, which the reads before a write carry too (GW20).
+    crate::middleware::tenancy::copy_tenant(headers, &mut probe);
     probe.insert(ACCEPT, HeaderValue::from_static("application/json"));
     crate::middleware::tenancy::as_gateway(&mut probe);
 

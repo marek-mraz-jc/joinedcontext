@@ -1097,6 +1097,7 @@ pub(crate) mod tests_support {
             title: BTreeMap::new(),
             description: BTreeMap::new(),
             space: "city".to_owned(),
+            tenant: crate::middleware::tenancy::Tenant::segment("city").ok(),
             project: "city".to_owned(),
             audience: jc_core::kinds::Audience::Public,
             allowed_projects: Vec::new(),

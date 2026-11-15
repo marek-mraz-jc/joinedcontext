@@ -609,6 +609,7 @@ fn endpoint(base_path: String) -> Endpoint {
         title: Default::default(),
         description: Default::default(),
         space: SPACE.to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment(SPACE).ok(),
         project: PROJECT.to_owned(),
         audience: Audience::ProjectList,
         allowed_projects: Vec::new(),

@@ -12,8 +12,15 @@ use axum::body::Body;
 use axum::extract::Request;
 use axum::http::HeaderValue;
 use context_gateway::middleware::tenancy::{
-    as_gateway, pin_tenant, strip_client_headers, FORGEABLE, GATEWAY_CLIENT, TENANT,
+    as_gateway, pin_tenant, strip_client_headers, Tenant, FORGEABLE, GATEWAY_CLIENT,
 };
+
+/// The tenant header as a client could send it; only the gateway's `pin_tenant` sets it.
+const TENANT: axum::http::HeaderName = axum::http::HeaderName::from_static("ngsild-tenant");
+
+fn segment(space: &str) -> Tenant {
+    Tenant::segment(space).expect("a space name")
+}
 
 fn with(headers: &[(&str, &str)]) -> Request {
     let mut builder = Request::builder().uri("/api/endpoint/s/ngsi-ld/v1/entities");
@@ -154,7 +161,7 @@ fn the_tenant_the_gateway_pins_replaces_anything_left_rather_than_joining_it() {
         .header(TENANT, "forged")
         .body(Body::empty())
         .expect("a request");
-    pin_tenant(&mut request, "ovzdusie").expect("a DNS-1123 label is a legal header value");
+    pin_tenant(request.headers_mut(), &segment("ovzdusie"));
     let values: Vec<_> = request.headers().get_all(&TENANT).iter().collect();
     assert_eq!(values, vec!["ovzdusie"]);
 }
@@ -170,7 +177,7 @@ fn a_space_name_that_is_not_a_legal_header_value_pins_nothing() {
             .body(Body::empty())
             .expect("a request");
         assert!(
-            pin_tenant(&mut request, illegal).is_err(),
+            Tenant::segment(illegal).is_err(),
             "{illegal:?} was accepted as a tenant"
         );
         assert!(
@@ -181,15 +188,10 @@ fn a_space_name_that_is_not_a_legal_header_value_pins_nothing() {
 }
 
 #[test]
-fn a_space_name_with_no_characters_in_it_still_pins_nothing_useful() {
-    // The empty string is a legal header value, so this is not an error; it is recorded because
-    // an empty tenant is a broker's default tenant, and a reader should know which it is.
-    let mut request = Request::builder()
-        .uri("/")
-        .body(Body::empty())
-        .expect("a request");
-    pin_tenant(&mut request, "").expect("the empty string is a legal header value");
-    assert_eq!(request.headers()[&TENANT], "");
+fn a_space_name_with_no_characters_in_it_is_no_tenant() {
+    // The empty string is a legal header value, and an empty tenant is a broker's default
+    // tenant: it is no space name, so no hop can be pinned to it (PF-130).
+    assert!(Tenant::segment("").is_err());
 }
 
 #[test]
@@ -236,8 +238,12 @@ fn a_caller_is_never_forwarded_as_the_gateway() {
     let mut subject = context_gateway::auth::subject::Subject::anonymous();
     subject.service_account = Some(GATEWAY_CLIENT.to_owned());
     let mut request = with(&[]);
-    context_gateway::middleware::tenancy::pin_caller(&mut request, "city", &subject)
-        .expect("a legal space");
+    context_gateway::middleware::tenancy::pin_caller(
+        &mut request,
+        Some(&segment("city")),
+        &subject,
+    )
+    .expect("a legal space");
     assert!(
         request.headers().get("x-jc-client").is_none(),
         "{:?}",
@@ -261,8 +267,12 @@ fn a_participant_is_forwarded_as_its_did_alone() {
         ("x-jc-restricted", "true"),
         ("ngsild-results-restricted", "true"),
     ]);
-    context_gateway::middleware::tenancy::pin_caller(&mut request, "city", &subject)
-        .expect("a legal space");
+    context_gateway::middleware::tenancy::pin_caller(
+        &mut request,
+        Some(&segment("city")),
+        &subject,
+    )
+    .expect("a legal space");
     let mut pinned: Vec<(String, String)> = request
         .headers()
         .iter()
@@ -331,8 +341,12 @@ fn a_hop_carries_only_the_x_jc_headers_the_gateway_set() {
 
     let mut request = with(&NEW_IDENTITY);
     let subject = context_gateway::auth::subject::Subject::anonymous();
-    context_gateway::middleware::tenancy::pin_caller(&mut request, "city", &subject)
-        .expect("a legal space");
+    context_gateway::middleware::tenancy::pin_caller(
+        &mut request,
+        Some(&segment("city")),
+        &subject,
+    )
+    .expect("a legal space");
     let jc: Vec<(&str, &str)> = request
         .headers()
         .iter()

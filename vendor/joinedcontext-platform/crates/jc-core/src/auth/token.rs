@@ -64,6 +64,11 @@ pub struct Claims {
     /// (ADR-N-067 2.2): what an `organization` assignee matches.
     #[serde(default)]
     pub jc_org: Vec<String>,
+    /// The ids of those Organizations (EP-186, `sk_bbsk`), from the realm's `jc_org_id` mapper:
+    /// the gateway sends the one naming a tenant's Organization to the broker (EP-188). Matches
+    /// no assignee; empty on a token from a realm without the mapper.
+    #[serde(default)]
+    pub jc_org_id: Vec<String>,
     /// The person's groups under an Organization as full paths, `/{organization}/{group}`
     /// (ADR-N-067 2.2). Absent on a token from a realm without the mapper, which is not the
     /// same as an empty list.
