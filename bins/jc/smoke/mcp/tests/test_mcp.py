@@ -7,6 +7,7 @@ import pytest
 import importlib.util
 import json
 import sys
+import urllib.parse
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -15,6 +16,7 @@ sys.path.insert(0, str(HERE.parent.parent))
 sys.path.append(str(HERE.parent.parent / "endpoints"))
 
 import client  # noqa: E402
+import export as ex  # noqa: E402
 
 # Loaded under its own name: the endpoints suite is also a `suite` module.
 _spec = importlib.util.spec_from_file_location("smoke_mcp_suite", HERE.parent / "suite.py")
@@ -227,3 +229,41 @@ def test_a_count_grown_by_the_rehearsal_pipelines_counts_the_seeded_rows(synthet
     s.x, s.hub, s.r = NS(index={"synthetic": synthetic}), NS(query=query), suite.Results("mcp", "http://localhost")
     s.hub_count(NS(slug="e"), "hub p/e", "Event", 2, {"count": 2})
     assert [(r["id"], r["result"]) for r in s.r.rows] == [("hub.query.count", result)]
+
+
+@pytest.mark.parametrize("live,expires,result,why", [
+    # T-6958: jc-dev Event 13103 exported, 14429 live; every one of the 1328 more created after it
+    ({"urn:e:1": "2020-01-01T00:00:00Z", "urn:e:2": "2020-01-01T00:00:00Z", "urn:e:3": "2026-11-10T00:00:00Z"},
+     False, "pass", "2 of the 2 exported, 1 more, 0 of them created at or before"),
+    ({"urn:e:1": "2020-01-01T00:00:00Z", "urn:e:2": "2020-01-01T00:00:00Z", "urn:e:3": "2026-11-08T00:00:00Z"},
+     False, "fail", "1 of them created at or before"),          # growth by an entity older than the export
+    ({"urn:e:1": "2020-01-01T00:00:00Z", "urn:e:3": "2026-11-10T00:00:00Z", "urn:e:4": "2026-11-10T00:00:00Z"},
+     False, "fail", "1 exported missing"),                       # an exported entity lost under new rows
+    ({"urn:e:1": "2020-01-01T00:00:00Z", "urn:e:3": "2026-11-10T00:00:00Z", "urn:e:4": "2026-11-10T00:00:00Z"},
+     True, "pass", "1 exported missing")])                       # unless the type's entities expire
+def test_a_count_grown_past_the_export_passes_only_with_its_proof(tmp_path, live, expires, result, why):
+    from types import SimpleNamespace as NS
+
+    ids = tmp_path / "ids"
+    ids.mkdir()
+    ex.ids_file(ids, "t", "Event").write_text("urn:e:1\nurn:e:2\n")
+
+    def query(args):
+        return answer({"jsonrpc": "2.0", "id": 1, "result": {"structuredContent": {"entities": [], "total": 3}}}), ""
+
+    def call(method, path, token=None, headers=None):
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)
+        rows = [{"id": i, "createdAt": c} for i, c in sorted(live.items())]
+        if qs.get("id"):
+            rows = [r for r in rows if r["id"] in qs["id"][0].split(",")]
+        elif int(qs["offset"][0]):
+            rows = []
+        return 200, {}, json.dumps(rows).encode()
+
+    s = object.__new__(suite.Suite)
+    s.x = NS(index={"synthetic": False, "exportedAt": "2026-11-09T19:31:18Z", "ids": str(ids)})
+    s.hub, s.http, s.r = NS(query=query), NS(call=call), suite.Results("mcp", "http://localhost")
+    e = NS(slug="e", tenant="t", public_grants=list, selectors=lambda grants: None)
+    s.hub_count(e, "hub p/e", "Event", 2, {"count": 2, "expires": expires})
+    rows = [(r["id"], r["result"]) for r in s.r.rows]
+    assert rows == [("hub.query.count", result)] and why in s.r.rows[0]["actual"], s.r.rows

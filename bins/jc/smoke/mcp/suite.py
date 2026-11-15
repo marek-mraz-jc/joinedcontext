@@ -332,9 +332,12 @@ class Suite:
                        "the grants narrow the type (q, scopeQ, attributes or overlapping patterns): no export "
                        f"count to compare{why}")
         elif slot.get("expires"):
+            ok, why = a.ok and total is not None and 0 < total <= want, ""
+            if a.ok and total is not None and total > want and not self.x.index.get("synthetic"):
+                ok, why = self.born(e, typ, total, True)
             self.check("hub.query.count", t, f"query_entities type={typ} count=true",
-                       f"<= {want} (the type carries expiresAt)", f"total {total}",
-                       a.ok and total is not None and 0 < total <= want)
+                       f"<= {want} (the type carries expiresAt), or more created after the export",
+                       f"total {total}{'; ' + why if why else ''}", ok)
         elif a.ok and total is not None and total > want and self.x.index.get("synthetic"):
             # A synthetic bundle's rehearsal runs the imported Pipelines against their live sources
             # (helsinki linked-events: Event 23 in smoke 43074228505): the seeded rows count exactly.
@@ -344,9 +347,35 @@ class Suite:
             self.check("hub.query.count", t, f"query_entities type={typ} idPattern={pattern} count=true",
                        f"total {want} (export; {total - want} more written by the rehearsal's Pipelines)",
                        f"total {seeded}; {b.brief(80) if seeded is None else ''}", b.ok and seeded == want)
+        elif a.ok and total is not None and total > want:
+            ok, why = self.born(e, typ, total, False)
+            self.check("hub.query.count", t, f"query_entities type={typ} count=true",
+                       f"total {want} (export), or more created after the export", f"total {total}; {why}", ok)
         else:
             self.check("hub.query.count", t, f"query_entities type={typ} count=true", f"total {want} (export)",
                        f"total {total}; {note}{a.brief(80) if total is None else ''}", a.ok and total == want)
+
+    def born(self, e, typ, total, expires) -> tuple[bool, str]:
+        """A copy that keeps ingesting counts more than its export: the growth passes only with
+        proof read from the copy through the Endpoint's own NGSI-LD door, anonymously as the hub
+        reads it (ex.born): every exported id still there, every other created after exportedAt."""
+        at = self.x.index.get("exportedAt")
+        if not at:
+            return False, "no proof: the export names no exportedAt"
+        scope = ex.count_scope(e.selectors(e.public_grants()), typ)
+        if scope is ex.OVERLAP or scope is False:
+            return False, "no proof: the public grants overlap on the type"
+        exported = ex.exported_ids(self.x.index, e.tenant, typ, scope)
+        if exported is None:
+            return False, "no proof: the export index holds no ids (built before index-v6)"
+
+        def get(path, token=None):
+            return self.http.call("GET", path, token=token, headers={"Accept": "application/json"})
+        live = ex.live_created(get, e.slug, typ)
+        if live is None:
+            return False, f"no proof: a page of /api/endpoint/{e.slug}/ngsi-ld/v1/entities was refused"
+        live.update(ex.present(get, e.slug, typ, exported - set(live)))
+        return ex.born(live, exported, at, expires, total)
 
     def hub_temporal(self, e, t, types, door=None, label="hub"):
         door = door or self.hub
