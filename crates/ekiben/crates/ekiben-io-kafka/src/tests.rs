@@ -152,7 +152,7 @@ fn unsafe_and_unsupported_settings_are_refused_with_a_fix() {
         (with("rack_id", json!("eu-1a")), "rack_id"),
         (with("batching", json!({"count": 10})), "batching"),
         (
-            with("group_balancers", json!(["cooperative_sticky"])),
+            with("group_balancers", json!(["fastest"])),
             "range",
         ),
         (

@@ -605,6 +605,8 @@ jobs:
       S3_TEST_SECRET: ekibentestsecret
       S3_TEST_BUCKET: raw
       REDIS_TEST_URL: redis://127.0.0.1:63790/0
+      # kafka_franz input (T-7093) against redpanda, started below (a service cannot pass its arguments).
+      KAFKA_TEST_BROKERS: 127.0.0.1:19092
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/rust
@@ -613,6 +615,12 @@ jobs:
           docker run -d --name versitygw -p 7070:7070 -e "ROOT_ACCESS_KEY=$S3_TEST_ID" -e "ROOT_SECRET_KEY=$S3_TEST_SECRET"
           versity/versitygw@sha256:605de57c0cdc297fc5bc905ece592965d542d8df70d6eedf755734c80f2eb797 --port :7070 posix /tmp
           && sleep 2 && docker exec versitygw mkdir -p "/tmp/$S3_TEST_BUCKET"
+      # redpanda v25.2.10 of 2025-10-25, one core, advertising the address the tests dial.
+      - run: >-
+          docker run -d --name redpanda -p 19092:19092
+          redpandadata/redpanda@sha256:8f9e1e944ba5ba21c5bd60877d0d267d8ac6e4d07e12509424197deb43c0ada5
+          redpanda start --mode dev-container --smp 1 --kafka-addr 0.0.0.0:19092 --advertise-kafka-addr 127.0.0.1:19092
+          && for _ in $(seq 30); do docker exec redpanda rpk cluster health --exit-when-healthy --watch=false >/dev/null 2>&1 && break; sleep 2; done
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked --no-fail-fast

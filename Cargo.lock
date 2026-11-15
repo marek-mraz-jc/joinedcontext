@@ -3594,6 +3594,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "ekiben-io-kafka"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.23.1",
+ "bytes",
+ "ekiben-bloblang",
+ "ekiben-core",
+ "ekiben-io-http",
+ "flate2",
+ "hmac 0.13.0",
+ "lz4_flex",
+ "regex",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
+ "serde_json",
+ "sha2 0.11.1",
+ "snap",
+ "subtle",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "uuid",
+ "zstd",
+]
+
+[[package]]
 name = "ekiben-io-nats"
 version = "0.1.0"
 dependencies = [
@@ -3778,6 +3806,7 @@ dependencies = [
  "ekiben-io-amqp",
  "ekiben-io-file",
  "ekiben-io-http",
+ "ekiben-io-kafka",
  "ekiben-io-nats",
  "ekiben-io-ngsild",
  "ekiben-io-s3",

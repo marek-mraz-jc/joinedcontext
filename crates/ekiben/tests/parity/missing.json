@@ -108,7 +108,6 @@
   "inputs/grpc_client",
   "inputs/hdfs",
   "inputs/kafka",
-  "inputs/kafka_franz",
   "inputs/kubernetes_watch",
   "inputs/mongodb",
   "inputs/mqtt_v5",

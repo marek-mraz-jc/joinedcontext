@@ -10,7 +10,8 @@
 //! batch inflates to at most 64 MiB.
 //!
 //! With `consumer_group` the input joins the group `<organization id>.<consumer_group>` (one
-//! organization never joins another's group), takes partitions by the range assignor and commits
+//! organization never joins another's group), takes partitions by the range assignor whatever
+//! `group_balancers` names, and commits
 //! the offset below its oldest unacknowledged batch every `commit_period` and at shutdown.
 //! Without one it reads every partition of its topics and commits nothing. Each fetch hands the
 //! pipeline one batch per partition; a nacked batch is fetched again (`auto_replay_nacks`), and a
@@ -428,18 +429,23 @@ pub(crate) fn parse(conf: &JsonValue) -> Result<Settings, String> {
             )))
         }
     };
-    if let Some(b) = obj.get("group_balancers") {
-        let list: Vec<&str> = b
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(JsonValue::as_str)
-            .collect();
-        if !list.is_empty() && !list.contains(&"range") {
-            return Err(err(format!(
-                "group_balancers {} is not supported; ekiben assigns partitions with range (group_balancers: [range])",
-                list.join(", ")
-            )));
+    // Bento's balancer names are accepted (the form fills cooperative_sticky) and every ekiben
+    // member assigns with range: members of one group must agree on the protocol, and range is
+    // the one ekiben implements.
+    for (i, b) in obj
+        .get("group_balancers")
+        .and_then(JsonValue::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        match b.as_str() {
+            Some("cooperative_sticky" | "sticky" | "range" | "round_robin") => {}
+            _ => {
+                return Err(err(format!(
+                    "group_balancers[{i}] is not a balancer; use range (ekiben assigns partitions with range)"
+                )))
+            }
         }
     }
     let read_committed = match str_field(obj, "transaction_isolation_level") {
@@ -522,5 +528,7 @@ pub(crate) fn settings(conf: &ComponentConfig) -> Result<Settings, CoreError> {
     parse(&conf.config).map_err(config_error)
 }
 
+#[cfg(test)]
+mod live;
 #[cfg(test)]
 mod tests;
