@@ -68,6 +68,9 @@ pub struct StreamMetrics {
     pub output_bytes: AtomicU64,
     pub output_error: AtomicU64,
     pub processor_errors_total: AtomicU64,
+    /// Nanoseconds the run spent inside its processors, charged to the organization's
+    /// `max_cpu_time_ms_per_run` (the runner charges each input batch once it is processed).
+    processing_ns: AtomicU64,
     counters: RwLock<BTreeMap<String, Arc<AtomicU64>>>,
     timings: RwLock<BTreeMap<String, std::sync::Mutex<TimingReservoir>>>,
     /// The stream's view of the Prometheus exporter (labels `stream` and, outside the default
@@ -101,6 +104,7 @@ impl StreamMetrics {
             output_bytes: AtomicU64::new(0),
             output_error: AtomicU64::new(0),
             processor_errors_total: AtomicU64::new(0),
+            processing_ns: AtomicU64::new(0),
             counters: RwLock::new(BTreeMap::new()),
             timings: RwLock::new(BTreeMap::new()),
             ns: RwLock::new(None),
@@ -111,6 +115,16 @@ impl StreamMetrics {
     /// Connects the stream to the exporter (done by `MetricsRegistry::register_stream`).
     pub fn attach(&self, ns: Namespaced) {
         *write_lock(&self.ns) = Some(ns);
+    }
+
+    /// Charges `ns` of processing time to this run.
+    pub fn charge_processing(&self, ns: u64) {
+        self.processing_ns.fetch_add(ns, Ordering::Relaxed);
+    }
+
+    /// The processing time charged to this run so far, in nanoseconds.
+    pub fn processing_ns(&self) -> u64 {
+        self.processing_ns.load(Ordering::Relaxed)
     }
 
     /// The stream's namespace, if it is attached to an exporter.

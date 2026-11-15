@@ -1,0 +1,32 @@
+# Fuzzes the javascript processor's sandbox (T-7082): any script over any message must end in a
+# flag or a result, never an abort (QuickJS asserts on JS_FreeRuntime when objects outlive a
+# context), a hang past the deadline or memory past the limit. Run by hand or by the on-demand
+# ekiben-fuzz workflow: cargo +nightly fuzz run script -- -max_total_time=3600. Not a member of
+# the ekiben workspace.
+[package]
+name = "ekiben-js-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ekiben-js = { path = "..", features = ["fuzzing"] }
+
+[[bin]]
+name = "script"
+path = "fuzz_targets/script.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
+
+# The ekiben workspace's patches, which a path dependency does not carry.
+[patch.crates-io]
+jaq-core = { path = "../../../../../vendor/jaq-core" }
+jaq-json = { path = "../../../../../vendor/jaq-json" }

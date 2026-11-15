@@ -1,0 +1,30 @@
+# The javascript processor's sandbox under libFuzzer (crates/ekiben/crates/ekiben-js/fuzz, T-7082):
+# on demand only, an hour by default. A crash uploads its input as an artifact; add it to
+# fuzz/corpus/script with the fix so the next run replays it.
+name: ekiben-fuzz
+on:
+  workflow_dispatch:
+    inputs:
+      seconds: { description: "fuzzing time in seconds", default: "3600" }
+permissions: { contents: read }
+concurrency:
+  group: "ekiben-fuzz-${{ github.ref }}"
+  cancel-in-progress: true
+jobs:
+  script:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults: { run: { working-directory: crates/ekiben/crates/ekiben-js } }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/rust
+        with: { workspace: crates/ekiben/crates/ekiben-js/fuzz, key: ekiben-fuzz, toolchain: nightly }
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
+        with: { tool: cargo-fuzz }
+      - env: { SECONDS_TO_FUZZ: "${{ inputs.seconds }}" }
+        run: |
+          case "$SECONDS_TO_FUZZ" in ''|*[!0-9]*) echo "seconds: a whole number" >&2; exit 1 ;; esac
+          cargo +nightly fuzz run script --release -- -dict=fuzz/script.dict -max_total_time="$SECONDS_TO_FUZZ" -timeout=10 -rss_limit_mb=2048
+      - if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with: { name: ekiben-js-fuzz-artifacts, path: crates/ekiben/crates/ekiben-js/fuzz/artifacts }

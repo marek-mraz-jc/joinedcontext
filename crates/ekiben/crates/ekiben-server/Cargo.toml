@@ -66,3 +66,7 @@ criterion = { workspace = true }
 [[bench]]
 name = "pipeline_bench"
 harness = false
+
+[[bench]]
+name = "js_isolation"
+harness = false
