@@ -58,6 +58,9 @@ window.jcCornerAside = (function () {
     var zone = { left: c.right - size.width, right: c.right, top: c.bottom - size.height, bottom: c.bottom };
     var over = Array.prototype.some.call(document.querySelectorAll(under + (phone.matches ? ", " + text : "")), function (el) {
       if (corner.contains(el)) return false;
+      // A closed <details> still reports its content's boxes; that content is not shown.
+      var folded = el.closest("details:not([open])");
+      if (folded && !el.closest("summary")) return false;
       var r = el.getBoundingClientRect();
       return r.width > 0 && r.left < zone.right && zone.left < r.right && r.top < zone.bottom && zone.top < r.bottom;
     });
