@@ -183,7 +183,7 @@ impl Hubs {
     /// Closes every open connection: the tables they were admitted under went stale.
     pub fn close_all(&self) {
         let hubs = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        for (_, hub) in hubs.values() {
+        for (_, _, hub) in hubs.values() {
             let closed = hub.close_ended(|_, _| true);
             if !closed.is_empty() {
                 tracing::warn!(slug = %hub.slug, closed = closed.len(), "WebSocket connections closed: the access rules went stale");
