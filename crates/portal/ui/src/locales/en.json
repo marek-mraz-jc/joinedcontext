@@ -602,6 +602,7 @@
       "samples": "Sample entities",
       "noModel": "This space names no data model, so its entity types are unknown.",
       "noTypes": "The data model {model} defines no entity type.",
+      "typesUnread": "The entity types are unknown while the data model's source cannot be read.",
       "readThrough": "read through endpoint {endpoint}",
       "noEndpoint": "counts need an endpoint that is public or has no policy",
       "sampleSize": "Size of the values shown, as JSON: {bytes}",

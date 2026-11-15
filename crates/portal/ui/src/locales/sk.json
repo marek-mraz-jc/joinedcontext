@@ -602,6 +602,7 @@
       "samples": "Ukážkové entity",
       "noModel": "Priestor neuvádza dátový model, takže jeho typy entít nie sú známe.",
       "noTypes": "Dátový model {model} nedefinuje žiadny typ entity.",
+      "typesUnread": "Typy entít nie sú známe, kým sa nedá prečítať YAML dátového modelu.",
       "readThrough": "čítané cez endpoint {endpoint}",
       "noEndpoint": "počty potrebujú verejný endpoint alebo endpoint bez politiky",
       "sampleSize": "Veľkosť zobrazených hodnôt v JSON: {bytes}",

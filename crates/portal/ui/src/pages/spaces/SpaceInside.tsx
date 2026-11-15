@@ -1996,6 +1996,8 @@ export function SpaceInside({ project, name }: { project: string; name: string }
   const modelSource = useSourceOf(project, listed.length === 0 ? model : undefined);
   const sourced = useMemo(() => classNamesOf(modelSource.data) ?? [], [modelSource.data]);
   const types = listed.length > 0 ? listed : sourced;
+  // A source that could not be read says nothing about the types: never "defines no type" (T-6950).
+  const typesUnread = types.length === 0 && modelSource.isError;
 
   if (space.isPending) {
     return <PageLoading label={t("app.loading")} />;
@@ -2090,14 +2092,18 @@ export function SpaceInside({ project, name }: { project: string; name: string }
 
       {tab === "data" ? (
         <div {...tabPanelProps("space-inside", tab)}>
-          <SpaceData
-            project={project}
-            space={name}
-            types={types}
-            endpoints={spaceEndpoints}
-            model={model}
-            retention={rulesOf(manifest)}
-          />
+          {typesUnread ? (
+            <PageFailed error={modelSource.error} onRetry={() => void modelSource.refetch()} />
+          ) : (
+            <SpaceData
+              project={project}
+              space={name}
+              types={types}
+              endpoints={spaceEndpoints}
+              model={model}
+              retention={rulesOf(manifest)}
+            />
+          )}
         </div>
       ) : null}
 
@@ -2110,6 +2116,8 @@ export function SpaceInside({ project, name }: { project: string; name: string }
       <Section title={<Term name="entityType">{t("spaces.inside.types")}</Term>}>
         {model === undefined ? (
           <SectionState query={models} empty={t("spaces.inside.noModel")} />
+        ) : typesUnread ? (
+          <p className="text-body text-fg-muted">{t("spaces.inside.typesUnread")}</p>
         ) : types.length === 0 ? (
           <p className="text-body text-fg-muted">
             {t("spaces.inside.noTypes", { model: model.metadata.name })}

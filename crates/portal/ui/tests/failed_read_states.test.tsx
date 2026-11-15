@@ -74,7 +74,7 @@ describe("a failed read", () => {
 
   // T-6950: both hosts of a model's source (its page and the space's Data model tab) say a refused
   // source read as a refusal: the server's words, no Retry, never "the Portal did not answer".
-  it.each([["/projects/helsinki/models/air"], ["/projects/helsinki/spaces/ilma?tab=model"]])(
+  it.each([["/projects/helsinki/models/air"], ["/projects/helsinki/spaces/ilma?tab=model"], ["/projects/helsinki/spaces/ilma?tab=data"]])(
     "says a refused model source on %s as a refusal",
     async (page) => {
       const model = {
@@ -102,6 +102,9 @@ describe("a failed read", () => {
       expect(await screen.findByText("answered 403")).toBeInTheDocument();
       expect(screen.queryByText(en.app.error.generic)).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: en.app.error.retry })).not.toBeInTheDocument();
+      // An unread source says nothing about the model's types (UI judge, T-6950).
+      expect(screen.queryByText(en.spaces.inside.noTypes.replace("{model}", "air"))).not.toBeInTheDocument();
+      expect(screen.queryByText(en.spaces.inside.dataNoTypes)).not.toBeInTheDocument();
     },
   );
 
