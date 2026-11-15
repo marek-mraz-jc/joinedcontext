@@ -1147,7 +1147,7 @@ pub(crate) async fn view_request(
             .await?
     };
     if let Some(raw) = operations::addressed_entity(path) {
-        if let Err(refusal) = write_guard::check_identifier(&query::decode(raw), None) {
+        if let Err(refusal) = write_guard::check_identifier(&query::decode_path(raw), None) {
             return Err(Box::new(ProblemDetails::from(refusal).into_response()));
         }
     }
@@ -1504,7 +1504,7 @@ async fn relationships_held(
         apply,
     };
     let refused = if operation == Operation::DeleteEntity {
-        match operations::addressed_entity(path).map(query::decode) {
+        match operations::addressed_entity(path).map(query::decode_path) {
             Some(id) => held.entity(&id).await,
             None => Ok(()),
         }

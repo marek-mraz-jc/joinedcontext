@@ -44,7 +44,7 @@ impl HeldWrite<'_> {
         use crate::relationships::{self, Extent, Shape};
         let refuse = |problem: ProblemDetails| Box::new(problem.into_response());
 
-        let addressed = operations::addressed_entity(self.path).map(query::decode);
+        let addressed = operations::addressed_entity(self.path).map(query::decode_path);
         let targeted = operations::targeted_attribute(self.path);
         let targeted = targeted.as_deref();
         // Removing a required end outright empties it as surely as a null does.
@@ -857,7 +857,7 @@ pub(crate) fn filled_units(
         // `judge_write` already refused a body that is not JSON; nothing is left to check.
         return Ok(Vec::new());
     };
-    let addressed = operations::addressed_entity(path).map(query::decode);
+    let addressed = operations::addressed_entity(path).map(query::decode_path);
     let targeted = operations::targeted_attribute(path);
     let shape = crate::units::Shape {
         addressed: addressed.as_deref(),
@@ -894,7 +894,7 @@ pub(crate) async fn minimised(
             ProblemDetails::bad_request().with_detail("the body is not JSON"),
         ));
     };
-    let addressed = operations::addressed_entity(path).map(query::decode);
+    let addressed = operations::addressed_entity(path).map(query::decode_path);
     let targeted = operations::targeted_attribute(path);
     let shape = crate::units::Shape {
         addressed: addressed.as_deref(),
@@ -984,7 +984,7 @@ pub(crate) fn quality_judged(
         // `judge_write` already refused a body that is not JSON; nothing is left to check.
         return Ok(());
     };
-    let addressed = operations::addressed_entity(path).map(query::decode);
+    let addressed = operations::addressed_entity(path).map(query::decode_path);
     let targeted = operations::targeted_attribute(path);
     let shape = crate::units::Shape {
         addressed: addressed.as_deref(),
@@ -1220,7 +1220,7 @@ pub(crate) fn judge_write(
         None => payload,
     };
     // An addressed write changes the entity in its path and nothing else (GW17, PF-44).
-    let addressed = operations::addressed_entity(path).map(query::decode);
+    let addressed = operations::addressed_entity(path).map(query::decode_path);
 
     let entries = match payload {
         Value::Array(entries) if divides(operation) => entries,
