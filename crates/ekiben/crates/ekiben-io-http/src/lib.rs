@@ -11,6 +11,7 @@ pub mod input;
 pub mod mqtt;
 pub mod outbound;
 pub mod output;
+pub mod paginate;
 pub mod processor;
 #[cfg(feature = "websocket")]
 pub mod websocket;

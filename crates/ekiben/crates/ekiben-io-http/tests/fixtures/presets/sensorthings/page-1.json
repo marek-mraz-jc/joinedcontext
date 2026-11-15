@@ -1,0 +1,605 @@
+{
+ "value": [
+  {
+   "@iot.id": 3,
+   "name": "StadtRad-Station 54229abf-cfa5-349e-b003-b83dd4755294"
+  },
+  {
+   "@iot.id": 4,
+   "name": "StadtRad-Station a4a042cf-4fd6-3fb4-b701-cbc8a1653ada"
+  },
+  {
+   "@iot.id": 5,
+   "name": "StadtRad-Station a97da629-b098-375c-a94d-ffdc3e463904"
+  },
+  {
+   "@iot.id": 6,
+   "name": "StadtRad-Station e2ef524f-bf3d-3fe6-91d5-a8e90fefdc9c"
+  },
+  {
+   "@iot.id": 7,
+   "name": "StadtRad-Station f457c545-a9de-388f-98ec-ee47145a72c0"
+  },
+  {
+   "@iot.id": 8,
+   "name": "StadtRad-Station 3644a684-f98e-38fe-a23c-713b77189a77"
+  },
+  {
+   "@iot.id": 9,
+   "name": "StadtRad-Station ed3d2c21-991e-3bef-9e06-9713af9fa6ca"
+  },
+  {
+   "@iot.id": 10,
+   "name": "StadtRad-Station e369853d-f766-3a44-a1ed-0ff613f563bd"
+  },
+  {
+   "@iot.id": 11,
+   "name": "StadtRad-Station 6364d3f0-f495-36ab-9dcf-8d3b5c6e0b01"
+  },
+  {
+   "@iot.id": 12,
+   "name": "StadtRad-Station c0c7c76d-30bd-3dca-afc9-6f40275bdc0a"
+  },
+  {
+   "@iot.id": 14,
+   "name": "StadtRad-Station 0aa1883c-6411-3787-bcb8-3dacb17b0afc"
+  },
+  {
+   "@iot.id": 16,
+   "name": "StadtRad-Station 67c6a1e7-ce56-33d6-ba74-8ab6d9af3fd7"
+  },
+  {
+   "@iot.id": 17,
+   "name": "StadtRad-Station b73ce398-c39f-306a-b761-d2277d853a92"
+  },
+  {
+   "@iot.id": 18,
+   "name": "StadtRad-Station 0e65972d-ce68-3ad4-952d-063967f0a705"
+  },
+  {
+   "@iot.id": 19,
+   "name": "StadtRad-Station 1ff8a7b5-dc7a-3d1f-8ed6-5aaa29c04b1e"
+  },
+  {
+   "@iot.id": 20,
+   "name": "StadtRad-Station a3c65c29-7427-3fd0-93ee-8a9bf8ae7d0b"
+  },
+  {
+   "@iot.id": 21,
+   "name": "StadtRad-Station bd4c9ab7-30f5-3132-86b9-99ec0d90d1fb"
+  },
+  {
+   "@iot.id": 22,
+   "name": "StadtRad-Station 85d8ce59-0ad8-381c-a2c8-286f79f59954"
+  },
+  {
+   "@iot.id": 23,
+   "name": "StadtRad-Station 7f6ffaa6-bb0b-3080-97b6-2254211691b5"
+  },
+  {
+   "@iot.id": 24,
+   "name": "StadtRad-Station cfecdb27-6f63-3854-b3ef-915e2e980c31"
+  },
+  {
+   "@iot.id": 25,
+   "name": "StadtRad-Station 642e92ef-b794-3173-8881-b53e1e1b18b6"
+  },
+  {
+   "@iot.id": 26,
+   "name": "StadtRad-Station 182be0c5-cdcd-3072-bb18-64cdee4d3d6e"
+  },
+  {
+   "@iot.id": 27,
+   "name": "StadtRad-Station 2838023a-778d-3aec-9c21-2708f721b788"
+  },
+  {
+   "@iot.id": 28,
+   "name": "StadtRad-Station ac627ab1-ccbd-362e-896e-702f07f6425b"
+  },
+  {
+   "@iot.id": 29,
+   "name": "StadtRad-Station a2557a7b-2e94-397f-b767-970b67041697"
+  },
+  {
+   "@iot.id": 30,
+   "name": "StadtRad-Station 82aa4b0a-f34c-3313-a562-076992e50aa3"
+  },
+  {
+   "@iot.id": 31,
+   "name": "StadtRad-Station 9dcb88e0-1376-3959-8b75-5372b040afad"
+  },
+  {
+   "@iot.id": 32,
+   "name": "StadtRad-Station 140f6969-d521-3fd0-ace0-3148e62e461e"
+  },
+  {
+   "@iot.id": 33,
+   "name": "StadtRad-Station 5f93f983-524d-3f3d-8a46-4469d2cf9f3e"
+  },
+  {
+   "@iot.id": 34,
+   "name": "StadtRad-Station 2723d092-b638-35e0-97c2-60cc007e8b9d"
+  },
+  {
+   "@iot.id": 35,
+   "name": "StadtRad-Station c16a5320-fa47-3530-9958-3c34fd356ef5"
+  },
+  {
+   "@iot.id": 36,
+   "name": "StadtRad-Station 6c4b761a-28b7-34fe-9383-1e3fb400ce87"
+  },
+  {
+   "@iot.id": 37,
+   "name": "StadtRad-Station 34173cb3-8f07-389d-9beb-c2ac9128303f"
+  },
+  {
+   "@iot.id": 38,
+   "name": "StadtRad-Station 31fefc0e-570c-3386-8f2a-6d4b38c6490d"
+  },
+  {
+   "@iot.id": 39,
+   "name": "StadtRad-Station 5fd0b37c-d7db-3b00-b97b-a6ce92bf5add"
+  },
+  {
+   "@iot.id": 40,
+   "name": "StadtRad-Station a597e505-02f5-3f68-a3e2-5b9114205d4a"
+  },
+  {
+   "@iot.id": 41,
+   "name": "StadtRad-Station bd686fd6-40be-38ef-aae0-091fa301e613"
+  },
+  {
+   "@iot.id": 43,
+   "name": "StadtRad-Station 6512bd43-d9ca-36e0-ac99-0b0a82652dca"
+  },
+  {
+   "@iot.id": 44,
+   "name": "StadtRad-Station 9872ed9f-c22f-3182-9371-c3e9ed316094"
+  },
+  {
+   "@iot.id": 45,
+   "name": "StadtRad-Station 73278a4a-8696-3eeb-976a-8fd4c9ec6997"
+  },
+  {
+   "@iot.id": 46,
+   "name": "StadtRad-Station 37a749d8-08e4-3495-a8da-1e5352d03cae"
+  },
+  {
+   "@iot.id": 47,
+   "name": "StadtRad-Station a1d0c6e8-3f02-3327-9846-1063f4ac58a6"
+  },
+  {
+   "@iot.id": 48,
+   "name": "StadtRad-Station b6d767d2-f8ed-3d21-a44b-0e5886680cb9"
+  },
+  {
+   "@iot.id": 49,
+   "name": "StadtRad-Station 03afdbd6-6e79-39b1-a5f8-597834fa83a4"
+  },
+  {
+   "@iot.id": 50,
+   "name": "StadtRad-Station 2a79ea27-c279-3471-b4d1-80b08d62b00a"
+  },
+  {
+   "@iot.id": 51,
+   "name": "StadtRad-Station 6cdd60ea-0045-3b7a-aec4-4c54d29ed402"
+  },
+  {
+   "@iot.id": 52,
+   "name": "StadtRad-Station 3416a75f-4cea-3109-907c-acd8e2f2aefc"
+  },
+  {
+   "@iot.id": 53,
+   "name": "StadtRad-Station a5bfc9e0-7964-38dd-9eb9-5fc584cd965d"
+  },
+  {
+   "@iot.id": 54,
+   "name": "StadtRad-Station 4c5bde74-a8f1-3065-a874-902f07378009"
+  },
+  {
+   "@iot.id": 55,
+   "name": "StadtRad-Station 979d472a-8480-3b9f-a47b-c185a877a8b5"
+  },
+  {
+   "@iot.id": 56,
+   "name": "StadtRad-Station f899139d-f5e1-3593-9643-1415e770c6dd"
+  },
+  {
+   "@iot.id": 58,
+   "name": "StadtRad-Station 37693cfc-7480-39e4-9d87-b8c7d8b9aacd"
+  },
+  {
+   "@iot.id": 59,
+   "name": "StadtRad-Station 45fbc6d3-e05e-3d93-b69c-e542e8f2322d"
+  },
+  {
+   "@iot.id": 60,
+   "name": "StadtRad-Station cedebb6e-872f-339b-af8c-3f919874e9d7"
+  },
+  {
+   "@iot.id": 61,
+   "name": "StadtRad-Station a5771bce-93e2-30c3-af7c-d9dfd0e5deaa"
+  },
+  {
+   "@iot.id": 62,
+   "name": "StadtRad-Station 45c48cce-2e2d-3fbd-aa1a-fc51c7c6ad26"
+  },
+  {
+   "@iot.id": 63,
+   "name": "StadtRad-Station c9f0f895-fb98-3b91-99f5-1fd0297e236d"
+  },
+  {
+   "@iot.id": 64,
+   "name": "StadtRad-Station fc221309-7460-33ac-9545-71fbd180e1c8"
+  },
+  {
+   "@iot.id": 65,
+   "name": "StadtRad-Station 17e62166-fc85-36df-a4d1-bc0e1742c08b"
+  },
+  {
+   "@iot.id": 66,
+   "name": "StadtRad-Station 2b44928a-e11f-3938-8c4c-f38708677c48"
+  },
+  {
+   "@iot.id": 67,
+   "name": "StadtRad-Station d67d8ab4-f4c1-3bf2-aaa3-53e27879133c"
+  },
+  {
+   "@iot.id": 68,
+   "name": "StadtRad-Station 96da2f59-0cd7-346b-bde0-051047b0d6f7"
+  },
+  {
+   "@iot.id": 69,
+   "name": "StadtRad-Station 06409663-226a-32f3-9144-85aa4e0a23b4"
+  },
+  {
+   "@iot.id": 70,
+   "name": "StadtRad-Station ca46c1b9-512a-3a83-95fa-3c5a946e8265"
+  },
+  {
+   "@iot.id": 71,
+   "name": "StadtRad-Station 19ca14e7-ea63-38a4-ae0e-b13d585e4c22"
+  },
+  {
+   "@iot.id": 72,
+   "name": "StadtRad-Station b3e3e393-c77e-35a4-a3f3-cbd1e429b5dc"
+  },
+  {
+   "@iot.id": 73,
+   "name": "StadtRad-Station 70efdf2e-c9b0-3607-9795-c442636b55fb"
+  },
+  {
+   "@iot.id": 74,
+   "name": "StadtRad-Station 6f4922f4-5568-361a-8cdf-4ad2299f6d23"
+  },
+  {
+   "@iot.id": 75,
+   "name": "StadtRad-Station 3b8a6142-26a9-33a8-8d95-26fca6fe9ba5"
+  },
+  {
+   "@iot.id": 76,
+   "name": "StadtRad-Station 98f13708-2101-34c4-b568-7be6106a3b84"
+  },
+  {
+   "@iot.id": 77,
+   "name": "StadtRad-Station c45147de-e729-311e-b5b5-c3003946c48f"
+  },
+  {
+   "@iot.id": 78,
+   "name": "StadtRad-Station a5e00132-373a-3031-800f-d987a3c9f87b"
+  },
+  {
+   "@iot.id": 79,
+   "name": "StadtRad-Station 6c8349cc-7260-3e62-a3b1-396831a8398f"
+  },
+  {
+   "@iot.id": 80,
+   "name": "StadtRad-Station 1f0e3dad-9990-3345-b743-9f8ffabdffc4"
+  },
+  {
+   "@iot.id": 81,
+   "name": "StadtRad-Station 045117b0-e0a1-3a24-ab97-65e79cbf113f"
+  },
+  {
+   "@iot.id": 82,
+   "name": "StadtRad-Station 2b24d495-052a-3ce6-a358-eb576b8912c8"
+  },
+  {
+   "@iot.id": 83,
+   "name": "StadtRad-Station 33e75ff0-9dd6-31bb-a69f-351039152189"
+  },
+  {
+   "@iot.id": 84,
+   "name": "StadtRad-Station aab32389-22bc-325a-af60-6eb525ffdc56"
+  },
+  {
+   "@iot.id": 85,
+   "name": "StadtRad-Station 5ef05993-8ba7-39aa-a845-e1c2e8a762bd"
+  },
+  {
+   "@iot.id": 86,
+   "name": "StadtRad-Station eb160de1-de89-3905-8fcb-0b968dbbbd68"
+  },
+  {
+   "@iot.id": 87,
+   "name": "StadtRad-Station 6ea9ab1b-aa0e-3b9e-9909-4440c317e21b"
+  },
+  {
+   "@iot.id": 88,
+   "name": "StadtRad-Station 44f683a8-4163-3352-bafe-57c2e008bc8c"
+  },
+  {
+   "@iot.id": 89,
+   "name": "StadtRad-Station 8f53295a-7387-3494-a9bc-8dd6c3c7104f"
+  },
+  {
+   "@iot.id": 90,
+   "name": "StadtRad-Station 7ef605fc-8dba-3425-9696-5fbd4c8fbe1f"
+  },
+  {
+   "@iot.id": 91,
+   "name": "StadtRad-Station 7f39f831-7fbd-3198-8ef4-c628eba02591"
+  },
+  {
+   "@iot.id": 92,
+   "name": "StadtRad-Station 8f855179-6779-3eee-b66c-225f7883bdcb"
+  },
+  {
+   "@iot.id": 93,
+   "name": "StadtRad-Station 07e1cd7d-ca89-3167-8042-477183b7ac3f"
+  },
+  {
+   "@iot.id": 94,
+   "name": "StadtRad-Station 02e74f10-e032-3ad8-a8d1-38f2b4fdd6f0"
+  },
+  {
+   "@iot.id": 95,
+   "name": "StadtRad-Station 63dc7ed1-010d-3c3b-8269-faf0ba7491d4"
+  },
+  {
+   "@iot.id": 96,
+   "name": "StadtRad-Station 705f2172-8346-3678-8607-efbfca35afb3"
+  },
+  {
+   "@iot.id": 97,
+   "name": "StadtRad-Station 9bf31c7f-f062-336a-96d3-c8bd1f8f2ff3"
+  },
+  {
+   "@iot.id": 98,
+   "name": "StadtRad-Station 4e732ced-3463-306d-a0ca-9a15b6153677"
+  },
+  {
+   "@iot.id": 99,
+   "name": "StadtRad-Station f7177163-c833-3ff4-b38f-c8d2872f1ec6"
+  },
+  {
+   "@iot.id": 100,
+   "name": "StadtRad-Station 38af8613-4b65-30f1-8fe3-3d30dd76442e"
+  },
+  {
+   "@iot.id": 101,
+   "name": "StadtRad-Station c20ad4d7-6fe9-3759-aa27-a0c99bff6710"
+  },
+  {
+   "@iot.id": 102,
+   "name": "StadtRad-Station 8e296a06-7a37-3633-b0de-d05f5a3bf3ec"
+  },
+  {
+   "@iot.id": 103,
+   "name": "StadtRad-Station 47d1e990-583c-3c67-824d-369f3414728e"
+  },
+  {
+   "@iot.id": 104,
+   "name": "StadtRad-Station 8d5e957f-2978-3348-bbd9-8fa830fa6413"
+  },
+  {
+   "@iot.id": 105,
+   "name": "StadtRad-Station c0e190d8-267e-3670-8f95-5d7ab048990d"
+  },
+  {
+   "@iot.id": 106,
+   "name": "StadtRad-Station c51ce410-c124-310e-8db5-e4b97fc2af39"
+  },
+  {
+   "@iot.id": 107,
+   "name": "StadtRad-Station 093f65e0-80a2-35f8-876b-1c5722a46aa2"
+  },
+  {
+   "@iot.id": 108,
+   "name": "StadtRad-Station 74db120f-0a8e-3646-af5a-30154e9f6deb"
+  },
+  {
+   "@iot.id": 109,
+   "name": "StadtRad-Station b53b3a3d-6ab9-3ce0-a682-29151c9bde11"
+  },
+  {
+   "@iot.id": 110,
+   "name": "StadtRad-Station a87ff679-a2f3-371d-9181-a67b7542122c"
+  },
+  {
+   "@iot.id": 111,
+   "name": "StadtRad-Station ec8ce6ab-b3e9-32a8-9b85-51ba726a1227"
+  },
+  {
+   "@iot.id": 112,
+   "name": "StadtRad-Station 0a09c884-4ba8-3093-ac20-bd791130d6b6"
+  },
+  {
+   "@iot.id": 113,
+   "name": "StadtRad-Station a684ecee-e76f-3522-b732-86a895bc8436"
+  },
+  {
+   "@iot.id": 114,
+   "name": "StadtRad-Station 903ce922-5fca-3e98-8c2a-f215d4e544d3"
+  },
+  {
+   "@iot.id": 115,
+   "name": "StadtRad-Station e96ed478-dab8-395a-bdbd-a4cbcbee168f"
+  },
+  {
+   "@iot.id": 117,
+   "name": "StadtRad-Station 9cfdf10e-8fc0-37a4-8b08-ed031e1f0ed1"
+  },
+  {
+   "@iot.id": 118,
+   "name": "StadtRad-Station 9a115815-4dfa-32ca-9dbd-0694a4e9bdc8"
+  },
+  {
+   "@iot.id": 119,
+   "name": "StadtRad-Station 82161242-827b-303e-aacf-9c726942a1e4"
+  },
+  {
+   "@iot.id": 120,
+   "name": "StadtRad-Station 072b030b-a126-32f4-b237-4f342be9ed44"
+  },
+  {
+   "@iot.id": 121,
+   "name": "StadtRad-Station f2217062-e9a3-37a1-9ca4-29e7d70bc6ca"
+  },
+  {
+   "@iot.id": 122,
+   "name": "StadtRad-Station 1679091c-5a88-3faf-afb5-e6087eb1b2dc"
+  },
+  {
+   "@iot.id": 123,
+   "name": "StadtRad-Station e4da3b7f-bbce-3345-9777-2b0674a318d5"
+  },
+  {
+   "@iot.id": 124,
+   "name": "StadtRad-Station 0f28b5d4-9b30-30af-aecd-95b4009adf4c"
+  },
+  {
+   "@iot.id": 125,
+   "name": "StadtRad-Station 060ad924-8994-3d41-8d89-7474079c1477"
+  },
+  {
+   "@iot.id": 127,
+   "name": "StadtRad-Station d82c8d16-19ad-3176-9665-453cfb2e55f0"
+  },
+  {
+   "@iot.id": 128,
+   "name": "StadtRad-Station 66f041e1-6a60-328b-85a7-e228a89c3799"
+  },
+  {
+   "@iot.id": 129,
+   "name": "StadtRad-Station 1afa34a7-f984-3eab-9bb0-a7d494132ee5"
+  },
+  {
+   "@iot.id": 130,
+   "name": "StadtRad-Station 76dc611d-6eba-3fc6-acc0-879c71b5db5c"
+  },
+  {
+   "@iot.id": 131,
+   "name": "StadtRad-Station eccbc87e-4b5c-32fe-a830-8fd9f2a7baf3"
+  },
+  {
+   "@iot.id": 132,
+   "name": "StadtRad-Station 9fc3d715-2ba9-336a-a70e-36d0ed79bc43"
+  },
+  {
+   "@iot.id": 133,
+   "name": "StadtRad-Station 7f1de29e-6da1-3d22-b51c-68001e7e0e54"
+  },
+  {
+   "@iot.id": 134,
+   "name": "StadtRad-Station 65ded535-3c5e-348d-8b7d-48c591b8f430"
+  },
+  {
+   "@iot.id": 135,
+   "name": "StadtRad-Station 02522a2b-2726-3b0a-83bb-19f2d8d9524d"
+  },
+  {
+   "@iot.id": 136,
+   "name": "StadtRad-Station d1f491a4-04d6-3548-8094-3e5c3cd9ca25"
+  },
+  {
+   "@iot.id": 137,
+   "name": "StadtRad-Station bf822969-6f7a-3bb4-b00c-fddef19fa23f"
+  },
+  {
+   "@iot.id": 138,
+   "name": "StadtRad-Station 9f61408e-3afb-333e-90cd-f1b20de6f466"
+  },
+  {
+   "@iot.id": 139,
+   "name": "StadtRad-Station bcbe3365-e6ac-35ea-ac03-43a2395834dd"
+  },
+  {
+   "@iot.id": 140,
+   "name": "StadtRad-Station e00da03b-685a-3dd1-8fb6-a08af0923de0"
+  },
+  {
+   "@iot.id": 141,
+   "name": "StadtRad-Station c81e728d-9d4c-3f63-af06-7f89cc14862c"
+  },
+  {
+   "@iot.id": 142,
+   "name": "StadtRad-Station c4ca4238-a0b9-3382-8dcc-509a6f75849b"
+  },
+  {
+   "@iot.id": 143,
+   "name": "StadtRad-Station c8ffe9a5-87b1-36f1-92ed-3d89a146b445"
+  },
+  {
+   "@iot.id": 144,
+   "name": "StadtRad-Station 3def184a-d8f4-355f-b269-862ea77393dd"
+  },
+  {
+   "@iot.id": 145,
+   "name": "StadtRad-Station a0a080f4-2e6f-33b3-a2df-133f073095dd"
+  },
+  {
+   "@iot.id": 146,
+   "name": "StadtRad-Station 202cb962-ac59-375b-964b-07152d234b70"
+  },
+  {
+   "@iot.id": 147,
+   "name": "StadtRad-Station 069059b7-ef84-3f0c-b4a8-14ec9237b6ec"
+  },
+  {
+   "@iot.id": 148,
+   "name": "StadtRad-Station ec5decca-5ed3-36b8-879e-2e7e7bacc9f2"
+  },
+  {
+   "@iot.id": 149,
+   "name": "StadtRad-Station 32c644f3-f447-459d-a35f-a1a6ee7e3f09"
+  },
+  {
+   "@iot.id": 150,
+   "name": "StadtRad-Station fe9fc289-c3ff-3af1-82b6-d3bead98a923"
+  },
+  {
+   "@iot.id": 151,
+   "name": "StadtRad-Station 38b3eff8-baf5-3627-878e-c76a704e9b52"
+  },
+  {
+   "@iot.id": 152,
+   "name": "StadtRad-Station ad61ab14-3223-3fbc-a4c7-d2583be69251"
+  },
+  {
+   "@iot.id": 153,
+   "name": "StadtRad-Station 1534b76d-325a-3f59-9b52-d302e7181331"
+  },
+  {
+   "@iot.id": 154,
+   "name": "StadtRad-Station 68d30a95-9472-3bc3-9aa2-4be94b319d21"
+  },
+  {
+   "@iot.id": 156,
+   "name": "StadtRad-Station 6f3ef77a-c0e3-319e-9815-9e9b6febf557"
+  },
+  {
+   "@iot.id": 157,
+   "name": "StadtRad-Station d1fe173d-08e9-3939-badf-34b1d77e88d7"
+  },
+  {
+   "@iot.id": 158,
+   "name": "StadtRad-Station 43ec517d-68b6-3dd3-815b-3edc9a11367b"
+  },
+  {
+   "@iot.id": 159,
+   "name": "StadtRad-Station ec895663-7a99-387b-9197-eacd77acce5e"
+  }
+ ],
+ "@iot.nextLink": "https://iot.hamburg.de/v1.1/Things?$top=150&$skip=150&$select=%40iot.id,name&$filter=startswith%28name%2C%27StadtRad%27%29&$orderby=%40iot.id+asc&$skipFilter=%28%40iot.id+gt+159%29"
+}

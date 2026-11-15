@@ -1,0 +1,9 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata: { name: odata, namespace: bb-ovzdusie }
+spec:
+  type: http
+  http:
+    url: https://services.odata.org/V4/Northwind/Northwind.svc/Customers?$select=CustomerID,CompanyName,City
+    preset:
+      kind: odata

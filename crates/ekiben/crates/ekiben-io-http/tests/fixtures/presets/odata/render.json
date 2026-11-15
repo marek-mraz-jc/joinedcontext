@@ -1,0 +1,8 @@
+{
+  "paginate": {
+    "mode": "next_url",
+    "next": "@odata.nextLink",
+    "records": "value"
+  },
+  "url": "https://services.odata.org/V4/Northwind/Northwind.svc/Customers?%24select=CustomerID%2CCompanyName%2CCity"
+}

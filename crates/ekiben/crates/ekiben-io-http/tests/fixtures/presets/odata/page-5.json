@@ -1,0 +1,60 @@
+{
+ "@odata.context": "https://services.odata.org/V4/Northwind/Northwind.svc/$metadata#Customers(CustomerID,CompanyName,City)",
+ "value": [
+  {
+   "CustomerID": "TRADH",
+   "CompanyName": "Tradição Hipermercados",
+   "City": "Sao Paulo"
+  },
+  {
+   "CustomerID": "TRAIH",
+   "CompanyName": "Trail's Head Gourmet Provisioners",
+   "City": "Kirkland"
+  },
+  {
+   "CustomerID": "VAFFE",
+   "CompanyName": "Vaffeljernet",
+   "City": "Århus"
+  },
+  {
+   "CustomerID": "VICTE",
+   "CompanyName": "Victuailles en stock",
+   "City": "Lyon"
+  },
+  {
+   "CustomerID": "VINET",
+   "CompanyName": "Vins et alcools Chevalier",
+   "City": "Reims"
+  },
+  {
+   "CustomerID": "WANDK",
+   "CompanyName": "Die Wandernde Kuh",
+   "City": "Stuttgart"
+  },
+  {
+   "CustomerID": "WARTH",
+   "CompanyName": "Wartian Herkku",
+   "City": "Oulu"
+  },
+  {
+   "CustomerID": "WELLI",
+   "CompanyName": "Wellington Importadora",
+   "City": "Resende"
+  },
+  {
+   "CustomerID": "WHITC",
+   "CompanyName": "White Clover Markets",
+   "City": "Seattle"
+  },
+  {
+   "CustomerID": "WILMK",
+   "CompanyName": "Wilman Kala",
+   "City": "Helsinki"
+  },
+  {
+   "CustomerID": "WOLZA",
+   "CompanyName": "Wolski  Zajazd",
+   "City": "Warszawa"
+  }
+ ]
+}
