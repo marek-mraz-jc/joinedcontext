@@ -185,6 +185,7 @@ fn every_example_renders_the_input_the_reader_never_wrote() {
             DataSourceType::Mqtt => "  mqtt:".to_owned(),
             DataSourceType::WebSocket => "  websocket:".to_owned(),
             DataSourceType::Http | DataSourceType::GtfsRt => "  http_client:".to_owned(),
+            DataSourceType::Webhook => "  http_server:".to_owned(),
             DataSourceType::Runner(name) => format!("  {name}:"),
         };
         assert!(
