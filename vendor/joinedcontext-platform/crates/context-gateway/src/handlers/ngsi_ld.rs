@@ -740,17 +740,35 @@ pub(crate) fn log_personal_read_of(
     if personal.is_empty() {
         return;
     }
-    tracing::info!(
-        target: "personal_read",
-        slug = %endpoint.slug,
-        space = %endpoint.space,
-        surface,
-        principal = %principal_of(subject),
-        attributes = %personal.join(","),
-        entities = %entities.join(","),
-        parameters = %parameter_names(query.unwrap_or_default()),
-        "personal attributes read"
-    );
+    let parts = id_parts(entities);
+    let count = parts.len();
+    for (part, ids) in (1..).zip(parts) {
+        tracing::info!(
+            target: "personal_read",
+            slug = %endpoint.slug,
+            space = %endpoint.space,
+            surface,
+            principal = %principal_of(subject),
+            attributes = %personal.join(","),
+            entities = %ids.join(","),
+            part,
+            parts = count,
+            parameters = %parameter_names(query.unwrap_or_default()),
+            "personal attributes read"
+        );
+    }
+}
+
+/// The most URNs one `personal_read` line names, so a log collector keeps each line whole: a
+/// 25,000-row download is 50 lines rather than one of a megabyte it would cut (DM-128).
+const IDS_PER_LINE: usize = 500;
+
+/// `entities` in parts of at most [`IDS_PER_LINE`], one empty part for an answer of none.
+fn id_parts(entities: &[String]) -> Vec<&[String]> {
+    if entities.is_empty() {
+        return vec![entities];
+    }
+    entities.chunks(IDS_PER_LINE).collect()
 }
 
 /// The names of a query string's parameters, each once in the order met, without their values:
@@ -1129,7 +1147,7 @@ pub(crate) async fn view_request(
             .await?
     };
     if let Some(raw) = operations::addressed_entity(path) {
-        if let Err(refusal) = write_guard::check_identifier(&query::decode(raw), None) {
+        if let Err(refusal) = write_guard::check_identifier(&query::decode_path(raw), None) {
             return Err(Box::new(ProblemDetails::from(refusal).into_response()));
         }
     }
@@ -1486,7 +1504,7 @@ async fn relationships_held(
         apply,
     };
     let refused = if operation == Operation::DeleteEntity {
-        match operations::addressed_entity(path).map(query::decode) {
+        match operations::addressed_entity(path).map(query::decode_path) {
             Some(id) => held.entity(&id).await,
             None => Ok(()),
         }
@@ -1520,6 +1538,19 @@ mod tests {
         assert_eq!(names, "f,q,limit,flag");
         assert!(!names.contains("Jana"), "{names}");
         assert_eq!(parameter_names(""), "");
+    }
+
+    /// DM-128: a large answer's URNs are logged over several bounded lines, none lost.
+    #[test]
+    fn a_large_answer_is_logged_in_bounded_parts() {
+        let ids: Vec<String> = (0..1201).map(|n| format!("urn:ngsi-ld:T:{n}")).collect();
+        let parts = id_parts(&ids);
+        assert_eq!(
+            parts.iter().map(|p| p.len()).collect::<Vec<_>>(),
+            [500, 500, 201]
+        );
+        assert_eq!(parts.concat(), ids);
+        assert_eq!(id_parts(&[]).len(), 1, "an empty answer is still one line");
     }
 
     /// ADR-N-066 2.3: the attributes a write touches, read off its path or its entities.

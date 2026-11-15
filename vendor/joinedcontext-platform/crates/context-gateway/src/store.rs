@@ -1245,18 +1245,29 @@ fn language_map(
 #[allow(clippy::type_complexity)]
 fn policies_by_space(repo: &Repository) -> BTreeMap<(String, String), Vec<(String, PolicySpec)>> {
     let mut policies: BTreeMap<(String, String), Vec<(String, PolicySpec)>> = BTreeMap::new();
+    // A Policy the gateway cannot read may be a prohibition, so its space grants nothing here
+    // rather than everything the others permit (ISO-01): `(project, Some(space))`, or the whole
+    // project when not even its `contextSpaceRef` reads.
+    let mut unreadable: BTreeSet<(String, Option<String>)> = BTreeSet::new();
     for (id, resource) in repo.iter() {
         if id.kind != "Policy" {
             continue;
         }
+        let project = id.namespace.clone().unwrap_or_default();
         let Some(spec) = spec_of::<PolicySpec>(&resource.manifest) else {
+            let space = resource
+                .manifest
+                .spec
+                .get("contextSpaceRef")
+                .and_then(|r| serde_json::from_value::<jc_core::envelope::Ref>(r.clone()).ok())
+                .map(|r| r.name().to_owned());
+            unreadable.insert((project, space));
             continue;
         };
         // One grant per rule, named `{policy}#{n}` (ADR-N-057); an invalid shape is left out
         // like an unreadable manifest.
         match spec.expand(&id.name) {
             Ok(rules) => {
-                let project = id.namespace.clone().unwrap_or_default();
                 let space = spec.context_space_ref.name().to_owned();
                 let rules = rules
                     .into_iter()
@@ -1265,11 +1276,14 @@ fn policies_by_space(repo: &Repository) -> BTreeMap<(String, String), Vec<(Strin
                     .collect::<Vec<_>>();
                 policies.entry((project, space)).or_default().extend(rules);
             }
-            Err(error) => tracing::warn!(
-                name = %id.name,
-                %error,
-                "Policy left out of the endpoint table"
-            ),
+            Err(error) => {
+                tracing::warn!(
+                    name = %id.name,
+                    %error,
+                    "Policy left out of the endpoint table: its space grants nothing"
+                );
+                unreadable.insert((project, Some(spec.context_space_ref.name().to_owned())));
+            }
         }
     }
     // Each Pipeline's Policies, granted to its own account and derived with it (PL-20).
@@ -1279,6 +1293,17 @@ fn policies_by_space(repo: &Repository) -> BTreeMap<(String, String), Vec<(Strin
                 .entry((project.clone(), spec.context_space_ref.name().to_owned()))
                 .or_default()
                 .push((name, of_own_project(spec, &project)));
+        }
+    }
+    for (project, space) in unreadable {
+        match space {
+            Some(space) => {
+                policies.insert((project, space), Vec::new());
+            }
+            None => policies
+                .iter_mut()
+                .filter(|((of, _), _)| *of == project)
+                .for_each(|(_, rules)| rules.clear()),
         }
     }
     policies
@@ -1752,6 +1777,84 @@ mod tests {
         };
         assert_eq!(names("events-a"), ["a-read", "pl-load-w-1"]);
         assert_eq!(names("events-b"), ["b-read"]);
+    }
+
+    /// ISO-01: a Policy the gateway cannot read may be a prohibition, so its space grants
+    /// nothing in the gateway's table; another space of the project keeps its grants, and a
+    /// Policy without a readable space empties its whole project.
+    #[test]
+    fn a_space_with_an_unreadable_policy_grants_nothing() {
+        let dir = std::env::temp_dir().join(format!(
+            "gw-unreadable-policy-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let header = "apiVersion: joinedcontext.com/v1alpha1\nkind:";
+        let policy = |project: &str, name: &str, space: &str, extra: &str| {
+            format!(
+                "{header} Policy\nmetadata:\n  name: {name}\n  namespace: {project}\nspec:\n  \
+                 {space}assigner: did:web:hel.fi\n  assignee: {{ kind: role, id: public }}\n  \
+                 operations: [retrieveOps]\n  information: [{{ entities: [{{ type: Event }}] }}]\n\
+                 {extra}"
+            )
+        };
+        let space =
+            |name: &str| format!("contextSpaceRef: {{ kind: ContextSpace, name: {name} }}\n  ");
+        let policies = |files: &[(&str, String)]| {
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("a repository");
+            for (file, body) in files {
+                std::fs::write(dir.join(file), body).expect("a manifest");
+            }
+            let repo = super::Repository::load(&dir).expect("the repository loads");
+            let _ = std::fs::remove_dir_all(&dir);
+            super::policies_by_space(&repo)
+                .into_iter()
+                .map(|((project, space), rules)| (format!("{project}/{space}"), rules.len()))
+                .collect::<BTreeMap<_, _>>()
+        };
+        let readable = [
+            ("p1.yaml", policy("helsinki", "read", &space("events"), "")),
+            ("p2.yaml", policy("helsinki", "air", &space("air"), "")),
+            ("p3.yaml", policy("espoo", "read", &space("events"), "")),
+        ];
+        let grants = |pairs: &[(&str, usize)]| {
+            pairs
+                .iter()
+                .map(|(key, n)| ((*key).to_owned(), *n))
+                .collect::<BTreeMap<_, _>>()
+        };
+        assert_eq!(
+            policies(&readable),
+            grants(&[
+                ("espoo/events", 1),
+                ("helsinki/air", 1),
+                ("helsinki/events", 1)
+            ])
+        );
+        let mut broken = readable.to_vec();
+        broken.push((
+            "p4.yaml",
+            policy("helsinki", "deny", &space("events"), "  notAField: true\n"),
+        ));
+        assert_eq!(
+            policies(&broken),
+            grants(&[
+                ("espoo/events", 1),
+                ("helsinki/air", 1),
+                ("helsinki/events", 0)
+            ])
+        );
+        let mut spaceless = readable.to_vec();
+        spaceless.push(("p4.yaml", policy("helsinki", "deny", "", "")));
+        assert_eq!(
+            policies(&spaceless),
+            grants(&[
+                ("espoo/events", 1),
+                ("helsinki/air", 0),
+                ("helsinki/events", 0)
+            ])
+        );
     }
 
     /// T-6569: a public Endpoint publishing to its project's CkanInstance gets that dataset's

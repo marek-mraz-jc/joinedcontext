@@ -114,8 +114,8 @@ pub fn sets_attribute_value<'a>(method: &Method, path: &'a str) -> Option<&'a st
 pub fn targeted_attribute(path: &str) -> Option<String> {
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     match segments.as_slice() {
-        ["entities", _, "attrs", attr] => Some(crate::query::decode(attr)),
-        ["temporal", "entities", _, "attrs", attr, ..] => Some(crate::query::decode(attr)),
+        ["entities", _, "attrs", attr] => Some(crate::query::decode_path(attr)),
+        ["temporal", "entities", _, "attrs", attr, ..] => Some(crate::query::decode_path(attr)),
         _ => None,
     }
 }
@@ -214,6 +214,21 @@ mod tests {
         );
         assert_eq!(targeted_attribute("entities/urn:x/attrs"), None);
         assert_eq!(targeted_attribute("entities/urn:x"), None);
+        // A path keeps `+` (RFC 3986 3.3), as the broker's router reads it.
+        assert_eq!(
+            targeted_attribute("entities/urn:x/attrs/a+b%20c").as_deref(),
+            Some("a+b c")
+        );
+    }
+
+    /// The entity a path names is decoded as the broker decodes it: `+` stays, `%2B` and `%20`
+    /// are their bytes; a query string's form decoding is another rule.
+    #[test]
+    fn a_path_entity_id_keeps_its_plus() {
+        let id =
+            addressed_entity("entities/urn:ngsi-ld:T:a+b%2Bc%20d").map(crate::query::decode_path);
+        assert_eq!(id.as_deref(), Some("urn:ngsi-ld:T:a+b+c d"));
+        assert_eq!(crate::query::decode("a+b%2Bc"), "a b+c");
     }
 
     #[test]

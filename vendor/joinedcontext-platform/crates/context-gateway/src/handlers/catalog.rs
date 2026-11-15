@@ -2,7 +2,6 @@
 
 use crate::app::{Gateway, HostOrganization};
 use crate::auth::subject::admit;
-use crate::auth::subject::Subject;
 use crate::handlers::{endpoint_surface, schema, schema_routes, space_surface};
 use crate::middleware::tenancy;
 use axum::body::Body;
@@ -158,7 +157,6 @@ async fn public_records(
     if let Some(records) = gateway.catalog_records.get(&key, &table) {
         return records.as_ref().clone();
     }
-    let anonymous = Subject::anonymous();
     let mut records = Vec::new();
     // Sorted by slug, so the feed a harvester reads twice reads the same way twice.
     let mut endpoints: Vec<_> = table.values().cloned().collect();
@@ -176,6 +174,8 @@ async fn public_records(
         {
             continue;
         }
+        // What an anonymous caller of this Endpoint reads, its `callerRole` included (EP-69).
+        let anonymous = crate::auth::subject::anonymous_on(&endpoint);
         let index = schema_routes::index_for(gateway, &endpoint, &endpoint.slug, &anonymous).await;
         let index =
             crate::handlers::mappings::with_mappings(gateway, &endpoint, &anonymous, index).await;
