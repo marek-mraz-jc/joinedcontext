@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
+import { digestOf } from "../src/api/digest";
 import { axeViolations } from "./axe";
 
 // T-7094 (G-22): the new data source wizard. A steward picks what the source is, gives its
@@ -53,9 +54,13 @@ async function stubApi(page: Page, paging: Paging = "wfs"): Promise<{ checked: u
     }
     if (request.method() === "POST" && url.pathname.endsWith(`/projects/${PROJECT}/datasources`) && url.searchParams.get("dryRun") === "All") {
       checked.push(request.postDataJSON());
+      // The verdict is fresh for the manifest it judged, as the server's is (API/01 §20).
+      const judged = { ...(request.postDataJSON() as Record<string, unknown>) };
+      delete judged.draft;
       return json({
         valid: true,
         lane: "green",
+        verdict: { ok: true, findings: [], checkedAt: new Date().toISOString(), inputDigest: digestOf(judged) },
         plan: { fields: [{ path: "spec.http.url", op: "add" }] },
         probe: { records: 453, bytes: 32488, pages: 3, sample: { type: "Feature", properties: { id: 1, c: 0.42 } } },
       });
@@ -157,7 +162,7 @@ test.describe("the new data source wizard", () => {
     await wizard.getByRole("button", { name: /REST API \(JSON\)/ }).click();
     await wizard.getByRole("textbox", { name: /Address of the API/ }).fill("https://api.example/items");
     await wizard.getByRole("button", { name: "Find how it pages" }).click();
-    await expect(wizard.getByTestId("wizard-paging")).toHaveText(/No grant proposes a DataSource in project helsinki/);
+    await expect(wizard.getByTestId("wizard-paging")).toHaveText(/No grant proposes a DataSource in project helsinki\. Ask a project administrator for a role/);
     await shot(page, "refused");
   });
 

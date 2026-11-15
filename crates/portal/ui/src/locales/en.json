@@ -2664,15 +2664,16 @@
         "walk": "Follows the next page the service names, {onPage} records on the first.",
         "totalOnly": "The first answer says {total} records in all, {onPage} on this page, but names no next page; set the paging in the form below.",
         "once": "One answer holds everything: the address is read once per run.",
-        "skipped": "Could not tell: {reason}"
+        "skipped": "Could not tell: {reason}. Try again, or set the paging in the form below."
       },
       "allPages": "Read every page",
       "allPagesHint": "Writes the paging into the form; untick to read the first page only.",
-      "presetPages": "The API kind pages the source itself; the form below keeps its page size.",
+      "presetPages": "The API kind pages the source itself, with the page size the service allows unless you set one in the form below.",
       "oneRead": "A file or a feed is read whole on each run: there are no pages.",
       "rows": "One record per row",
       "rowsHint": "Each row of the CSV reaches the pipeline as one record keyed by the header's column names.",
-      "handoff": "Start a pipeline on {name}"
+      "handoff": "Start a pipeline on {name}",
+      "picked": "Picked: {value}. Fill the form and check writes it into the form below."
     }
   },
   "pipelines": {

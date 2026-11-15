@@ -172,7 +172,11 @@ export function PresetDiscovery({
               </div>
             </Field>
             {answer.truncated ? <p className="text-caption text-fg-muted">{t("datasources.discover.truncated")}</p> : null}
-            {used ? <p className="text-body font-medium text-success">✓ {t("datasources.discover.used", { value: used })}</p> : null}
+            {used ? (
+              <p className="text-body font-medium text-success">
+                ✓ {t(inline ? "datasources.wizard.picked" : "datasources.discover.used", { value: used })}
+              </p>
+            ) : null}
           </>
         ) : null}
       </div>

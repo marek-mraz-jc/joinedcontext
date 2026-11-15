@@ -109,9 +109,12 @@ export function TemplateGallery({ project, secrets, others, onUse, onPick }: Tem
     }
   };
 
+  // A refusal says what to do next beside the server's words, as the discovery's does.
   const guessFailure =
     guess.error instanceof ApiError
-      ? (guess.error.problem?.detail ?? guess.error.message)
+      ? [guess.error.problem?.detail ?? guess.error.message, guess.error.status === 403 ? t("datasources.discover.refused") : null]
+          .filter(Boolean)
+          .join(" ")
       : guess.error
         ? t("app.error.generic")
         : null;

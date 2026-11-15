@@ -2664,15 +2664,16 @@
         "walk": "Ide na ďalšiu stránku, ktorú služba uvedie, na prvej je {onPage} záznamov.",
         "totalOnly": "Prvá odpoveď hovorí o {total} záznamoch spolu, {onPage} na tejto stránke, ale neuvádza ďalšiu stránku; nastavte stránkovanie vo formulári nižšie.",
         "once": "Jedna odpoveď obsahuje všetko: adresa sa pri behu prečíta raz.",
-        "skipped": "Nedá sa zistiť: {reason}"
+        "skipped": "Nedá sa zistiť: {reason}. Skúste to znova alebo nastavte stránkovanie vo formulári nižšie."
       },
       "allPages": "Čítať všetky stránky",
       "allPagesHint": "Zapíše stránkovanie do formulára; bez neho sa prečíta len prvá stránka.",
-      "presetPages": "Druh API stránkuje zdroj sám; formulár nižšie drží veľkosť stránky.",
+      "presetPages": "Druh API stránkuje zdroj sám, s veľkosťou stránky, ktorú služba dovolí, ak ju nenastavíte vo formulári nižšie.",
       "oneRead": "Súbor alebo kanál sa pri každom behu prečíta celý: stránky nemá.",
       "rows": "Jeden záznam na riadok",
       "rowsHint": "Každý riadok CSV príde do pipeline ako jeden záznam s názvami stĺpcov z hlavičky.",
-      "handoff": "Spustiť pipeline nad {name}"
+      "handoff": "Spustiť pipeline nad {name}",
+      "picked": "Vybraté: {value}. Vyplniť formulár a skontrolovať ho zapíše do formulára nižšie."
     }
   },
   "pipelines": {

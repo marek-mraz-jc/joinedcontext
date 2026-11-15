@@ -2664,15 +2664,16 @@
         "walk": "Folgt der nächsten Seite, die der Dienst nennt, {onPage} Datensätze auf der ersten.",
         "totalOnly": "Die erste Antwort nennt {total} Datensätze insgesamt, {onPage} auf dieser Seite, aber keine nächste Seite; legen Sie die Seitenaufteilung im Formular unten fest.",
         "once": "Eine Antwort enthält alles: die Adresse wird pro Lauf einmal gelesen.",
-        "skipped": "Nicht zu ermitteln: {reason}"
+        "skipped": "Nicht zu ermitteln: {reason}. Versuchen Sie es erneut oder legen Sie die Seitenaufteilung im Formular unten fest."
       },
       "allPages": "Alle Seiten lesen",
       "allPagesHint": "Schreibt die Seitenaufteilung ins Formular; ohne Haken wird nur die erste Seite gelesen.",
-      "presetPages": "Die API-Art teilt die Quelle selbst in Seiten; das Formular unten hält die Seitengröße.",
+      "presetPages": "Die API-Art teilt die Quelle selbst in Seiten, mit der Seitengröße, die der Dienst erlaubt, wenn Sie im Formular unten keine festlegen.",
       "oneRead": "Eine Datei oder ein Feed wird bei jedem Lauf ganz gelesen: es gibt keine Seiten.",
       "rows": "Ein Datensatz pro Zeile",
       "rowsHint": "Jede CSV-Zeile erreicht die Pipeline als ein Datensatz mit den Spaltennamen der Kopfzeile.",
-      "handoff": "Pipeline auf {name} starten"
+      "handoff": "Pipeline auf {name} starten",
+      "picked": "Gewählt: {value}. Formular ausfüllen und prüfen schreibt es ins Formular unten."
     }
   },
   "pipelines": {
