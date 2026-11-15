@@ -157,8 +157,22 @@ fn put(query: &mut Query, key: &str, value: &str) {
 }
 
 /// The gateway path under the Endpoint and its query, from a checked input: what a person would
-/// send to the Endpoint's NGSI-LD API themselves.
-pub fn request_of(input: &DataQueryInput) -> Result<(&'static str, Query), OpError> {
+/// send to the Endpoint's NGSI-LD API themselves. A current read of an `id` with no type, q,
+/// attrs or georel is that entity's retrieval (CIM 009 clause 5.7.1), since a query names at
+/// least one of them (the query clause 5.7.2).
+pub fn request_of(input: &DataQueryInput) -> Result<(String, Query), OpError> {
+    let selected = input.entity_type.is_some()
+        || input.q.is_some()
+        || !input.attrs.is_empty()
+        || input.georel.is_some();
+    let one = input.id.as_deref().filter(|id| !id.is_empty() && !selected);
+    if let (Some(id), None) = (one, &input.temporal) {
+        let mut query = Query::new();
+        if let Some(format) = &input.format {
+            put(&mut query, "format", format);
+        }
+        return Ok((entity_path("ngsi-ld/v1/entities", id)?, query));
+    }
     let mut query = Query::new();
     for (key, value) in [
         ("type", &input.entity_type),
@@ -179,10 +193,22 @@ pub fn request_of(input: &DataQueryInput) -> Result<(&'static str, Query), OpErr
         if let Some(format) = &input.format {
             put(&mut query, "format", format);
         }
-        return Ok(("ngsi-ld/v1/entities", query));
+        return Ok(("ngsi-ld/v1/entities".to_owned(), query));
     };
     temporal_of(temporal, input.format.as_deref(), &mut query)?;
-    Ok(("ngsi-ld/v1/temporal/entities", query))
+    Ok(("ngsi-ld/v1/temporal/entities".to_owned(), query))
+}
+
+/// `{collection}/{id}` with the id one percent-encoded path segment, whatever `/`, `?` or `#` it
+/// holds.
+fn entity_path(collection: &str, id: &str) -> Result<String, OpError> {
+    let mut url = url::Url::parse("http://entity.invalid/")
+        .map_err(|_| invalid("/id", "not an entity id this tool can address"))?;
+    url.path_segments_mut()
+        .map_err(|()| invalid("/id", "not an entity id this tool can address"))?
+        .extend(collection.split('/'))
+        .push(id);
+    Ok(url.path().trim_start_matches('/').to_owned())
 }
 
 /// The geo-query pairs: georel, geometry and coordinates together or none of them.
@@ -446,7 +472,7 @@ pub(super) async fn run(
 ) -> Result<Value, OpError> {
     let (path, query) = request_of(&input)?;
     let page = Page {
-        path,
+        path: &path,
         query: &query,
         accept: "application/json",
         history: input.temporal.is_some(),
@@ -666,7 +692,7 @@ mod tests {
         parse_input(args).expect("input parses")
     }
 
-    fn query(args: Value) -> (&'static str, Query) {
+    fn query(args: Value) -> (String, Query) {
         request_of(&input(args)).expect("a query")
     }
 
@@ -690,6 +716,26 @@ mod tests {
             refused(&Value::Null),
             "the gateway does not serve Endpoint counters yet"
         );
+    }
+
+    #[test]
+    fn an_id_alone_retrieves_that_entity_and_an_id_with_a_type_queries() {
+        let (path, q) = query(json!({ "endpoint": "c", "id": "urn:ngsi-ld:BikeCounter:c/1?x" }));
+        assert_eq!(
+            path,
+            "ngsi-ld/v1/entities/urn:ngsi-ld:BikeCounter:c%2F1%3Fx"
+        );
+        assert!(q.is_empty(), "{q:?}");
+        let (path, q) = query(
+            json!({ "endpoint": "c", "id": "urn:ngsi-ld:BikeCounter:c1", "format": "keyValues" }),
+        );
+        assert_eq!(path, "ngsi-ld/v1/entities/urn:ngsi-ld:BikeCounter:c1");
+        assert_eq!(q, vec![("format".to_owned(), "keyValues".to_owned())]);
+        let (path, q) = query(
+            json!({ "endpoint": "c", "id": "urn:ngsi-ld:BikeCounter:c1", "type": "BikeCounter" }),
+        );
+        assert_eq!(path, "ngsi-ld/v1/entities");
+        assert_eq!(param(&q, "id"), Some("urn:ngsi-ld:BikeCounter:c1"));
     }
 
     #[test]

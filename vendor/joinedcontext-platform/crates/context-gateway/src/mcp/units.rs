@@ -32,7 +32,12 @@ pub fn readable(answer: &mut Value) {
     }
 }
 
-/// Whether any unit was added below `value`.
+/// The members that hold a client's own data (NGSI-LD 4.5.2 `value`, 4.5.24 `json`, 4.5.21
+/// `valueList`, the temporalValues pairs), as the broker's own labelling skips them: a `unitCode`
+/// in them is data the client stored, and the answer keeps it as stored.
+const DATA_MEMBERS: [&str; 4] = ["value", "json", "valueList", "values"];
+
+/// Whether any unit was added below `value`, outside the [`DATA_MEMBERS`].
 fn name_units(value: &mut Value) -> bool {
     match value {
         Value::Object(map) => {
@@ -54,7 +59,10 @@ fn name_units(value: &mut Value) -> bool {
                     added = true;
                 }
             }
-            for child in map.values_mut() {
+            for (_, child) in map
+                .iter_mut()
+                .filter(|(k, _)| !DATA_MEMBERS.contains(&k.as_str()))
+            {
                 added |= name_units(child);
             }
             added
@@ -76,6 +84,22 @@ mod tests {
             "content": [{ "type": "text", "text": payload.to_string() }],
             "structuredContent": payload,
         } })
+    }
+
+    #[test]
+    fn a_client_s_stored_value_keeps_its_members_as_stored() {
+        let stored = json!({ "entities": [{
+            "spec": { "type": "JsonProperty", "json": { "unitCode": "GQ" } },
+            "limit": { "type": "Property", "value": { "unitCode": "GQ", "max": 40 } },
+            "list": { "type": "ListProperty", "valueList": [{ "unitCode": "GQ" }] },
+        }] });
+        let mut sent = answer(stored.clone());
+        readable(&mut sent);
+        assert_eq!(sent["result"]["structuredContent"], stored);
+        let text: Value =
+            serde_json::from_str(sent["result"]["content"][0]["text"].as_str().expect("text"))
+                .expect("json");
+        assert_eq!(text, stored);
     }
 
     #[test]
