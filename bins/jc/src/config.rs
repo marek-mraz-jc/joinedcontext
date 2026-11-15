@@ -819,19 +819,23 @@ fn check_organizations(
                 return bad(format!("{name}: host '{host}' is not a plain host name"));
             }
         }
-        if let Some(apps) = &h.apps {
-            if site_of(apps) == site_of(&h.portal) && !org.same_site_apps {
-                return bad(format!(
-                    "{name}: hosts.apps '{apps}' is one site with the working host '{}': an App \
-                     could send requests carrying the session cookie. Put Apps on a domain of \
-                     their own, or set same_site_apps = true to accept that",
-                    h.portal
-                ));
-            }
+        if let Some(apps) = &h.apps
+            && site_of(apps) == site_of(&h.portal)
+            && !org.same_site_apps
+        {
+            return bad(format!(
+                "{name}: hosts.apps '{apps}' is one site with the working host '{}': an App \
+                 could send requests carrying the session cookie. Put Apps on a domain of \
+                 their own, or set same_site_apps = true to accept that",
+                h.portal
+            ));
         }
         let shared = h.shared;
         // Each whole-host mount takes a host of its own; the working host's paths are prefixes.
-        let whole = h.by_module().into_iter().filter(|m| m.bound && m.prefix.is_none());
+        let whole = h
+            .by_module()
+            .into_iter()
+            .filter(|m| m.bound && m.prefix.is_none());
         let own: Vec<&str> = whole.map(|m| m.host).chain(h.apps.as_deref()).collect();
         for host in own {
             let bare = bare_host(host).to_owned();

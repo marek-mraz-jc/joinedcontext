@@ -403,7 +403,8 @@ mod tests {
         assert_eq!(parsed[0].organization, "alpha");
         assert_eq!(
             parsed[0].api.as_ref().map(url::Url::as_str),
-            Some("http://opendata.alpha.test/")
+            Some("http://portal.alpha.test/data"),
+            "the open data host takes no write: the Portal publishes on the working host"
         );
         assert!(parsed[0].reach.is_some_and(|r| r.ip().is_loopback()));
         assert_eq!(

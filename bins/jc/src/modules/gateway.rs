@@ -1132,6 +1132,61 @@ mod tests {
         }
     }
 
+    /// RFC 9728 per host (T-6991 §5): each API host links itself, a shared `auto` API host the
+    /// Organization's path on it, every other address the Organization's API base; a client's
+    /// own link base never survives.
+    #[tokio::test]
+    async fn each_api_host_links_itself_and_a_shared_one_the_organizations_path() {
+        use tower::ServiceExt;
+        let text = "base_host = \"city.example\"\n\
+            [[organizations]]\nname = \"bbsk\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a1\"\n\
+            hosts = { portal = \"smartcity.bbsk.sk\", api = \"api.bbsk.sk\", mcp = \"mcp.bbsk.sk\" }\n\
+            [[organizations]]\nname = \"zilina\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a2\"\n\
+            host = \"auto\"\n";
+        let file = JcConfig::parse_file(Path::new("jc.toml"), text).unwrap();
+        let cli = Cli {
+            role: Some("gateway".into()),
+            ..Cli::default()
+        };
+        let cfg = JcConfig::merge(cli, file).unwrap();
+        let echo = Router::new().fallback(
+            |base: Option<axum::Extension<context_gateway::app::HostBase>>| async move {
+                base.map_or_else(|| "-".to_owned(), |b| b.0.0)
+            },
+        );
+        let app = by_organization(echo, &cfg.organizations, "https");
+        for (org, host, link) in [
+            ("bbsk", "api.bbsk.sk", "https://api.bbsk.sk"),
+            ("bbsk", "mcp.bbsk.sk", "https://mcp.bbsk.sk"),
+            ("bbsk", "smartcity.bbsk.sk", "https://api.bbsk.sk"),
+            (
+                "zilina",
+                "api.city.example",
+                "https://api.city.example/zilina",
+            ),
+            (
+                "zilina",
+                "zilina.city.example",
+                "https://api.city.example/zilina",
+            ),
+        ] {
+            let mut req = axum::http::Request::builder()
+                .uri("/x")
+                .body(axum::body::Body::empty())
+                .unwrap();
+            req.extensions_mut()
+                .insert(Mount::new("gateway", "https", host, "").unwrap());
+            req.extensions_mut()
+                .insert(jc_router::Organization(org.to_owned()));
+            req.extensions_mut().insert(context_gateway::app::HostBase(
+                "https://evil.example".into(),
+            ));
+            let resp = app.clone().oneshot(req).await.unwrap();
+            let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+            assert_eq!(body, link.as_bytes(), "{org} on {host}");
+        }
+    }
+
     /// A read from a sandboxed page reaches the gateway anonymously and gets CORS for `null`; a
     /// read from any other origin, a write, and a path outside the Endpoints get none.
     #[tokio::test]
