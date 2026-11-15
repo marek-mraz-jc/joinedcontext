@@ -454,6 +454,24 @@ pub fn plan(space: &Space, entities: &[Value]) -> Vec<Plan> {
         .collect()
 }
 
+/// A check as the database keeps it: the shown [`Links`] and the failures in a row the next
+/// check counts on, which the API answer leaves out.
+#[derive(Serialize)]
+struct Stored<'a> {
+    #[serde(flatten)]
+    links: &'a Links,
+    failing: &'a BTreeMap<String, DeadLinkState>,
+}
+
+impl<'a> Stored<'a> {
+    fn of(links: &'a Links) -> Self {
+        Self {
+            links,
+            failing: &links.failing,
+        }
+    }
+}
+
 /// The newest check of each pipeline, durable with a database.
 pub struct LinkStore {
     db: Option<sqlx::PgPool>,
@@ -501,7 +519,7 @@ impl LinkStore {
         )
         .bind(project)
         .bind(pipeline)
-        .bind(sqlx::types::Json(links))
+        .bind(sqlx::types::Json(Stored::of(links)))
         .execute(pool)
         .await?;
         Ok(())
@@ -895,6 +913,27 @@ mod tests {
         );
         assert_eq!(third.dead_count, 0);
         assert!(third.failing.is_empty());
+    }
+
+    /// The database keeps the failures in a row, so a link failing in two stored checks is dead.
+    #[test]
+    fn a_stored_check_keeps_the_failures_the_next_check_counts_on() {
+        let now = Utc::now();
+        let bad = || Outcome::Failed {
+            status: Some(404),
+            error: None,
+        };
+        let first = fold(None, &[("https://a.sk/1".into(), bad())], 0, now);
+        let stored = serde_json::to_value(Stored::of(&first)).expect("a check serializes");
+        let read: Links = serde_json::from_value(stored).expect("a stored check reads back");
+        assert_eq!(read.failing, first.failing);
+        let second = fold(Some(&read), &[("https://a.sk/1".into(), bad())], 0, now);
+        assert_eq!(second.dead_count, 1);
+        let shown = serde_json::to_value(&second).expect("a check serializes");
+        assert!(
+            shown.get("failing").is_none(),
+            "the API answer keeps failing out"
+        );
     }
 
     #[test]
