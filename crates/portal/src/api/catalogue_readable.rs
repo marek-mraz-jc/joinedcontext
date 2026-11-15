@@ -76,7 +76,7 @@ pub async fn get_readable(
     // No session, or a token that does not verify: the caller is the public, who reads only the
     // public Endpoints, so a broken token never widens anything.
     let subject = match user {
-        Ok(user) => Some(subject_of(&user.0, &headers, state.config.trust_edge_token)),
+        Ok(user) => Some(subject_of(&state, &user.0, &headers)),
         Err(ApiError::Unauthorized) => None,
         Err(other) => return Err(other),
     };
@@ -94,7 +94,7 @@ pub(crate) async fn readable_by(
     session: &Session,
     headers: &HeaderMap,
 ) -> ReadableCatalogue {
-    let subject = subject_of(session, headers, state.config.trust_edge_token);
+    let subject = subject_of(state, session, headers);
     let ask = |slug: String, question: Value| {
         let state = state.clone();
         async move { ask_gateway(&state, &slug, &question).await }
@@ -115,9 +115,12 @@ struct OrganizationClaims {
 /// The caller as the gateway's simulator takes them: their Keycloak id, groups and realm roles
 /// from the verified session, and `jc_org`/`jc_groups` from the token the extractor verified in
 /// this same request (a bearer or the edge's header), else the cookie session's ID token, whose
-/// signature the login checked. A missing claim stays out, as a token without it.
-fn subject_of(session: &Session, headers: &HeaderMap, trust_edge_token: bool) -> Value {
-    let token = match Front::of(headers, trust_edge_token) {
+/// signature the login checked. A cookie never carries that token: the Portal keeps it beside
+/// the session ([`AppState::session_id_token`], T-6549), and without it (a restart, another
+/// replica) the person is named with no Organization standing, as a token without the claim.
+fn subject_of(state: &AppState, session: &Session, headers: &HeaderMap) -> Value {
+    let kept;
+    let token = match Front::of(headers, state.config.trust_edge_token) {
         Front::Bearer => headers
             .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
@@ -125,7 +128,12 @@ fn subject_of(session: &Session, headers: &HeaderMap, trust_edge_token: bool) ->
         Front::Edge => headers
             .get(&EDGE_TOKEN_HEADER)
             .and_then(|v| v.to_str().ok()),
-        Front::Portal => Some(session.id_token.as_str()),
+        Front::Portal => {
+            kept = state
+                .session_id_token(session)
+                .unwrap_or_else(|| session.id_token.clone());
+            Some(kept.as_str())
+        }
     };
     let claims: OrganizationClaims = token
         .and_then(|token| crate::auth::oidc::jwt_payload(token.trim()))
@@ -488,8 +496,9 @@ mod tests {
     /// none, so the gateway reads it as a token without the mapper.
     #[test]
     fn the_subject_carries_the_organization_claims_of_the_verified_token() {
+        let state = world();
         let claims = json!({ "jc_org": ["helsinki"], "jc_groups": ["/helsinki/members"] });
-        let subject = subject_of(&session(&jwt(claims.clone())), &HeaderMap::new(), false);
+        let subject = subject_of(&state, &session(&jwt(claims.clone())), &HeaderMap::new());
         assert_eq!(subject["organizations"], json!(["helsinki"]));
         assert_eq!(subject["organizationGroups"], json!(["/helsinki/members"]));
         assert_eq!(subject["groups"], json!(["helsinki/members"]));
@@ -500,7 +509,7 @@ mod tests {
             header::AUTHORIZATION,
             format!("Bearer {bearer}").parse().expect("a header"),
         );
-        let subject = subject_of(&session(&jwt(claims)), &headers, false);
+        let subject = subject_of(&state, &session(&jwt(claims)), &headers);
         assert_eq!(
             subject["organizations"],
             json!(["espoo"]),
@@ -508,8 +517,46 @@ mod tests {
         );
         assert!(subject.get("organizationGroups").is_none());
 
-        let none = subject_of(&session(""), &HeaderMap::new(), false);
+        let none = subject_of(&state, &session(""), &HeaderMap::new());
         assert!(none.get("organizations").is_none() && none.get("organizationGroups").is_none());
+    }
+
+    /// T-6997: a session read back from its cookie has no ID token (T-6549); the catalogue takes
+    /// the one the Portal kept for it, so a member whose only grant is a `kind: organization`
+    /// rule finds that Endpoint, as the gateway serves it to them. A member of another
+    /// Organization, or a session whose token this Portal did not keep, finds no closed one.
+    #[tokio::test]
+    async fn a_cookie_session_is_named_by_the_id_token_the_portal_kept() {
+        let state = world();
+        let signed_in = |orgs: &[&str]| {
+            let mut login = session(&jwt(json!({ "jc_org": orgs, "jc_groups": [] })));
+            login.identity.subject = format!("member-of-{}", orgs.join("-"));
+            login.expires_at = crate::auth::session::now_unix() + 600;
+            state.keep_session_claims(&login);
+            Session {
+                id_token: String::new(),
+                ..login
+            }
+        };
+        let catalogue = |cookie: Session| {
+            let subject = subject_of(&state, &cookie, &HeaderMap::new());
+            let state = state.clone();
+            async move { catalogue_of(&state, Some(subject)).await }
+        };
+        let public = ("bikes".to_owned(), "public".to_owned(), None);
+        let counts = ("counts".to_owned(), "organization".to_owned(), None);
+        let parking = ("parking".to_owned(), "organization".to_owned(), None);
+        assert_eq!(
+            catalogue(signed_in(&["helsinki"])).await,
+            [public.clone(), counts]
+        );
+        assert_eq!(
+            catalogue(signed_in(&["espoo"])).await,
+            [public.clone(), parking]
+        );
+        let mut not_kept = session("");
+        not_kept.identity.subject = "after-a-restart".into();
+        assert_eq!(catalogue(not_kept).await, [public]);
     }
 
     /// T-6411 Security: a member (no RoleBinding) who types a project page's address reads
