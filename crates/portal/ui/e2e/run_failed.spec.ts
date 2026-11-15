@@ -41,8 +41,9 @@ for (const width of [1440, 400]) {
     // On a phone the assistant stands over the page until it is hidden.
     if (width === 400) await page.getByRole("button", { name: "Hide the assistant" }).click();
     await expect(page.getByText(/did not answer in time/)).toContainText("Open the Assistant page to build it again.");
-    await expect(page.getByRole("button", { name: "Publish this app" })).toBeDisabled();
-    await expect(page.getByText("This run has ended, so it has nothing to publish.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Publish this app" })).toHaveAttribute("aria-disabled", "true");
+    // The button's description says it to a screen reader; the line under it, the last one, to the eye.
+    await expect(page.getByText("This run has ended, so it has nothing to publish.").last()).toBeVisible();
     await expect(page.getByRole("link", { name: "Build it again" })).toHaveAttribute("href", `/projects/${PROJECT}/assistant`);
     await expect(page.getByRole("button", { name: "Stop the run" })).toHaveCount(0);
     expect(await page.locator("body").innerText()).not.toContain("pool timed out");

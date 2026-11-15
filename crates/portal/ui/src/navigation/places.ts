@@ -8,7 +8,7 @@
  * which the server merges into what is stored.
  */
 import { useEffect, useSyncExternalStore } from "react";
-import { api } from "../api/client";
+import { api, unwrap } from "../api/client";
 import type { components } from "../api/schema";
 
 export type Place = components["schemas"]["Place"];
@@ -65,6 +65,25 @@ function save(change: (current: Places) => Places): Promise<void> {
     }
   });
   return writing;
+}
+
+/**
+ * Saves `patch` into the person's preferences: read fresh and written back in the same queue as the
+ * stars, since a PUT replaces the whole row and a copy read when the page opened would put back
+ * the stars and recent pages saved since.
+ */
+export function savePreferences(patch: Partial<Preferences>): Promise<Preferences> {
+  const saved = writing.then(async () => {
+    const stored = await unwrap(await api.GET("/api/v1/preferences", {}));
+    const answer = await unwrap(await api.PUT("/api/v1/preferences", { body: { ...stored, ...patch } }));
+    publish({ recent: answer.recent ?? [], favourites: answer.favourites ?? [] });
+    return answer;
+  });
+  writing = saved.then(
+    () => undefined,
+    () => undefined,
+  );
+  return saved;
 }
 
 /** The address of the page as a place: its path and query, without the language override. */

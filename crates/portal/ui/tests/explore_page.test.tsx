@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import { InRouter } from "./pageHarness";
 import { queryKeys } from "../src/api/client";
-import { ExplorePage, firstWithData } from "../src/pages/explore/ExplorePage";
+import { accessRequestHref, ExplorePage, firstWithData } from "../src/pages/explore/ExplorePage";
 import { expectDenied } from "./checks";
 import en from "../src/locales/en.json";
 
@@ -821,6 +821,13 @@ it("words a refused read as a refusal and hides Your access", async () => {
   expect(screen.queryByText(new RegExp(en.entityGrid.error))).toBeNull();
   expect(screen.queryByText(en.explore.yourAccess)).toBeNull();
   expect(screen.queryByRole("button", { name: en.explore.useData.open })).toBeNull();
+});
+
+describe("ask for access", () => {
+  it("leads to the open Endpoint's request section, and to the members only without one", () => {
+    expect(accessRequestHref("helsinki", "air quality")).toBe("/projects/helsinki/endpoints/air%20quality#request-access");
+    expect(accessRequestHref("helsinki", undefined)).toBe("/projects/helsinki/access");
+  });
 });
 
 describe("the space the page opens on", () => {
