@@ -92,7 +92,7 @@ describe("the OData client", () => {
       {
         status: 412,
         body: { error: { code: "precondition-failed", message: "changed", title: "Precondition Failed" } },
-        headers: { etag: '"new"' },
+        headers: { etag: '"new"', "x-request-id": "req-7" },
       },
     );
     const client = odata("/api/v1/", { transport });
@@ -108,7 +108,7 @@ describe("the OData client", () => {
     expect(required).toBeInstanceOf(ODataError);
     expect((required as ODataError).preconditionRequired).toBe(true);
     const stale = (await client.act("propose_delete", bound, {}, '"old"').catch((e: unknown) => e)) as ODataError;
-    expect([stale.stale, stale.etag, stale.code]).toEqual([true, '"new"', "precondition-failed"]);
+    expect([stale.stale, stale.etag, stale.code, stale.requestId]).toEqual([true, '"new"', "precondition-failed", "req-7"]);
   });
 
   it("maps the OData error object and a problem+json to one API/09 problem", async () => {

@@ -4149,6 +4149,7 @@
       "search": "Search people",
       "show": "Show access",
       "failed": "Access could not be shown. Try again in a minute; the reason is below.",
+      "refused": "You may not see this access. Only an organization administrator explores another person's or account's access; the reason is below.",
       "nothing": "Reaches nothing",
       "nothingLead": "No Endpoint of this project admits them or grants them anything. Grant access with a Policy, a group or a role binding.",
       "space": "space {space}",

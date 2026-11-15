@@ -4149,6 +4149,7 @@
       "search": "Hľadať osoby",
       "show": "Zobraziť prístup",
       "failed": "Prístup sa nepodarilo zobraziť. Skúste to znova o minútu; dôvod je nižšie.",
+      "refused": "Tento prístup nesmiete zobraziť. Prístup inej osoby alebo účtu prezerá len správca organizácie; dôvod je nižšie.",
       "nothing": "Nedosiahne nič",
       "nothingLead": "Žiadny Endpoint tohto projektu ich nepripúšťa ani im nič neudeľuje. Prístup udelíte politikou, skupinou alebo väzbou roly.",
       "space": "priestor {space}",

@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 import { axeViolations } from "./axe";
 import { odataBody, odataCall } from "../tests/odata";
 
@@ -18,6 +18,9 @@ const ADMIN = { role: "org-admin", binding: "admins", scope: "organization", rul
 const ENDPOINT = { apiVersion: API, kind: "Endpoint", metadata: { name: "air", namespace: "helsinki" }, spec: { slug: "air-quality" } };
 const MODEL = { name: "air-quality", level: "project", project: "helsinki", version: "1.0.0", lifecycle: "published", classes: ["AirQualityObserved"] };
 const JANA = { id: "jana-id", email: "jana@hel.fi", firstName: "Jana", lastName: "K", enabled: true, emailVerified: true };
+/** An editor of the project's Policies too, so the page offers New Policy. */
+const EDITOR = { role: "editor", binding: "editors", scope: "project:helsinki", rule: { kinds: ["Policy"], verbs: ["read", "propose"] } };
+const POLICY = { apiVersion: API, kind: "Policy", metadata: { name: "air-read", namespace: "helsinki" }, spec: { space: "air", grants: [] }, status: { phase: "Ready" } };
 const ACCOUNT = { apiVersion: API, kind: "ServiceAccount", metadata: { name: "etl", namespace: "helsinki" }, spec: {} };
 const REACHED = {
   subject: { serviceAccount: "helsinki-etl", groups: [], roles: [] },
@@ -64,16 +67,23 @@ async function stub(page: Page, functions: Record<string, Answer>): Promise<stri
       if (!answer) return json({ error: { code: "not-implemented", message: `no ${called.name} here`, status: 501 } }, 501);
       if (answer.status !== 200) {
         const code = answer.status === 403 ? "forbidden" : "internal-error";
-        return json({ error: { code, message: answer.message, type: `https://joinedcontext.com/errors/${code}`, title: "Error", status: answer.status } }, answer.status);
+        // The edge numbers every answer; a failure quotes it as its reference (T-3244).
+        return route.fulfill({
+          status: answer.status,
+          contentType: "application/json",
+          headers: { "x-request-id": "req-6812" },
+          body: JSON.stringify({ error: { code, message: answer.message, type: `https://joinedcontext.com/errors/${code}`, title: "Error", status: answer.status } }),
+        });
       }
       return route.fulfill({ status: 200, contentType: "application/json", body: odataBody(answer.value) });
     }
     const path = url.pathname;
     if (path.endsWith("/auth/me")) return json({ subject: "s1", username: "anna", name: "Anna Admin", email: "anna@hel.fi", roles: [] });
-    if (path.endsWith("/permissions/me")) return json({ project: "org", bootstrap: false, grants: [ADMIN] });
+    if (path.endsWith("/permissions/me")) return json({ project: "org", bootstrap: false, grants: [ADMIN, EDITOR] });
     if (path === "/api/v1/projects") return json({ apiVersion: API, kind: "ProjectList", items: [{ name: "helsinki" }] });
     if (path === "/api/v1/projects/helsinki/endpoints") return json(list([ENDPOINT]));
     if (path === "/api/v1/projects/helsinki/serviceaccounts") return json(list([ACCOUNT]));
+    if (path === "/api/v1/projects/helsinki/policies") return json(list([POLICY]));
     if (path === "/api/v1/organization/people") return json({ items: [JANA], total: 1 });
     if (path === "/api/v1/organization/datamodels") return json({ items: [MODEL] });
     return json(list([]));
@@ -81,13 +91,17 @@ async function stub(page: Page, functions: Record<string, Answer>): Promise<stri
   return asked;
 }
 
-async function shoot(page: Page, name: string, width: number): Promise<void> {
+/** The state in view, as a person sees it: the viewport around `at`, the sticky bar where it belongs. */
+async function shoot(page: Page, name: string, width: number, at: Locator): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), "nothing scrolls sideways").toBe(0);
-  await page.screenshot({ path: join(SHOTS, `${name}-${width}.png`), fullPage: true });
+  await at.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(SHOTS, `${name}-${width}.png`) });
 }
 
 for (const width of [1440, 400]) {
   test.describe(`at ${width} px`, () => {
+    // The phone is a touch screen, where every control keeps a finger's 44 px (T-5596).
+    test.use(width < 640 ? { hasTouch: true, isMobile: true } : {});
     test.beforeEach(async ({ page }) => page.setViewportSize({ width, height: 900 }));
 
     test("Try a person asks the gateway through jc_access_simulate: allowed, refused, failed", async ({ page }) => {
@@ -104,18 +118,18 @@ for (const width of [1440, 400]) {
       await ask.click();
       const verdict = page.getByTestId("try-verdict");
       await expect(verdict).toContainText("Allowed");
-      await verdict.scrollIntoViewIfNeeded();
-      await shoot(page, "try-a-person-allowed", width);
+      await shoot(page, "try-a-person-allowed", width, verdict);
 
       answers.jc_access_simulate = { status: 200, value: { decision: false, reason: "no_grant", subject: { groups: [], roles: [] } } };
       await ask.click();
       await expect(verdict).toContainText("Refused");
-      await shoot(page, "try-a-person-refused", width);
+      await shoot(page, "try-a-person-refused", width, verdict);
 
       answers.jc_access_simulate = { status: 503, message: "The gateway did not answer; try again shortly." };
       await ask.click();
-      await expect(panel.getByText("The gateway did not answer; try again shortly.")).toBeVisible();
-      await shoot(page, "try-a-person-error", width);
+      const failed = panel.getByText("The gateway did not answer; try again shortly.");
+      await expect(failed).toBeVisible();
+      await shoot(page, "try-a-person-error", width, failed);
       expect(asked.filter((path) => OLD_DOORS.test(path))).toEqual([]);
       expect(await axeViolations(page)).toEqual([]);
     });
@@ -128,17 +142,20 @@ for (const width of [1440, 400]) {
       await show.click();
       await expect(page.getByText("2 Endpoints reached")).toBeVisible();
       await expect(page.getByText("city-air", { exact: true })).toBeVisible();
-      await shoot(page, "access-explorer-filled", width);
+      await shoot(page, "access-explorer-filled", width, page.getByText("2 Endpoints reached"));
 
       answers.jc_access_explore = { status: 200, value: { ...REACHED, endpoints: [] } };
       await show.click();
       await expect(page.getByText("2 Endpoints reached")).toBeHidden();
-      await shoot(page, "access-explorer-empty", width);
+      await shoot(page, "access-explorer-empty", width, show);
 
       answers.jc_access_explore = { status: 403, message: "Only an organization administrator explores another's access." };
       await show.click();
-      await expect(page.getByText("Only an organization administrator explores another's access.")).toBeVisible();
-      await shoot(page, "access-explorer-refused", width);
+      const refused = page.getByText("Only an organization administrator explores another's access.");
+      await expect(refused).toBeVisible();
+      // A refusal is said as one: waiting a minute does not change it.
+      await expect(page.getByText(/You may not see this access/)).toBeVisible();
+      await shoot(page, "access-explorer-refused", width, refused);
       expect(asked.filter((path) => OLD_DOORS.test(path))).toEqual([]);
       expect(await axeViolations(page)).toEqual([]);
     });
@@ -148,20 +165,23 @@ for (const width of [1440, 400]) {
       const asked = await stub(page, answers);
       await page.goto("/projects/helsinki/approvals?lang=en");
       await page.getByRole("tab", { name: "History" }).click();
-      await expect(page.getByText("Reason: Writes stay with the stewards")).toBeVisible();
-      await shoot(page, "approvals-history-filled", width);
+      const reason = page.getByText("Reason: Writes stay with the stewards");
+      await expect(reason).toBeVisible();
+      await shoot(page, "approvals-history-filled", width, reason);
 
       answers.jc_change_history = { status: 200, value: { ...list([]), next: null } };
       await page.getByLabel("Name contains").fill("nothing");
       await page.getByRole("button", { name: "Filter", exact: true }).click();
       await expect(page.getByText("Reason: Writes stay with the stewards")).toBeHidden();
-      await shoot(page, "approvals-history-empty", width);
+      await shoot(page, "approvals-history-empty", width, page.getByLabel("Name contains"));
 
-      answers.jc_change_history = { status: 503, message: "The forge does not answer." };
+      answers.jc_change_history = { status: 503, message: "git forge is not configured" };
       await page.getByLabel("Name contains").fill("again");
       await page.getByRole("button", { name: "Filter", exact: true }).click();
-      await expect(page.getByText(/The forge does not answer/)).toBeVisible();
-      await shoot(page, "approvals-history-error", width);
+      const failed = page.getByText(/git forge is not configured/);
+      await expect(failed).toBeVisible();
+      await expect(page.getByText(/req-6812/)).toBeVisible();
+      await shoot(page, "approvals-history-error", width, failed);
       expect(asked.filter((path) => OLD_DOORS.test(path))).toEqual([]);
     });
   });

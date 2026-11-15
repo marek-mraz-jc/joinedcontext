@@ -49,12 +49,17 @@ describe("the Portal's OData client (T-6812)", () => {
     await expect(sent[0].json()).resolves.toEqual({ dryRun: true });
   });
 
-  it("reads a refusal as the ApiError every page shows, with the problem's members", async () => {
-    serve(() => odataError(403, "forbidden", "You may not read this project's changes."));
+  it("reads a refusal as the ApiError every page shows, with the problem's members and the edge's reference", async () => {
+    serve(() => {
+      const refusal = odataError(403, "forbidden", "You may not read this project's changes.");
+      refusal.headers.set("X-Request-Id", "req-42");
+      return refusal;
+    });
     const refused = await call("jc_change_history", "air", {}).catch((error: unknown) => error);
     expect(refused).toBeInstanceOf(ApiError);
     expect(refused).toMatchObject({
       status: 403,
+      requestId: "req-42",
       message: "You may not read this project's changes.",
       problem: { type: "https://joinedcontext.com/errors/forbidden", status: 403, detail: "You may not read this project's changes." },
     });

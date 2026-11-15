@@ -186,7 +186,10 @@ function Explorer({ project }: { project: string }): JSX.Element {
       </form>
       <div aria-live="polite" className="mt-6">
         {explore.isError ? (
-          <Alert tone="danger" title={t("access.explorer.failed")}>
+          <Alert
+            tone="danger"
+            title={t(explore.error instanceof ApiError && explore.error.status === 403 ? "access.explorer.refused" : "access.explorer.failed")}
+          >
             {explore.error instanceof ApiError ? (explore.error.problem?.detail ?? explore.error.message) : t("app.error.generic")}
           </Alert>
         ) : null}

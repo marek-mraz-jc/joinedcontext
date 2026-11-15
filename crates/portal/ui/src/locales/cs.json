@@ -4149,6 +4149,7 @@
       "search": "Hledat osoby",
       "show": "Zobrazit přístup",
       "failed": "Přístup se nepodařilo zobrazit. Zkuste to znovu za minutu; důvod je níže.",
+      "refused": "Tento přístup nesmíte zobrazit. Přístup jiné osoby nebo účtu prohlíží jen správce organizace; důvod je níže.",
       "nothing": "Nedosáhne ničeho",
       "nothingLead": "Žádný Endpoint tohoto projektu je nepřipouští ani jim nic neuděluje. Přístup udělíte politikou, skupinou nebo vazbou role.",
       "space": "prostor {space}",

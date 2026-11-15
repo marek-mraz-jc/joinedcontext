@@ -56,7 +56,7 @@ export function toApiError(error: unknown): unknown {
     status: error.status,
     detail: error.message,
   };
-  return new ApiError(error.status, error.message, problem);
+  return new ApiError(error.status, error.message, problem, error.requestId);
 }
 
 async function refusedAs<T>(answer: Promise<T>): Promise<T> {
