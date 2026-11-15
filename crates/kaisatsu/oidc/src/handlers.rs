@@ -1016,7 +1016,11 @@ async fn authorize_get(
         let requested = params.get("scope").map_or("", String::as_str);
         let asked = granted_scope
             .split_whitespace()
-            .filter(|g| requested.split_whitespace().any(|t| t.eq_ignore_ascii_case(g)))
+            .filter(|g| {
+                requested
+                    .split_whitespace()
+                    .any(|t| t.eq_ignore_ascii_case(g))
+            })
             .collect::<Vec<_>>()
             .join(" ");
         let has_consent = if client.consent_required || prompt.as_deref() == Some("consent") {

@@ -152,7 +152,12 @@ pub(crate) async fn ensure_may_join_group(
     let realm_admin_clients = {
         let mut ids = Vec::new();
         for name in ["realm-management", "broker"] {
-            ids.extend(store.get_client_by_client_id(realm, name).await?.map(|c| c.id));
+            ids.extend(
+                store
+                    .get_client_by_client_id(realm, name)
+                    .await?
+                    .map(|c| c.id),
+            );
         }
         ids
     };
@@ -164,7 +169,10 @@ pub(crate) async fn ensure_may_join_group(
         if !seen.insert(g.id.clone()) {
             break;
         }
-        let realm_wide = g.realm_roles.iter().any(|r| !caller.realm_roles.contains(r))
+        let realm_wide = g
+            .realm_roles
+            .iter()
+            .any(|r| !caller.realm_roles.contains(r))
             || g.client_roles
                 .iter()
                 .any(|(client, roles)| admin_client(client) && !roles.is_empty());

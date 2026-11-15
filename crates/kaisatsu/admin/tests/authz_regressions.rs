@@ -894,7 +894,12 @@ async fn joining_a_group_with_realm_wide_roles_needs_a_user_manager() {
         )
         .await;
     assert_eq!(st, StatusCode::FORBIDDEN);
-    let kept = f.store.get_group("dev", None, "g-admins").await.unwrap().unwrap();
+    let kept = f
+        .store
+        .get_group("dev", None, "g-admins")
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(kept.name, "g-admins");
     let st = f
         .send(
