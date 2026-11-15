@@ -575,7 +575,7 @@ test.describe("a model source that cannot be read (T-6950)", () => {
           if (where === "page") {
             // The record still names the model, and Edit model says why it cannot open (UI judge, T-6950).
             await expect(page.getByRole("region", { name: "From the model's record" })).toBeVisible();
-            await expect(page.getByRole("button", { name: "Edit model" })).toHaveAccessibleDescription("Editing reads the model's source, which could not be read.");
+            await expect(page.getByRole("button", { name: "Edit model" })).toHaveAccessibleDescription("Edit model opens once the model's source can be read.");
           }
           await shot(page, `source-${status}-${where}-${width}`);
         }

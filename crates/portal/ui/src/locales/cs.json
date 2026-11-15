@@ -4763,7 +4763,7 @@
       "unusedLead": "Nic v tomto projektu model zatím nepoužívá: nejmenuje ho žádný prostor, endpoint, pipeline, aplikace ani dashboard.",
       "back": "Všechny datové modely",
       "edit": "Upravit model",
-      "editUnread": "Úprava čte zdroj modelu, který se nepodařilo načíst.",
+      "editUnread": "Upravit model se otevře, až se zdroj modelu podaří načíst.",
       "known": "Ze záznamu modelu",
       "notFound": "Datový model {name} neexistuje",
       "notFoundLead": "Možná byl přejmenován nebo odstraněn, nebo patří jinému projektu. Seznam ukazuje každý model, který smíte číst.",

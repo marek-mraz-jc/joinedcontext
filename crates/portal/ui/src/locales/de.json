@@ -4763,7 +4763,7 @@
       "unusedLead": "Noch nichts in diesem Projekt verwendet das Modell: kein Space, Endpoint, keine Pipeline, App oder Dashboard nennt es.",
       "back": "Alle Datenmodelle",
       "edit": "Modell bearbeiten",
-      "editUnread": "Zum Bearbeiten wird die Quelle des Modells gelesen, die nicht gelesen werden konnte.",
+      "editUnread": "Modell bearbeiten öffnet sich, sobald die Quelle des Modells gelesen werden kann.",
       "known": "Aus dem Eintrag des Modells",
       "notFound": "Kein Datenmodell namens {name}",
       "notFoundLead": "Es wurde vielleicht umbenannt oder entfernt, oder es gehört zu einem anderen Projekt. Die Liste zeigt jedes Modell, das Sie lesen dürfen.",

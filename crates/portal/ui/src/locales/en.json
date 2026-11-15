@@ -4763,7 +4763,7 @@
       "unusedLead": "Nothing in this project uses the model yet: no space, endpoint, pipeline, app or dashboard names it.",
       "back": "All data models",
       "edit": "Edit model",
-      "editUnread": "Editing reads the model's source, which could not be read.",
+      "editUnread": "Edit model opens once the model's source can be read.",
       "known": "From the model's record",
       "notFound": "No data model named {name}",
       "notFoundLead": "It may have been renamed or removed, or it belongs to another project. The list shows every model you may read.",

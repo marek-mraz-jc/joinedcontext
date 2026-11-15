@@ -347,7 +347,7 @@ export function ModelPage({
                 <h2 id="model-known" className="text-sm font-semibold">
                   {t("models.page.known")}
                 </h2>
-                <dl className="grid gap-x-6 gap-y-2 text-body sm:grid-cols-[12rem_1fr]">
+                <dl className="grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-4 gap-y-2 text-body sm:grid-cols-[12rem_1fr] sm:gap-x-6">
                   {[
                     [t("models.field.name"), <span className="font-mono">{name}</span>],
                     [t("models.field.version"), version ?? "—"],
