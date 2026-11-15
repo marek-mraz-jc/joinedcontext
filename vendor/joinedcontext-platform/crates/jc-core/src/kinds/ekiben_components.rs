@@ -4,6 +4,7 @@
 
 /// Every input name the runner builds.
 pub const INPUTS: &[&str] = &[
+    "aws_s3",
     "batched",
     "broker",
     "csv",
@@ -19,6 +20,7 @@ pub const INPUTS: &[&str] = &[
     "read_until",
     "resource",
     "sequence",
+    "socket",
     "sql_raw",
     "sql_select",
     "stdin",
@@ -43,6 +45,7 @@ pub const PROCESSORS: &[&str] = &[
     "group_by_value",
     "http",
     "insert_part",
+    "javascript",
     "jmespath",
     "jq",
     "json_schema",
@@ -66,6 +69,9 @@ pub const PROCESSORS: &[&str] = &[
     "select_parts",
     "sleep",
     "split",
+    "sql_insert",
+    "sql_raw",
+    "sql_select",
     "switch",
     "sync_response",
     "try",

@@ -29,6 +29,11 @@ impl Default for LinesScanner {
 }
 
 impl LinesScanner {
+    /// Whether this splits on `\n` (no `custom_delimiter`).
+    pub fn splits_on_newline(&self) -> bool {
+        self.delimiter.is_none()
+    }
+
     pub fn from_config(obj: &serde_json::Map<String, JsonValue>) -> Result<Self, CoreError> {
         let delimiter = match obj.get("custom_delimiter") {
             None => None,

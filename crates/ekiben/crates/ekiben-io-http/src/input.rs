@@ -42,7 +42,7 @@ impl HttpClientInput {
             .unwrap_or(true);
         let stream = match conf.config.get("stream").and_then(JsonValue::as_object) {
             Some(s) if s.get("enabled").and_then(JsonValue::as_bool) == Some(true) => {
-                Some(ekiben_io_file::inputs::Scanner::from_config(s)?)
+                Some(ekiben_io_file::inputs::Scanner::lines_by_default(s)?)
             }
             _ => None,
         };

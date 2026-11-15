@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""Inventory gate: what Bento 1.22 has that ekiben lacks, refuses by policy, or adds (G-01).
+
+Both binaries answer `list --format json`; every name of the kinds below lands in exactly one
+list of tests/parity/missing.json: missing (Bento has it, ekiben lacks it), refused (policy, with
+its reason), extension (ekiben only, with its reason). Reasons live in scripts/parity-policy.json,
+whose `deprecated` section names what Bento still runs but leaves out of its listing (`meta`,
+the `sql` output): ekiben carrying one of those is parity, not an extension.
+
+    parity-inventory.py --record                 record .bento/bento's listing in
+                                                 tests/parity/bento-list.json (scripts/reference-bento.sh)
+                                                 and the Bloblang parameter spec its `blobl server`
+                                                 embeds in tests/parity/bento-params.json
+    parity-inventory.py --ekiben PATH            write tests/parity/missing.json
+    parity-inventory.py --ekiben PATH --check    fail on any name newly missing, on an ekiben-only
+                                                 name without a reason, or on a stale policy entry
+
+bento-params.json (name, optional, default and variadic per function and method) is what
+ekiben-bloblang's parser enforces (params.rs); --check also fails when it no longer names exactly
+the functions and methods of bento-list.json, so a re-recorded Bento cannot leave the two apart.
+
+Exit 1 names every offending entry. Bento's side is the recorded listing, so CI needs no Bento binary.
+"""
+import argparse
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
+import urllib.request
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+KINDS = ["inputs", "outputs", "processors", "caches", "rate-limits", "buffers", "scanners",
+         "bloblang-functions", "bloblang-methods"]
+
+
+def names(data, source):
+    absent = [k for k in KINDS if k not in data]
+    if absent:
+        sys.exit(f"{source} has no {', '.join(absent)}")
+    return {f"{k}/{n}" for k in KINDS for n in data[k]}
+
+
+def listing(binary):
+    out = subprocess.run([binary, "list", "--format", "json"], capture_output=True, text=True, check=True).stdout
+    return json.loads(out)
+
+
+# Functions `bento blobl server` leaves out of its spec (the playground disables them), with the
+# parameters `bento blobl` 1.22 answers for them: `env(zz: 1)` says "did you mean name?",
+# `env("HOME", true, 3)` "expected 2, got 3", and `env(name:, no_cache: true)` runs; `file` alike.
+NOT_IN_SERVER_SPEC = {
+    "env": {"params": [{"name": "name", "optional": False}, {"name": "no_cache", "optional": False, "default": False}],
+            "variadic": False},
+    "file": {"params": [{"name": "path", "optional": False}, {"name": "no_cache", "optional": False, "default": False}],
+             "variadic": False},
+}
+
+
+def param_spec(binary):
+    """The Bloblang spec `bento blobl server` embeds in its page (window.BLOBLANG_SYNTAX), reduced to
+    what a call is checked against: each parameter's name, whether it may be left out, its default."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    server = subprocess.Popen([binary, "blobl", "server", "--no-open", "--host", "127.0.0.1", "--port", str(port)],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        page = None
+        for _ in range(50):
+            try:
+                page = urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5).read().decode()
+                break
+            except OSError:
+                time.sleep(0.2)
+        if page is None:
+            sys.exit(f"{binary} blobl server did not answer on port {port}")
+    finally:
+        server.terminate()
+        server.wait()
+    marker = "window.BLOBLANG_SYNTAX = "
+    syntax, _ = json.JSONDecoder().raw_decode(page[page.index(marker) + len(marker):])
+    spec = {}
+    for kind in ("functions", "methods"):
+        spec[kind] = {}
+        for name, item in sorted(syntax[kind].items()):
+            params = []
+            for p in item["params"].get("named") or []:
+                row = {"name": p["name"], "optional": bool(p.get("is_optional", False))}
+                if "default" in p:
+                    row["default"] = p["default"]
+                params.append(row)
+            spec[kind][name] = {"params": params, "variadic": bool(item["params"].get("variadic", False))}
+    for name, item in NOT_IN_SERVER_SPEC.items():
+        spec["functions"].setdefault(name, item)
+    return spec
+
+
+PARAMS_RS = os.path.join(ROOT, "crates", "ekiben-bloblang", "src", "params.rs")
+
+
+def write_params_rs(spec):
+    """params.rs: the recorded spec as the table ekiben-bloblang's parser checks every call against."""
+    out = [f"// Generated by scripts/parity-inventory.py --record from {spec['version']} (tests/parity/bento-params.json); do not edit.",
+           "//! Parameters of each Bento Bloblang function and method: (name, optional, default as JSON), and",
+           "//! whether the call is variadic. The parser refuses an unknown named parameter and a surplus",
+           "//! positional one as Bento does; params::tests keeps this table equal to the recording.",
+           "",
+           "pub(crate) type Spec = (&'static str, bool, &'static [(&'static str, bool, Option<&'static str>)]);",
+           ""]
+    for kind in ("functions", "methods"):
+        out.append(f"pub(crate) const {kind.upper()}: &[Spec] = &[")
+        for name, item in sorted(spec[kind].items()):
+            rows = []
+            for p in item["params"]:
+                d = "None" if "default" not in p else "Some(" + json.dumps(json.dumps(p["default"], sort_keys=True)) + ")"
+                rows.append(f'("{p["name"]}", {str(p["optional"]).lower()}, {d})')
+            out.append(f'    ("{name}", {str(item["variadic"]).lower()}, &[{", ".join(rows)}]),')
+        out.append("];")
+        out.append("")
+    with open(PARAMS_RS, "w") as f:
+        f.write("\n".join(out))
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--bento", default=os.path.join(ROOT, ".bento", "bento"))
+    ap.add_argument("--recorded", default=os.path.join(ROOT, "tests", "parity", "bento-list.json"))
+    ap.add_argument("--params", default=os.path.join(ROOT, "tests", "parity", "bento-params.json"))
+    ap.add_argument("--record", action="store_true")
+    ap.add_argument("--write-params-rs", action="store_true", help="regenerate params.rs from --params only")
+    ap.add_argument("--ekiben")
+    ap.add_argument("--policy", default=os.path.join(ROOT, "scripts", "parity-policy.json"))
+    ap.add_argument("--out", default=os.path.join(ROOT, "tests", "parity", "missing.json"))
+    ap.add_argument("--check", action="store_true")
+    a = ap.parse_args()
+
+    if a.write_params_rs:
+        with open(a.params) as f:
+            write_params_rs(json.load(f))
+        return 0
+    if a.record:
+        version = subprocess.run([a.bento, "--version"], capture_output=True, text=True, check=True)
+        data = {k: sorted(v) for k, v in listing(a.bento).items() if k in KINDS}
+        data["version"] = version.stdout.splitlines()[0]
+        with open(a.recorded, "w") as f:
+            json.dump(data, f, indent=1, sort_keys=True)
+            f.write("\n")
+        spec = param_spec(a.bento)
+        spec["version"] = data["version"]
+        with open(a.params, "w") as f:
+            json.dump(spec, f, indent=1, sort_keys=True)
+            f.write("\n")
+        write_params_rs(spec)
+        print(f"recorded {data['version']} -> {a.recorded}, {a.params}")
+        return 0
+    if not a.ekiben:
+        ap.error("--ekiben PATH is required unless --record")
+    with open(a.recorded) as f:
+        recorded = json.load(f)
+    bento = names(recorded, a.recorded)
+    ekiben_listing = listing(a.ekiben)
+    ekiben = names(ekiben_listing, f"{a.ekiben} list --format json")
+    with open(a.policy) as f:
+        policy = json.load(f)
+    refused, ext = policy.get("refused", {}), dict(policy.get("extension", {}))
+    # What ekiben itself declares as its own (`ekiben-extensions`: the NGSI-LD components and
+    # helpers) needs no second entry here.
+    declared = {n: "declared by `ekiben list` (ekiben-extensions)"
+                for n in ekiben_listing.get("ekiben-extensions", [])}
+    deprecated = policy.get("deprecated", {})
+    errors = []
+    for section, entries in (("refused", refused), ("extension", ext), ("deprecated", deprecated)):
+        for name, why in entries.items():
+            if not isinstance(why, str) or not why.strip():
+                errors.append(f"{section} {name}: no reason given")
+            if name.split("/", 1)[0] not in KINDS:
+                errors.append(f"{section} {name}: kind is not one of {', '.join(KINDS)}")
+    errors += [f"refused {n}: Bento has no such name (stale policy entry)" for n in refused if n not in bento]
+    errors += [f"extension {n}: not ekiben-only (stale policy entry)" for n in ext if n in bento or n not in ekiben]
+    errors += [f"deprecated {n}: listed by Bento or absent from ekiben (stale policy entry)"
+               for n in deprecated if n in bento or n not in ekiben]
+
+    for n, why in declared.items():
+        ext.setdefault(n, why)
+    with open(a.params) as f:
+        params = json.load(f)
+    for kind, section in (("bloblang-functions", "functions"), ("bloblang-methods", "methods")):
+        specced, listed = set(params.get(section, {})), set(recorded[kind])
+        errors += [f"{kind}/{n}: in {a.recorded} but has no parameter spec in {a.params}"
+                   for n in sorted(listed - specced)]
+        errors += [f"{kind}/{n}: has a parameter spec in {a.params} but is not in {a.recorded}"
+                   for n in sorted(specced - listed) if f"{kind}/{n}" not in deprecated]
+    if params.get("version") != recorded.get("version"):
+        errors.append(f"{a.params} records {params.get('version')!r}, {a.recorded} {recorded.get('version')!r}")
+
+    missing = sorted(bento - ekiben - refused.keys())
+    extension = sorted(ekiben - bento - deprecated.keys())
+    errors += [f"{n}: ekiben has it and Bento does not; list it under extension with a reason"
+               for n in extension if n not in ext]
+
+    report = {
+        "bento": recorded.get("version", ""),
+        "missing": missing,
+        "refused": [{"name": n, "reason": refused[n]} for n in sorted(refused) if n in bento],
+        "extension": [{"name": n, "reason": ext[n]} for n in extension if n in ext],
+    }
+
+    if a.check:
+        with open(a.out) as f:
+            committed = json.load(f)
+        errors += [f"{n}: Bento has it, ekiben no longer does (not listed as missing)"
+                   for n in missing if n not in set(committed.get("missing", []))]
+        ported = sorted(set(committed.get("missing", [])) - set(missing))
+        if ported:
+            print(f"now present in ekiben, regenerate {a.out}: {', '.join(ported)}")
+    else:
+        os.makedirs(os.path.dirname(a.out), exist_ok=True)
+        with open(a.out, "w") as f:
+            json.dump(report, f, indent=1, sort_keys=True)
+            f.write("\n")
+        print(f"{len(missing)} missing, {len(report['refused'])} refused, "
+              f"{len(report['extension'])} extensions -> {a.out}")
+
+    for e in errors:
+        print("FAIL", e)
+    return 1 if errors else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

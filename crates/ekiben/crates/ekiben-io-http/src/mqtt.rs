@@ -13,15 +13,16 @@
 //! batch is acked; a nacked one is not, so the broker sends it again after a reconnect of a
 //! persistent session. A lost connection reconnects inside `read_batch` (1 s to 30 s backoff).
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::http::{HeaderValue, Uri};
 use bytes::Bytes;
-use ekiben_bloblang::Value;
+use ekiben_bloblang::{FieldExpression, Value};
 use ekiben_core::{
-    redact_url_str, AckResponder, Batch, ComponentConfig, CoreError, Input, Part, Registry,
-    SecretString, StreamContext,
+    redact_url_str, AckResponder, Batch, ComponentConfig, CoreError, Input, Output, Part,
+    PartsView, Registry, SecretString, StreamContext,
 };
 use futures::{SinkExt, StreamExt};
 use serde_json::Value as JsonValue;
@@ -45,6 +46,9 @@ pub fn register(registry: &Registry) {
     registry.register_input("mqtt", |conf, _ctx| {
         Ok(Box::new(MqttInput::from_config(conf)?))
     });
+    registry.register_output("mqtt", |conf, ctx| {
+        Ok(Arc::new(MqttOutput::from_config(conf, ctx)?))
+    });
 }
 
 /// The parsed config of one `mqtt` input.
@@ -63,6 +67,11 @@ pub struct MqttConf {
 
 impl MqttConf {
     pub fn from_json(val: &JsonValue) -> Result<Self, CoreError> {
+        Self::parse(val, true)
+    }
+
+    /// The connection fields; `subscribes` makes `topics` required (the input).
+    fn parse(val: &JsonValue, subscribes: bool) -> Result<Self, CoreError> {
         let map = val
             .as_object()
             .ok_or_else(|| CoreError::config("mqtt: expected an object"))?;
@@ -105,7 +114,9 @@ impl MqttConf {
                     .collect()
             })
             .unwrap_or_default();
-        if topics.is_empty() || topics.iter().any(|t| t.is_empty() || t.len() > 65535) {
+        if subscribes
+            && (topics.is_empty() || topics.iter().any(|t| t.is_empty() || t.len() > 65535))
+        {
             return Err(CoreError::config(
                 "mqtt: topics must name at least one non-empty topic",
             ));
@@ -453,6 +464,10 @@ async fn dial(
                 connack.1[1]
             )));
         }
+        // A publisher (the output) subscribes to nothing.
+        if conf.topics.is_empty() {
+            return Ok(std::mem::take(&mut buf));
+        }
         wire.send(subscribe_packet(conf, 1)).await?;
         // A retained PUBLISH may arrive before the SUBACK: it is kept, in order, for the reader.
         let mut early = Vec::new();
@@ -709,6 +724,231 @@ impl Input for MqttInput {
     }
 }
 
+/// A PUBLISH of `payload` to `topic`; `id` is sent for QoS 1.
+fn publish_packet(topic: &str, payload: &[u8], qos: u8, retain: bool, id: u16) -> Vec<u8> {
+    let mut body = Vec::with_capacity(topic.len() + payload.len() + 4);
+    put_str(&mut body, topic.as_bytes());
+    if qos > 0 {
+        body.extend_from_slice(&id.to_be_bytes());
+    }
+    body.extend_from_slice(payload);
+    packet(0x30 | (qos << 1) | u8::from(retain), &body)
+}
+
+/// A publish names exactly one topic: no wildcard, no NUL, MQTT's length.
+fn check_publish_topic(topic: &str) -> Result<(), CoreError> {
+    if topic.is_empty() || topic.len() > 65535 {
+        return Err(CoreError::other("mqtt: a topic must be 1 to 65535 bytes"));
+    }
+    if topic.contains(['+', '#', '\0']) {
+        return Err(CoreError::other(format!(
+            "mqtt: topic '{topic}' holds a wildcard or NUL: a publish names one topic"
+        )));
+    }
+    Ok(())
+}
+
+/// The output's connection: the stream to the broker, bytes read past the last packet, and the
+/// last packet id given out.
+struct Publisher {
+    wire: Wire,
+    buf: Vec<u8>,
+    last_id: u16,
+}
+
+/// `mqtt` output (Bento 1.22 `internal/impl/mqtt/output.go`): publishes each message to the
+/// interpolated `topic` at `qos` 0 or 1 with `retained`; the connection fields, the outbound
+/// rule and TLS are the input's. QoS 1 waits for each PUBACK before the batch is acked.
+/// A write that fails on a kept connection reconnects once and sends the batch again (at least
+/// once). QoS 2, `will` and `retained_interpolated` are refused.
+pub struct MqttOutput {
+    conf: MqttConf,
+    topic: FieldExpression,
+    retained: bool,
+    label: String,
+    conn: tokio::sync::Mutex<Option<Publisher>>,
+}
+
+impl MqttOutput {
+    pub fn from_config(conf: &ComponentConfig, ctx: &StreamContext) -> Result<Self, CoreError> {
+        let mut mq = MqttConf::parse(&conf.config, false)?;
+        mq.topics.clear();
+        if mq.qos > 1 {
+            return Err(CoreError::config(
+                "mqtt output: qos 2 is not supported by ekiben, use 0 or 1",
+            ));
+        }
+        let topic = conf
+            .config
+            .get("topic")
+            .and_then(JsonValue::as_str)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| CoreError::config("mqtt output: field topic is required"))?;
+        let topic = ctx.blobl_env.compile_field(topic)?;
+        if conf
+            .config
+            .get("retained_interpolated")
+            .and_then(JsonValue::as_str)
+            .is_some_and(|s| !s.is_empty())
+        {
+            return Err(CoreError::config(
+                "mqtt.retained_interpolated is not supported by ekiben, use retained",
+            ));
+        }
+        Ok(Self {
+            conf: mq,
+            topic,
+            retained: conf
+                .config
+                .get("retained")
+                .and_then(JsonValue::as_bool)
+                .unwrap_or(false),
+            label: conf.label.clone(),
+            conn: tokio::sync::Mutex::new(None),
+        })
+    }
+
+    async fn open(&self, ctx: &StreamContext) -> Result<Publisher, CoreError> {
+        let mut last = CoreError::other("mqtt: no url");
+        for url in &self.conf.urls {
+            match dial(&self.conf, url, ctx).await {
+                Ok((wire, buf)) => {
+                    return Ok(Publisher {
+                        wire,
+                        buf,
+                        last_id: 0,
+                    })
+                }
+                Err(e) => last = e,
+            }
+        }
+        Err(last)
+    }
+
+    async fn publish_all(
+        &self,
+        p: &mut Publisher,
+        msgs: &[(String, Bytes)],
+    ) -> Result<(), CoreError> {
+        for (topic, payload) in msgs {
+            let qos = self.conf.qos;
+            let id = if qos == 1 {
+                p.last_id = p.last_id.wrapping_add(1).max(1);
+                p.last_id
+            } else {
+                0
+            };
+            p.wire
+                .send(publish_packet(topic, payload, qos, self.retained, id))
+                .await?;
+            if qos == 0 {
+                continue;
+            }
+            let (wire, buf) = (&mut p.wire, &mut p.buf);
+            let acked = async {
+                loop {
+                    let (first, body) = next_packet(wire, buf).await?;
+                    if first >> 4 == 4 && body.get(..2) == Some(&id.to_be_bytes()[..]) {
+                        return Ok::<(), CoreError>(());
+                    }
+                }
+            };
+            // ponytail: the PUBACK wait reuses connect_timeout; Bento's write_timeout is the
+            // upgrade path if a broker needs another bound.
+            tokio::time::timeout(self.conf.connect_timeout, acked)
+                .await
+                .map_err(|_| {
+                    CoreError::other(format!("mqtt: no PUBACK for a message to {topic}"))
+                })??;
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl Output for MqttOutput {
+    fn output_type(&self) -> &'static str {
+        "mqtt"
+    }
+
+    fn label(&self) -> &str {
+        &self.label
+    }
+
+    async fn connect(&self, ctx: &StreamContext) -> Result<(), CoreError> {
+        let mut guard = self.conn.lock().await;
+        if guard.is_some() {
+            return Ok(());
+        }
+        // As the input: a broker that is down keeps the stream; the next write dials again. A
+        // refused or malformed address stays an error.
+        match self.open(ctx).await {
+            Ok(p) => {
+                *guard = Some(p);
+                Ok(())
+            }
+            Err(e @ (CoreError::AccessDenied { .. } | CoreError::Config(_))) => Err(e),
+            Err(e) => {
+                tracing::warn!("mqtt: connect failed, the next write dials again: {e}");
+                Ok(())
+            }
+        }
+    }
+
+    async fn write_batch(&self, ctx: &StreamContext, mut batch: Batch) -> Result<(), CoreError> {
+        for p in &mut batch {
+            let _ = p.as_bytes();
+        }
+        let view = PartsView(&batch);
+        let mut msgs = Vec::with_capacity(batch.len());
+        for (i, part) in batch.iter().enumerate() {
+            let topic = self
+                .topic
+                .resolve_string(i, &view)
+                .map_err(|e| CoreError::other(format!("mqtt: topic interpolation error: {e}")))?;
+            check_publish_topic(&topic)?;
+            let payload = part.as_bytes_ref();
+            if payload.len() > MAX_PACKET_BYTES {
+                return Err(CoreError::other(format!(
+                    "mqtt: a message of {} bytes is over the {MAX_PACKET_BYTES} a packet may hold",
+                    payload.len()
+                )));
+            }
+            msgs.push((topic, payload));
+        }
+        let mut guard = self.conn.lock().await;
+        let mut retry = guard.is_some();
+        loop {
+            let mut p = match guard.take() {
+                Some(p) => p,
+                None => self.open(ctx).await?,
+            };
+            match self.publish_all(&mut p, &msgs).await {
+                Ok(()) => {
+                    *guard = Some(p);
+                    return Ok(());
+                }
+                Err(e) if retry => {
+                    retry = false;
+                    tracing::warn!("mqtt: publish failed on a kept connection, reconnecting: {e}");
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    fn is_connected(&self) -> bool {
+        self.conn.try_lock().map(|g| g.is_some()).unwrap_or(true)
+    }
+
+    async fn close(&self) -> Result<(), CoreError> {
+        if let Some(mut p) = self.conn.lock().await.take() {
+            let _ = p.wire.send(vec![0xe0, 0x00]).await;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -777,5 +1017,37 @@ mod tests {
         assert!(take_packet(&mut buf).is_err());
         let mut buf = vec![0x30, 0xff, 0xff, 0xff, 0xff, 0x01];
         assert!(take_packet(&mut buf).is_err());
+    }
+
+    #[test]
+    fn a_publish_reads_back_as_sent() {
+        let mut buf = publish_packet("t/1", b"hi", 1, true, 7);
+        let (first, body) = take_packet(&mut buf).unwrap().unwrap();
+        assert_eq!(
+            parse_publish(first, &body).unwrap(),
+            Publish {
+                topic: "t/1".into(),
+                qos: 1,
+                dup: false,
+                retain: true,
+                id: 7,
+                payload: b"hi".to_vec()
+            }
+        );
+        let mut buf = publish_packet("t", b"x", 0, false, 0);
+        let (first, body) = take_packet(&mut buf).unwrap().unwrap();
+        assert_eq!(first, 0x30);
+        assert_eq!(parse_publish(first, &body).unwrap().payload, b"x");
+    }
+
+    #[test]
+    fn a_publish_names_one_topic() {
+        for bad in ["", "a/+/b", "a/#", "#", "a\0b"] {
+            assert!(check_publish_topic(bad).is_err(), "{bad:?}");
+        }
+        assert!(check_publish_topic("city/signs/42").is_ok());
+        let out = MqttConf::parse(&json!({"urls": ["tcp://x:1"], "topic": "a"}), false).unwrap();
+        assert!(out.topics.is_empty());
+        assert!(MqttConf::from_json(&json!({"urls": ["tcp://x:1"]})).is_err());
     }
 }
