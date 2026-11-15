@@ -503,6 +503,39 @@ fn expand_paths(
     Ok(out)
 }
 
+/// A configured scanner for an input that fetches whole objects itself (aws_s3, sftp): the
+/// `scanner` field of `obj` as the file input reads it, `to_the_end` when absent (Bento's default
+/// for those inputs).
+#[derive(Clone, Debug)]
+pub struct Scanner(FileScannerKind);
+
+impl Scanner {
+    pub fn from_config(obj: &serde_json::Map<String, JsonValue>) -> Result<Self, CoreError> {
+        match obj.get("scanner").and_then(JsonValue::as_object) {
+            Some(s) => parse_scanner(s).map(Self),
+            None => Ok(Self(FileScannerKind::ToTheEnd)),
+        }
+    }
+
+    pub fn scan(&self, raw: Vec<u8>) -> Result<Vec<Part>, CoreError> {
+        scan_parts(raw, self.0.clone())
+    }
+
+    /// The scanner given when `obj` names none, for the stream inputs whose Bento default is
+    /// `lines` (socket).
+    pub fn lines_by_default(obj: &serde_json::Map<String, JsonValue>) -> Result<Self, CoreError> {
+        match obj.get("scanner").and_then(JsonValue::as_object) {
+            Some(s) => parse_scanner(s).map(Self),
+            None => Ok(Self(FileScannerKind::Lines)),
+        }
+    }
+
+    /// Whether this is `lines`, which a stream input splits as bytes arrive.
+    pub fn is_lines(&self) -> bool {
+        matches!(self.0, FileScannerKind::Lines)
+    }
+}
+
 fn parse_scanner_config(
     obj: &serde_json::Map<String, JsonValue>,
 ) -> Result<FileScannerKind, CoreError> {
@@ -523,6 +556,20 @@ fn parse_scanner_config(
         None => Ok(FileScannerKind::Lines),
     }
 }
+
+/// Every scanner [`parse_scanner`] builds, as `ekiben list` prints them.
+pub const SCANNERS: &[&str] = &[
+    "chunker",
+    "csv",
+    "decompress",
+    "json_documents",
+    "lines",
+    "re_match",
+    "skip_bom",
+    "tar",
+    "to_the_end",
+    "xml_documents",
+];
 
 /// One scanner object (`{<name>: {..}}`), nested ones (`into`) included.
 fn parse_scanner(
@@ -1081,6 +1128,21 @@ mod scanner_config_tests {
 
     fn scanner(conf: serde_json::Value) -> Result<FileScannerKind, CoreError> {
         parse_scanner_config(conf.as_object().expect("an object"))
+    }
+
+    #[test]
+    fn every_listed_scanner_is_built() {
+        let minimal = |name: &str| match name {
+            "chunker" => serde_json::json!({"size": 4}),
+            "decompress" => serde_json::json!({"algorithm": "gzip"}),
+            "re_match" => serde_json::json!({"pattern": "^x"}),
+            "xml_documents" => serde_json::json!({"operator": "to_json"}),
+            _ => serde_json::json!({}),
+        };
+        for name in SCANNERS {
+            let conf = serde_json::json!({ "scanner": { *name: minimal(name) } });
+            assert!(scanner(conf).is_ok(), "{name}");
+        }
     }
 
     #[test]

@@ -6,6 +6,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+calamine = { version = "=0.38.0", features = ["dates"] }
 ekiben-bloblang = { workspace = true }
 ekiben-core = { workspace = true }
 tokio = { workspace = true }
