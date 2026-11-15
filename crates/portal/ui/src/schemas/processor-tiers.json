@@ -24,7 +24,9 @@
     "metric",
     "sleep",
     "ngsi_ld",
-    "noop"
+    "noop",
+    "javascript",
+    "sql_select"
   ],
   "advanced": [
     "branch",
@@ -43,7 +45,8 @@
     "insert_part",
     "sync_response",
     "nats_kv",
-    "nats_request_reply"
+    "nats_request_reply",
+    "sql_insert"
   ],
-  "bloblang": ["mapping", "mutation", "bloblang", "jq", "jmespath"]
+  "bloblang": ["mapping", "mutation", "bloblang", "jq", "jmespath", "sql_raw"]
 }
