@@ -59,6 +59,7 @@ fn endpoint(slug: &str, space: &str, audience: Audience) -> Endpoint {
         calendars: Vec::new(),
         map_defaults: Default::default(),
         page: None,
+        open_data: false,
         policy_names: Vec::new(),
         manifest_name: String::new(),
         policies: vec![policy],

@@ -2,6 +2,7 @@
 
 use crate::envelope::{Kind, ObjectMeta, Ref, Scope, SecretRef, TypedRef};
 use crate::error::{Error, Result};
+use crate::kinds::PolicySpec;
 use crate::names;
 use crate::system_members::is_entity_system_member;
 use crate::urn::Urn;
@@ -689,6 +690,38 @@ fn facets_gap(facets: &[String]) -> Option<String> {
 }
 
 impl EndpointSpec {
+    /// Whether this Endpoint is open data (EP-62, EP-187): it publishes to an open-data
+    /// catalogue, or anyone may call it (`audience: public`) and a Policy it serves (`served`, as
+    /// the gateway binds them) grants the role `public`. A public form (`spec.creates`, EP-97)
+    /// takes anonymous creates and is no open data unless it publishes. The gateway,
+    /// `jcctl validate` and the Portal all decide it here.
+    pub fn is_open_data<'a>(&self, served: impl IntoIterator<Item = &'a PolicySpec>) -> bool {
+        self.publish.is_some()
+            || self.audience == Audience::Public
+                && self.creates.is_none()
+                && served
+                    .into_iter()
+                    .any(|policy| policy.is_public() && !policy.effect.is_prohibition())
+    }
+
+    /// Why this Endpoint cannot serve `served`, each a Policy's name and spec (EP-187): an
+    /// open-data Endpoint is read-only, so the first served Policy that writes context data is
+    /// named with its operation. `None` for an Endpoint that is no open data or writes nothing.
+    pub fn open_data_write(&self, served: &[(&str, &PolicySpec)]) -> Option<String> {
+        if !self.is_open_data(served.iter().map(|(_, policy)| *policy)) {
+            return None;
+        }
+        served.iter().find_map(|(name, policy)| {
+            policy.entity_write().map(|op| {
+                format!(
+                    "an open-data Endpoint is read-only (EP-187): Policy {name} grants {op}; \
+                     serve the write through an internal Endpoint of the space, or drop {op} \
+                     from the Policy"
+                )
+            })
+        })
+    }
+
     /// The Policies this Endpoint names, `policyRef` read as a list of one (ADR-N-057); `None`
     /// when it names none and so evaluates every Policy of its space. The gateway, the Portal
     /// and `jcctl validate` all bind through this, never through either field alone.
@@ -1275,6 +1308,96 @@ impl SharedSpaceReferenceSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn policy(role: &str, operations: &str) -> PolicySpec {
+        serde_json::from_value(serde_json::json!({
+            "contextSpaceRef": { "kind": "ContextSpace", "name": "air" },
+            "assigner": "did:web:city.example",
+            "assignee": { "kind": "role", "id": role },
+            "operations": operations.split(',').collect::<Vec<_>>(),
+        }))
+        .expect("a Policy")
+    }
+
+    fn endpoint(publish: bool) -> EndpointSpec {
+        let mut spec = serde_json::json!({
+            "contextSpaceRef": { "kind": "ContextSpace", "name": "air" },
+            "slug": "zt4qm7ge2xdv6ksb3ncf5arw2y",
+            "audience": "public",
+        });
+        if publish {
+            spec["publish"] = serde_json::json!({});
+        }
+        serde_json::from_value(spec).expect("an Endpoint")
+    }
+
+    /// T-6972: every caller holds `public`, so a public grant that writes lets anyone write.
+    #[test]
+    fn a_public_policy_that_writes_is_refused_with_or_without_attributes() {
+        for ops in [
+            "updateAttrs",
+            "createEntity,mergeEntity",
+            "updateOps",
+            "deleteTemporal",
+        ] {
+            let err = policy("public", ops).validate().expect_err(ops);
+            assert!(
+                err.to_string().contains("open data is read-only (EP-187)"),
+                "{err}"
+            );
+        }
+        policy("public", "queryEntity,createEntity")
+            .validate()
+            .expect("a public form creates (EP-97)");
+        policy("public", "queryEntity,retrieveEntity,queryTemporal")
+            .validate()
+            .expect("a public read stays");
+        policy("public", "queryEntity,createSubscription")
+            .validate()
+            .expect("a subscription writes no entity");
+        policy("editors", "updateAttrs")
+            .validate()
+            .expect("a group's write stays");
+        let mut prohibition = policy("public", "updateAttrs");
+        prohibition.effect = crate::kinds::policy::PolicyEffect::Prohibition;
+        prohibition
+            .validate()
+            .expect("a public prohibition takes a write away");
+    }
+
+    #[test]
+    fn an_open_data_endpoint_serves_no_writing_policy() {
+        let read = policy("public", "queryEntity");
+        let write = policy("editors", "updateAttrs");
+        let served = [("public-read", &read), ("editors-write", &write)];
+        let refusal = endpoint(false).open_data_write(&served).expect("refused");
+        assert!(
+            refusal.contains("read-only (EP-187): Policy editors-write grants updateAttrs"),
+            "{refusal}"
+        );
+        // Published to a catalogue, it is open data with no public Policy at all.
+        let internal = [("editors-write", &write)];
+        assert!(endpoint(true).open_data_write(&internal).is_some());
+        // No public Policy and no publish: an internal Endpoint keeps its writes.
+        assert_eq!(endpoint(false).open_data_write(&internal), None);
+        // Open data that only reads is accepted.
+        let subscribe = policy("editors", "queryEntity,createSubscription");
+        let reads = [("public-read", &read), ("subscribe", &subscribe)];
+        assert_eq!(endpoint(true).open_data_write(&reads), None);
+        assert!(endpoint(false).is_open_data([&read]));
+        // The organization's own Endpoint serving the same public read is no open data.
+        let mut internal = endpoint(false);
+        internal.audience = Audience::Organization;
+        assert_eq!(internal.open_data_write(&served), None);
+        assert!(!endpoint(false).is_open_data([&write]));
+        // A public form takes anonymous creates and is no open data, unless it publishes.
+        let create = policy("public", "createEntity");
+        let mut form = endpoint(false);
+        form.creates = Some(Creates::default());
+        assert!(!form.is_open_data([&read, &create]));
+        form.publish = endpoint(true).publish;
+        assert!(form.open_data_write(&[("public-form", &create)]).is_some());
+    }
 
     #[test]
     fn facets_take_names_and_one_member_at_most_ten_once_each() {

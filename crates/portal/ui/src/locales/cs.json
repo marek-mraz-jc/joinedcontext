@@ -1586,7 +1586,7 @@
       "open": "Otevřená",
       "custom": "Vlastní"
     },
-    "publicNotice": "Endpoint s veřejným publikem odpovídá anonymnímu volajícímu a ten smí pouze číst. Zápisy a odběry stále vyžadují přihlášení, ať jsou zapnuté kterékoli reprezentace.",
+    "publicNotice": "Endpoint s veřejným publikem odpovídá anonymním volajícím, kteří jen čtou. Jakmile slouží politice pro roli public nebo publikuje do katalogu, jsou to otevřená data, jen pro čtení pro každého: Portál odmítne politiku, kterou slouží a která zapisuje. Zapisujte přes interní endpoint téhož prostoru, např. s publikem Organizace a politikou, která povoluje updateAttrs.",
     "data": {
       "title": "Co tento endpoint odpovídá",
       "type": "Typ entity",
@@ -1866,7 +1866,11 @@
       "firstCallCopy": "Kopírovat příkaz",
       "firstCallPublic": "Volat ho může kdokoli, token není potřeba.",
       "filterUntouched": "Nejprve změňte filtr: je stejný jako uložený.",
-      "filterFaulty": "Nejprve opravte označená pole."
+      "filterFaulty": "Nejprve opravte označená pole.",
+      "openData": "Otevřená data: jen pro čtení",
+      "openDataHint": "Každý zápis přes tento Endpoint je odmítnut, pro každého. Vlastník dat zapisuje přes interní Endpoint prostoru, takový s publikem Organizace.",
+      "openDataWrite": "Tento Endpoint otevřených dat váže politiku, která zapisuje",
+      "openDataWriteHint": "Čtení pokračuje a každý zápis je odmítnut. V policyRefs uveďte jen politiky pro čtení, např. politiku public-read, nebo přesuňte zapisující politiku na interní Endpoint."
     },
     "condition": {
       "title": "Přidat podmínku",
