@@ -489,26 +489,29 @@ fn events_in(text: &str) -> Vec<(String, Value)> {
     found
 }
 
-/// The answer's events and how long after the request its `answer` event arrived, the stream
-/// read frame by frame.
-async fn answer_timed(
+/// The answer's events, the stream read frame by frame; `answered` is sent the moment its
+/// `answer` event arrives, while the rest of the stream may still be on its way.
+async fn answer_signalled(
     app: &axum::Router,
     request: Request<Body>,
-) -> (std::time::Duration, Vec<(String, Value)>) {
+    answered: tokio::sync::oneshot::Sender<()>,
+) -> Vec<(String, Value)> {
     use futures_util::StreamExt as _;
-    let asked = std::time::Instant::now();
     let response = app.clone().oneshot(request).await.expect("an answer");
     assert_eq!(response.status(), StatusCode::OK);
     let mut frames = response.into_body().into_data_stream();
-    let (mut text, mut answered) = (String::new(), None);
+    let (mut text, mut answered) = (String::new(), Some(answered));
     while let Some(frame) = frames.next().await {
         text.push_str(&String::from_utf8_lossy(&frame.expect("a frame")));
-        if answered.is_none() && text.contains("event: answer") {
-            answered = Some(asked.elapsed());
+        if text.contains("event: answer") {
+            if let Some(answered) = answered.take() {
+                // The receiver is gone only once the lock it holds was released anyway.
+                let _ = answered.send(());
+            }
         }
     }
-    let events = events_in(&text);
-    (answered.expect("an answer event"), events)
+    assert!(answered.is_none(), "an answer event");
+    events_in(&text)
 }
 
 async fn model_calls(proxy: &MockServer) -> Vec<(axum::http::HeaderMap, Value)> {
@@ -4357,17 +4360,19 @@ async fn the_reads_after_the_router_run_at_once() {
 
 /// T-5789: a dataset page lookup is a regular-expression scan of the index that took 5-15 s on
 /// prod; the data call waits for it at most PAGE_DEADLINE (1.5 s), and the table then links no
-/// page. The scan is held here by a lock on the passages until 6 s. Naming the cited sources
-/// reads the same passages after the answer is written and waits as long (T-5800: 5.5 s after
-/// od-67's answer on prod), so the answer goes out well before the lock is released.
+/// page. The scan is held here by a lock on the passages, released only once the answer event
+/// arrived (or at `hold`, when the answer waited for the scan and the test fails). Naming the cited
+/// sources reads the same passages after the answer is written and waits as long (T-5800: 5.5 s
+/// after od-67's answer on prod). The events are ordered, not timed: a 4.5 s bound on the answer
+/// went red at 4.52 s on loaded runners with the deadline intact (T-6952).
 #[tokio::test]
 async fn a_slow_dataset_page_lookup_does_not_hold_the_data_call() {
-    let hold = std::time::Duration::from_secs(6);
+    let hold = std::time::Duration::from_secs(30);
     let mut d = deployment(Channel::Public, 80_000, 10);
     d.spec.connectors[0].tools = vec!["list_types".into(), "query_entities".into()];
     let w = world("chatpagedeadline", d).await;
     recorded_air(&w.gateway, SLUG).await;
-    let (routed, answered) = stamped_data_question(&w.proxy, "NO2 nad 20 má stanica [1].").await;
+    let (_, answered) = stamped_data_question(&w.proxy, "NO2 nad 20 má stanica [1].").await;
     // The first question reads the languages, the digest and the types the next one keeps.
     let (status, events, _) = answer_of(
         &w.app,
@@ -4389,27 +4394,35 @@ async fn a_slow_dataset_page_lookup_does_not_hold_the_data_call() {
         .execute(&mut locker)
         .await
         .expect("the passages are locked");
+    let (answer_tx, answer_rx) = tokio::sync::oneshot::channel();
     let release = tokio::spawn(async move {
-        tokio::time::sleep(hold).await;
+        let before_answer = tokio::time::timeout(hold, answer_rx).await.is_ok();
+        let released = std::time::Instant::now();
         sqlx::query("ROLLBACK")
             .execute(&mut locker)
             .await
             .expect("released");
+        (before_answer, released)
     });
-    let (took, events) = answer_timed(
+    let events = answer_signalled(
         &w.app,
         ask(
             json!({"message": "Ktoré stanice majú NO2 nad 20?"}),
             Some(ORIGIN),
         ),
+        answer_tx,
     )
     .await;
-    release.await.expect("the lock was released");
-    eprintln!("answer event under a held scan: {took:?}");
-    assert!(took < std::time::Duration::from_millis(4_500), "{took:?}");
-    let gap = router_to_data(&routed, &answered, 1);
-    eprintln!("router to data call under a held scan: {gap:?}");
-    assert!(gap < std::time::Duration::from_millis(2_500), "{gap:?}");
+    let (before_answer, released) = release.await.expect("the lock was released");
+    assert!(
+        before_answer,
+        "the answer waited {hold:?} for the held scan"
+    );
+    let data_call = answered.lock().expect("the stamps").get(1).copied();
+    assert!(
+        data_call.is_some_and(|at| at < released),
+        "the data call started while the scan was held"
+    );
     let data: Vec<&Value> = events
         .iter()
         .filter(|(n, _)| n == "data")
