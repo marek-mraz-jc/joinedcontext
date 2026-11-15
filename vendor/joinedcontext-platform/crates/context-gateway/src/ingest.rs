@@ -195,7 +195,7 @@ fn digest(key: &hmac::Key, value: &Value) -> Value {
         other => other.to_string(),
     };
     let tag = hmac::sign(key, text.as_bytes());
-    Value::String(tag.as_ref().iter().map(|b| format!("{b:02x}")).collect())
+    Value::String(crate::query::hex(tag.as_ref()))
 }
 
 #[cfg(test)]

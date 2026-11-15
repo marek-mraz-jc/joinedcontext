@@ -300,15 +300,7 @@ fn one(headers: &mut HeaderMap, name: HeaderName, value: Option<&str>) {
 /// percent-encoded UTF-8, the RFC 3986 unreserved characters kept, so a diacritic travels and a
 /// comma never splits a list member.
 fn encode(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-            out.push(char::from(byte));
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
+    crate::query::encode(value)
 }
 
 /// The value of [`READ_VERSIONS`] for these attributes (`None`: every one): `true`, the value a

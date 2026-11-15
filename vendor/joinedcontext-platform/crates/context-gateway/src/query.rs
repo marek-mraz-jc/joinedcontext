@@ -440,8 +440,26 @@ pub fn encode(raw: &str) -> String {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
                 out.push(byte as char)
             }
-            _ => out.push_str(&format!("%{byte:02X}")),
+            _ => {
+                out.push('%');
+                out.push(char::from(UPPER_HEX[usize::from(byte >> 4)]));
+                out.push(char::from(UPPER_HEX[usize::from(byte & 0xf)]));
+            }
         }
+    }
+    out
+}
+
+const UPPER_HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+/// `bytes` as lowercase hex, two digits a byte: the form of every digest and id the gateway
+/// writes (an `ETag`, a minted UUID, a hashed personal value).
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    const LOWER: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(char::from(LOWER[usize::from(byte >> 4)]));
+        out.push(char::from(LOWER[usize::from(byte & 0xf)]));
     }
     out
 }
@@ -590,6 +608,24 @@ mod tests {
         assert_eq!(encode("pm10>=0"), "pm10%3E%3D0");
         assert_eq!(decode("100%25%20done"), "100% done");
         assert_eq!(decode("a%zz"), "a%zz", "a stray percent is not an escape");
+    }
+
+    #[test]
+    fn every_byte_encodes_as_format_writes_it() {
+        let bytes: Vec<u8> = (0..=255).collect();
+        let lower: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(hex(&bytes), lower);
+        let text = String::from_utf8_lossy(&bytes).into_owned() + "č ,\u{7f}";
+        let escaped: String = text
+            .bytes()
+            .map(|b| match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                    char::from(b).to_string()
+                }
+                _ => format!("%{b:02X}"),
+            })
+            .collect();
+        assert_eq!(encode(&text), escaped);
     }
 
     #[test]

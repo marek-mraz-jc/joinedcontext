@@ -45,7 +45,7 @@ pub(crate) fn uuid_v4() -> Result<String, Box<ProblemDetails>> {
         .map_err(|_| Box::new(ProblemDetails::internal()))?;
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let hex = crate::query::hex(&bytes);
     Ok(format!(
         "{}-{}-{}-{}-{}",
         &hex[..8],
