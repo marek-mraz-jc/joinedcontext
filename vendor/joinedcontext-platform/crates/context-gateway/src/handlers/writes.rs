@@ -397,6 +397,10 @@ pub(crate) enum Unlinking {
     },
 }
 
+/// The most ids one batch delete names: the broker's own batch ceiling (Antares
+/// `ANTARES_MAX_BATCH_ITEMS`, 1000 unless raised).
+const MAX_DELETE_IDS: usize = 1_000;
+
 /// One delete held against the relationships of the space's model (DM-71, T-2858).
 ///
 /// The broker keeps no relationship rules (the owner's decision of 2026-09-25), so the rules run
@@ -405,10 +409,6 @@ pub(crate) enum Unlinking {
 /// required end, or an entity the caller may not change), and otherwise the entities are changed
 /// or deleted first and the entity itself last. Nothing is changed until every rule has passed;
 /// a reference written after the read is the race window Architecture/11 §1.2 names.
-/// The most ids one batch delete names: the broker's own batch ceiling (Antares
-/// `ANTARES_MAX_BATCH_ITEMS`, 1000 unless raised).
-const MAX_DELETE_IDS: usize = 1_000;
-
 pub(crate) struct HeldDelete<'a> {
     pub(crate) gateway: &'a Gateway,
     pub(crate) subject: &'a Subject,

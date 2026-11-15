@@ -1202,14 +1202,6 @@ fn portal_personal_data_read(
     })
 }
 
-/// One `metadata` text as a language map, or an empty one when the manifest carries none
-/// (PF-24, UI-50).
-///
-/// The loader keeps metadata beyond name and namespace as raw JSON, so this reads the
-/// shape rather than a type. A plain string, the form every new manifest writes, belongs
-/// to no locale and is kept under the empty key; the legacy `{locale: text}` map is kept
-/// as it is. Anything else is a manifest the Portal would have rejected, and here it
-/// simply describes nothing.
 /// `metadata.{key}` in the default language, else English, else the first one given.
 fn manifest_text(manifest: &RawManifest, key: &str) -> Option<String> {
     let texts = language_map(&manifest.metadata.rest, key);
@@ -1220,6 +1212,14 @@ fn manifest_text(manifest: &RawManifest, key: &str) -> Option<String> {
         .cloned()
 }
 
+/// One `metadata` text as a language map, or an empty one when the manifest carries none
+/// (PF-24, UI-50).
+///
+/// The loader keeps metadata beyond name and namespace as raw JSON, so this reads the
+/// shape rather than a type. A plain string, the form every new manifest writes, belongs
+/// to no locale and is kept under the empty key; the legacy `{locale: text}` map is kept
+/// as it is. Anything else is a manifest the Portal would have rejected, and here it
+/// simply describes nothing.
 fn language_map(
     metadata: &serde_json::Map<String, serde_json::Value>,
     key: &str,
@@ -1236,7 +1236,6 @@ fn language_map(
     }
 }
 
-/// The policies of every space, keyed by the project and space they name (GW8).
 /// Every Policy of every space, by project and space, with the manifest name it is bound
 /// to by `spec.policyRef` (`urn:ngsi-ld:Policy:{org}:{space}:{name}`).
 #[allow(clippy::type_complexity)]
@@ -1494,11 +1493,6 @@ fn spec_of<T: serde::de::DeserializeOwned>(manifest: &RawManifest) -> Option<T> 
     }
 }
 
-/// One data model, with whatever artifacts the checkout carries beside its manifest.
-///
-/// An artifact that is missing or unreadable is simply absent: the schema surface falls
-/// back to deriving the document from the endpoint's grants, which is a narrower answer
-/// but never a wrong one.
 /// One JSON artifact committed beside its manifest (DM-02, DM-52).
 ///
 /// The artifacts live beside their manifest; a path that climbs out of the repository is a

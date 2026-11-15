@@ -910,10 +910,6 @@ pub(crate) fn capped_query(raw: &str) -> String {
         .join("&")
 }
 
-/// The checks of a view request that need no body: the domain gate on a write (PF-41), a
-/// federated read's write refused (T-3999), the identifier (PF-43), then the tenant and the
-/// verified caller pinned for the hop (T-3641), with the token a `caller` registration of the
-/// space receives (PF-48, PF-113).
 /// A token the gateway exchanged for a federated read reads entities; it never writes and never
 /// touches a subscription, which would outlive it (T-3999, PF-114).
 fn federated_refusal(
@@ -1068,6 +1064,10 @@ fn record_version(
     }
 }
 
+/// The checks of a view request that need no body: the domain gate on a write (PF-41), a
+/// federated read's write refused (T-3999), the identifier (PF-43), then the tenant and the
+/// verified caller pinned for the hop (T-3641), with the token a `caller` registration of the
+/// space receives (PF-48, PF-113).
 pub(crate) async fn view_request(
     gateway: &Gateway,
     endpoint: &Endpoint,

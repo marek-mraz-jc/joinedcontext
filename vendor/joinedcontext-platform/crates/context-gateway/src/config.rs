@@ -454,7 +454,6 @@ impl Config {
 /// reaching readers within a minute (T-5900).
 pub const PUBLIC_MAX_AGE_LIMIT: u32 = 60;
 
-/// `JC_GATEWAY_PUBLIC_MAX_AGE` as whole seconds from 0 to [`PUBLIC_MAX_AGE_LIMIT`]; 0 when unset.
 /// What a create or upsert whose URN does not name the space's owning Organization meets
 /// (`JC_GATEWAY_URN_OWNER_PREFIX`, ADR-N-068).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -522,6 +521,7 @@ fn urn_owner_prefix(
     }
 }
 
+/// `JC_GATEWAY_PUBLIC_MAX_AGE` as whole seconds from 0 to [`PUBLIC_MAX_AGE_LIMIT`]; 0 when unset.
 fn public_max_age(read: Result<String, std::env::VarError>) -> Result<u32, ConfigError> {
     match read {
         Ok(value) if !value.trim().is_empty() => match value.trim().parse::<u32>() {
