@@ -1228,6 +1228,49 @@ async fn an_import_binding_an_unreadable_policy_or_admitting_a_foreign_project_i
     assert_eq!(status, StatusCode::ACCEPTED, "{change}");
 }
 
+/// EP-80: a catalogue record publishes its contact point to everyone, so the import door refuses
+/// a person's own address there as the single-manifest door does, before any branch.
+#[tokio::test]
+async fn an_import_naming_a_persons_address_as_the_catalogue_contact_is_refused() {
+    let server = forge().await;
+    let space: Value = serde_norway::from_str(SPACE).expect("the space parses");
+    let mut endpoint: Value = serde_norway::from_str(ENDPOINT).expect("the endpoint parses");
+    endpoint["spec"]["catalog"] =
+        json!({ "contactPoint": { "name": "Eva", "email": "eva.persson@hel.fi" } });
+    let group = json!({
+        "apiVersion": API_VERSION, "kind": "Group",
+        "metadata": { "name": "air-team", "namespace": ORG_NAMESPACE },
+        "spec": { "members": [{ "user": "eva.persson@hel.fi" }] },
+    });
+    let importer = role(
+        "importer",
+        json!([{ "kinds": ["ContextSpace", "Endpoint"], "verbs": ["propose"] }]),
+    );
+    let (state, cookie) = state_as(
+        &server,
+        vec![],
+        &[],
+        vec![importer, binding("importer"), group],
+    );
+    let body = json!({
+        "manifests": { "apiVersion": API_VERSION, "kind": "List", "items": [space, endpoint] }
+    });
+    let (status, problem) = post(
+        state,
+        &cookie,
+        "application/json",
+        serde_json::to_vec(&body).expect("body"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+    let detail = problem["detail"].as_str().unwrap_or_default();
+    assert!(
+        detail.contains("spec.catalog.contactPoint.email"),
+        "{detail}"
+    );
+    assert!(written(&server).await.is_empty());
+}
+
 #[tokio::test]
 async fn a_native_file_under_a_directory_that_names_no_kind_is_refused_even_with_every_role() {
     let server = forge().await;

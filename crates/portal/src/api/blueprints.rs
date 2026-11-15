@@ -476,6 +476,7 @@ pub(crate) fn plan_flow(
     let mut lane = declared_lane(blueprint.spec.risk_class);
     let mut summary = PlanSummary::default();
     let mut files = Vec::with_capacity(rendered.len());
+    let mut judged = Vec::with_capacity(rendered.len());
     let effective = crate::permissions::for_request(state, identity, project);
     for expanded in &rendered {
         let (mut manifest, kind_info) =
@@ -508,7 +509,11 @@ pub(crate) fn plan_flow(
         let yaml = serde_norway::to_string(&manifest)
             .map_err(|e| ApiError::Internal(format!("serialize manifest to yaml: {e}")))?;
         files.push((repo_path, yaml));
+        judged.push(manifest);
     }
+    // A green flow merges without an approval, so it meets the one judge here, its rendered
+    // manifests standing as the one Change they open (CHG-03, S-5-08).
+    crate::judge::change(&crate::judge::Ground::of(state), project, &judged)?;
     Ok(PlannedFlow {
         lane,
         summary,
