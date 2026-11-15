@@ -370,6 +370,12 @@ async fn without_smtp_a_token_creating_a_person_never_receives_the_password() {
     })
     .expect("a realm")
     .oidc;
+    state.bearer = config.oidc.as_ref().map(|oidc| {
+        Arc::new(joinedcontext_portal::auth::bearer::BearerVerifier::new(
+            &oidc.issuer,
+            &oidc.client_id,
+        ))
+    });
     state.config = Arc::new(config);
     let token = common::REALM.person_token_of("portal-api", "jcctl", "pia", &[]);
     let request = axum::http::Request::builder()

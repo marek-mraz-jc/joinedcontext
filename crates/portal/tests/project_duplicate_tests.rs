@@ -349,6 +349,9 @@ async fn a_project_the_caller_may_not_read_is_not_duplicated() {
 #[tokio::test]
 async fn a_reader_of_one_space_does_not_duplicate_the_project() {
     let (server, state) = world(false).await;
+    state
+        .mirror
+        .upsert(envelope("ContextSpace", "ovzdusie", "ovzdusie", json!({})));
     state.mirror.upsert(envelope(
         "RoleBinding",
         "spacer-reads-one-space",
