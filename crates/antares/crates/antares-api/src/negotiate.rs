@@ -1461,7 +1461,7 @@ mod negotiation {
         parse_accept_geo(&accept(value)).expect("acceptable")
     }
 
-    /// 6.3.14: an NGSILD-Tenant that is not `[A-Za-z0-9_-]{1,64}` is a
+    /// 6.3.14: an NGSILD-Tenant that is not `[A-Za-z0-9_-]{1,128}` is a
     /// BadRequestData 400 — never a panic, a 500, or a silent fallback to the
     /// default tenant.
     #[test]
@@ -1478,7 +1478,7 @@ mod negotiation {
                 .as_str(),
             "city-01_A"
         );
-        let long = "x".repeat(65);
+        let long = "x".repeat(129);
         for bad in ["", "a b", "a/b", "../etc", "a.b", "tenant;drop", &long] {
             let err = tenant_from(&hdr("NGSILD-Tenant", bad))
                 .map(|t| t.as_str().to_owned())

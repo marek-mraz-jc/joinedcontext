@@ -496,6 +496,11 @@ impl Ops {
         else {
             return None;
         };
+        // EP-188: a view of another Organization's Tenant is an unknown view
+        // to this caller, on every surface of the view root alike.
+        if !antares_api::admin_auth::view_admits(&self.state, tenant) {
+            return None;
+        }
         // The loader stored the tenant it validated, so this never refuses.
         let tenant = antares_model::TenantId::new(tenant).ok()?;
         // the loader attaches nothing else, so a failed downcast is a view

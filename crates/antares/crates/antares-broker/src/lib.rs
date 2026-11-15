@@ -88,6 +88,10 @@ const KNOWN_KEYS: &[&str] = &[
     // provenance headers. Unset, every write is `channel: api`. Read by the
     // `jc` build only (T-4854); vanilla ignores it.
     "ANTARES_PROVENANCE_FROM",
+    // EP-188 (T-7036): `enforce` serves a gateway request only on a Tenant
+    // `{organization id}__{segment}` of the Organization it vouched; `off`
+    // (default) as before. Read by the `jc` build only.
+    "ANTARES_TENANT_ORGANIZATION",
     // T-4875: the mesh identities (l5d-client-id) whose policy subject
     // headers are believed; from anyone else they are dropped. Unset,
     // every caller's are, as before.
@@ -745,6 +749,25 @@ const SURFACE_SHELF: &[(&str, SurfaceCtor)] = &[
     }),
 ];
 
+/// ANTARES_TENANT_ORGANIZATION → whether the Organization check runs
+/// (EP-188): `off` (default, unset or empty) or `enforce`. Under `enforce`
+/// a broker that requires no subject would serve every request unchecked,
+/// so it refuses to start.
+#[cfg(feature = "jc")]
+fn tenant_organization(raw: Option<String>, subject_required: bool) -> Result<bool, String> {
+    match raw.as_deref().map(str::trim) {
+        None | Some("" | "off") => Ok(false),
+        Some("enforce") if subject_required => Ok(true),
+        Some("enforce") => Err("ANTARES_TENANT_ORGANIZATION=enforce needs subject headers \
+             (ANTARES_POLICY_SUBJECT_HEADERS): without them no request carries the \
+             Organization the check compares"
+            .to_owned()),
+        Some(other) => Err(format!(
+            "ANTARES_TENANT_ORGANIZATION: unknown value {other:?} (off|enforce)"
+        )),
+    }
+}
+
 /// ANTARES_API_SURFACES → the surfaces mounted beside the NGSI-LD API,
 /// comma-separated; absent = `admin`. An unknown name is fatal and names
 /// the shelf, and so is a selection that ends up empty: health, readiness
@@ -1292,6 +1315,10 @@ pub async fn build_state(
         // T-5032: a deployment that names who calls serves a caller
         // without a subject only with the admin bearer token.
         state.subject_required = !antares_api::policy::SUBJECT_HEADERS.is_empty();
+        state.tenant_organization = tenant_organization(
+            cfg.var("ANTARES_TENANT_ORGANIZATION"),
+            state.subject_required,
+        )?;
     }
     // The surfaces mounted beside the NGSI-LD API root, from configuration
     // rather than from a hard-wired list: the selection replaces what the
@@ -1979,6 +2006,31 @@ async fn wait_drain(rx: &mut tokio::sync::watch::Receiver<bool>) {
 #[cfg(test)]
 mod config_key_tests {
     use super::unknown_config_key;
+
+    /// T-7036 (EP-188): off by default, enforce only beside subject headers,
+    /// any other value fatal.
+    #[cfg(feature = "jc")]
+    #[test]
+    fn tenant_organization_is_off_by_default_and_needs_a_subject() {
+        assert_eq!(super::tenant_organization(None, false), Ok(false));
+        assert_eq!(
+            super::tenant_organization(Some(" ".into()), true),
+            Ok(false)
+        );
+        assert_eq!(
+            super::tenant_organization(Some("off".into()), true),
+            Ok(false)
+        );
+        assert_eq!(
+            super::tenant_organization(Some("enforce".into()), true),
+            Ok(true)
+        );
+        let err =
+            super::tenant_organization(Some("enforce".into()), false).expect_err("no subject");
+        assert!(err.contains("ANTARES_POLICY_SUBJECT_HEADERS"), "{err}");
+        let err = super::tenant_organization(Some("on".into()), true).expect_err("unknown");
+        assert!(err.contains("off|enforce"), "{err}");
+    }
 
     /// Kubelet-injected service links must never be fatal; real typos
     /// must stay fatal.
