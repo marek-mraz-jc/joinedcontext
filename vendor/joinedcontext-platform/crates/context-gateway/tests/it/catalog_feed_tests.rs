@@ -157,6 +157,32 @@ async fn the_feed_lists_every_public_endpoint_and_nothing_else() {
     }
 }
 
+/// EP-69: a record describes what an anonymous caller of the Endpoint reads, so a type granted
+/// only to the Endpoint's `callerRole` is in it, as it is in the caller's own schema.
+#[tokio::test]
+async fn a_record_describes_what_the_endpoints_caller_role_reads() {
+    let mut open = endpoint(OPEN, "ovzdusie", Audience::Public);
+    let caller = jc_core::kinds::endpoint_role(&open.project, OPEN, None);
+    open.policies = vec![serde_norway::from_str(&format!(
+        "contextSpaceRef: ovzdusie\n\
+         assigner: did:web:banskabystrica.sk\n\
+         assignee: {{ kind: role, id: '{caller}' }}\n\
+         operations: [queryEntity, retrieveEntity]\n\
+         information:\n  - entities:\n      - type: AirQualityObserved\n"
+    ))
+    .expect("the policy spec parses")];
+    // The same Endpoint without the role: what `Subject::anonymous` would read.
+    let plain = open.clone();
+    open.roles.caller = Some(caller);
+    let realm = common::Realm::new();
+    let (_, _, _, with_role) = get(app_of(&realm, vec![open]), "/catalog.jsonld", None).await;
+    let (_, _, _, without) = get(app_of(&realm, vec![plain]), "/catalog.jsonld", None).await;
+    assert_ne!(
+        with_role, without,
+        "the caller role's grant changed nothing in the record: {with_role}"
+    );
+}
+
 /// EP-139, T-4744: a door over a space whose types are split into datasets of their own stays
 /// public with its record, licence included, and the feed leaves it out; `harvest: true` is
 /// listed as an unset one is.
