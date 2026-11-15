@@ -2875,7 +2875,7 @@ async fn pages_draw_the_brand_marks_the_footer_logo_and_each_configured_badge() 
         "/organization/",
         "/organization/city",
         "/dataset/open",
-        "/assistants",
+        "/connector",
         "/about",
     ] {
         let a = get(&w.app, uri, None).await;
@@ -2901,7 +2901,7 @@ async fn pages_draw_the_brand_marks_the_footer_logo_and_each_configured_badge() 
     assert!(
         a.body.contains("The city's own words") || a.body.contains("The city&#x27;s own words")
     );
-    let a = get(&w.app, "/assistants", None).await;
+    let a = get(&w.app, "/connector", None).await;
     assert!(
         a.body.contains("<svg class=\"jc-note-icon\""),
         "the connector note's mark"
@@ -2910,8 +2910,8 @@ async fn pages_draw_the_brand_marks_the_footer_logo_and_each_configured_badge() 
         a.body
             .matches("<svg class=\"jc-ai-logo\" width=\"32\"")
             .count(),
-        3,
-        "a mark per card"
+        6,
+        "a mark per assistant in the menu and on its section's heading"
     );
 
     // A logo SVG the logo upload would refuse is never served on the catalogue's origin.
@@ -3127,7 +3127,6 @@ async fn pages_lists_publishers_static_pages_and_routing() {
         "/terms",
         "/support",
         "/accessibility",
-        "/assistants",
         "/sk/about",
     ] {
         let a = get(app, uri, None).await;
@@ -3163,7 +3162,25 @@ async fn pages_lists_publishers_static_pages_and_routing() {
         get(app, "/organization/ghost", None).await.status,
         StatusCode::NOT_FOUND
     );
-    // Assistant guides, unknown pages, unknown language prefixes, other methods.
+    // T-7030: the old assistant addresses answer 308 to the one connector page's anchors, the
+    // language kept and every query dropped; an unknown guide stays 404.
+    for (uri, to) in [
+        ("/assistants", "/connector#assistants"),
+        ("/assistants?utm=x", "/connector#assistants"),
+        ("/assistants/claude", "/connector#claude"),
+        ("/assistants/chatgpt?x=1", "/connector#chatgpt"),
+        ("/assistants/grok", "/connector#grok"),
+        ("/assistants/other", "/connector#other"),
+        ("/sk/assistants/claude", "/sk/connector#claude"),
+        ("/en/assistants", "/en/connector#assistants"),
+    ] {
+        let a = get(app, uri, None).await;
+        assert_eq!(
+            (a.status, a.header("location")),
+            (StatusCode::PERMANENT_REDIRECT, to),
+            "{uri}"
+        );
+    }
     let a = get(app, "/assistants/nope", None).await;
     assert_eq!(a.status, StatusCode::NOT_FOUND);
     assert_eq!(

@@ -25,7 +25,7 @@ use helpers::{
     jc_resource_sections, jc_schema_org_script, jc_standard, jc_subscriptions, jc_try_prompt,
     jc_visualizations, jc_what, publisher_card_info, render_breakable_html, AboutRow,
     AssistantGuideView, ChartView, ExplorerView, LiveEndpointBox, McpInstallView, ResourceExample,
-    ResourcePreviewConfig, ResourceSectionView, StaticPageView, SubscriptionsView, CONNECTOR_NAME,
+    ResourcePreviewConfig, ResourceSectionView, StaticPageView, SubscriptionsView, GUIDE_IDS,
     STATIC_PAGE_NAMES,
 };
 use i18n::{
@@ -202,27 +202,18 @@ pub struct UiLabels {
     pub mcp: String,
     pub mcp_lead: String,
     pub mcp_url: String,
-    pub mcp_claude_ai: String,
-    pub mcp_claude_ai_1: String,
-    pub mcp_claude_ai_2: String,
-    pub mcp_claude_ai_3: String,
-    pub mcp_editors: String,
     pub mcp_claude: String,
     pub mcp_json: String,
     pub mcp_vscode: String,
     pub mcp_cursor: String,
     pub any_client: String,
-    pub for_developers: String,
     pub connector_status: String,
     pub connector_note: String,
     pub connector_why: String,
-    pub store_address: String,
-    pub guide_open: String,
     pub guide_who: String,
+    pub guide_up: String,
     pub guide_steps: String,
-    pub guide_try: String,
     pub guide_trouble: String,
-    pub guide_back: String,
     pub publishers_help: String,
     pub read_more: String,
     pub followers: String,
@@ -385,27 +376,18 @@ impl UiLabels {
             mcp: t("mcp"),
             mcp_lead: t("mcp_lead"),
             mcp_url: t("mcp_url"),
-            mcp_claude_ai: t("mcp_claude_ai"),
-            mcp_claude_ai_1: t("mcp_claude_ai_1"),
-            mcp_claude_ai_2: t("mcp_claude_ai_2"),
-            mcp_claude_ai_3: t("mcp_claude_ai_3"),
-            mcp_editors: t("mcp_editors"),
             mcp_claude: t("mcp_claude"),
             mcp_json: t("mcp_json"),
             mcp_vscode: t("mcp_vscode"),
             mcp_cursor: t("mcp_cursor"),
             any_client: t("any_client"),
-            for_developers: t("for_developers"),
             connector_status: t("connector_status"),
             connector_note: t("connector_note"),
             connector_why: t("connector_why"),
-            store_address: t("store_address"),
-            guide_open: t("guide_open"),
             guide_who: t("guide_who"),
+            guide_up: t("guide_up"),
             guide_steps: t("guide_steps"),
-            guide_try: t("guide_try"),
             guide_trouble: t("guide_trouble"),
-            guide_back: t("guide_back"),
             publishers_help: t("publishers_help"),
             read_more: t("read_more"),
             followers: t("followers"),
@@ -935,28 +917,11 @@ pub struct StaticPageTemplate {
     pub labels: UiLabels,
     pub page: StaticPageView,
     pub mcp: Option<McpInstallView>,
-}
-
-/// Assistants overview page (`/assistants`, `templates/assistants.html`, D6).
-#[derive(Template)]
-#[template(path = "assistants.html")]
-pub struct AssistantsPageTemplate {
-    pub chrome: PageChrome,
-    pub labels: UiLabels,
-    pub lead: String,
+    /// On `/connector` with an address: one section per assistant and one for any other MCP
+    /// client, the only copy of the setup steps (T-7030); empty on every other page.
+    pub guides: Vec<AssistantGuideView>,
+    /// The question to try the connector with, copied whole.
     pub prompt: String,
-    pub cards: Vec<(String, String)>,
-    pub mcp: Option<McpInstallView>,
-}
-
-/// Assistant step-by-step guide page (`/assistants/{id}`, `templates/guide.html`, D6).
-#[derive(Template)]
-#[template(path = "guide.html")]
-pub struct GuidePageTemplate {
-    pub chrome: PageChrome,
-    pub labels: UiLabels,
-    pub guide: AssistantGuideView,
-    pub mcp: McpInstallView,
 }
 
 /// Framable map page (`/map/{id}`, `templates/map.html`, D6).
@@ -2302,85 +2267,22 @@ pub fn render_static_page(
     let mcp = (name == "connector")
         .then(|| jc_mcp_install(&chrome.branding))
         .flatten();
+    let guides = if mcp.is_some() {
+        GUIDE_IDS
+            .iter()
+            .filter_map(|id| jc_assistant_guide(id, &chrome.branding, &chrome.lang))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let prompt = jc_try_prompt(&chrome.branding, &chrome.lang);
     let tpl = StaticPageTemplate {
         chrome,
         labels,
         page,
         mcp,
-    };
-    tpl.render().ok()
-}
-
-/// Renders the `/assistants` page (D6).
-pub fn render_assistants_page(
-    catalogue: &Catalogue,
-    installation_branding: Option<&BrandingBlock>,
-    lang: &str,
-    had_url_prefix: bool,
-    mount_prefix: &str,
-    csp_nonce: &str,
-) -> String {
-    let chrome = PageChrome::build(
-        catalogue,
-        installation_branding,
-        lang,
-        had_url_prefix,
-        "/assistants",
-        None,
-        mount_prefix,
-        "",
-        csp_nonce,
-    );
-    let labels = UiLabels::for_lang(&chrome.lang);
-    let lead = jc_t("assistants_lead", &chrome.lang).replace("{name}", CONNECTOR_NAME);
-    let prompt = jc_try_prompt(&chrome.branding, &chrome.lang);
-    let cards = vec![
-        ("chatgpt".into(), "ChatGPT".into()),
-        ("claude".into(), "Claude".into()),
-        ("grok".into(), "Grok".into()),
-    ];
-    let mcp = jc_mcp_install(&chrome.branding);
-    let tpl = AssistantsPageTemplate {
-        chrome,
-        labels,
-        lead,
+        guides,
         prompt,
-        cards,
-        mcp,
-    };
-    tpl.render().unwrap_or_default()
-}
-
-/// Renders `/assistants/{id}` (`claude`, `chatgpt`, `grok`, D6).
-pub fn render_assistant_guide_page(
-    catalogue: &Catalogue,
-    installation_branding: Option<&BrandingBlock>,
-    id: &str,
-    lang: &str,
-    had_url_prefix: bool,
-    mount_prefix: &str,
-    csp_nonce: &str,
-) -> Option<String> {
-    let stripped = format!("/assistants/{id}");
-    let chrome = PageChrome::build(
-        catalogue,
-        installation_branding,
-        lang,
-        had_url_prefix,
-        &stripped,
-        None,
-        mount_prefix,
-        "",
-        csp_nonce,
-    );
-    let guide = jc_assistant_guide(id, &chrome.branding, &chrome.lang)?;
-    let mcp = jc_mcp_install(&chrome.branding)?;
-    let labels = UiLabels::for_lang(&chrome.lang);
-    let tpl = GuidePageTemplate {
-        chrome,
-        labels,
-        guide,
-        mcp,
     };
     tpl.render().ok()
 }

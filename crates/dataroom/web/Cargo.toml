@@ -13,6 +13,8 @@ askama = { version = "0.12.1", default-features = false, features = ["humansize"
 chrono = { version = "0.4.38", features = ["serde"] }
 dataroom-core = { path = "../core" }
 dataroom-search = { path = "../search" }
+# The open data pages' built-in Markdown and its one safe renderer (T-7030, T-7031).
+jc-core = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0" }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 url = "2.5.4"

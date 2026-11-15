@@ -2194,17 +2194,9 @@ async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
         );
     }
 
-    // 6. Assistants guide page (`live/dev-assistants-claude.html` parity)
-    let (st, _, claude_html) = send_json(
-        &app,
-        Method::GET,
-        "/assistants/claude",
-        host,
-        None,
-        None,
-        None,
-    )
-    .await;
+    // 6. The connector page with every assistant guide (T-7030; was `/assistants/claude`)
+    let (st, _, claude_html) =
+        send_json(&app, Method::GET, "/connector", host, None, None, None).await;
     let claude_html = normalise_entities(&claude_html);
     assert_eq!(st, StatusCode::OK);
     for expected in [
@@ -2214,9 +2206,10 @@ async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
         "Joinedcontext Open Data",
         "https://api.dev.joinedcontext.com<wbr>/api<wbr>/mcp",
         "Použi Joinedcontext Open Data: Aká je teraz kvalita ovzdušia v Helsinkách?",
-        "Vyskúšajte",
+        // The example prompt shows once for every assistant, in the note under the guides.
+        "Napíšte mu to v otázke, napríklad:",
         "Ak to nejde",
-        "Všetci asistenti",
+        "id=\"claude\"",
     ] {
         assert!(
             claude_html.contains(expected),

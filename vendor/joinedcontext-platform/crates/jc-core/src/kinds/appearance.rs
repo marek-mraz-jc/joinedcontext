@@ -60,6 +60,26 @@ pub struct OrganizationAppearance {
     /// anonymous readers see them (T-6780).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub opendata_widgets: Vec<String>,
+    /// The texts of the open data portal's own pages, each one page in one language in
+    /// Markdown (T-7031); a page or language left out shows the built-in text.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pages: Vec<AppearancePage>,
+}
+
+/// The most page texts an appearance carries: every page in eight languages.
+pub const MAX_APPEARANCE_PAGES: usize = 40;
+
+/// `spec.appearance.pages[]`: one page of the open data portal in one language (T-7031).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AppearancePage {
+    /// The page: `connector`, `privacy`, `terms`, `support` or `accessibility`.
+    pub page: String,
+    /// The language as a two-letter code, e.g. `sk`.
+    pub lang: String,
+    /// The page in Markdown, its first `# heading` the title, at most 16 KiB, e.g.
+    /// `# Podpora\n\nNapíšte nám na opendata@mesto.sk.`; raw HTML shows as text.
+    pub markdown: String,
 }
 
 /// `spec.appearance.colours`: each one a hex colour, `#rgb` or `#rrggbb`.
@@ -166,8 +186,51 @@ impl OrganizationAppearance {
         }
         dashboards("spec.appearance.homeWidgets", &self.home_widgets)?;
         dashboards("spec.appearance.opendataWidgets", &self.opendata_widgets)?;
-        Ok(())
+        pages(&self.pages)
     }
+}
+
+/// Each page text names one of the portal's pages and a language, once, with Markdown of 1 byte
+/// to [`crate::opendata_pages::MAX_PAGE_MARKDOWN`] and no control character but line breaks
+/// and tabs.
+fn pages(pages: &[AppearancePage]) -> Result<()> {
+    for (at, text) in pages.iter().enumerate() {
+        let field = format!("spec.appearance.pages[{at}]");
+        if at >= MAX_APPEARANCE_PAGES {
+            return Err(invalid(&field, "one of at most 40 page texts"));
+        }
+        if !crate::opendata_pages::PAGES.contains(&text.page.as_str()) {
+            return Err(invalid(
+                &format!("{field}.page"),
+                "connector, privacy, terms, support or accessibility",
+            ));
+        }
+        if text.lang.len() != 2 || !text.lang.bytes().all(|b| b.is_ascii_lowercase()) {
+            return Err(invalid(
+                &format!("{field}.lang"),
+                "a two-letter language code such as sk",
+            ));
+        }
+        if pages[..at]
+            .iter()
+            .any(|o| o.page == text.page && o.lang == text.lang)
+        {
+            return Err(invalid(&field, "the only text of its page and language"));
+        }
+        if text.markdown.trim().is_empty()
+            || text.markdown.len() > crate::opendata_pages::MAX_PAGE_MARKDOWN
+            || text
+                .markdown
+                .chars()
+                .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+        {
+            return Err(invalid(
+                &format!("{field}.markdown"),
+                "Markdown of 1 to 16384 bytes without control characters",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Each of `widgets` names a Dashboard as `project/name`, once, at most [`MAX_HOME_WIDGETS`].
@@ -301,6 +364,57 @@ mod tests {
         serde_json::from_value::<OrganizationAppearance>(appearance)
             .expect("parses")
             .validate()
+    }
+
+    /// T-7031: page texts name a page and a language once, within the size cap.
+    #[test]
+    fn page_texts_name_a_page_and_language_once_within_the_cap() {
+        let page = |page: &str, lang: &str, markdown: &str| json!({ "page": page, "lang": lang, "markdown": markdown });
+        let fine = json!({ "pages": [
+            page("connector", "sk", "# Konektor\n\n<script>x</script> shows as text"),
+            page("connector", "en", "# Connector"),
+        ]});
+        assert!(checked(fine.clone()).is_ok(), "{:?}", checked(fine));
+        let long = "a".repeat(crate::opendata_pages::MAX_PAGE_MARKDOWN + 1);
+        for (pages, field) in [
+            (
+                json!([page("admin", "sk", "x")]),
+                "spec.appearance.pages[0].page",
+            ),
+            (
+                json!([page("terms", "SK", "x")]),
+                "spec.appearance.pages[0].lang",
+            ),
+            (
+                json!([page("terms", "svk", "x")]),
+                "spec.appearance.pages[0].lang",
+            ),
+            (
+                json!([page("terms", "sk", " \n")]),
+                "spec.appearance.pages[0].markdown",
+            ),
+            (
+                json!([page("terms", "sk", &long)]),
+                "spec.appearance.pages[0].markdown",
+            ),
+            (
+                json!([page("terms", "sk", "a\u{0}b")]),
+                "spec.appearance.pages[0].markdown",
+            ),
+            (
+                json!([page("terms", "sk", "a"), page("terms", "sk", "b")]),
+                "spec.appearance.pages[1]",
+            ),
+        ] {
+            match checked(json!({ "pages": pages })) {
+                Err(Error::Invalid { field: got, .. }) => assert_eq!(got, field),
+                other => panic!("{field}: {other:?}"),
+            }
+        }
+        assert!(serde_json::from_value::<OrganizationAppearance>(
+            json!({ "pages": [{ "page": "terms", "lang": "sk", "markdown": "x", "html": "<b>" }] })
+        )
+        .is_err());
     }
 
     /// T-6772 (UIX-16): an appearance is validated values, each refusal naming its member.

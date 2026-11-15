@@ -58,21 +58,84 @@
         <div class="primary col-12" role="main"><article class="module-content jc-page">
           <h1 class="page-heading">{{ page.title }}</h1>
           {% if page.name == "connector" %}<p class="jc-connector-status">{{ labels.connector_status }}</p>{% endif %}
-          {% for (heading, paragraphs) in page.sections %}
-            {% if !heading.is_empty() %}<h2>{{ heading }}</h2>{% endif %}
-            {% for paragraph in paragraphs %}<p>{{ paragraph }}</p>{% endfor %}
-          {% endfor %}
           {% if let Some(m) = mcp %}
-          <section class="jc-live jc-mcp" aria-labelledby="jc-mcp-title">
+          <section class="jc-live jc-mcp jc-connect" aria-labelledby="jc-mcp-title">
             <h2 id="jc-mcp-title">{{ labels.mcp }}</h2>
-            <p id="jc-mcp-url" class="jc-code-url">{{ m.url_wbr|safe }}</p>
+            <div class="jc-code">
+              <div class="jc-code-head"><span id="jc-mcp-url-label">{{ labels.mcp_url }}</span><button type="button" class="jc-code-copy" data-jc-copy="jc-mcp-url" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}" aria-label="{{ labels.copy }}: {{ labels.mcp_url }}"><span class="jc-code-copy-label" aria-hidden="true">{{ labels.copy }}</span></button></div>
+              <p id="jc-mcp-url" class="jc-code-url" aria-labelledby="jc-mcp-url-label">{{ m.url_wbr|safe }}</p>
+            </div>
+            {% if !guides.is_empty() %}
+            <p class="jc-connect-guide">{{ labels.assistants_label }}</p>
+            <nav class="jc-guide-menu" aria-label="{{ labels.assistants }}">
+              <ul>
+                {% for g in guides %}<li><a href="#{{ g.id }}">{% if g.id == "claude" %}{% include "jc/card-claude.svg" %}{% else if g.id == "chatgpt" %}{% include "jc/card-chatgpt.svg" %}{% else if g.id == "grok" %}{% include "jc/card-grok.svg" %}{% endif %}<span>{{ g.name }}</span></a></li>{% endfor %}
+              </ul>
+            </nav>
+            {% endif %}
+            <p class="visually-hidden" role="status" aria-live="polite" id="jc-copy-status"></p>
           </section>
           {% endif %}
+          <div class="jc-page-body">{{ page.html|safe }}</div>
+          {% if let Some(m) = mcp %}{% if !guides.is_empty() %}
+          <section class="jc-guides" id="assistants" aria-labelledby="jc-guides-title">
+            <h2 id="jc-guides-title">{{ labels.assistants }}</h2>
+            {% for g in guides %}
+            <details class="jc-guide" id="{{ g.id }}">
+              <summary><h3 id="jc-guide-{{ g.id }}">{% if g.id == "claude" %}{% include "jc/card-claude.svg" %}{% else if g.id == "chatgpt" %}{% include "jc/card-chatgpt.svg" %}{% else if g.id == "grok" %}{% include "jc/card-grok.svg" %}{% endif %}{{ g.title }}</h3></summary>
+              <h4>{{ labels.guide_who }}</h4>
+              {% for line in g.who %}<p>{{ line }}</p>{% endfor %}
+              <h4>{{ labels.guide_steps }}</h4>
+              <ol class="jc-guide-steps">
+                {% for step in g.steps %}
+                  <li>{{ step }}
+                    {% if loop.index0 == g.paste_index %}
+                    <div class="jc-code">
+                      <div class="jc-code-head"><span id="jc-url-label-{{ g.id }}">{{ labels.mcp_url }}</span><button type="button" class="jc-code-copy" data-jc-copy="jc-url-{{ g.id }}" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}" aria-label="{{ labels.copy }}: {{ labels.mcp_url }}"><span class="jc-code-copy-label" aria-hidden="true">{{ labels.copy }}</span></button></div>
+                      <p id="jc-url-{{ g.id }}" class="jc-code-url" aria-labelledby="jc-url-label-{{ g.id }}">{{ m.url_wbr|safe }}</p>
+                    </div>
+                    {% endif %}
+                  </li>
+                {% endfor %}
+              </ol>
+              {% if g.id == "other" %}
+              <p class="jc-mcp-links">
+                <a class="btn btn-default" href="{{ m.vscode }}">{{ labels.mcp_vscode }}</a>
+                <a class="btn btn-default" href="{{ m.cursor }}">{{ labels.mcp_cursor }}</a>
+              </p>
+              <div class="jc-code">
+                <div class="jc-code-head"><span id="jc-mcp-claude-label">{{ labels.mcp_claude }}</span><button type="button" class="jc-code-copy" data-jc-copy="jc-mcp-claude" data-jc-text="{{ m.claude_copy }}" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}" aria-label="{{ labels.copy }}: {{ labels.mcp_claude }}"><span class="jc-code-copy-label" aria-hidden="true">{{ labels.copy }}</span></button></div>
+                <pre id="jc-mcp-claude" aria-labelledby="jc-mcp-claude-label" tabindex="0"><code>{{ m.claude_breakable|safe }}</code></pre>
+              </div>
+              <div class="jc-code">
+                <div class="jc-code-head"><span id="jc-mcp-json-label">{{ labels.mcp_json }}</span><button type="button" class="jc-code-copy" data-jc-copy="jc-mcp-json" data-jc-text="{{ m.json_copy }}" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}" aria-label="{{ labels.copy }}: {{ labels.mcp_json }}"><span class="jc-code-copy-label" aria-hidden="true">{{ labels.copy }}</span></button></div>
+                <pre id="jc-mcp-json" aria-labelledby="jc-mcp-json-label" tabindex="0"><code>{{ m.json_breakable|safe }}</code></pre>
+              </div>
+              {% endif %}
+              <h4>{{ labels.guide_trouble }}</h4>
+              <dl class="jc-guide-trouble">
+                {% for (problem, fix) in g.trouble %}<dt>{{ problem }}</dt><dd>{{ fix }}</dd>{% endfor %}
+              </dl>
+              <p class="jc-guide-checked">{{ g.checked }} <a href="{{ g.help }}" target="_blank" rel="noopener noreferrer">{{ g.help }}</a></p>
+              <p class="jc-guide-up"><a href="#jc-mcp-title">{{ labels.guide_up }}</a></p>
+            </details>
+            {% endfor %}
+            <div class="jc-connector-note" role="note">
+              <svg class="jc-note-icon" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 9v5M10 6v.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              <div>
+                <p>{{ labels.connector_note }}</p>
+                <p class="jc-note-prompt"><q id="jc-note-prompt">{{ prompt }}</q>
+                  <button type="button" class="btn btn-default" data-jc-copy="jc-note-prompt" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}"><span class="jc-code-copy-label">{{ labels.copy }}</span></button></p>
+                <p>{{ labels.connector_why }}</p>
+              </div>
+            </div>
+          </section>
+          {% endif %}{% endif %}
           {% if !page.email.is_empty() %}
             <h2>{{ labels.contact }}</h2>
             <p><a href="mailto:{{ page.email }}">{{ page.email }}</a></p>
           {% endif %}
-          <nav aria-label="{{ labels.about_site }}">
+          <nav class="jc-page-links" aria-label="{{ labels.about_site }}">
             <ul class="list-inline">
               {% for (other_slug, other_title) in page.other_pages %}
                 <li class="list-inline-item"><a href="{{ chrome.lang_prefix }}/{{ other_slug }}">{{ other_title }}</a></li>
