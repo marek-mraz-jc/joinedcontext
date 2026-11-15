@@ -8658,6 +8658,34 @@
       "noMatchHint": "Vymažte filter alebo zvoľte Každý stav a uvidíte aj odvolané a vypršané konektory.",
       "callsPerDay": "Volania za 24 hodín",
       "denialsPerDay": "Odmietnuté za 24 hodín"
+    },
+    "addresses": {
+      "title": "Adresy",
+      "lead": "Kde ľudia a programy nájdu každú organizáciu, tak ako ju smeruje toto nasadenie. Nastavuje ich operátor v jc.toml; nič sa tu nezadáva.",
+      "empty": "Nie sú uvedené žiadne adresy organizácií",
+      "emptyHint": "Toto nasadenie neuvádza žiadne organizácie s vlastnými hostiteľmi. Operátor pridá každú pod [[organizations]] v jc.toml (napríklad portal = \"portal.bbsk.sk\"); dovtedy všetci používajú vlastnú adresu tohto Portálu.",
+      "id": "ID organizácie: {id}",
+      "noId": "ID organizácie: zatiaľ nenastavené. Operátor ho vydá z overenej domény organizácie (z bbsk.sk vznikne sk_bbsk).",
+      "kind": {
+        "portal": "Portál",
+        "shared": "Cesta na zdieľanom hostiteľovi",
+        "host": "Vlastný hostiteľ",
+        "portal-site": "Ďalší portál",
+        "opendata": "Otvorené dáta",
+        "api": "API",
+        "mcp": "MCP servery",
+        "sign-in": "Prihlásenie"
+      },
+      "hint": {
+        "portal": "Vlastný hostiteľ Portálu: tu ľudia pracujú v organizácii.",
+        "shared": "Cesta na hostiteľovi, ktorého zdieľajú organizácie, napr. https://smartcity.sk/sk_bbsk/; prvý segment je ID organizácie.",
+        "host": "Vlastný hostiteľ viazaný na organizáciu, napr. data.bbsk.sk.",
+        "portal-site": "Ďalší verejný portál, ktorý uviedol operátor, napr. mobility.bbsk.sk.",
+        "opendata": "Katalóg otvorených dát, čitateľný bez prihlásenia.",
+        "api": "Kde programy volajú jej Endpointy, napr. …/api/endpoint/air-quality.",
+        "mcp": "Každý MCP server odpovedá na tejto adrese, za ktorou nasleduje jeho projekt a názov, napr. …/api/mcp/doprava/cestovne-poriadky.",
+        "sign-in": "Poskytovateľ identity, kde sa jej ľudia prihlasujú; heslá a druhé faktory sa zadávajú len tam."
+      }
     }
   },
   "projectDelete": {

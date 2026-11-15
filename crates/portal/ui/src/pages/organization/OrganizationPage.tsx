@@ -32,6 +32,7 @@ import { Roles } from "../access/Roles";
 import { ServiceAccounts } from "../access/ServiceAccounts";
 import { OrganizationApplications } from "./OrganizationApplications";
 import { OrganizationModels } from "../models/OrganizationModels";
+import { OrganizationAddresses } from "./OrganizationAddresses";
 import { OrganizationSettings } from "./OrganizationSettings";
 import { OrganizationSetup, SetupReminder } from "./OrganizationSetup";
 import { People } from "./People";
@@ -327,7 +328,12 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
       <PageHeader title={t("organization.title")} description={t(`organization.groupLead.${groupOf(tab)}`)} />
       {tab === "setup" ? null : <SetupReminder />}
       <div className="space-y-8">
-        {tab === "settings" ? <OrganizationSettings /> : null}
+        {tab === "settings" ? (
+          <>
+            <OrganizationSettings />
+            <OrganizationAddresses />
+          </>
+        ) : null}
         {tab === "people" ? <People /> : null}
         {tab === "members" ? <OrganizationMembers /> : null}
         {tab === "roles" ? <Roles project={ORG_NAMESPACE} scope="organization" /> : null}

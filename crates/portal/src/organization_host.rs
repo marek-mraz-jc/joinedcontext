@@ -76,6 +76,80 @@ pub fn parse_catalogues(raw: &str) -> Result<Vec<OrganizationCatalogue>, String>
     Ok(all)
 }
 
+/// What answers at one address of an Organization (API/15 §2, T-7013).
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum AddressKind {
+    /// Its Portal on a host of its own.
+    Portal,
+    /// Its open data portal.
+    Opendata,
+    /// Its APIs (the gateway).
+    Api,
+    /// Its MCP servers, each at `{url}{project}/{server}`.
+    Mcp,
+    /// A further portal host the operator listed for it (ODP-08).
+    PortalSite,
+    /// A host of its own bound at a root (`[[hosts]]`).
+    Host,
+    /// Its path on a host Organizations share: `https://{base}/{id}/`.
+    Shared,
+    /// Where its people sign in: the Portal's identity provider.
+    SignIn,
+}
+
+/// One address: what answers and where.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OrganizationAddress {
+    pub kind: AddressKind,
+    /// The address, e.g. `https://portal.bbsk.sk/` or `https://smartcity.sk/sk_bbsk/`.
+    #[schema(value_type = String)]
+    pub url: Url,
+}
+
+/// Every address of one Organization, as jc's host registry routes it.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OrganizationAddresses {
+    /// The `Organization` manifest's name.
+    pub organization: String,
+    /// Its id (`sk_bbsk`, EP-186), once jc sets one.
+    #[serde(default)]
+    pub organization_id: Option<String>,
+    pub addresses: Vec<OrganizationAddress>,
+}
+
+/// `JC_PORTAL_ORGANIZATION_ADDRESSES`: a JSON array of [`OrganizationAddresses`], each
+/// Organization once, every address an http(s) URL with a host.
+pub fn parse_addresses(raw: &str) -> Result<Vec<OrganizationAddresses>, String> {
+    if raw.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let all: Vec<OrganizationAddresses> =
+        serde_json::from_str(raw).map_err(|e| format!("not a list of addresses: {e}"))?;
+    for (i, org) in all.iter().enumerate() {
+        if all[..i].iter().any(|o| o.organization == org.organization) {
+            return Err(format!("{}: named twice", org.organization));
+        }
+        if let Some(id) = &org.organization_id {
+            jc_core::names::OrganizationId::parse(id)
+                .map_err(|e| format!("{}: {e}", org.organization))?;
+        }
+        for a in &org.addresses {
+            if !matches!(a.url.scheme(), "http" | "https") || a.url.host_str().is_none() {
+                return Err(format!(
+                    "{}: '{}' is not an http(s) URL",
+                    org.organization, a.url
+                ));
+            }
+        }
+    }
+    Ok(all)
+}
+
 /// The host the request reached, as the router that placed it saw it (jc's `Mount`: a trusted
 /// proxy's `X-Forwarded-Host` already applied). Without it the `Host` header counts.
 #[derive(Clone, Debug)]

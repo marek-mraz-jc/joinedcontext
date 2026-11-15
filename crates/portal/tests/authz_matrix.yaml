@@ -268,6 +268,15 @@ routes:
   - route: GET /organization/health
     rule: "org-admin"
     expect: [401, 403, 403, 403, 403, allow, 403, 403]
+  - route: POST /organization-ids/challenge
+    rule: "a person of the operators' group (JC_PORTAL_BOOTSTRAP_ADMINS); 403 for everyone else (EP-186)"
+    expect: [403, 403, 403, 403, 403, 403, 403, 403]
+  - route: POST /organization-ids
+    rule: "a person of the operators' group with a second factor (EP-186, PF-78); 403 for everyone else"
+    expect: [403, 403, 403, 403, 403, 403, 403, 403]
+  - route: GET /organization/addresses
+    rule: "any signed-in person: the answer holds only the Organizations the caller belongs to (T-7013)"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
   - route: GET /organization/portal-hosts
     rule: "propose on Portal in at least one Organization (OWN_SETTINGS_KINDS narrows org admins to their own); 403 for a caller who makes portals nowhere (ODP-15)"
     expect: [401, 403, 403, 403, 403, allow, 403, 403]

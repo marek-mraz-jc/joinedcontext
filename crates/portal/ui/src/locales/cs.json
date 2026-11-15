@@ -8658,6 +8658,34 @@
       "noMatchHint": "Vymažte filtr nebo zvolte Každý stav a uvidíte i odvolané a vypršelé konektory.",
       "callsPerDay": "Volání za 24 hodin",
       "denialsPerDay": "Odmítnuté za 24 hodin"
+    },
+    "addresses": {
+      "title": "Adresy",
+      "lead": "Kde lidé a programy najdou každou organizaci, tak jak ji směruje toto nasazení. Nastavuje je operátor v jc.toml; nic se zde nezadává.",
+      "empty": "Nejsou uvedeny žádné adresy organizací",
+      "emptyHint": "Toto nasazení neuvádí žádné organizace s vlastními hostiteli. Operátor přidá každou pod [[organizations]] v jc.toml (například portal = \"portal.bbsk.sk\"); do té doby všichni používají vlastní adresu tohoto Portálu.",
+      "id": "ID organizace: {id}",
+      "noId": "ID organizace: zatím nenastaveno. Operátor jej vydá z ověřené domény organizace (z bbsk.sk vznikne sk_bbsk).",
+      "kind": {
+        "portal": "Portál",
+        "shared": "Cesta na sdíleném hostiteli",
+        "host": "Vlastní hostitel",
+        "portal-site": "Další portál",
+        "opendata": "Otevřená data",
+        "api": "API",
+        "mcp": "MCP servery",
+        "sign-in": "Přihlášení"
+      },
+      "hint": {
+        "portal": "Vlastní hostitel Portálu: zde lidé pracují v organizaci.",
+        "shared": "Cesta na hostiteli, kterého sdílejí organizace, např. https://smartcity.sk/sk_bbsk/; první segment je ID organizace.",
+        "host": "Vlastní hostitel vázaný na organizaci, např. data.bbsk.sk.",
+        "portal-site": "Další veřejný portál, který uvedl operátor, např. mobility.bbsk.sk.",
+        "opendata": "Katalog otevřených dat, čitelný bez přihlášení.",
+        "api": "Kde programy volají její Endpointy, např. …/api/endpoint/air-quality.",
+        "mcp": "Každý MCP server odpovídá na této adrese, za kterou následuje jeho projekt a název, např. …/api/mcp/doprava/cestovne-poriadky.",
+        "sign-in": "Poskytovatel identity, kde se její lidé přihlašují; hesla a druhé faktory se zadávají jen tam."
+      }
     }
   },
   "projectDelete": {
