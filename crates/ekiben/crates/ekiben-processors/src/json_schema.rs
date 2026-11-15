@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use ekiben_core::{Batch, ComponentConfig, CoreError, ProcContext, Processor, Registry};
+use ekiben_core::{Batch, ComponentConfig, CoreError, Part, ProcContext, Processor, Registry};
 use regex::Regex;
 use serde_json::Value;
 
@@ -56,6 +56,19 @@ impl JsonSchemaProcessor {
     }
 }
 
+/// The message as JSON: a structured value (a mapping's result) is converted as it is, without
+/// serialising it and parsing it back; bytes are parsed once.
+fn document(part: &Part) -> Result<Value, String> {
+    if part.holds_structured() {
+        return part
+            .as_structured_ref()
+            .map(|v| v.to_json_value())
+            .map_err(|e| format!("failed to parse message as JSON: {e}"));
+    }
+    serde_json::from_slice::<Value>(&part.as_bytes_ref())
+        .map_err(|e| format!("failed to parse message as JSON: {e}"))
+}
+
 /// `schema_path` is `file://<path>` or a path, read inside the stream's file root when one is set.
 fn read_schema_path(path: &str, file_root: Option<&std::path::Path>) -> Result<String, CoreError> {
     let rel = path.strip_prefix("file://").unwrap_or(path);
@@ -90,9 +103,7 @@ impl Processor for JsonSchemaProcessor {
         mut batch: Batch,
     ) -> Result<Vec<Batch>, CoreError> {
         for part in batch.iter_mut() {
-            let doc = serde_json::from_slice::<Value>(&part.as_bytes_ref())
-                .map_err(|e| format!("failed to parse message as JSON: {e}"));
-            match doc {
+            match document(part) {
                 Ok(doc) => {
                     let errors = self.schema.validate(&doc);
                     if !errors.is_empty() {
@@ -930,6 +941,20 @@ mod tests {
 
     fn errors(schema: Value, doc: Value) -> Vec<String> {
         Schema::compile(schema).unwrap().validate(&doc)
+    }
+
+    #[test]
+    fn a_structured_message_is_validated_as_it_is_and_bytes_are_parsed() {
+        let structured =
+            Part::from_structured(ekiben_bloblang::Value::from_json_value(json!({"a": 1})));
+        assert_eq!(document(&structured).unwrap(), json!({"a": 1}));
+        assert_eq!(
+            document(&Part::from_str(r#"{"a":2}"#)).unwrap(),
+            json!({"a": 2})
+        );
+        assert!(document(&Part::from_str("{nope"))
+            .unwrap_err()
+            .starts_with("failed to parse message as JSON"));
     }
 
     #[test]

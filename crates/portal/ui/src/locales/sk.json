@@ -2759,7 +2759,16 @@
       "modeChoice": {
         "upsert": "Vytvoriť alebo zlúčiť",
         "replace": "Nahradiť celú entitu",
-        "update-attrs": "Iba aktualizovať atribúty"
+        "update-attrs": "Iba aktualizovať atribúty",
+        "merge": "Zlúčiť do častí atribútov",
+        "backfill": "Iba pridať do histórie"
+      },
+      "modeHint": {
+        "upsert": "Vytvorí entitu alebo aktualizuje atribúty, ktoré záznam uvádza; ostatné atribúty zostanú.",
+        "replace": "Entita bude presne záznam: atribúty, ktoré neuvádza, sa odstránia. Iba keď entitu zapisuje len táto pipeline.",
+        "update-attrs": "Aktualizuje na entite atribúty, ktoré záznam uvádza; ostatné atribúty zostanú.",
+        "merge": "Hĺbkovo zlúči záznam, takže dve pipeline môžu zapisovať každá časť jedného atribútu, napríklad address.streetAddress a address.postalCode.",
+        "backfill": "Pridá minulé merania iba do histórie; aktuálna hodnota zostane. Vyžaduje operáciu pripájania k histórii v Policy endpointu."
       },
       "lastRun": "Posledný beh"
     },

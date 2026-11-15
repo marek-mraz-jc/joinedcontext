@@ -738,7 +738,8 @@ async fn try_mapping(
         (None, messages) => {
             let messages = messages.unwrap_or_default();
             let spec = pipeline_test::tested_spec(&caller.identity, state, project, &pipeline)?;
-            pipeline_test::run_messages(state, project, &spec, &messages).await?
+            let name = pipeline_test::manifest_name(&pipeline);
+            pipeline_test::run_messages(state, project, &spec, &name, &messages).await?
         }
     };
     // The records the mapping made, judged where their write is: the record check a proposal
@@ -897,7 +898,7 @@ async fn sample_source(
             })
         }
     };
-    let trace = pipeline_test::run_harness(state, project, &plan, &sample).await?;
+    let trace = pipeline_test::run_harness(state, project, &plan, "", &sample).await?;
     let fields = fields_of(&trace.mapping);
     let answer = json!({
         "count": trace.mapping.len(),

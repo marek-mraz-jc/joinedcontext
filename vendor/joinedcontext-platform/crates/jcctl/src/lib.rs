@@ -6,7 +6,7 @@
 pub mod apisix;
 pub use jc_manifest::bento;
 pub use jc_manifest::{
-    assemble, catalogue, foreign_models, history, lifetime, loader, model_schema,
+    assemble, attributes, catalogue, foreign_models, history, lifetime, loader, model_schema,
     pipeline_identity, roles,
 };
 pub mod bench_org;

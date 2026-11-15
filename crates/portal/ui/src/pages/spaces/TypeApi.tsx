@@ -22,6 +22,7 @@ import {
   servedRepresentations,
 } from "../../components/endpoints/links";
 import { CodeBlock, Alert, Button, Card, ExternalLink, Field, Select } from "../../components/ui";
+import { endpointView } from "../../components/ui/safeHref";
 
 /** The calls one Endpoint answers for one type, as a program writes them. */
 export function callsOf(
@@ -275,7 +276,7 @@ export function TypeApi({
               return (
                 <li key={hook.metadata.name} className="text-body [overflow-wrap:anywhere]">
                   <span className="font-semibold">{hook.metadata.name}</span>{" "}
-                  <span className="font-mono text-caption text-fg-muted">{typeof uri === "string" ? uri : ""}</span>
+                  <span className="font-mono text-caption text-fg-muted">{typeof uri === "string" ? endpointView(uri).shown : ""}</span>
                 </li>
               );
             })}

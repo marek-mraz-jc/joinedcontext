@@ -105,6 +105,11 @@ pub struct PipelineSpec {
     /// row comes from (PL-106…PL-110).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<super::pipeline_history::History>,
+    /// Per written type, how chosen attributes are written: their `observedAt`, `unitCode` and
+    /// `datasetId`, the source's system members dropped and its own dates kept (G-15). The
+    /// rendered stream applies them after the author's steps, before history and lifetime.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attributes: Vec<super::pipeline_attributes::AttributeRules>,
     /// How the pipeline follows a record its source removed (PL-96…PL-100); absent, nothing is
     /// deleted, as with `mode: never`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -587,6 +592,14 @@ pub enum OutputMode {
     Replace,
     /// Update or append attributes onto existing entity.
     UpdateAttrs,
+    /// Deep-merge the record into the entity (`entityOperations/merge`, NGSI-LD 5.6.20): a
+    /// sub-attribute the record does not name stays, and `urn:ngsi-ld:null` deletes one, so two
+    /// pipelines can each own part of one attribute (G-17).
+    Merge,
+    /// Append the record's attribute instances to the entity's history only
+    /// (`POST /temporal/entities/{id}/attrs`, 5.6.12): the current value is never touched, for
+    /// a backfill of past readings (G-17).
+    Backfill,
 }
 
 impl OutputMode {
@@ -596,6 +609,19 @@ impl OutputMode {
             Self::Upsert => "upsert",
             Self::Replace => "replace",
             Self::UpdateAttrs => "update-attrs",
+            Self::Merge => "merge",
+            Self::Backfill => "backfill",
+        }
+    }
+
+    /// The one operation a Policy grants for this mode's write (PL-20, G-17): the gateway
+    /// authorizes the Endpoint call it renders to by exactly this operation.
+    pub const fn grant(&self) -> crate::kinds::policy::Operation {
+        use crate::kinds::policy::Operation;
+        match self {
+            Self::Upsert | Self::Replace | Self::UpdateAttrs => Operation::UpsertBatch,
+            Self::Merge => Operation::MergeBatch,
+            Self::Backfill => Operation::AppendAttrsTemporal,
         }
     }
 }
@@ -1113,6 +1139,21 @@ impl PipelineSpec {
                 .collect();
             super::pipeline_history::validate(&self.history, written.as_ref())?;
         }
+        if !self.attributes.is_empty() {
+            let outputs = self.outputs();
+            let written: Option<std::collections::BTreeSet<&str>> = outputs
+                .iter()
+                .map(|out| out.entity_type.as_deref())
+                .collect();
+            super::pipeline_attributes::validate(
+                &self.attributes,
+                &super::pipeline_attributes::Context {
+                    written: written.as_ref(),
+                    history: &self.history,
+                    author_texts: &self.author_texts(),
+                },
+            )?;
+        }
         if let Some(source_deletes) = &self.source_deletes {
             source_deletes.validate(&super::pipeline_source_deletes::Context {
                 has_clock: self.period.is_some() || self.schedule.is_some(),
@@ -1282,6 +1323,12 @@ pub fn validate_processor_reading(
         )));
     }
     validate_cache_names(field, processor)?;
+    if let Some(step) = literal_dsn(processor) {
+        return Err(refused(format!(
+            "the `dsn` of `{step}` is written into the step; give it as `${{NAME}}` from a \
+             secretRef the pipeline declares, so the password never sits in Git (PL-52)"
+        )));
+    }
     // A `mapping` body and a `${! … }` interpolation are Bloblang too, and a step that reads
     // the runner is the same escape wherever it is written.
     let mut texts = Vec::new();
@@ -1392,6 +1439,39 @@ fn nested_refused(value: &serde_json::Value) -> Option<&'static str> {
                 .filter(|_| inner.is_object() || inner.is_null())
                 .copied()
                 .or_else(|| nested_refused(inner))
+        }),
+        _ => None,
+    }
+}
+
+/// The sql processors, whose `dsn` holds the database password.
+const DSN_PROCESSORS: &[&str] = &["sql_insert", "sql_raw", "sql_select"];
+
+/// The first sql processor, however deeply nested, whose `dsn` is anything but one `${NAME}`.
+fn literal_dsn(value: &serde_json::Value) -> Option<&'static str> {
+    let is_var = |dsn: &str| {
+        dsn.strip_prefix("${")
+            .and_then(|rest| rest.strip_suffix('}'))
+            .is_some_and(|name| {
+                !name.is_empty()
+                    && name
+                        .bytes()
+                        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+            })
+    };
+    match value {
+        serde_json::Value::Array(items) => items.iter().find_map(literal_dsn),
+        serde_json::Value::Object(fields) => fields.iter().find_map(|(key, inner)| {
+            DSN_PROCESSORS
+                .iter()
+                .find(|name| **name == key.as_str())
+                .filter(|_| {
+                    inner
+                        .get("dsn")
+                        .is_some_and(|dsn| !dsn.as_str().is_some_and(is_var))
+                })
+                .copied()
+                .or_else(|| literal_dsn(inner))
         }),
         _ => None,
     }
@@ -1997,6 +2077,43 @@ mod runner_registry_tests {
         );
         super::validate_processor("spec.steps", &json!({ "mapping": "root = this" }))
             .expect("mapping is built by the runner");
+    }
+
+    #[test]
+    fn an_sql_step_takes_its_dsn_from_a_declared_secret_only() {
+        let step = |dsn: &str| {
+            json!({ "branch": { "processors": [ { "sql_select": {
+                "driver": "postgres", "dsn": dsn, "table": "stations", "columns": ["name"]
+            } } ] } })
+        };
+        let err = super::validate_processor("spec.steps", &step("postgres://u:pw@db/x"))
+            .expect_err("a literal dsn is refused")
+            .to_string();
+        assert!(err.contains("`dsn` of `sql_select`"), "{err}");
+        assert!(super::validate_processor("spec.steps", &step("${DB}x")).is_err());
+        super::validate_processor_reading("spec.steps", &step("${STATIONS_DB}"), &["STATIONS_DB"])
+            .expect("a declared secret variable is the dsn");
+    }
+
+    /// G-24/G-25 (T-7061): `javascript` stays refused as a raw author step, top level or nested;
+    /// it may only reach the runner through a reconciler-rendered Script reference.
+    #[test]
+    fn javascript_is_refused_as_a_raw_step_top_level_and_nested() {
+        let top = super::validate_processor(
+            "spec.steps",
+            &json!({ "javascript": { "code": "(() => { return this; })()" } }),
+        )
+        .expect_err("raw javascript is refused")
+        .to_string();
+        assert!(top.contains("processor `javascript`"), "{top}");
+
+        let nested = super::validate_processor(
+            "spec.steps",
+            &json!({ "try": [ { "javascript": { "code": "1" } } ] }),
+        )
+        .expect_err("javascript nested in try is refused")
+        .to_string();
+        assert!(nested.contains("`javascript` inside `try`"), "{nested}");
     }
 }
 

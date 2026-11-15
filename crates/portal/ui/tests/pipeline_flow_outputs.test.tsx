@@ -141,6 +141,20 @@ describe("a second output edited in place", () => {
     expect(screen.queryByTestId("flow-node-output-0")).not.toBeInTheDocument();
   });
 
+  it("offers merge and backfill, each with a hint the mode select is described by", async () => {
+    const seen = vi.fn();
+    render(<Host seen={seen} />);
+    await userEvent.click(screen.getByRole("button", { name: en.pipelines.flow.addOutput }));
+    const mode = screen.getByLabelText(en.pipelines.field.outputMode);
+    expect(mode).toHaveAccessibleDescription(en.pipelines.field.modeHint.upsert);
+    for (const choice of ["merge", "backfill"] as const) {
+      await userEvent.selectOptions(mode, choice);
+      expect(screen.getByRole("option", { name: en.pipelines.field.modeChoice[choice] })).toBeInTheDocument();
+      expect(mode).toHaveAccessibleDescription(en.pipelines.field.modeHint[choice]);
+      expect(seen).toHaveBeenLastCalledWith(expect.objectContaining({ moreOutputs: [{ mode: choice }] }));
+    }
+  });
+
   it("removes a second output with Delete and never the first one", async () => {
     const seen = vi.fn();
     render(<Host seen={seen} />);
