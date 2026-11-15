@@ -42,6 +42,7 @@ fn endpoint(slug: &str, title: &str, project: &str) -> Endpoint {
         slug: slug.to_owned(),
         title: [("en".to_owned(), title.to_owned())].into(),
         description: [("en".to_owned(), format!("{title} air"))].into(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment(&space).ok(),
         space,
         project: project.to_owned(),
         audience: Audience::Public,

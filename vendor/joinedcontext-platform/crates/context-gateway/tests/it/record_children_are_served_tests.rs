@@ -93,6 +93,7 @@ fn endpoint(slug: &str, space: &str, representations: Vec<Representation>) -> En
         title: Default::default(),
         description: Default::default(),
         space: space.to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment(space).ok(),
         project: space.to_owned(),
         audience: Audience::Public,
         allowed_projects: Vec::new(),

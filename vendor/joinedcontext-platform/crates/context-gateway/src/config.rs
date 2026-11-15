@@ -283,6 +283,14 @@ impl Config {
             SystemTime::now(),
         )
         .map_err(|(name, reason)| ConfigError::Invalid { name, reason })?;
+        // The store reads `JC_TENANT_NAMES` on every reload (PF-130): a value it cannot read
+        // does not start.
+        crate::store::TenantNames::parse(var("JC_TENANT_NAMES").ok().as_deref()).map_err(
+            |reason| ConfigError::Invalid {
+                name: "JC_TENANT_NAMES",
+                reason,
+            },
+        )?;
         let domain_verifications_url = var("JC_GATEWAY_DOMAIN_VERIFICATIONS_URL")
             .ok()
             .filter(|url| !url.trim().is_empty());

@@ -205,9 +205,9 @@ async fn from_view(
         ),
     };
     let mut hop = Request::new(Body::empty());
-    tenancy::pin_caller(&mut hop, &endpoint.space, subject).map_err(|problem| {
-        tracing::error!(space = %endpoint.space, %problem, "endpoint names an unusable space");
-        Box::new(ProblemDetails::internal().into_response())
+    tenancy::pin_caller(&mut hop, endpoint.tenant.as_ref(), subject).map_err(|unpinned| {
+        tracing::error!(space = %endpoint.space, %unpinned, "endpoint names an unusable space");
+        Box::new(unpinned.problem().into_response())
     })?;
     let mut headers = std::mem::take(hop.headers_mut());
     headers.insert(ACCEPT, HeaderValue::from_static(accept));

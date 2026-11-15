@@ -1635,6 +1635,7 @@ mod tests {
             title: [("en".to_owned(), format!("Air quality {slug}"))].into(),
             description: Default::default(),
             space: "ovzdusie".to_owned(),
+            tenant: crate::middleware::tenancy::Tenant::segment("ovzdusie").ok(),
             project: "ovzdusie".to_owned(),
             audience: Audience::Public,
             allowed_projects: Vec::new(),

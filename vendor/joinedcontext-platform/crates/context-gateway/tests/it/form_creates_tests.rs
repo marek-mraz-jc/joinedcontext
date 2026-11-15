@@ -77,6 +77,7 @@ fn endpoint(per_day: Option<u32>) -> Endpoint {
         title: std::collections::BTreeMap::new(),
         description: std::collections::BTreeMap::new(),
         space: SPACE.to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment(SPACE).ok(),
         project: SPACE.to_owned(),
         audience: Audience::Public,
         allowed_projects: Vec::new(),

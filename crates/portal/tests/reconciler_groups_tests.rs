@@ -423,6 +423,7 @@ fn derived(name: &str, member: &str, organization: Option<&str>) -> DerivedGroup
         name: name.to_owned(),
         members: [member.to_owned()].into_iter().collect(),
         jc_org: None,
+        jc_org_id: None,
         jc_groups: organization.map(|organization| format!("/{organization}/{name}")),
         second_factor: false,
     }
@@ -433,6 +434,7 @@ fn bound_group(organization: &str, member: &str) -> DerivedGroup {
         name: format!("{organization}_bound"),
         members: [member.to_owned()].into_iter().collect(),
         jc_org: Some(organization.to_owned()),
+        jc_org_id: None,
         jc_groups: None,
         second_factor: false,
     }
@@ -737,7 +739,7 @@ fn only_an_organization_scoped_binding_gives_the_organization() {
     let vendor = NEWCOMER;
     let world = || {
         vec![
-            organizational("Organization", "hel", json!({})),
+            organizational("Organization", "hel", json!({ "domain": "hel.fi" })),
             organizational("Organization", "espoo", json!({})),
             organizational("Project", "doprava", json!({ "organizationRef": "hel" })),
             organizational("Project", "tapiola", json!({ "organizationRef": "espoo" })),
@@ -776,8 +778,12 @@ fn only_an_organization_scoped_binding_gives_the_organization() {
     let all = groups(&mirror_with(world()));
     let hel = find(&all, "hel_bound");
     assert_eq!(hel.jc_org.as_deref(), Some("hel"));
+    // EP-188: the group names the Organization's id too, read from its domain; an
+    // Organization without one names none.
+    assert_eq!(hel.jc_org_id.as_deref(), Some("fi_hel"));
     assert_eq!(hel.members, [LEAD.to_owned()].into_iter().collect());
     let espoo = find(&all, "espoo_bound");
+    assert_eq!(espoo.jc_org_id, None);
     assert_eq!(espoo.jc_org.as_deref(), Some("espoo"));
     assert_eq!(espoo.members, [SNEAKY.to_owned()].into_iter().collect());
     // The vendor reaches the project by name, and no group that gives them `jc_org` holds them.

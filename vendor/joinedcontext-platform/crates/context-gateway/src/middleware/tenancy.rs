@@ -10,11 +10,117 @@
 
 use crate::auth::subject::Subject;
 use axum::extract::Request;
-use axum::http::header::{InvalidHeaderValue, AUTHORIZATION, COOKIE};
+use axum::http::header::{AUTHORIZATION, COOKIE};
 use axum::http::{HeaderMap, HeaderName, HeaderValue};
+use jc_core::names::TenantName;
 
-/// The header that pins the broker's tenant. Only the gateway ever sets it (GW20).
-pub const TENANT: HeaderName = HeaderName::from_static("ngsild-tenant");
+/// The header that pins the broker's tenant. Only the gateway ever sets it (GW20), and only
+/// through [`pin_tenant`] with a [`Tenant`] an Endpoint record holds: no other module names it,
+/// so no bare string reaches the hop (design 10.7, a test greps for it).
+const TENANT: HeaderName = HeaderName::from_static("ngsild-tenant");
+/// The Organization id of the space a hop is pinned to, from the Endpoint record (EP-188): the
+/// broker checks it against the tenant's Organization half for every caller who is not a member.
+pub const SPACE_ORGANIZATION: HeaderName = HeaderName::from_static("x-jc-space-organization");
+/// The verified caller's Organization id, a `jc_org_id` entry of their token, sent beside
+/// [`MEMBER`] when it names the tenant's Organization (EP-188): the broker admits a member only
+/// when it equals the tenant's Organization half.
+pub const ORGANIZATION_ID: HeaderName = HeaderName::from_static("x-jc-organization-id");
+
+/// The tenant a hop to the broker is pinned to (EP-22, PF-130): a [`TenantName`] under
+/// `JC_TENANT_NAMES=organization`, the space's segment under `segment` (the release before the
+/// rename). Both are checked when built, so the header value is always legal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tenant {
+    value: HeaderValue,
+    organization: Option<HeaderValue>,
+}
+
+impl Tenant {
+    /// The tenant `{organization id}__{segment}`, which names its Organization to the broker.
+    pub fn named(name: &TenantName) -> jc_core::Result<Self> {
+        let header = |value: &str| {
+            HeaderValue::from_str(value).map_err(|_| jc_core::Error::Name {
+                field: "tenant",
+                value: value.to_owned(),
+                reason: "must be a legal header value",
+            })
+        };
+        Ok(Self {
+            value: header(name.as_str())?,
+            organization: Some(header(name.organization())?),
+        })
+    }
+
+    /// The tenant of a space under `JC_TENANT_NAMES=segment`: the segment as it is, checked as
+    /// a space name, naming no Organization.
+    pub fn segment(segment: &str) -> jc_core::Result<Self> {
+        jc_core::names::validate_space_name(segment)?;
+        Ok(Self {
+            // A space name is `[a-z0-9-]`, always a legal header value.
+            value: HeaderValue::from_str(segment).map_err(|_| jc_core::Error::Name {
+                field: "space",
+                value: segment.to_owned(),
+                reason: "must be a legal header value",
+            })?,
+            organization: None,
+        })
+    }
+
+    /// The tenant as the `NGSILD-Tenant` header carries it.
+    pub fn as_str(&self) -> &str {
+        self.value.to_str().unwrap_or_default()
+    }
+
+    /// The Organization id half, `None` for a segment tenant.
+    pub fn organization(&self) -> Option<&str> {
+        self.organization.as_ref().and_then(|o| o.to_str().ok())
+    }
+}
+
+/// A hop whose Endpoint has no tenant (PF-130): its project names no Organization with a
+/// verified domain the repository holds, so the space has no name at the broker yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Unpinned;
+
+impl Unpinned {
+    /// `503`: an operator fixes the Project, the caller can do nothing but wait.
+    pub fn problem(self) -> jc_core::error::ProblemDetails {
+        jc_core::error::ProblemDetails::new(503, "service-unavailable", "Service Unavailable")
+            .with_detail(
+                "This Endpoint's space has no tenant yet: its project names no Organization with \
+                 a verified domain. An operator names one in the Project's spec.organizationRef.",
+            )
+    }
+}
+
+impl std::fmt::Display for Unpinned {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "the Endpoint's project resolves to no Organization, so its space has no tenant",
+        )
+    }
+}
+
+/// The tenant [`pin_tenant`] pinned on `headers`, if any.
+pub fn pinned_tenant(headers: &HeaderMap) -> Option<&str> {
+    headers.get(TENANT).and_then(|tenant| tenant.to_str().ok())
+}
+
+/// Copies the pinned tenant and its space Organization from `pinned` onto a hop the gateway
+/// makes for the same request (a condition probe, an unlinking).
+pub fn copy_tenant(pinned: &HeaderMap, headers: &mut HeaderMap) {
+    for name in [TENANT, SPACE_ORGANIZATION] {
+        while headers.remove(&name).is_some() {}
+        if let Some(value) = pinned.get(&name) {
+            headers.insert(name, value.clone());
+        }
+    }
+}
+
+/// Removes the tenant from an answer: it is an internal name (SP-05).
+pub fn drop_tenant(headers: &mut HeaderMap) {
+    while headers.remove(&TENANT).is_some() {}
+}
 
 /// Headers a client must never be able to set, because a downstream component would
 /// believe them (Deployment/10 section 4, GW25); every name under [`IDENTITY_PREFIX`] is
@@ -128,16 +234,17 @@ pub fn strip_client_headers(request: &mut Request) {
     drop_identity(headers);
 }
 
-/// Pins the tenant for the internal hop to the broker (EP-22, GW20).
+/// Pins the tenant for the internal hop to the broker (EP-22, GW20), and the Organization of
+/// its space when the tenant names one (EP-188).
 ///
-/// Called after the slug resolved, with the space the endpoint names, never with anything
-/// derived from the request. A space name is a DNS-1123 label, so it is always a legal
-/// header value; a name that is not is a reconciler bug and pins nothing rather than
-/// pinning something wrong.
-pub fn pin_tenant(request: &mut Request, space: &str) -> Result<(), InvalidHeaderValue> {
-    let value = HeaderValue::from_str(space)?;
-    request.headers_mut().insert(TENANT, value);
-    Ok(())
+/// Called after the slug resolved, with the tenant the Endpoint record holds, never with
+/// anything derived from the request. `insert` replaces every earlier value.
+pub fn pin_tenant(headers: &mut HeaderMap, tenant: &Tenant) {
+    headers.insert(TENANT, tenant.value.clone());
+    while headers.remove(&SPACE_ORGANIZATION).is_some() {}
+    if let Some(organization) = &tenant.organization {
+        headers.insert(SPACE_ORGANIZATION, organization.clone());
+    }
 }
 
 /// Pins the tenant and the verified caller for the hop to the broker, and drops the caller's
@@ -150,18 +257,23 @@ pub fn pin_tenant(request: &mut Request, space: &str) -> Result<(), InvalidHeade
 /// broker whole. A caller under a data-space agreement is its participant's DID alone
 /// (`x-jc-did`, DS-02): no role, no account, no opt-in, so a broker that does not read the
 /// header yet takes the hop as the cluster's own and refuses it, never as the public's.
+///
+/// A member's hop also carries [`ORGANIZATION_ID`], the entry of their verified `jc_org_id` that
+/// names the tenant's Organization; a member whose token lists none carries no id, and the
+/// broker's Organization check refuses them (EP-188). `Err` when the Endpoint has no tenant.
 pub fn pin_caller(
     request: &mut Request,
-    space: &str,
+    tenant: Option<&Tenant>,
     subject: &Subject,
-) -> Result<(), InvalidHeaderValue> {
-    pin_tenant(request, space)?;
+) -> Result<(), Unpinned> {
+    let tenant = tenant.ok_or(Unpinned)?;
     let asked = super::response::asked_about_narrowing(request);
     let headers = request.headers_mut();
     for name in [AUTHORIZATION, COOKIE] {
         while headers.remove(&name).is_some() {}
     }
     drop_identity(headers);
+    pin_tenant(headers, tenant);
     let (channel, actor) = provenance(subject);
     headers.insert(PROVENANCE_CHANNEL, HeaderValue::from_static(channel));
     one(headers, PROVENANCE_ACTOR, Some(&actor));
@@ -175,6 +287,10 @@ pub fn pin_caller(
     }
     request_id(headers);
     headers.extend(caller_headers(subject));
+    let home = tenant
+        .organization()
+        .filter(|org| subject.member_of_organization && subject.organization_ids.contains(*org));
+    one(headers, ORGANIZATION_ID, home);
     if subject.agreement.is_some() {
         return Ok(());
     }
@@ -347,7 +463,12 @@ pub fn as_gateway(headers: &mut HeaderMap) {
     for name in [AUTHORIZATION, COOKIE] {
         while headers.remove(&name).is_some() {}
     }
+    // The space's Organization is the Endpoint record's, not the caller's: it stays.
+    let space_organization = headers.get(&SPACE_ORGANIZATION).cloned();
     drop_identity(headers);
+    if let Some(organization) = space_organization {
+        headers.insert(SPACE_ORGANIZATION, organization);
+    }
     headers.insert(CLIENT, HeaderValue::from_static(GATEWAY_CLIENT));
     headers.insert(ROLES, HeaderValue::from_static(""));
 }
@@ -367,6 +488,10 @@ pub fn keep_provenance(pinned: &HeaderMap, headers: &mut HeaderMap) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn air() -> Tenant {
+        Tenant::segment("air").expect("a space name")
+    }
 
     /// ADR-N-066 2.3 (DM-149): every attribute is `true`, a list is its names encoded, and an empty
     /// list sends nothing, which the broker reads as no grant.
@@ -505,7 +630,7 @@ mod tests {
             client: Some("claude desktop".to_owned()),
             ..Subject::default()
         };
-        pin_caller(&mut request, "air", &person).expect("a usable space");
+        pin_caller(&mut request, Some(&air()), &person).expect("a usable space");
         let named = request.headers().get_all(PROVENANCE_CLIENT);
         assert_eq!(named.iter().collect::<Vec<_>>(), ["claude%20desktop"]);
         // The client is provenance only: the broker still decides on the person alone.
@@ -524,7 +649,7 @@ mod tests {
             },
         ] {
             let mut hop = Request::new(axum::body::Body::empty());
-            pin_caller(&mut hop, "air", &caller).expect("a usable space");
+            pin_caller(&mut hop, Some(&air()), &caller).expect("a usable space");
             assert!(!hop.headers().contains_key(PROVENANCE_CLIENT));
         }
     }
@@ -542,7 +667,7 @@ mod tests {
                 ..Subject::default()
             };
             let mut request = Request::new(axum::body::Body::empty());
-            pin_caller(&mut request, "air", &person).expect("a usable space");
+            pin_caller(&mut request, Some(&air()), &person).expect("a usable space");
             request.headers()[GROUPS]
                 .to_str()
                 .map(str::to_owned)
@@ -566,7 +691,7 @@ mod tests {
                 member_of_organization,
                 ..Subject::default()
             };
-            pin_caller(&mut request, "air", &person).expect("a usable space");
+            pin_caller(&mut request, Some(&air()), &person).expect("a usable space");
             request
                 .headers()
                 .get_all(MEMBER)
@@ -589,7 +714,7 @@ mod tests {
             organization: Some("Banská Bystrica".to_owned()),
             ..Subject::default()
         };
-        pin_caller(&mut request, "air", &person).expect("a usable space");
+        pin_caller(&mut request, Some(&air()), &person).expect("a usable space");
         let headers = request.headers_mut();
         assert_eq!(
             headers
@@ -603,7 +728,7 @@ mod tests {
         assert_eq!(headers[PROVENANCE_ACTOR_KIND], "agent");
         // An anonymous hop names no kind, and an MCP call does not invent one.
         let mut anonymous = Request::new(axum::body::Body::empty());
-        pin_caller(&mut anonymous, "air", &Subject::anonymous()).expect("a usable space");
+        pin_caller(&mut anonymous, Some(&air()), &Subject::anonymous()).expect("a usable space");
         as_agent(anonymous.headers_mut());
         assert!(!anonymous.headers().contains_key(PROVENANCE_ACTOR_KIND));
         assert!(!anonymous.headers().contains_key(PROVENANCE_ORGANIZATION));
@@ -667,7 +792,7 @@ mod tests {
                     .headers_mut()
                     .insert(name, HeaderValue::from_static("forged"));
             }
-            pin_caller(&mut request, "air", &subject).expect("a usable space");
+            pin_caller(&mut request, Some(&air()), &subject).expect("a usable space");
             let identity = |headers: &HeaderMap| {
                 let mut pairs: Vec<(String, String)> = headers
                     .iter()
@@ -695,5 +820,175 @@ mod tests {
                 request.headers()
             );
         }
+    }
+
+    fn named(raw: &str) -> Tenant {
+        Tenant::named(&TenantName::parse(raw).expect("a tenant name")).expect("a header value")
+    }
+
+    /// EP-188, PF-130: an organization tenant pins `{org}__{segment}` and its space's
+    /// Organization on every hop, and a member's hop carries the `jc_org_id` entry naming that
+    /// Organization, per admission path; what a client sent under those names never survives.
+    #[test]
+    fn an_organization_tenant_names_its_organization_per_admission_path() {
+        let ids = |ids: &[&str]| ids.iter().map(|id| (*id).to_owned()).collect();
+        let member = |organization_ids| Subject {
+            user: Some("jana".to_owned()),
+            id: Some("2f0c".to_owned()),
+            member_of_organization: true,
+            organization_ids,
+            ..Subject::default()
+        };
+        let cases = [
+            (
+                "member",
+                member(ids(&["fi_hel", "sk_bbsk"])),
+                Some("sk_bbsk"),
+            ),
+            ("member without the id", member(ids(&["fi_hel"])), None),
+            ("member, realm without the mapper", member(ids(&[])), None),
+            (
+                "grant to another Organization",
+                Subject {
+                    user: Some("eva".to_owned()),
+                    organization_ids: ids(&["sk_bbsk"]),
+                    ..Subject::default()
+                },
+                None,
+            ),
+            (
+                "service account",
+                Subject {
+                    service_account: Some("ingest".to_owned()),
+                    service_account_project: Some("mobility".to_owned()),
+                    ..Subject::default()
+                },
+                None,
+            ),
+            ("public", Subject::anonymous(), None),
+            (
+                "agreement",
+                Subject {
+                    did: Some("did:web:a.example".to_owned()),
+                    agreement: Some("agr-1".to_owned()),
+                    ..Subject::default()
+                },
+                None,
+            ),
+        ];
+        let tenant = named("sk_bbsk__mobility");
+        for (path, subject, home) in cases {
+            let mut request = Request::new(axum::body::Body::empty());
+            for (name, value) in [
+                ("ngsild-tenant", "sk_evil__mobility"),
+                ("x-jc-organization-id", "sk_evil"),
+                ("x-jc-space-organization", "sk_evil"),
+            ] {
+                request
+                    .headers_mut()
+                    .append(name, HeaderValue::from_static(value));
+            }
+            strip_client_headers(&mut request);
+            pin_caller(&mut request, Some(&tenant), &subject).expect("a tenant");
+            let headers = request.headers();
+            let all = |name: &str| {
+                headers
+                    .get_all(name)
+                    .iter()
+                    .map(|v| v.to_str().unwrap_or("?"))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(all("ngsild-tenant"), ["sk_bbsk__mobility"], "{path}");
+            assert_eq!(all("x-jc-space-organization"), ["sk_bbsk"], "{path}");
+            assert_eq!(
+                all("x-jc-organization-id"),
+                home.into_iter().collect::<Vec<_>>(),
+                "{path}"
+            );
+            // The gateway's own hops for the request keep the space's Organization alone.
+            let mut own = HeaderMap::new();
+            copy_tenant(headers, &mut own);
+            as_gateway(&mut own);
+            assert_eq!(pinned_tenant(&own), Some("sk_bbsk__mobility"), "{path}");
+            assert_eq!(own[&SPACE_ORGANIZATION], "sk_bbsk", "{path}");
+            assert!(!own.contains_key(&ORGANIZATION_ID), "{path}");
+        }
+    }
+
+    /// PF-130: two Organizations with the same project and space names get two tenants; a
+    /// segment tenant names no Organization, so even a member's hop carries none; an Endpoint
+    /// without a tenant pins nothing and answers 503.
+    #[test]
+    fn a_segment_tenant_names_no_organization_and_no_tenant_is_503() {
+        let (bbsk, hel) = (named("sk_bbsk__city-air"), named("fi_hel__city-air"));
+        assert_ne!(bbsk, hel);
+        assert_eq!(
+            (bbsk.organization(), hel.organization()),
+            (Some("sk_bbsk"), Some("fi_hel"))
+        );
+        let member = Subject {
+            member_of_organization: true,
+            organization_ids: ["sk_bbsk".to_owned()].into(),
+            ..Subject::default()
+        };
+        let mut request = Request::new(axum::body::Body::empty());
+        pin_caller(&mut request, Some(&air()), &member).expect("a tenant");
+        assert_eq!(pinned_tenant(request.headers()), Some("air"));
+        assert!(!request.headers().contains_key(&SPACE_ORGANIZATION));
+        assert!(!request.headers().contains_key(&ORGANIZATION_ID));
+        let mut request = Request::new(axum::body::Body::empty());
+        assert_eq!(pin_caller(&mut request, None, &member), Err(Unpinned));
+        assert!(pinned_tenant(request.headers()).is_none());
+        assert_eq!(Unpinned.problem().status, 503);
+        for bad in ["", "Air", "air\r\nx-userinfo: root", "sk_bbsk__air"] {
+            assert!(Tenant::segment(bad).is_err(), "{bad}");
+        }
+    }
+
+    /// Design 10.7: no module but this one names the tenant header, so every pin goes through
+    /// [`pin_tenant`] with a [`Tenant`]; and only the store builds a segment tenant.
+    #[test]
+    fn only_this_module_names_the_tenant_header() {
+        fn sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).expect("src").flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    sources(&path, out);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    out.push(path);
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        sources(&root, &mut files);
+        assert!(files.len() > 50);
+        let mut found = Vec::new();
+        for file in files {
+            let text = std::fs::read_to_string(&file).expect("a source file");
+            // Test modules forge the header on purpose.
+            let code = ["#[cfg(test)]\nmod ", "#[cfg(test)]\npub(crate) mod "]
+                .iter()
+                .filter_map(|marker| text.find(marker))
+                .min()
+                .map_or(text.as_str(), |end| &text[..end]);
+            let name = file
+                .strip_prefix(&root)
+                .unwrap_or(&file)
+                .display()
+                .to_string();
+            let lowered = code.to_ascii_lowercase();
+            if name != "middleware/tenancy.rs"
+                && (lowered.contains("ngsild-tenant") || code.contains("tenancy::TENANT"))
+            {
+                found.push(format!("{name}: names the tenant header"));
+            }
+            if !["middleware/tenancy.rs", "store.rs"].contains(&name.as_str())
+                && code.contains("Tenant::segment(")
+            {
+                found.push(format!("{name}: builds a segment tenant"));
+            }
+        }
+        assert!(found.is_empty(), "{found:#?}");
     }
 }

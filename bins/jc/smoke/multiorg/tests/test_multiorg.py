@@ -821,8 +821,9 @@ class SameNameJc:
                 return 204, {}, b""
 
         class Session:
-            def __init__(self, key):
+            def __init__(self, key, on=None):
                 self.org = key.rsplit("-", 1)[0]
+                self.on = on or s.home(key)
 
             def json(self, method, path, body=None):
                 if path == "/api/v1/catalogue/readable":
@@ -832,8 +833,12 @@ class SameNameJc:
                     return 200, {"datasets": [{"slug": x} for x in mine]}
                 if path == "/api/v1/connectors":
                     return 201, {"id": f"c-{self.org}"}
-                if path.startswith("/api/v1/projects/org/organizations/"):
-                    return 200, {"spec": {"domain": f"{path.rsplit('/', 1)[1]}.example"}}
+                if path == "/api/v1/projects/org/organizations":
+                    # project `org` is the installation's: foreign on another Organization's host
+                    if self.on not in (None, s.installation):
+                        return 404, {"detail": "no such project"}
+                    return 200, {"items": [{"metadata": {"name": o}, "spec": {"domain": f"{o}.example"}}
+                                           for o in jc.PROJECTS]}
                 plural = path.rsplit("/", 1)[1]
                 return 200, {"items": [{"metadata": {"name": suite.ISO[plural]}}, {"metadata": {"name": "other"}}]}
 
@@ -852,7 +857,7 @@ class SameNameJc:
 
         s.exchange = exchange
         s.client = lambda org=None, kind="portal": Api()
-        s.session = lambda key, on=None: Session(key)
+        s.session = lambda key, on=None: Session(key, on)
         s.tool = tool
         s.bearer = lambda key, scope="mcp:portal", client=None: "t"
 
@@ -886,6 +891,44 @@ def test_same_names_in_two_organizations_read_and_write_only_their_own(tmp_path,
         assert {v["id"] for v in jc.store.values()} == {"urn:ngsi-ld:IsoCheck:example_ctl-a:1",
                                                        "urn:ngsi-ld:IsoCheck:example_ctl-b:1"}
         assert [p for m, p in jc.sent if m == "DELETE"] == ["/api/v1/connectors/c-ctl-a", "/api/v1/connectors/c-ctl-b"]
+
+
+def test_in_host_mode_the_platform_admin_reads_the_fixture_domains_on_the_installations_host(tmp_path):
+    # smoke 43726575991: read on ctl-a's own host, project `org` answered 404 and every entity row was skipped
+    s = suite.Suite(args(tmp_path))
+    SameNameJc().install(s)
+    s.hosts = {o: {"portal": f"{o}.localhost"} for o in ("ops", "ctl-a", "ctl-b")}
+    s.installation = "ops"
+    s.check_same_names()
+    assert not [r["id"] for r in s.rows if r["result"] != "pass"]
+    assert {"same.ctl-a-admin.ctl-a-iso.write", "same.ctl-a-admin.ctl-a-iso.rewrite"} <= {r["id"] for r in s.rows}
+    (tmp_path / "foreign").mkdir()
+    s = suite.Suite(args(tmp_path / "foreign"))
+    SameNameJc().install(s)
+    s.hosts, s.installation = {"ctl-a": {}, "ctl-b": {}}, "ctl-a"
+    s.home = lambda key: "ctl-b"  # a platform session on a foreign host: the row names it
+    s.check_same_names()
+    assert [(r["id"], r["result"]) for r in s.rows if r["result"] != "pass"] == [("same.ctl-a.domain", "fail")]
+
+
+@pytest.mark.parametrize("audience,passes", [("organization", True), ("public", False)])
+def test_an_organization_whose_only_endpoints_are_closed_publishes_nothing(tmp_path, audience, passes):
+    # smoke 43726575991: the same-name fixtures gave ctl-a its first Endpoint (audience organization),
+    # and an empty open data catalogue counted as a missing publication
+    s = suite.Suite(args(tmp_path))
+    closed = {} if audience == "public" else {"s1": ("iso", audience)}
+    s.exp = {"ctl-a": {"projects": {"ctl-a-iso": EMPTY | {"Endpoint": ["iso"], "closed": closed}}}}
+
+    class OpenData:
+        def json(self, method, path):
+            return 200, {"result": {"results": []} if "package_search" in path else []}
+
+        def call(self, method, path):
+            return 200, {}, b'{"result": []}' if "package_list" in path else b'{"result": {"results": []}}'
+    s.client = lambda org=None, kind="portal": OpenData()
+    s.check_catalogue_hosts()
+    row = next(r for r in s.rows if r["id"] == "catalogue.ctl-a.published")
+    assert row["result"] == ("pass" if passes else "fail"), row
 
 
 def test_a_live_run_reads_the_fixtures_and_their_refusals_and_writes_no_entity(tmp_path):

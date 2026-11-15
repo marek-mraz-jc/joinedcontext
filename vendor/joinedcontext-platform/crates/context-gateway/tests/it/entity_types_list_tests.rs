@@ -93,6 +93,7 @@ fn endpoint(operations: &str, granted: &[&str]) -> Endpoint {
         title: std::collections::BTreeMap::new(),
         description: std::collections::BTreeMap::new(),
         space: "air".to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment("air").ok(),
         project: "air".to_owned(),
         audience: Audience::Public,
         allowed_projects: Vec::new(),

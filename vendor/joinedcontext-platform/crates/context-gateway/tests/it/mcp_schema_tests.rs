@@ -177,6 +177,7 @@ fn endpoint() -> Endpoint {
         title: Default::default(),
         description: Default::default(),
         space: "fleet".to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment("fleet").ok(),
         project: "helsinki".to_owned(),
         audience: Audience::Public,
         allowed_projects: Vec::new(),
@@ -243,6 +244,7 @@ fn big_endpoint() -> Endpoint {
         roles: Default::default(),
         slug: BIG_SLUG.to_owned(),
         space: "wide".to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment("wide").ok(),
         base_path: format!("/api/endpoint/{BIG_SLUG}"),
         projection: None,
         models: vec![Model {

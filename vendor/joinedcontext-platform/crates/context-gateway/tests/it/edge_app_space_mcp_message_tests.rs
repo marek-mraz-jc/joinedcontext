@@ -85,6 +85,7 @@ fn space(
             title: Default::default(),
             description: Default::default(),
             space: name.to_owned(),
+            tenant: context_gateway::middleware::tenancy::Tenant::segment(name).ok(),
             project: name.to_owned(),
             audience,
             allowed_projects: Vec::new(),

@@ -80,6 +80,7 @@ fn endpoint() -> Endpoint {
         title: Default::default(),
         description: Default::default(),
         space: "bench".to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment("bench").ok(),
         project: "bench".to_owned(),
         audience: Audience::Public,
         allowed_projects: Vec::new(),

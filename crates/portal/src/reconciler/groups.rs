@@ -28,6 +28,9 @@ pub const MANAGED_VALUE: &str = "joinedcontext";
 
 /// The attributes the realm's `jc_org` and `jc_groups` mappers read (ADR-N-067 2.2).
 const ORGANIZATION_ATTRIBUTE: &str = "jc_org";
+/// The attribute the realm's `jc_org_id` mapper reads: the Organization's id (EP-186), which the
+/// gateway sends to the broker for its Organization check (EP-188).
+const ORGANIZATION_ID_ATTRIBUTE: &str = "jc_org_id";
 const GROUPS_ATTRIBUTE: &str = "jc_groups";
 
 /// The attribute kaisatsu reads on a person's groups to ask them for a second factor
@@ -61,6 +64,9 @@ pub struct DerivedGroup {
     pub name: String,
     pub members: BTreeSet<String>,
     pub jc_org: Option<String>,
+    /// The id of the Organization in `jc_org`, from its manifest's `spec.domain` (EP-186);
+    /// `None` when the domain gives no id.
+    pub jc_org_id: Option<String>,
     pub jc_groups: Option<String>,
     /// The Organization in `jc_org` asks every member for a second factor (T-6895).
     pub second_factor: bool,
@@ -91,6 +97,16 @@ fn requires_second_factor(mirror: &Mirror, organization: &str) -> bool {
     }
 }
 
+/// The id of the Organization manifest `organization` (`sk_bbsk` for `bbsk.sk`, EP-186), as the
+/// gateway derives a tenant's Organization (PF-130): from its `spec.domain` alone.
+fn organization_id(mirror: &Mirror, organization: &str) -> Option<String> {
+    let org = mirror.get(ORG_NAMESPACE, "Organization", organization)?;
+    let domain = org.spec.get("domain")?.as_str()?;
+    jc_core::names::OrganizationId::from_domain(domain)
+        .map(|id| id.as_str().to_owned())
+        .ok()
+}
+
 /// The two groups of a project: who reads it and who writes it.
 fn teams_of(slug: &str) -> [String; 2] {
     [format!("{slug}-readers"), format!("{slug}-writers")]
@@ -115,6 +131,7 @@ pub fn derived_groups(
                 name,
                 members: people_only(members),
                 jc_org: None,
+                jc_org_id: None,
                 jc_groups,
                 second_factor: false,
             }
@@ -138,6 +155,7 @@ pub fn derived_groups(
         name: organization_group(&organization),
         members: people_only(organization_scoped_people(mirror, &organization, now)),
         second_factor: requires_second_factor(mirror, &organization),
+        jc_org_id: organization_id(mirror, &organization),
         jc_org: Some(organization),
         jc_groups: None,
     });
@@ -517,6 +535,7 @@ impl GroupSync {
         let says = |key: &str| group.attributes.get(key).map(|values| json!(values));
         if [
             ORGANIZATION_ATTRIBUTE,
+            ORGANIZATION_ID_ATTRIBUTE,
             GROUPS_ATTRIBUTE,
             SECOND_FACTOR_ATTRIBUTE,
         ]
@@ -571,6 +590,9 @@ fn attributes_of(derived: Option<&DerivedGroup>) -> Value {
     let mut attributes = json!({ MANAGED_BY: [MANAGED_VALUE] });
     if let Some(organization) = derived.and_then(|group| group.jc_org.as_ref()) {
         attributes[ORGANIZATION_ATTRIBUTE] = json!([organization]);
+    }
+    if let Some(id) = derived.and_then(|group| group.jc_org_id.as_ref()) {
+        attributes[ORGANIZATION_ID_ATTRIBUTE] = json!([id]);
     }
     if let Some(path) = derived.and_then(|group| group.jc_groups.as_ref()) {
         attributes[GROUPS_ATTRIBUTE] = json!([path]);
