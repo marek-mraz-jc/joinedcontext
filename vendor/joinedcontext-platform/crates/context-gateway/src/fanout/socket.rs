@@ -805,9 +805,11 @@ pub async fn session(
             () = &mut expired => ended = Some(Ended::Closing("lifetime")),
             () = queue.ready() => {
                 let (items, overflowed) = queue.take();
+                let mut notified = Vec::new();
                 for item in items {
                     match item {
-                        Out::Notification { subscription, body, .. } => {
+                        Out::Notification { subscription, entity, body } => {
+                            notified.push(entity);
                             seq += 1;
                             let text = json!({"metadata": {
                                 "x-op": "x-notification", "x-seq": seq,
@@ -846,6 +848,9 @@ pub async fn session(
                 if overflowed {
                     outgoing.push(gap(seq + 1, seq + 1));
                     ended = Some(Ended::Closing("overflow"));
+                }
+                if !notified.is_empty() {
+                    hub.log_personal_read(conn, &notified);
                 }
             }
         }

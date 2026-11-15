@@ -610,6 +610,22 @@ impl Hub {
         gone
     }
 
+    /// DM-128 on the WebSocket (S-3-09): the notifications of `entities` just sent on
+    /// connection `conn` leave the `personal_read` line of its Endpoint and caller, none when
+    /// the Endpoint serves no personal attribute.
+    pub fn log_personal_read(&self, conn: u64, entities: &[String]) {
+        let state = self.state();
+        if let Some(conn) = state.conns.get(&conn) {
+            crate::handlers::ngsi_ld::log_personal_read_of(
+                &conn.endpoint,
+                &conn.subject,
+                "WebSocket",
+                entities,
+                None,
+            );
+        }
+    }
+
     /// Ends with `access-ended` every connection whose caller lost its access since the
     /// upgrade (S-3-12): `ended` is asked with the caller and the unix second its connection
     /// opened. Answers the connections it closes.
@@ -1096,6 +1112,79 @@ mod tests {
 
     fn open(hub: &Hub) -> (u64, Arc<Queue>) {
         hub.open(endpoint(), "anonymous".into(), Subject::default())
+    }
+
+    /// S-3-09: notifications sent on a connection of an Endpoint serving a personal attribute
+    /// leave the `personal_read` line with the caller, the surface and the Entities, never a
+    /// value; a connection of an Endpoint without one leaves nothing.
+    #[test]
+    fn a_personal_notification_leaves_the_personal_read_line() {
+        #[derive(Clone, Default)]
+        struct Lines(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Lines {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let model = json!({"definitions": {"BikeTrip": {"type": "object", "properties": {
+            "id": {"type": "string"},
+            "rider": {"type": "string", "x-personal-data": true}}}}});
+        let schema = jc_manifest::model_schema::ModelSchema::compile(
+            "bike-trips",
+            "1.0.0",
+            &model,
+            &["BikeTrip".to_owned()],
+            true,
+        );
+        let mut personal = (*endpoint()).clone();
+        personal.declared_types = Some(Arc::new(crate::resolver::DeclaredTypes {
+            model: "bike-trips".into(),
+            classes: ["BikeTrip".to_owned()].into(),
+            units: Default::default(),
+            relationships: Default::default(),
+            quality: Vec::new(),
+            schema: Some(Arc::new(schema)),
+        }));
+        let hub = Hub::new("s", 10);
+        let jana = Subject {
+            user: Some("jana".into()),
+            ..Subject::default()
+        };
+        let (read, _) = hub.open(Arc::new(personal), "user:jana".into(), jana);
+        let (plain, _) = open(&hub);
+        let lines = Lines::default();
+        let writer = lines.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            hub.log_personal_read(read, &["urn:ngsi-ld:BikeTrip:t1".to_owned()]);
+            hub.log_personal_read(plain, &["urn:ngsi-ld:BikeTrip:t2".to_owned()]);
+        });
+        let text = String::from_utf8_lossy(&lines.0.lock().unwrap_or_else(PoisonError::into_inner))
+            .into_owned();
+        assert_eq!(
+            text.matches("personal attributes read").count(),
+            1,
+            "{text}"
+        );
+        for named in [
+            "WebSocket",
+            "jana",
+            "BikeTrip.rider",
+            "urn:ngsi-ld:BikeTrip:t1",
+        ] {
+            assert!(text.contains(named), "{named} missing: {text}");
+        }
+        assert!(!text.contains("BikeTrip:t2"), "{text}");
     }
 
     /// S-3-12: a caller whose access ended closes with `access-ended`, its filters leave the

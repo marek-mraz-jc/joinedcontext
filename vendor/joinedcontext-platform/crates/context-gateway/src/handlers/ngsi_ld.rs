@@ -723,6 +723,18 @@ async fn logged_read(
 /// The DM-128 line of one read of the Endpoint's personal attributes, none without them: the
 /// reader, the Endpoint and the Entities' URNs, never a value.
 pub(crate) fn log_personal_read(endpoint: &Endpoint, subject: &Subject, entities: &[String]) {
+    log_personal_read_of(endpoint, subject, "NGSI-LD", entities, None);
+}
+
+/// [`log_personal_read`] of a read on `surface` (S-3-09): an answer whose Entities could not be
+/// listed names the `query` that chose them instead.
+pub(crate) fn log_personal_read_of(
+    endpoint: &Endpoint,
+    subject: &Subject,
+    surface: &str,
+    entities: &[String],
+    query: Option<&str>,
+) {
     let personal = endpoint.personal_attributes();
     if personal.is_empty() {
         return;
@@ -731,9 +743,11 @@ pub(crate) fn log_personal_read(endpoint: &Endpoint, subject: &Subject, entities
         target: "personal_read",
         slug = %endpoint.slug,
         space = %endpoint.space,
+        surface,
         principal = %principal_of(subject),
         attributes = %personal.join(","),
         entities = %entities.join(","),
+        query = query.unwrap_or_default(),
         "personal attributes read"
     );
 }

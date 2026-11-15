@@ -427,6 +427,7 @@ async fn read_surface(
         "request forwarded to the broker's view"
     );
     let (parts, _) = request.into_parts();
+    let query = parts.uri.query().map(str::to_owned);
     // A HEAD is the GET without its body (RFC 9110 9.3.2): the broker's GET is read and its
     // links moved, so the Content-Length is the one the caller's GET gets (T-5204).
     let head = method == Method::HEAD;
@@ -441,7 +442,92 @@ async fn read_surface(
         let (parts, body) = answer.into_parts();
         return Response::from_parts(parts, head_body(&body));
     }
-    answer
+    logged(&endpoint, &subject, surface, query.as_deref(), answer).await
+}
+
+/// DM-128 on the view's other surfaces (S-3-09): a read of an Endpoint serving personal
+/// attributes leaves the line NGSI-LD writes, with the Entities' URNs the answer names. A file
+/// streamed through (`f=csv|parquet|zip`) is not held to list them, so its line names the
+/// query that chose them instead; either way no value is written.
+async fn logged(
+    endpoint: &Endpoint,
+    subject: &Subject,
+    surface: &Surface,
+    query: Option<&str>,
+    answer: Response<Body>,
+) -> Response<Body> {
+    if endpoint.personal_attributes().is_empty() || !answer.status().is_success() {
+        return answer;
+    }
+    let streamed = answer
+        .headers()
+        .get(CONTENT_DISPOSITION)
+        .is_some_and(|v| v.as_bytes().starts_with(b"attachment"));
+    if streamed {
+        crate::handlers::ngsi_ld::log_personal_read_of(endpoint, subject, surface.name, &[], query);
+        return answer;
+    }
+    let (parts, body) = answer.into_parts();
+    // `answered` held this body already (at most MAX_BODY): reading it again allocates nothing new.
+    let Ok(held) = axum::body::to_bytes(body, MAX_BODY).await else {
+        return broker_failure(StatusCode::BAD_GATEWAY, None, Body::empty()).await;
+    };
+    let entities = answer_urns(&held);
+    crate::handlers::ngsi_ld::log_personal_read_of(
+        endpoint,
+        subject,
+        surface.name,
+        &entities,
+        None,
+    );
+    proxy::with_body(parts, held)
+}
+
+/// The URNs of the Entities a surface answer names, each once in the order met: in JSON every
+/// string `id`, `@id` or `@iot.id` that is a URN, at any depth (an OData `value`, an `$expand`,
+/// a GeoJSON feature, a SensorThings navigation); in any other text (iCalendar, a feed) every
+/// `urn:ngsi-ld:` token.
+fn answer_urns(body: &[u8]) -> Vec<String> {
+    fn walk(value: &Value, out: &mut Vec<String>) {
+        match value {
+            Value::Object(members) => {
+                for (key, member) in members {
+                    match member {
+                        Value::String(id)
+                            if matches!(key.as_str(), "id" | "@id" | "@iot.id")
+                                && id.starts_with("urn:") =>
+                        {
+                            out.push(id.clone());
+                        }
+                        _ => walk(member, out),
+                    }
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|item| walk(item, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    match serde_json::from_slice::<Value>(body) {
+        Ok(answer) => walk(&answer, &mut out),
+        Err(_) => {
+            let text = String::from_utf8_lossy(body);
+            let mut rest = text.as_ref();
+            while let Some(at) = rest.find("urn:ngsi-ld:") {
+                let token = &rest[at..];
+                let end = token
+                    .find(|c: char| {
+                        c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | ',' | ';' | '\\')
+                    })
+                    .unwrap_or(token.len());
+                out.push(token[..end].to_owned());
+                rest = &token[end..];
+            }
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|urn| seen.insert(urn.clone()));
+    out
 }
 
 /// The empty body of a `HEAD`: of no stated size when the `GET`'s body is streamed (an OGC
@@ -1126,6 +1212,27 @@ pub(crate) fn routes() -> Router<Arc<Gateway>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// S-3-09: the Entities a surface answer names, each once: JSON ids at any depth
+    /// (SensorThings `@iot.id` included, a non-URN id skipped) and the URNs of a text answer.
+    #[test]
+    fn answer_urns_lists_each_entity_once_in_json_and_text() {
+        let sta = serde_json::json!({"value": [
+            {"@iot.id": "urn:ngsi-ld:Thing:t1", "Datastreams": [{"@iot.id": "urn:ngsi-ld:D:d1"}]},
+            {"@iot.id": "urn:ngsi-ld:Thing:t1", "name": "urn:ngsi-ld:NotAnId:x"},
+            {"id": 7}
+        ]});
+        assert_eq!(
+            answer_urns(sta.to_string().as_bytes()),
+            ["urn:ngsi-ld:Thing:t1", "urn:ngsi-ld:D:d1"]
+        );
+        let ical = "BEGIN:VEVENT\r\nUID:urn:ngsi-ld:Event:e1\r\nEND:VEVENT\r\n\
+                    <id>urn:ngsi-ld:Event:e2</id>";
+        assert_eq!(
+            answer_urns(ical.as_bytes()),
+            ["urn:ngsi-ld:Event:e1", "urn:ngsi-ld:Event:e2"]
+        );
+    }
 
     /// A `HEAD` of a streamed file states no length; one of a held page keeps the empty body
     /// whose length the `GET`'s `Content-Length` header states (jc-ogc-stream).
