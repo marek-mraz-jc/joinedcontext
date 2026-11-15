@@ -727,6 +727,13 @@ impl StreamDeployer {
                         continue;
                     }
                 };
+                // Each Script pin becomes its version's `javascript` processor, digest checked
+                // (PL-120); a pin that does not hold renders no stream.
+                let mut spec = spec;
+                if let Err(err) = crate::scripts::inline(mirror, &ns, &mut spec) {
+                    outcomes.push((ns.clone(), name, StreamOutcome::Error(err)));
+                    continue;
+                }
 
                 let first = spec.sources().into_iter().next();
                 let ds_ref_name = first
@@ -5425,6 +5432,7 @@ output:
             bloblang: None,
             kpi: None,
             datacube: None,
+            script_ref: None,
         })];
         assert!(!eligible(&wasm));
     }

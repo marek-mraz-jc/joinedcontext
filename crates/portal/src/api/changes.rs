@@ -2327,7 +2327,12 @@ async fn approve_every_file(
         judged.push(judged_one);
         lane = crate::api::import::riskiest(
             lane,
-            change::classify_manifest(envelope, Operation::Create),
+            crate::scripts::lane(
+                &state.mirror,
+                namespace,
+                envelope,
+                change::classify_manifest(envelope, Operation::Create),
+            ),
         );
     }
     Ok((
