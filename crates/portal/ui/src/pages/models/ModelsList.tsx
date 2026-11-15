@@ -92,18 +92,22 @@ export function ProposeLink({
   project,
   search,
   variant = "secondary",
+  unavailable,
   children,
 }: {
   project: string;
   search: { new?: "blank" | "file" | "sdm"; edit?: string; space?: string };
   variant?: ButtonVariant;
+  /** Why the change cannot be proposed right now (the model's source is unreadable), when it cannot. */
+  unavailable?: string;
   children: string;
 }): JSX.Element {
   const { t } = useTranslation();
   const { can } = usePermissions(project);
-  if (!can("DataModel", "propose")) {
+  const reason = can("DataModel", "propose") ? unavailable : t("permissions.denied", { verb: "propose", kind: "DataModel" });
+  if (reason !== undefined) {
     return (
-      <Button size="sm" variant={variant} disabled disabledReason={t("permissions.denied", { verb: "propose", kind: "DataModel" })}>
+      <Button size="sm" variant={variant} disabled disabledReason={reason}>
         {children}
       </Button>
     );

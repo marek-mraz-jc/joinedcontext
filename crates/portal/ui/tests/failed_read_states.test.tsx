@@ -4,7 +4,7 @@
  * at "0 of 5 done", "no create form here", a bare "Internal Server Error" without the page's
  * heading, or a page without its navigation.
  */
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import en from "../src/locales/en.json";
 import { queryKeys } from "../src/api/client";
@@ -107,6 +107,35 @@ describe("a failed read", () => {
       expect(screen.queryByText(en.spaces.inside.dataNoTypes)).not.toBeInTheDocument();
     },
   );
+
+  // T-6950 (integrator UI judge): the model page keeps what the record knows beside an unread
+  // source, and Edit model says why it cannot open instead of a faded primary that does nothing.
+  it("keeps the model's record and explains Edit model when the source is refused", async () => {
+    const model = {
+      apiVersion: "joinedcontext.com/v1alpha1",
+      kind: "DataModel",
+      metadata: { name: "air", namespace: "helsinki" },
+      spec: { contextSpaceRef: "ilma", version: "1.2.0", lifecycle: "published" },
+    };
+    await renderRoute({
+      path: "/projects/helsinki/models/air",
+      answer: (path) =>
+        path.endsWith("/datamodels/air/source")
+          ? new Response(JSON.stringify({ type: "about:blank", title: "Forbidden", status: 403, detail: "answered 403" }), {
+              status: 403,
+              headers: { "Content-Type": "application/problem+json" },
+            })
+          : path.endsWith("/datamodels")
+            ? jsonResponse(list([model]))
+            : undefined,
+    });
+    expect(await screen.findByText("answered 403")).toBeInTheDocument();
+    const known = screen.getByRole("region", { name: en.models.page.known });
+    expect(within(known).getByText("1.2.0")).toBeInTheDocument();
+    expect(within(known).getByText(en.models.lifecycleOption.published)).toBeInTheDocument();
+    expect(within(known).getByRole("link", { name: "ilma" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: en.models.page.edit })).toHaveAccessibleDescription(en.models.page.editUnread);
+  });
 
   it("is not told as a missing create form", async () => {
     await renderRoute({
