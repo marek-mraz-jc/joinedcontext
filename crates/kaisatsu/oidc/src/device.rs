@@ -175,10 +175,9 @@ pub struct DevicePageQuery {
 async fn signed_in(
     state: &OidcState,
     realm: &RealmConfig,
-    mount: &Mount,
     headers: &HeaderMap,
 ) -> Result<Option<SsoSession>> {
-    let Some(handle) = read_sso_cookie(headers, mount) else {
+    let Some(handle) = read_sso_cookie(headers) else {
         return Ok(None);
     };
     let sso = state
@@ -323,15 +322,7 @@ async fn start_login(
             expires_at: now + Duration::minutes(30),
         })
         .await?;
-    let cookie_name = mount.cookie_name("auth");
-    let path = if mount.path_prefix.is_empty() {
-        "/".to_owned()
-    } else {
-        mount.realm_cookie_path(&realm.realm)
-    };
-    let set_cookie = format!(
-        "{cookie_name}={handle}; Path={path}; HttpOnly; Secure; SameSite=Lax; Max-Age=1800"
-    );
+    let set_cookie = crate::handlers::sign_in_cookie("auth", &handle, 1800);
     let login = format!(
         "{}/realms/{}/login-actions/authenticate?session_code={id}&client_id={LOGIN_CLIENT}",
         mount.path_prefix, realm.realm
@@ -370,7 +361,7 @@ pub async fn device_page(
         .filter(|c| c.len() == 8)
         .map(|c| format!("{}-{}", &c[..4], &c[4..]))
         .unwrap_or_default();
-    let Some(sso) = signed_in(&state, &realm, &mount, &headers).await? else {
+    let Some(sso) = signed_in(&state, &realm, &headers).await? else {
         let mut back = format!("{}/device", mount.realm_issuer(&realm.realm));
         if !user_code.is_empty() {
             back = format!("{back}?user_code={user_code}");
@@ -452,7 +443,7 @@ pub async fn device_submit(
         .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let action = page_path(&mount, &realm);
-    let Some(sso) = signed_in(&state, &realm, &mount, &headers).await? else {
+    let Some(sso) = signed_in(&state, &realm, &headers).await? else {
         return Ok((
             StatusCode::SEE_OTHER,
             [
