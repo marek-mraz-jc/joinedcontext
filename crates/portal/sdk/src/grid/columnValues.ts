@@ -44,12 +44,14 @@ function valuesOf(cell: RichCell | RichCell[] | undefined): string[] {
   return out;
 }
 
-export async function columnValues(source: EntitySource, query: GridQuery, attr: string): Promise<ColumnValues> {
+export async function columnValues(source: EntitySource, query: GridQuery, attr: string, signal?: AbortSignal): Promise<ColumnValues> {
   const asked: GridQuery = { ...query, attrs: [attr], orderBy: undefined };
   const counts = new Map<string, number>();
   let scanned = 0;
   let total: number | undefined;
   for (;;) {
+    // A closed list asks for no further page; the one in flight still answers.
+    signal?.throwIfAborted();
     const page = await source.query(asked, { offset: scanned, limit: VALUE_PAGE, count: scanned === 0 });
     if (scanned === 0) total = page.total;
     scanned += page.rows.length;

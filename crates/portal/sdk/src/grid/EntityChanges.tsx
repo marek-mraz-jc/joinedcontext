@@ -432,6 +432,9 @@ export function useRowChanges(
   return { tabs, panel, mark };
 }
 
+/** Sources that refused versions once: the next row opens without a second 403 (as EntityHistory). */
+const changesRefusedBy = new WeakSet<object>();
+
 /**
  * What a grid hands its row dialog for Changes: a reader bound to the open row, stable while the
  * row is (one read per row), and each kept value drawn by the grid's own cell view.
@@ -445,8 +448,12 @@ export function useChangesFeed(
 ): RowChanges | undefined {
   const load = useMemo(() => {
     const read = source.changes;
-    return read && id
-      ? (attrs: string[]) => read.call(source, id, attrs)
+    return read && id && !changesRefusedBy.has(source)
+      ? (attrs: string[]) =>
+          read.call(source, id, attrs).catch((error: unknown) => {
+            if (error instanceof SourceError && error.status === 403) changesRefusedBy.add(source);
+            throw error;
+          })
       : undefined;
   }, [source, id]);
   if (!load) return undefined;

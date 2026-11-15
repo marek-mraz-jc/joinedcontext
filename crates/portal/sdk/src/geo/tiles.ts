@@ -81,27 +81,28 @@ export function registerTileProtocol(): void {
 }
 
 /**
- * The tile template of `type` on an Endpoint once `wanted` holds, or `null` while it is not wanted,
- * not read yet, refused, or names its tiles elsewhere.
+ * The tile template of `type` on an Endpoint once `wanted` holds; `undefined` while it is being
+ * asked; `null` while it is not wanted, refused, or names its tiles elsewhere.
  */
-export function useTileTemplate(endpointBase: string | null, type: string, wanted: boolean, fetchImpl: typeof fetch = fetch): string | null {
-  const [template, setTemplate] = useState<string | null>(null);
+export function useTileTemplate(endpointBase: string | null, type: string, wanted: boolean, fetchImpl: typeof fetch = fetch): string | null | undefined {
+  const path = wanted && endpointBase ? tilesetPath(endpointBase, type) : null;
+  const [answer, setAnswer] = useState<{ path: string; template: string | null } | null>(null);
   useEffect(() => {
-    setTemplate(null);
-    if (!wanted || !endpointBase) return;
+    if (!path) return;
     let live = true;
-    const path = tilesetPath(endpointBase, type);
     fetchImpl(path, { credentials: "same-origin", headers: { Accept: "application/json" } })
       .then((response) => (response.ok ? response.json() : null))
       .then((body: unknown) => {
-        if (live) setTemplate(tileTemplate(body, path));
+        if (live) setAnswer({ path, template: tileTemplate(body, path) });
       })
       .catch(() => {
-        if (live) setTemplate(null);
+        if (live) setAnswer({ path, template: null });
       });
     return () => {
       live = false;
     };
-  }, [endpointBase, type, wanted, fetchImpl]);
-  return template;
+  }, [path, fetchImpl]);
+  if (!path) return null;
+  // Undefined while the tileset of this path is still being asked, so a caller can wait for it.
+  return answer?.path === path ? answer.template : undefined;
 }

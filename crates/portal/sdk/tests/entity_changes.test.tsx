@@ -265,6 +265,21 @@ describe("the Changes tab (T-6333)", () => {
     expect(dialog).not.toHaveTextContent("readVersions");
   });
 
+  it("asks a source that refused versions once no second time, on the next row it opens", async () => {
+    const changes = vi.fn(async () => {
+      throw new SourceError(403, "the space's policy grants no readVersions");
+    });
+    const two = [...rows, { ...rows[0], id: `${ID}-2`, name: { type: "Property", value: "Stanica Hrad" } }];
+    render(<EntityGrid config={config} source={{ ...fixtureSource(two), history: async () => [], changes }} />);
+    await openRow();
+    await waitFor(() => expect(changes).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open: Stanica Hrad" }));
+    const dialog = screen.getByRole("dialog", { name: "Details: Stanica Hrad" });
+    expect(within(dialog).queryByRole("tab", { name: "Changes" })).toBeNull();
+    expect(changes).toHaveBeenCalledTimes(1);
+  });
+
   it("says nothing is kept yet, and offers Try again after a failure", async () => {
     let fail = true;
     const changes = vi.fn(async () => {
