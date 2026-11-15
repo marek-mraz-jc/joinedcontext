@@ -494,6 +494,10 @@ mod tests {
         let detail = down["detail"].as_str().expect("a detail");
         assert!(detail.contains("again in a moment"), "{detail}");
         assert!(!detail.contains("10.0.0.7"), "{detail}");
+        let slow = problem(ProxyError::Timeout(Duration::from_secs(30)));
+        assert_eq!(slow["status"], 504);
+        let detail = slow["detail"].as_str().expect("a detail");
+        assert!(detail.contains("before sending a write again"), "{detail}");
         let unaddressed = problem(ProxyError::Uri("http://broker.internal/x".into()));
         let detail = unaddressed["detail"].as_str().expect("a detail");
         assert!(detail.contains("operator"), "{detail}");
