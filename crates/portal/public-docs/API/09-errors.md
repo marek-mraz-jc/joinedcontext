@@ -74,7 +74,7 @@ What to do: Ask a project owner or an organization administrator for the role th
 
 The Endpoint is public, and its model and projection would serve attributes the model marks as personal data (DM-122, ADR-N-054), so the Endpoint answers nothing until that changes.
 
-What to do: Hide the attributes the detail names in the Endpoint's projection, or narrow its audience.
+What to do: Hide the attributes the Endpoint's model marks as personal data in its projection, or narrow its audience.
 
 ### `domain-not-verified` {#domain-not-verified}
 
