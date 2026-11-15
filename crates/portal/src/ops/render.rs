@@ -896,8 +896,11 @@ async fn widget_rows(
                 limit: Some(WIDGET_PAGE as u32),
                 ..DataQueryInput::default()
             };
-            let read = data_query::run(caller, state, project, query).await?;
-            let entities = read["entities"].as_array().cloned().unwrap_or_default();
+            let mut read = data_query::run(caller, state, project, query).await?;
+            let entities = match read["entities"].take() {
+                Value::Array(entities) => entities,
+                _ => Vec::new(),
+            };
             let mut rows = temporal_rows(&entities, attrs, method.is_some());
             let cut = rows.len() > WIDGET_ROWS;
             rows.truncate(WIDGET_ROWS);
@@ -1016,7 +1019,8 @@ fn next_page(next: &str, path: &str) -> Result<Vec<(String, String)>, OpError> {
 }
 
 /// A history answer as one row per value, as the Portal's widget reads it: `id`, `attribute`,
-/// `value`, `observedAt` and, aggregated, `method`.
+/// `value`, `observedAt` and, aggregated, `method`; one past [`WIDGET_ROWS`] at most, so a cut
+/// shows without a row per pair of an 8 MiB history on the async thread.
 fn temporal_rows(
     entities: &[Value],
     attrs: &[String],
@@ -1061,6 +1065,9 @@ fn temporal_rows(
                             pair.get(1).cloned().unwrap_or(Value::Null),
                         );
                         rows.push(row);
+                        if rows.len() > WIDGET_ROWS {
+                            return rows;
+                        }
                     }
                 }
             }
@@ -2104,6 +2111,22 @@ mod tests {
             .expect("drawn");
         assert_eq!(fixture["widgets"][0]["error"]["status"], 422);
         assert_eq!(fixture["widgets"][1]["rows"], 24);
+    }
+
+    #[test]
+    fn a_long_history_stops_one_row_past_the_widget_cap() {
+        let values: Vec<Value> = (0..WIDGET_ROWS * 3)
+            .map(|n| json!([n, format!("2026-10-01T00:00:{:02}Z", n % 60)]))
+            .collect();
+        let entities = [json!({ "id": "urn:x", "pm10": { "type": "Property", "values": values } })];
+        let rows = temporal_rows(&entities, &["pm10".to_owned()], false);
+        assert_eq!(
+            rows.len(),
+            WIDGET_ROWS + 1,
+            "one past the cap shows the cut"
+        );
+        assert_eq!(rows[WIDGET_ROWS]["value"], json!(WIDGET_ROWS));
+        assert_eq!(rows[0]["attribute"], "pm10");
     }
 
     #[test]
