@@ -33,8 +33,9 @@ FSTRING = re.compile(r"""\bf(["'])(.*?)\1""")
 
 
 def rows(markdown):
-    """(row id, test cell or None) of every row of a table headed `Id`; None when the table has
-    no `Test` column or the cell is empty."""
+    """(row id, test cell or None) of every row of every table, whatever its header says (a
+    renamed header never hides its rows); None when the table has no `Test` column or the cell
+    is empty."""
     test_col = None
     for line in markdown.splitlines():
         if not line.startswith("|"):
@@ -43,10 +44,10 @@ def rows(markdown):
         cells = [cell.strip() for cell in line.strip().strip("|").split(" | ")]
         if re.fullmatch(r"[|\-: ]+", line.strip()):
             continue
-        if cells and cells[0] == "Id":
+        if test_col is None:  # a table's first line is its header
             test_col = cells.index("Test") if "Test" in cells else -1
             continue
-        if test_col is None or not ROW_ID.match(cells[0]):
+        if not ROW_ID.match(cells[0]):
             continue
         yield cells[0], (cells[test_col] if 0 <= test_col < len(cells) else None)
 
@@ -73,7 +74,7 @@ def packages(root):
         for manifest in (root / base).rglob("Cargo.toml"):
             if {"target", "node_modules"} & set(manifest.parts):
                 continue
-            match = re.search(r'^\[package\][^\[]*?^name\s*=\s*"([^"]+)"', manifest.read_text(errors="replace"), re.M | re.S)
+            match = re.search(r'^\[package\][^\[]*?^name\s*=\s*"([^"]+)"', manifest.read_text(errors="replace"), re.MULTILINE | re.DOTALL)
             if match:
                 found.setdefault(match.group(1), manifest.parent)
     return found
@@ -148,6 +149,8 @@ def check(root, review):
     for row, cell in rows((root / review).read_text()):
         count += 1
         problems += judge(root, known, row, cell)
+    if not count:
+        problems.append(f"{review}: no row found (a table's first line is its header, its first cell the row id)")
     return problems, count
 
 
@@ -176,6 +179,10 @@ def selftest():
 | Id | Fix |
 |---|---|
 | C-1 | a table without a Test column names no test |
+
+| ID | Fix |
+|---|---|
+| C-2 | a table headed `ID`, not `Id`, is still judged |
 """
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp)
@@ -192,6 +199,8 @@ def selftest():
             (root / name).parent.mkdir(parents=True, exist_ok=True)
             (root / name).write_text(body)
         problems, count = check(root, REVIEW)
+        (root / REVIEW).write_text("# A review whose tables are gone\n")
+        problems += check(root, REVIEW)[0]
     expected = [
         "A-2: fn a_test_that_was_deleted is not in package demo-core",
         "A-4: package ghost does not exist",
@@ -200,8 +209,10 @@ def selftest():
         "B-4: names no test (name one, or write `none: <reason>`)",
         "B-5: 'same' names no test",
         "C-1: names no test (name one, or write `none: <reason>`)",
+        "C-2: names no test (name one, or write `none: <reason>`)",
+        f"{REVIEW}: no row found (a table's first line is its header, its first cell the row id)",
     ]
-    if problems != expected or count != 11:
+    if problems != expected or count != 12:
         print(f"security-review-tests selftest FAILED: {count} rows")
         print("\n".join(problems))
         return 1
