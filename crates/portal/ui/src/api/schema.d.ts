@@ -16754,7 +16754,7 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description The caller lacks create on Person */
+            /** @description The caller lacks create on Person, or a grant naming the address is one the caller cannot change and the realm cannot send mail (nothing is created) */
             403: {
                 headers: {
                     [name: string]: unknown;

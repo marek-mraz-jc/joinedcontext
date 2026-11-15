@@ -575,10 +575,9 @@ impl OrganizationHosts {
     }
 }
 
-/// `[[organizations]]` checked: plain lowercase names and hosts, a catalogue UUID each, and no
-/// name, catalogue or host twice (a host compared without its port).
 /// `[kaisatsu] outbound_private_hosts`, each entry an exact host name (normalised to lowercase,
-/// without a trailing dot).
+/// without a trailing dot), by the rule of `kaisatsu_oidc::PrivateHost::parse` (kept here so the
+/// file loads without the `kaisatsu` feature).
 fn check_private_hosts(hosts: Vec<String>) -> Result<Vec<String>, ConfigError> {
     let normalise = |raw: &str| -> Result<String, String> {
         let raw = raw.trim();
@@ -614,6 +613,8 @@ fn check_private_hosts(hosts: Vec<String>) -> Result<Vec<String>, ConfigError> {
         .collect()
 }
 
+/// `[[organizations]]` checked: plain lowercase names and hosts, a catalogue UUID each, and no
+/// name, catalogue or host twice (a host compared without its port).
 fn check_organizations(orgs: &mut [OrganizationSection]) -> Result<(), ConfigError> {
     let bad = |m: String| Err(ConfigError::Organization(m));
     let mut names = std::collections::BTreeSet::new();
