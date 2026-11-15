@@ -841,6 +841,7 @@ fn kubectl_certificates(kubeconfig: &std::path::Path) -> Result<Vec<CertificateS
         .arg("--kubeconfig")
         .arg(kubeconfig)
         .args([
+            "--request-timeout=20s",
             "get",
             "certificates.cert-manager.io",
             "--all-namespaces",
