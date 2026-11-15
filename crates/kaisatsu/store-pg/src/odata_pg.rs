@@ -898,6 +898,10 @@ mod tests {
         // Without the key walk the order stays the row_json sort.
         let mut qb = QueryBuilder::<Postgres>::new("");
         PgScopedTable::push_order(&info("People"), &mut qb, &key, false).expect("order");
-        assert!(qb.sql().as_str().starts_with("CASE jsonb_typeof((r.row_json #> "));
+        assert!(
+            qb.sql()
+                .as_str()
+                .starts_with("CASE jsonb_typeof((r.row_json #> ")
+        );
     }
 }
