@@ -59,7 +59,19 @@ metadata:
   name: alert-{{ title }}
 spec:
   title: {{ title }}
-  webhook: {{ webhookUrl }}
+  pages:
+    - title: {{ webhookUrl }}
+      layers: [base]
+";
+
+/// A Dashboard with no page, which its kind refuses (UI-17).
+const PAGELESS_TEMPLATE: &str = "apiVersion: joinedcontext.com/v1alpha1
+kind: Dashboard
+metadata:
+  name: alert-{{ title }}
+spec:
+  title: {{ title }}
+  pages: []
 ";
 
 /// The same, rendering into a namespace that is not the project the flow runs in.
@@ -70,7 +82,9 @@ metadata:
   namespace: someone-elses-project
 spec:
   title: {{ title }}
-  webhook: {{ webhookUrl }}
+  pages:
+    - title: {{ webhookUrl }}
+      layers: [base]
 ";
 
 fn blueprint_with(
@@ -478,6 +492,39 @@ async fn a_valid_flow_reaches_the_forge_and_stops_there_when_there_is_none() {
             .contains("git forge"),
         "the answer must say what is missing: {problem}"
     );
+}
+
+/// S-5-08: a green flow merges without an approval, so its rendered manifests meet the one
+/// judge before the forge: a Dashboard its kind refuses never reaches a merge request.
+#[tokio::test]
+async fn a_flow_rendering_a_manifest_its_kind_refuses_never_reaches_the_forge() {
+    let config = Config::for_tests();
+    let cookie = session_cookie(&config, &["domain-editor"]);
+    let mirror = seeded_mirror();
+    for envelope in bound_to_propose() {
+        mirror.upsert(envelope);
+    }
+    mirror.upsert(blueprint_with(
+        "pageless-alert",
+        "alerting",
+        "green",
+        json!(["domain-editor"]),
+        PAGELESS_TEMPLATE,
+    ));
+    let app = server::app(AppState::new(config, None).with_mirror(mirror));
+    let (status, problem) = post_flow_to(
+        app,
+        &cookie,
+        json!({
+            "blueprint": "pageless-alert",
+            "version": "1.2.0",
+            "parameters": { "title": "nocne-hluky", "webhookUrl": "https://example.org/hook" },
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+    let detail = problem["detail"].as_str().unwrap_or_default();
+    assert!(detail.contains("spec.pages"), "{detail}");
 }
 
 #[tokio::test]

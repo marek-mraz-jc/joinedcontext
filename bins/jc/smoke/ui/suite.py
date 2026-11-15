@@ -3,7 +3,7 @@
     bins/jc/smoke/run ui --base-url http://localhost:42101 --state <dir> --out <dir>
         [--export <export dir>] [--project <p>] [--widths 1440,400] [--only <regex>]
         [--shako-token-file <f>] [--judge-file <scores.json>] [--personas admin,viewer,outsider]
-        [--realm-token-file <f>]
+        [--realm-token-file <f>] [--no-shared]
 
 The test persons are made with a portal-reconciler token: --realm-token-file, else one minted from
 --state's portal-admin-client-secret. The runner's --admin-token-file is jc's admin listener token
@@ -59,7 +59,8 @@ sys.path.insert(0, str(HERE.parent))
 import checks  # noqa: E402
 import personas as ps  # noqa: E402
 import walk  # noqa: E402
-from common import FAIL, SECOND_FACTOR, SKIP, Http, Results, browser_get, loopback_only, read_token, realm_of  # noqa: E402
+from common import (FAIL, SECOND_FACTOR, SKIP, Http, Results, browser_get, loopback_only, public_origin, read_token,  # noqa: E402
+                    realm_of)
 
 LOGIN = "/api/v1/auth/login"
 HEIGHT = {400: 860, 1440: 900}
@@ -98,7 +99,10 @@ def kept_component(finding: str) -> bool:
 class Walker:
     def __init__(self, a, browser, res: Results, out: Path):
         self.a, self.browser, self.res, self.out = a, browser, res, out
-        self.base = a.base_url.rstrip("/")
+        # The browser walks jc where jc says it lives: its public origin when the suite reaches jc
+        # through a forward (jc-dev), since its sign-in redirects, session cookie and
+        # frame-ancestors name that origin (T-6969); the base otherwise.
+        self.base = (getattr(a, "public", None) or a.base_url).rstrip("/")
         self.script = checks.script()
         self.namespaces = checks.namespaces()
         self.allow = checks.excused()
@@ -517,6 +521,8 @@ def main(argv=None) -> int:
     p.add_argument("--state", help="the rehearsal's state dir: realm-name.txt names the realm the personas are made in")
     p.add_argument("--project")
     p.add_argument("--personas", default="admin,viewer,outsider")
+    p.add_argument("--no-shared", dest="shared", action="store_false",
+                   help="leave out the anonymous dataroom and the shako walks: the gate's other ui shard runs them")
     p.add_argument("--widths", default="1440,400")
     p.add_argument("--only", help="regex over the Portal addresses walked")
     p.add_argument("--judge-file")
@@ -558,6 +564,7 @@ def main(argv=None) -> int:
         res.skip("persona:viewer", "realm", "viewer persona", "a provider-group viewer RoleBinding",
                  "the export names no `role: viewer` RoleBinding with a provider group" if a.export else "no --export")
 
+    a.public = public_origin(h, realm)
     from playwright.sync_api import sync_playwright
 
     started = time.time()
@@ -567,8 +574,9 @@ def main(argv=None) -> int:
         w.datasets = lambda: bool(list(a.export.glob("gitea/files/*/*/ckan/*.yaml"))) if a.export else False
         for x in plan:
             walk_persona(w, x, passwords.get(x["name"]))
-        dataroom(w)
-        shako(w)
+        if a.shared:
+            dataroom(w)
+            shako(w)
         browser.close()
     (a.out / "shots.json").write_text(json.dumps(w.shots, indent=1, ensure_ascii=False))
     fold_judge(res, w.shots, a.judge_file)

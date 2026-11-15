@@ -564,16 +564,15 @@ async fn waits_for_another_person(file: &str, yaml: &str, author: Identity) {
 #[tokio::test]
 async fn a_policy_naming_its_author_waits_for_another_person() {
     let yaml = policy(&format!(
-        "  assignee:\n    kind: user\n    id: {AUTHOR_ID}\n  operations: [retrieveOps, updateOps]\n"
+        "  assignee:\n    kind: user\n    id: {AUTHOR_ID}\n  operations: [retrieveOps]\n"
     ));
     waits_for_another_person(POLICY_PATH, &yaml, author()).await;
 }
 
 #[tokio::test]
 async fn a_policy_naming_a_group_of_its_author_waits_for_another_person() {
-    let yaml = policy(
-        "  assignee:\n    kind: group\n    id: air-team\n  operations: [retrieveOps, updateOps]\n",
-    );
+    let yaml =
+        policy("  assignee:\n    kind: group\n    id: air-team\n  operations: [retrieveOps]\n");
     waits_for_another_person(POLICY_PATH, &yaml, author()).await;
 }
 

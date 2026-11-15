@@ -194,6 +194,11 @@ pub async fn execute(
                 .map_err(|e| KaisatsuError::BadRequest(format!("invalid person: {e}")))?;
             let merged = merge_user_update(&existing, incoming, ctx);
             let updated = store.update_user(merged).await?;
+            // Disabling ends the person's sessions now, as SCIM deactivation does (S-4-10).
+            if !updated.enabled {
+                crate::scim::end_sessions_for_deactivated_user(state, mount, realm, &updated.id)
+                    .await?;
+            }
             record_admin_write(
                 state,
                 ctx,

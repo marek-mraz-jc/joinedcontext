@@ -1218,6 +1218,12 @@ pub struct RefreshTokenFamily {
     pub offline: bool,
     pub revoked: bool,
     pub expires_at: DateTime<Utc>,
+    /// The delegation chain of an exchanged token, minted again by each refresh (S-4-08).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub act: Option<crate::claims::ActClaim>,
+    /// The one audience an exchange named, kept by each refresh (S-4-08).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub only_audience: Option<String>,
 }
 
 /// Revoked token or single-use JTI/OTP marker (`revoked_token`, W2).

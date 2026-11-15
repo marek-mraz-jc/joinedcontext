@@ -405,7 +405,7 @@ def suite_windows(dirs: list[Path], base: str = "") -> list[dict]:
     """A window per suite result that ran against `base`: a suite judged on another jc (the gate's
     multiorg on its own two) wrote into that jc's activity feed, not this one's."""
     out = []
-    for f in [f for d in dirs for f in sorted(d.rglob("results.json"))]:
+    for d, f in [(d, f) for d in dirs for f in sorted(d.rglob("results.json"))]:
         doc = as_json(f.read_bytes())
         if not isinstance(doc, dict) or not isinstance(doc.get("checks"), list):
             continue
@@ -414,7 +414,10 @@ def suite_windows(dirs: list[Path], base: str = "") -> list[dict]:
         end = f.stat().st_mtime
         start = end - float(doc.get("seconds") or 0)
         writes = [c for c in doc.get("checks", []) if is_write(c)]
-        out.append({"suite": doc.get("suite", f.parent.name), "dir": str(f.parent), "start": start - 60, "end": end + 60,
+        # named by its place under the run's dir (restore/before/endpoints), the same on every shard
+        name = f.parent.relative_to(d.parent).as_posix()
+        out.append({"suite": doc.get("suite", f.parent.name), "name": name, "dir": str(f.parent),
+                    "start": start - 60, "end": end + 60,
                     "writes": len(writes), "example": writes[0]["call"][:120] if writes else ""})
     return out
 
@@ -423,7 +426,7 @@ def judge_activity(res: Results, person: Person | None, why: str, windows: list[
     if person is None:
         res.skip("activity.feed", "portal", "GET /api/v1/projects/{p}/activity", "200 per project", why)
         for w in windows:
-            res.skip(f"activity.{w['suite']}", "portal", "GET /api/v1/projects/{p}/activity", "events", why)
+            res.skip(f"activity.{w['name']}", "portal", "GET /api/v1/projects/{p}/activity", "events", why)
         return
     s = person.session
     st, _, raw = s.call("GET", "/api/v1/projects")
@@ -446,18 +449,17 @@ def judge_activity(res: Results, person: Person | None, why: str, windows: list[
     res.check("activity.feed", "portal", "GET /api/v1/projects/{p}/activity?since=...", "200 for every project",
               f"{len(projects) - len(bad)}/{len(projects)} answered, {len(events)} events" +
               (f"; {', '.join(bad[:5])}" if bad else ""), not bad and bool(projects))
-    for i, w in enumerate(windows, 1):
-        w["suite"] = f"{w['suite']}.{i}"
+    for w in windows:
         a = dt.datetime.fromtimestamp(w["start"], dt.timezone.utc)
         b = dt.datetime.fromtimestamp(w["end"], dt.timezone.utc)
         inside = [e for e in events if a <= e[0] <= b]
-        call = f"activity of {iso(a)}..{iso(b)} (suite {w['suite']}, {w['writes']} passed writes)"
+        call = f"activity of {iso(a)}..{iso(b)} (suite {w['suite']} in {w['name']}, {w['writes']} passed writes)"
         if not w["writes"]:
-            res.skip(f"activity.{w['suite']}", "portal", call, "events of the suite's writes",
+            res.skip(f"activity.{w['name']}", "portal", call, "events of the suite's writes",
                      "the suite's results name no passed write")
             continue
         kinds = sorted({str(e[2]) for e in inside})
-        res.check(f"activity.{w['suite']}", "portal", call, "at least one event in the suite's window",
+        res.check(f"activity.{w['name']}", "portal", call, "at least one event in the suite's window",
                   f"{len(inside)} events ({', '.join(kinds[:6])})", bool(inside),
                   "" if inside else f"no event for writes such as {w['example']}")
 
@@ -493,6 +495,15 @@ def scan_text_sources(res: Results, index: ls.SecretIndex, sources: list[tuple[s
 
 
 # ------------------------------------------------------------------ main
+
+def result_sources(dirs: list[str]) -> list[tuple[str, str, Path]]:
+    """The files of other suites' result dirs to scan, each named by its dir (`run all` gives each
+    run its own: restore, multiorg@path), never by its place in the list: each shard of the gate
+    (ci/merge.py) hands logs another list, and the merged rows keep one id per file."""
+    return [(f"results.{Path(d).name}.{f.relative_to(d)}", f"results {d}", f)
+            for d in dirs for f in sorted(Path(d).rglob("*"))
+            if f.is_file() and f.stat().st_size < 64 << 20 and f.suffix in (".json", ".md", ".txt", ".log", ".jsonl", "")]
+
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -657,10 +668,7 @@ def main(argv=None) -> int:
                 f"{len(found)} values", PASS)
         index = ls.SecretIndex(found)
         sources = [("log", "jc", log)] if log and log.is_file() else []
-        for i, d in enumerate(a.results_dir, 1):
-            for f in sorted(Path(d).rglob("*")):
-                if f.is_file() and f.stat().st_size < 64 << 20 and f.suffix in (".json", ".md", ".txt", ".log", ".jsonl", ""):
-                    sources.append((f"results{i}.{f.relative_to(d)}", f"results {d}", f))
+        sources += result_sources(a.results_dir)
         scan_text_sources(res, index, sources)
 
     if person:
