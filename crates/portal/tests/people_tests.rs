@@ -347,6 +347,59 @@ async fn without_smtp_a_temporary_password_is_answered_once_and_never_logged() {
     assert!(!read.text.contains(&password));
 }
 
+/// PF-93: an address a Policy the creator cannot change already names opens by the e-mail only;
+/// without mail nothing is created and no temporary password is answered. A platform admin
+/// still gets the password.
+#[tokio::test]
+async fn a_person_created_for_an_address_an_uncovered_grant_names_opens_by_mail_only() {
+    for smtp in [true, false] {
+        let (kc, shako) = (realm(smtp).await, forge().await);
+        let state = state_with(&kc, &shako);
+        state.mirror.upsert(envelope(
+            "Policy",
+            "air-read",
+            "air",
+            json!({ "contextSpaceRef": "air", "assignee": { "kind": "user", "id": "New@Example.org" },
+                    "operations": ["queryEntity"] }),
+        ));
+        let body = json!({ "email": "new@example.org", "firstName": "Nora", "lastName": "Nová" });
+        let created = send(&state, caller("pia"), "POST", PEOPLE, Some(body.clone())).await;
+        assert!(
+            !created.text.contains("temporaryPassword"),
+            "{}",
+            created.text
+        );
+        assert!(received(&kc, "PUT", "/new-id/reset-password")
+            .await
+            .is_empty());
+        if smtp {
+            assert_eq!(created.status, StatusCode::CREATED, "{}", created.text);
+            assert_eq!(
+                received(&kc, "PUT", "/new-id/execute-actions-email")
+                    .await
+                    .len(),
+                1
+            );
+            continue;
+        }
+        assert_eq!(created.status, StatusCode::FORBIDDEN, "{}", created.text);
+        assert!(
+            created.text.contains("Policy air/air-read"),
+            "{}",
+            created.text
+        );
+        assert_eq!(
+            received(&kc, "DELETE", "/users/new-id").await.len(),
+            1,
+            "rolled back"
+        );
+
+        let root = send(&state, caller("root"), "POST", PEOPLE, Some(body)).await;
+        assert_eq!(root.status, StatusCode::CREATED, "{}", root.text);
+        assert!(root.text.contains("temporaryPassword"), "{}", root.text);
+    }
+}
+
 /// PF-93: disabling ends every session; the person is written back whole, `enabled: false`.
 #[tokio::test]
 async fn disabling_a_person_ends_their_sessions() {
@@ -426,6 +479,333 @@ async fn a_people_admin_cannot_act_on_a_person_holding_a_right_they_lack() {
     )
     .await;
     assert_eq!(own_level.status, StatusCode::OK, "{}", own_level.text);
+}
+
+/// ola: holds no RoleBinding, has an authenticator app, and is named by the grant `grant`
+/// ("policy", "app", "endpoint" or none) of project `air`.
+async fn ola(kc: &MockServer, state: &AppState, grant: Option<&str>) {
+    Mock::given(method("GET"))
+        .and(path(format!("{ADMIN}/users/ola-id")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(user("ola-id", "ola@hel.fi")))
+        .mount(kc)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{ADMIN}/users/ola-id/credentials")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!([{ "id": "otp-1", "type": "otp" }])),
+        )
+        .with_priority(1)
+        .mount(kc)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path(format!("{ADMIN}/users/ola-id/credentials/otp-1")))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(kc)
+        .await;
+    let subjects = json!([{ "user": "ola@hel.fi" }]);
+    let (kind, name, spec) = match grant {
+        Some("policy") => (
+            "Policy",
+            "air-read",
+            json!({ "contextSpaceRef": "air", "assignee": { "kind": "user", "id": "ola-id" },
+                    "operations": ["queryEntity"] }),
+        ),
+        Some("app") => (
+            "App",
+            "board",
+            json!({ "access": [{ "role": "viewer", "subjects": subjects }] }),
+        ),
+        Some("endpoint") => (
+            "Endpoint",
+            "sensors",
+            json!({ "roles": [{ "name": "reader", "subjects": subjects }] }),
+        ),
+        _ => return,
+    };
+    state.mirror.upsert(envelope(kind, name, "air", spec));
+}
+
+/// kai: a people administrator who may also approve Policies, Apps and Endpoints of `air`.
+fn kai_covers_air(state: &AppState) {
+    state.mirror.upsert(envelope(
+        "Role",
+        "grant-approver",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Policy", "App", "Endpoint"], "verbs": ["propose", "approve"] }] }),
+    ));
+    for (name, role, scope) in [
+        (
+            "kai-people",
+            "people-admin",
+            json!({ "organization": "hel" }),
+        ),
+        ("kai-air", "grant-approver", json!({ "project": "air" })),
+    ] {
+        let mut spec = json!({ "subjects": [{ "user": "kai@hel.fi" }], "role": role });
+        if !scope.is_null() {
+            spec["scope"] = scope;
+        }
+        state
+            .mirror
+            .upsert(envelope("RoleBinding", name, ORG_NAMESPACE, spec));
+    }
+}
+
+/// `root` is a platform admin (the tests' bootstrap group, `portal-approver`); every other name a
+/// person of `hel.fi`.
+fn caller(who: &str) -> joinedcontext_portal::auth::session::Identity {
+    let mut identity = person(who);
+    if who == "root" {
+        identity.groups = vec!["portal-approver".into()];
+    }
+    identity
+}
+
+async fn post(state: &AppState, who: &str, action: &str) -> common::Answer {
+    send(
+        state,
+        caller(who),
+        "POST",
+        &format!("{PEOPLE}/ola-id/{action}"),
+        None,
+    )
+    .await
+}
+
+/// S-5-03, PF-93: a people admin acting on a person named in a Policy they cannot change may
+/// only reset by e-mail and remove the second factor with an e-mail; never a temporary password.
+#[tokio::test]
+async fn a_person_holding_an_uncovered_policy_gets_a_reset_by_mail_only() {
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
+    ola(&kc, &state, Some("policy")).await;
+
+    let reset = post(&state, "pia", "reset-password").await;
+    assert_eq!(reset.status, StatusCode::ACCEPTED, "{}", reset.text);
+    assert!(!reset.text.contains("temporaryPassword"), "{}", reset.text);
+    let mailed = received(&kc, "PUT", "/ola-id/execute-actions-email").await;
+    assert_eq!(mailed.len(), 1);
+    assert!(String::from_utf8_lossy(&mailed[0].body).contains("UPDATE_PASSWORD"));
+    assert!(received(&kc, "PUT", "/ola-id/reset-password")
+        .await
+        .is_empty());
+
+    let removed = post(&state, "pia", "remove-second-factor").await;
+    assert_eq!(removed.status, StatusCode::NO_CONTENT, "{}", removed.text);
+    let mailed = received(&kc, "PUT", "/ola-id/execute-actions-email").await;
+    assert!(String::from_utf8_lossy(&mailed[1].body).contains("CONFIGURE_TOTP"));
+    assert_eq!(received(&kc, "DELETE", "/credentials/otp-1").await.len(), 1);
+
+    for (verb, route, body) in [
+        (
+            "PATCH",
+            format!("{PEOPLE}/ola-id"),
+            Some(json!({ "email": "o@x.example" })),
+        ),
+        (
+            "PATCH",
+            format!("{PEOPLE}/ola-id"),
+            Some(json!({ "firstName": "O" })),
+        ),
+        ("POST", format!("{PEOPLE}/ola-id/disable"), None),
+        ("POST", format!("{PEOPLE}/ola-id/sign-out"), None),
+        ("DELETE", format!("{PEOPLE}/ola-id"), None),
+        (
+            "POST",
+            format!("{PEOPLE}/remove"),
+            Some(json!({ "ids": ["ola-id"] })),
+        ),
+    ] {
+        let refused = send(&state, person("pia"), verb, &route, body).await;
+        assert_eq!(
+            refused.status,
+            StatusCode::FORBIDDEN,
+            "{verb} {route}: {}",
+            refused.text
+        );
+        assert!(
+            refused.text.contains("Policy air/air-read"),
+            "{}",
+            refused.text
+        );
+    }
+    assert!(
+        received(&kc, "PUT", "/ola-id").await.is_empty(),
+        "nothing was edited"
+    );
+    assert!(
+        received(&kc, "DELETE", "/users/ola-id").await.is_empty(),
+        "nothing was deleted"
+    );
+}
+
+/// Without a mail server neither action is open: 403, no password set, nothing removed. The same
+/// for a person holding an App role or an Endpoint role.
+#[tokio::test]
+async fn without_mail_a_person_holding_an_uncovered_grant_is_only_a_platform_admins() {
+    for grant in ["policy", "app", "endpoint"] {
+        let (kc, shako) = (realm(false).await, forge().await);
+        let state = state_with(&kc, &shako);
+        ola(&kc, &state, Some(grant)).await;
+        let reset = post(&state, "pia", "reset-password").await;
+        assert_eq!(
+            reset.status,
+            StatusCode::FORBIDDEN,
+            "{grant}: {}",
+            reset.text
+        );
+        assert!(
+            reset.text.contains("cannot send mail"),
+            "{grant}: {}",
+            reset.text
+        );
+        assert!(!reset.text.contains("temporaryPassword"));
+        let removed = post(&state, "pia", "remove-second-factor").await;
+        assert_eq!(
+            removed.status,
+            StatusCode::FORBIDDEN,
+            "{grant}: {}",
+            removed.text
+        );
+        assert!(
+            received(&kc, "PUT", "/ola-id/reset-password")
+                .await
+                .is_empty(),
+            "{grant}"
+        );
+        assert!(
+            received(&kc, "DELETE", "/credentials/otp-1")
+                .await
+                .is_empty(),
+            "{grant}"
+        );
+        let disabled = post(&state, "pia", "disable").await;
+        assert_eq!(
+            disabled.status,
+            StatusCode::FORBIDDEN,
+            "{grant}: {}",
+            disabled.text
+        );
+    }
+}
+
+/// An admin who may change the grant, and a platform admin, act on the person as before: a
+/// reset without mail still answers the temporary password once.
+#[tokio::test]
+async fn an_admin_who_covers_the_grant_or_a_platform_admin_may_do_everything() {
+    for grant in ["policy", "app", "endpoint"] {
+        for who in ["kai", "root"] {
+            let (kc, shako) = (realm(false).await, forge().await);
+            let state = state_with(&kc, &shako);
+            kai_covers_air(&state);
+            ola(&kc, &state, Some(grant)).await;
+            let reset = post(&state, who, "reset-password").await;
+            assert_eq!(
+                reset.status,
+                StatusCode::OK,
+                "{grant} {who}: {}",
+                reset.text
+            );
+            assert!(reset.text.contains("temporaryPassword"), "{grant} {who}");
+            let removed = post(&state, who, "remove-second-factor").await;
+            assert_eq!(
+                removed.status,
+                StatusCode::NO_CONTENT,
+                "{grant} {who}: {}",
+                removed.text
+            );
+            let edited = send(
+                &state,
+                caller(who),
+                "PATCH",
+                &format!("{PEOPLE}/ola-id"),
+                Some(json!({ "email": "ola.new@hel.fi" })),
+            )
+            .await;
+            assert_eq!(
+                edited.status,
+                StatusCode::OK,
+                "{grant} {who}: {}",
+                edited.text
+            );
+            let disabled = post(&state, who, "disable").await;
+            assert_eq!(
+                disabled.status,
+                StatusCode::OK,
+                "{grant} {who}: {}",
+                disabled.text
+            );
+        }
+    }
+}
+
+/// An administrator of another Organization (ctl-a, not the installation's) holds no right on
+/// the installation's people: every people route answers 403, and nothing reaches the realm.
+#[tokio::test]
+async fn another_organizations_admin_is_refused_on_every_people_route() {
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
+    ola(&kc, &state, None).await;
+    for (name, spec) in [
+        ("hel", json!({ "installation": true })),
+        ("ctl-a", json!({})),
+    ] {
+        state
+            .mirror
+            .upsert(envelope("Organization", name, ORG_NAMESPACE, spec));
+    }
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "ctl-a-admins",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "cara@hel.fi" }], "role": "org-admin",
+                "scope": { "organization": "ctl-a" } }),
+    ));
+    for (verb, route, body) in [
+        ("GET", PEOPLE.to_owned(), None),
+        ("GET", format!("{PEOPLE}/ola-id"), None),
+        (
+            "POST",
+            PEOPLE.to_owned(),
+            Some(json!({ "email": "x@example.org", "firstName": "X", "lastName": "Y" })),
+        ),
+        (
+            "PATCH",
+            format!("{PEOPLE}/ola-id"),
+            Some(json!({ "firstName": "Z" })),
+        ),
+        ("POST", format!("{PEOPLE}/ola-id/disable"), None),
+        ("POST", format!("{PEOPLE}/ola-id/enable"), None),
+        ("POST", format!("{PEOPLE}/ola-id/reset-password"), None),
+        ("POST", format!("{PEOPLE}/ola-id/resend-invitation"), None),
+        (
+            "POST",
+            format!("{PEOPLE}/ola-id/remove-second-factor"),
+            None,
+        ),
+        ("POST", format!("{PEOPLE}/ola-id/sign-out"), None),
+        ("DELETE", format!("{PEOPLE}/ola-id"), None),
+        (
+            "POST",
+            format!("{PEOPLE}/remove"),
+            Some(json!({ "ids": ["ola-id"] })),
+        ),
+    ] {
+        let refused = send(&state, person("cara"), verb, &route, body).await;
+        assert_eq!(
+            refused.status,
+            StatusCode::FORBIDDEN,
+            "{verb} {route}: {}",
+            refused.text
+        );
+    }
+    let reached = kc
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .any(|r| r.url.path().starts_with(ADMIN));
+    assert!(!reached, "nothing reached the realm's admin API");
 }
 
 /// PF-93, PF-03: nobody disables or deletes themselves, or the last Organization Administrator.

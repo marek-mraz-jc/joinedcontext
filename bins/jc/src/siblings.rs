@@ -720,7 +720,7 @@ pub(crate) mod tests {
     fn live_addresses_come_from_the_mounts_unless_named_and_nobody_serves_tiles_or_assistant() {
         let (siblings, _, _d) = fixture("https");
         let live = live_addresses(&crate::config::DataroomAddresses::default(), &siblings);
-        assert_eq!(live.viz, "https://city.example/viz");
+        assert_eq!(live.viz, "https://city.example/embed");
         assert_eq!(
             live.api, "https://city.example",
             "the gateway answers at the host's root"

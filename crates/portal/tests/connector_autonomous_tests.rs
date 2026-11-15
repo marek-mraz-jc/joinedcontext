@@ -51,7 +51,9 @@ fn org(kind: &str, name: &str, spec: Value) -> ResourceEnvelope {
 
 fn manifest(kind: &str) -> (String, String) {
     let spec = match kind {
-        "DataModel" => json!({ "version": "1.0.0", "linkml": "models/air.linkml.yaml" }),
+        "DataModel" => {
+            json!({ "version": "1.0.0", "linkml": "models/air.linkml.yaml", "lifecycle": "draft" })
+        }
         "Policy" => json!({
             "assignee": { "kind": "user", "id": "eva.hruba@banskabystrica.sk" },
             "actions": ["read"]

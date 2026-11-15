@@ -9,7 +9,10 @@ as CSV and Parquet and /collections narrowed to it as a ZIP, OData $metadata + o
 SensorThings and iCal where the Endpoint serves them, and an anonymous write that must be refused. Per closed Endpoint: 401 anonymously; with --person-token-file, 200 where the
 token names the Endpoint and a Policy grants its holder, 403 for a write outside the Policy.
 Per published Endpoint: its datasets in the dataroom catalogue (`/opendata`), one per Endpoint or
-one per `spec.catalog.datasets` entry."""
+one per `spec.catalog.datasets` entry.
+
+--shard K/N keeps the Endpoints whose slug hashes to shard K of N (shard_of): N runs with K = 1..N
+check every Endpoint exactly once, and shard 1 alone checks the listing."""
 
 from __future__ import annotations
 
@@ -17,6 +20,7 @@ import argparse
 import concurrent.futures as cf
 import csv
 import datetime as dt
+import hashlib
 import io
 import json
 import re
@@ -666,6 +670,19 @@ class Suite:
                      f"{st} {len(slugs)} listed, missing {len(missing)}: {missing[:8]}", st == 200 and not missing)
 
 
+def shard_of(slug: str, n: int) -> int:
+    """The shard (1..n) an Endpoint's rows land in: its slug's SHA-256 mod n, the same on every
+    run and machine (Python's hash() is salted per process)."""
+    return int.from_bytes(hashlib.sha256(slug.encode()).digest()[:8], "big") % n + 1
+
+
+def shard_arg(v: str) -> tuple[int, int]:
+    k, _, n = v.partition("/")
+    if not (k.isdigit() and n.isdigit() and 1 <= int(k) <= int(n)):
+        raise argparse.ArgumentTypeError(f"--shard K/N with 1 <= K <= N, not {v!r}")
+    return int(k), int(n)
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="run endpoints", description=__doc__.splitlines()[0])
     p.add_argument("--base-url", required=True)
@@ -676,6 +693,9 @@ def main(argv=None) -> int:
     p.add_argument("--cache", help="where the export index is kept (default <out>/../.cache)")
     p.add_argument("--only", help="regex over slug, name, project or tenant")
     p.add_argument("--max-endpoints", type=int, default=0)
+    p.add_argument("--shard", type=shard_arg, default=(1, 1), metavar="K/N",
+                   help="only the Endpoints whose slug hashes to shard K of N (shard_of); shard 1 also "
+                        "checks the listing against every Endpoint")
     p.add_argument("--workers", type=int, default=6)
     p.add_argument("--timeout", type=float, default=60)
     p.add_argument("--sweep-minutes", type=int, default=65,
@@ -692,10 +712,13 @@ def main(argv=None) -> int:
         eps = [e for e in eps if any(rx.search(x) for x in (e.slug, e.name, e.project, e.tenant))]
     if a.max_endpoints:
         eps = eps[:a.max_endpoints]
+    k, n = a.shard
+    listed, eps = eps, [e for e in eps if shard_of(e.slug, n) == k]
     index = ex.load_index(export, eps, Path(a.cache) if a.cache else out.parent / ".cache",
                           log=lambda m: print(m, file=sys.stderr))
     s = Suite(a, index, Person(read_token(a.person_token_file)))
-    s.listing(eps)
+    if k == 1:
+        s.listing(listed)
     # Closed Endpoints first: a person token lives minutes, the whole run longer.
     eps = sorted(eps, key=lambda e: not e.closed)
     with cf.ThreadPoolExecutor(max_workers=a.workers) as pool:

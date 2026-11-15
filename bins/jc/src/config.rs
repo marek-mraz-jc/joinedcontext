@@ -254,6 +254,12 @@ pub struct KaisatsuSection {
     /// keeps the per-person rules (role `mfa-required`, an Organization's setting).
     #[serde(default)]
     pub second_factor: SecondFactorFloor,
+    /// Hosts besides the Kubernetes API that kaisatsu's outgoing calls (sign-out notices,
+    /// identity-provider keys and tokens) may reach on a private address or over `http`: exact
+    /// `host` or `host:port` (e.g. `portal.jc.svc.cluster.local:8080`), case-insensitive; an
+    /// address literal, a wildcard or a suffix is refused at load. Empty by default.
+    #[serde(default)]
+    pub outbound_private_hosts: Vec<String>,
 }
 
 /// `[kaisatsu] second_factor`.
@@ -569,6 +575,44 @@ impl OrganizationHosts {
     }
 }
 
+/// `[kaisatsu] outbound_private_hosts`, each entry an exact host name (normalised to lowercase,
+/// without a trailing dot), by the rule of `kaisatsu_oidc::PrivateHost::parse` (kept here so the
+/// file loads without the `kaisatsu` feature).
+fn check_private_hosts(hosts: Vec<String>) -> Result<Vec<String>, ConfigError> {
+    let normalise = |raw: &str| -> Result<String, String> {
+        let raw = raw.trim();
+        let (host, port) = match raw.rsplit_once(':') {
+            Some((h, p)) if p.parse::<u16>().is_ok_and(|p| p != 0) => (h, Some(p)),
+            Some(_) => return Err(format!("'{raw}': the port must be 1-65535")),
+            None => (raw, None),
+        };
+        let host = host.strip_suffix('.').unwrap_or(host).to_ascii_lowercase();
+        let label_ok = |l: &str| {
+            !l.is_empty()
+                && l.len() <= 63
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+                && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        };
+        if host.len() > 253 || !host.split('.').all(label_ok) {
+            return Err(format!(
+                "'{raw}' is not an exact host name (no wildcard, suffix, scheme or path; e.g. portal.jc.svc.cluster.local:8080)"
+            ));
+        }
+        if host
+            .split('.')
+            .all(|l| l.bytes().all(|b| b.is_ascii_digit()))
+        {
+            return Err(format!("'{raw}' is an address, not a host name"));
+        }
+        Ok(port.map_or(host.clone(), |p| format!("{host}:{p}")))
+    };
+    hosts
+        .iter()
+        .map(|h| normalise(h).map_err(ConfigError::PrivateHost))
+        .collect()
+}
+
 /// `[[organizations]]` checked: plain lowercase names and hosts, a catalogue UUID each, and no
 /// name, catalogue or host twice (a host compared without its port).
 fn check_organizations(orgs: &mut [OrganizationSection]) -> Result<(), ConfigError> {
@@ -587,6 +631,12 @@ fn check_organizations(orgs: &mut [OrganizationSection]) -> Result<(), ConfigErr
         {
             return bad(format!(
                 "name '{name}' is not a lowercase Organization name"
+            ));
+        }
+        if jc_core::names::RESERVED_LABELS.contains(&name) {
+            return bad(format!(
+                "Organization '{name}' is reserved for the platform: a service's path or host \
+                 uses this name; choose another"
             ));
         }
         if !names.insert(org.name.clone()) {
@@ -888,6 +938,8 @@ pub enum ConfigError {
     Address(&'static str, String),
     #[error("[identity] realm: {0}")]
     Realm(String),
+    #[error("[kaisatsu] outbound_private_hosts: {0}")]
+    PrivateHost(String),
     #[error("[[organizations]] {0}")]
     Organization(String),
 }
@@ -1036,6 +1088,7 @@ impl Config {
             database: file.kaisatsu.database,
             branding_file: file.kaisatsu.branding_file,
             second_factor: file.kaisatsu.second_factor,
+            outbound_private_hosts: check_private_hosts(file.kaisatsu.outbound_private_hosts)?,
         };
         if kaisatsu.database.is_some() && kaisatsu.database_url_file.is_some() {
             return Err(ConfigError::Database {
@@ -2313,6 +2366,11 @@ path_prefix = "/api/endpoint"
             ("\"beta\"", "\"alpha\"", "named twice"),
             ("\"beta\"", "\"Beta\"", "not a lowercase Organization name"),
             ("\"beta\"", "\"-b\"", "not a lowercase Organization name"),
+            // T-6974: a name a platform address uses stops jc at startup.
+            ("\"beta\"", "\"api\"", "reserved for the platform"),
+            ("\"beta\"", "\"opendata\"", "reserved for the platform"),
+            ("\"beta\"", "\"oauth\"", "reserved for the platform"),
+            ("\"beta\"", "\"login\"", "reserved for the platform"),
             (
                 "0000000000b1",
                 "0000000000a1",
@@ -2515,6 +2573,49 @@ path_prefix = "/api/endpoint"
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn the_kaisatsu_section_lists_exact_private_hosts_only() {
+        let parse = |list: &str| {
+            let file = Config::parse_file(
+                Path::new("jc.toml"),
+                &format!(
+                    "profile = \"development\"\n[kaisatsu]\noutbound_private_hosts = [{list}]\n"
+                ),
+            )
+            .expect("parses");
+            Config::merge(cli(&["--role", "kaisatsu"]), file)
+        };
+        let cfg =
+            parse(r#""Portal.JC.svc.cluster.local.:8080", "idp.corp.example""#).expect("parses");
+        assert_eq!(
+            cfg.kaisatsu.outbound_private_hosts,
+            ["portal.jc.svc.cluster.local:8080", "idp.corp.example"]
+        );
+        let unset = Config::parse_file(Path::new("jc.toml"), "profile = \"development\"\n")
+            .expect("parses");
+        assert!(unset.kaisatsu.outbound_private_hosts.is_empty());
+        assert!(
+            Config::merge(cli(&["--role", "kaisatsu"]), unset)
+                .expect("merges")
+                .kaisatsu
+                .outbound_private_hosts
+                .is_empty()
+        );
+        for bad in [
+            r#"".svc.cluster.local""#,
+            r#""*.svc.cluster.local""#,
+            r#""10.0.0.1""#,
+            r#""10.0.0.1:80""#,
+            r#""[::1]""#,
+            r#""http://portal""#,
+            r#""portal:0""#,
+            "\"\"",
+        ] {
+            let err = parse(bad).unwrap_err();
+            assert!(matches!(err, ConfigError::PrivateHost(_)), "{bad}: {err}");
+        }
     }
 
     #[test]

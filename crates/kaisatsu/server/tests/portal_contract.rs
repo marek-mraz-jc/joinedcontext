@@ -93,6 +93,7 @@ async fn realm() -> Realm {
         dry_run: false,
         allow_literal_secrets: false,
         secrets_dir: None,
+        outbound_private_hosts: Vec::new(),
         env_vars: BTreeMap::from([
             ("CLIENT_SECRET_PORTAL_API".into(), PORTAL_API_SECRET.into()),
             (

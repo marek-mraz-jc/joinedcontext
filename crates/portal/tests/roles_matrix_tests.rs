@@ -279,7 +279,12 @@ async fn forge() -> MockServer {
                 })))
                 .mount(&shako)
                 .await;
-            let file = serde_norway::to_string(&manifest(family, "proposed")).expect("yaml");
+            // What the propose door wrote: a space of its own for a model (DM-61), a minted slug.
+            let mut proposed = fresh(family, "proposed");
+            if family.kind == "Endpoint" {
+                proposed["spec"]["slug"] = json!("pq4tm7ge2xdv6ksb3ncf5arw2y");
+            }
+            let file = serde_norway::to_string(&proposed).expect("yaml");
             Mock::given(method("GET"))
                 .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", REPO)))
                 .and(query_param("@r", format!("'{head}'")))

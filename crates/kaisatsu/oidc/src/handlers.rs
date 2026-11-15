@@ -104,7 +104,30 @@ pub fn oidc_router(state: OidcState) -> Router {
             "/realms/{realm}/protocol/openid-connect/logout",
             get(logout_get_endpoint).post(logout_post_endpoint),
         )
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            active_realm,
+        ))
         .with_state(state)
+}
+
+/// Serves a route that names a realm only while that realm exists and is enabled (S-4-10): a
+/// disabled realm answers like an unknown one, so it shows no sign-in, mints no code or token and
+/// publishes no keys. Layered on the protocol and login routers; admin routes keep their own rule.
+pub async fn active_realm(
+    State(state): State<OidcState>,
+    params: Option<Path<HashMap<String, String>>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if let Some(name) = params.as_ref().and_then(|Path(p)| p.get("realm")) {
+        match state.store.get_realm(name).await {
+            Ok(Some(realm)) if realm.enabled => {}
+            Ok(_) => return KaisatsuError::NotFound("realm not found".into()).into_response(),
+            Err(e) => return e.into_response(),
+        }
+    }
+    next.run(request).await
 }
 
 async fn realm_info(
@@ -255,6 +278,9 @@ pub async fn resolve_or_fetch_client(
 
 /// Validates requested scopes against the client's allowed scopes and parameterized scope regexps
 /// (`connector:{id}` with regexp `[a-z2-7]{26}`, W1).
+/// The scope that takes every write right from a token (jc-core `READ_ONLY_SCOPE`, T-5955).
+const READ_ONLY_SCOPE: &str = "jc:read-only";
+
 pub async fn resolve_scopes_for_client(
     store: &Arc<dyn Store>,
     realm: &RealmConfig,
@@ -359,6 +385,14 @@ pub async fn resolve_scopes_for_client(
             || all_scopes
                 .iter()
                 .any(|s| s.name == token && client.has_optional_scope(s));
+        // `jc:read-only` only takes rights away (the gateway refuses every write of its token):
+        // any client may narrow its own token with it, and an exchanged token's refresh keeps it.
+        if !allowed_on_client && token == READ_ONLY_SCOPE {
+            if !granted_tokens.iter().any(|t| t == token) {
+                granted_tokens.push(token.to_owned());
+            }
+            continue;
+        }
         if !allowed_on_client {
             return Err(KaisatsuError::invalid_scope(format!(
                 "Invalid scopes: {token}"
@@ -639,6 +673,25 @@ pub(crate) fn html_escape(s: &str) -> String {
         .replace('\'', "&#x27;")
 }
 
+/// The name of sign-in cookie `suffix` (`auth`, `sso`): `__Host-wk_{suffix}` on every mount
+/// (T-6974). A `__Host-` cookie carries no `Domain` and `Path=/`, so a sibling host (an App on
+/// `*.apps.<base>`) can neither plant nor shadow it; under a path prefix (slug mode) the old
+/// `__Secure-wk_*` name could be set from any host below the domain. The old name is never
+/// read, so a cookie planted under it reaches nothing: a browser holding one signs in once more.
+#[must_use]
+pub fn sign_in_cookie_name(suffix: &str) -> String {
+    format!("__Host-wk_{suffix}")
+}
+
+/// The `Set-Cookie` value of sign-in cookie `suffix` (`Max-Age=0` clears it).
+#[must_use]
+pub fn sign_in_cookie(suffix: &str, value: &str, max_age: i64) -> String {
+    format!(
+        "{}={value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={max_age}",
+        sign_in_cookie_name(suffix)
+    )
+}
+
 /// The first non-empty value of cookie `target` across every `Cookie` header.
 pub fn read_cookie(headers: &HeaderMap, target: &str) -> Option<String> {
     headers
@@ -651,8 +704,8 @@ pub fn read_cookie(headers: &HeaderMap, target: &str) -> Option<String> {
         .map(|(_, v)| v.to_owned())
 }
 
-pub(crate) fn read_sso_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
-    read_cookie(headers, &mount.cookie_name("sso"))
+pub(crate) fn read_sso_cookie(headers: &HeaderMap) -> Option<String> {
+    read_cookie(headers, &sign_in_cookie_name("sso"))
 }
 
 /// Keycloak's maximum authentication age for `UPDATE_PASSWORD` and `CONFIGURE_TOTP` (5 min):
@@ -850,7 +903,7 @@ async fn authorize_get(
     }
 
     // Check existing SSO session cookie unless `prompt=login` or `prompt=select_account`
-    let mut existing_sso = if let Some(raw_handle) = read_sso_cookie(&headers, &mount) {
+    let mut existing_sso = if let Some(raw_handle) = read_sso_cookie(&headers) {
         state
             .store
             .get_sso_session_by_handle(&realm.id, &sha256_hex(&raw_handle))
@@ -1152,15 +1205,7 @@ async fn authorize_get(
     };
     state.store.put_auth_session(auth_session).await?;
 
-    let cookie_name = mount.cookie_name("auth");
-    let cookie_path = mount.realm_cookie_path(&realm.realm);
-    let set_cookie = if mount.path_prefix.is_empty() {
-        format!("{cookie_name}={handle}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=1800")
-    } else {
-        format!(
-            "{cookie_name}={handle}; Path={cookie_path}; HttpOnly; Secure; SameSite=Lax; Max-Age=1800"
-        )
-    };
+    let set_cookie = sign_in_cookie("auth", &handle, 1800);
     let login_url = format!(
         "{}/realms/{}/login-actions/authenticate?session_code={auth_session_id}&client_id={}",
         mount.path_prefix, realm.realm, client.client_id
@@ -1675,14 +1720,14 @@ async fn mint_tokens_for_principal(
         exp: access_exp,
         auth_time,
         dpop_jkt,
-        act,
+        act: act.clone(),
         active_org: resolved_active_org.as_deref(),
     };
 
     let mut access_claims = evaluate_mappers(&mapper_ctx, TokenKind::AccessToken)?;
     // A token exchange naming `audience` gets that audience alone, as Keycloak 26's standard
-    // exchange issues it: the requester's own audience mappers do not ride along.
-    // ponytail: a SAME_SESSION refresh of such a token mints the requester's full audience again.
+    // exchange issues it: the requester's own audience mappers do not ride along. Its refresh
+    // family keeps the audience, so a SAME_SESSION refresh mints it alone again.
     if let Some(only) = only_audience {
         access_claims["aud"] = Value::String(only.to_owned());
     }
@@ -1794,6 +1839,8 @@ async fn mint_tokens_for_principal(
                         offline: is_offline,
                         revoked: false,
                         expires_at: Utc::now() + Duration::seconds(refresh_ttl),
+                        act,
+                        only_audience: only_audience.map(str::to_owned),
                     })
                     .await?;
             }
@@ -2465,6 +2512,9 @@ async fn handle_refresh_token_grant(
         .or_else(|| family.dpop_jkt.clone());
 
     let reused = family.clone();
+    // An exchanged token's refresh is still the actor's and still for its one audience (S-4-08).
+    let act = family.act.clone();
+    let only_audience = family.only_audience.clone();
     match mint_tokens_for_principal(
         state,
         mount,
@@ -2479,10 +2529,10 @@ async fn handle_refresh_token_grant(
         None,
         Some(auth_time),
         bound_jkt.as_deref(),
-        None,
+        act,
         true,
         Some(family),
-        None,
+        only_audience.as_deref(),
     )
     .await
     {
@@ -2766,6 +2816,13 @@ async fn handle_token_exchange_grant(
         form.get("scope").map(String::as_str),
     )
     .await?;
+    let granted_scope_str = narrowed_like_subject(
+        &granted_scope_str,
+        subj_claims
+            .get("scope")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )?;
 
     // Check that any requested `audience` is mapped by one of the requester's active scopes or mappers
     if let Some(req_aud) = form.get("audience").filter(|s| !s.is_empty()) {
@@ -2874,6 +2931,31 @@ async fn handle_token_exchange_grant(
     out["issued_token_type"] =
         Value::String("urn:ietf:params:oauth:token-type:access_token".into());
     Ok(out)
+}
+
+/// The scope of an exchanged token keeps every narrowing of its subject token (S-4-08): a
+/// `jc:read-only` subject exchanges for a read-only token, and a subject pinned to one
+/// organization for a token of that organization alone (another one asked for is refused).
+fn narrowed_like_subject(granted: &str, subject: &str) -> Result<String> {
+    let mut tokens: Vec<&str> = granted.split_whitespace().collect();
+    let subject: Vec<&str> = subject.split_whitespace().collect();
+    if let Some(pin) = subject.iter().find(|t| t.starts_with("organization:")) {
+        if let Some(other) = tokens
+            .iter()
+            .find(|t| t.starts_with("organization:") && *t != pin)
+        {
+            return Err(KaisatsuError::invalid_scope(format!(
+                "Invalid scopes: {other} (the subject token is for {pin})"
+            )));
+        }
+        if !tokens.contains(pin) {
+            tokens.push(pin);
+        }
+    }
+    if subject.contains(&READ_ONLY_SCOPE) && !tokens.contains(&READ_ONLY_SCOPE) {
+        tokens.push(READ_ONLY_SCOPE);
+    }
+    Ok(tokens.join(" "))
 }
 
 /// RFC 7523 JWT Authorization Grant (`urn:ietf:params:oauth:grant-type:jwt-bearer`, W1).
@@ -3887,7 +3969,7 @@ async fn handle_logout_request(
     }
 
     if session_to_end.is_none()
-        && let Some(handle) = read_sso_cookie(&headers, &mount)
+        && let Some(handle) = read_sso_cookie(&headers)
     {
         session_to_end = state
             .store
@@ -3977,13 +4059,7 @@ async fn handle_logout_request(
         let _ = dispatch_backchannel_logout(&state, &mount, &realm, &sso).await;
     }
 
-    let cookie_name = mount.cookie_name("sso");
-    let cookie_path = mount.realm_cookie_path(&realm.realm);
-    let clear_cookie = if mount.path_prefix.is_empty() {
-        format!("{cookie_name}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0")
-    } else {
-        format!("{cookie_name}=; Path={cookie_path}; HttpOnly; Secure; SameSite=Lax; Max-Age=0")
-    };
+    let clear_cookie = sign_in_cookie("sso", "", 0);
 
     if let Some(target_uri) = post_logout {
         let mut url = url::Url::parse(target_uri)

@@ -143,6 +143,31 @@ fn state_with(shako: &MockServer) -> AppState {
             "scope": { "project": PROJECT },
         }),
     ));
+    // PL-94: whoever approves a Pipeline reads the Entities of the space it writes.
+    state.mirror.upsert(common::envelope(
+        "Role",
+        "entity-reader",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Entity"], "verbs": ["read"] }] }),
+    ));
+    state.mirror.upsert(common::envelope(
+        "RoleBinding",
+        "steward-reads-entities",
+        ORG_NAMESPACE,
+        json!({
+            "subjects": [{ "user": "steward@hel.fi" }],
+            "role": "entity-reader",
+            "scope": { "project": PROJECT },
+        }),
+    ));
+    // The Endpoint the Pipeline writes through (PL-111).
+    state.mirror.upsert(common::envelope(
+        "Endpoint",
+        "air",
+        PROJECT,
+        json!({ "contextSpaceRef": "ovzdusie", "slug": "mluyob4nz52lok3ssk7pgn5vwt",
+                "audience": "organization", "enabledRepresentations": ["ngsi-ld"] }),
+    ));
     state
 }
 

@@ -530,7 +530,7 @@ pub async fn open_project(
         .shako
         .as_deref()
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    new_project_name(&state, shako, &name).await?;
+    new_project_name(&state, shako, &name, &organization).await?;
 
     let mut files = open_project_files(identity, &request, &name, &organization)?;
     // Layout 2 (CC-85, PF-86): the project gets a repository of its own, seeded here, and the
@@ -618,11 +618,14 @@ pub async fn open_project(
 
 /// The checks a new project's slug passes, whether it is opened or duplicated (PF-67, PF-78):
 /// a DNS-1123 label, not the organization's namespace, not held, not reserved by a deleted
-/// project's cooling period, not proposed by an open change.
+/// project's cooling period, not proposed by an open change. A name held by another
+/// Organization than `organization`, the one the project opens in, is "not available": the
+/// answer names nothing of that Organization or its project.
 pub(crate) async fn new_project_name(
     state: &AppState,
     shako: &crate::forge::ShakoClient,
     name: &str,
+    organization: &str,
 ) -> Result<(), ApiError> {
     if !resource::is_dns1123(name) {
         return Err(ApiError::BadRequest(format!(
@@ -641,6 +644,12 @@ pub(crate) async fn new_project_name(
             .get(crate::permissions::ORG_NAMESPACE, "Project", name)
             .is_some()
     {
+        let owner = crate::permissions::organization_of(&state.mirror, name);
+        if owner.as_deref().is_some_and(|owner| owner != organization) {
+            return Err(ApiError::Conflict(format!(
+                "project name '{name}' is not available (PF-67)"
+            )));
+        }
         return Err(ApiError::Conflict(format!(
             "project '{name}' already exists (PF-67)"
         )));
@@ -930,7 +939,7 @@ pub async fn duplicate_project(
         .shako
         .as_deref()
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    new_project_name(&state, shako, &name).await?;
+    new_project_name(&state, shako, &name, &organization).await?;
 
     let source = shako.for_project(&origin_repo, &origin);
     let mut files = open_project_files(

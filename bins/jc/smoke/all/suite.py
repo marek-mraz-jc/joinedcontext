@@ -3,6 +3,7 @@
    bins/jc/smoke/run all --base-url <url> --out <dir> [--export e] [--state s] [--log-file f]
        [--admin-url u] [--admin-token-file f] [--person-token-file f] [--e2e]
        [--only a,b] [--skip a,b] [--with <suite>=<args>]... [--suite-timeout s] [--known <file>]
+       [--shard <name>]
    bins/jc/smoke/run all --deployment <name> --domain <d> --edge <ip> --jc-config <jc.toml>
        --export <bundle> --out <dir> [--rate n] [--only a,b] ...
 
@@ -14,6 +15,13 @@ is one failing row; one refused for a missing required flag is one skip row nami
 skip, then the failures). Answers 0 only when no check failed outside the --known list.
 `--with SUITE@VARIANT=ARGS` runs SUITE a second time right after its first run, with ARGS, into
 <out>/SUITE@VARIANT/ and with that row prefix (the gate's multiorg in host mode, then multiorg@path).
+--only and --skip take run names: a suite (with its variants), one variant (`multiorg@path`) or
+`e2e` (with --e2e: under --only, e2e runs only when named).
+
+--shard <name> makes this run one shard of the gate (.github/workflows/smoke.yml): results.json
+also names the shard and the plan, every run name the same flags without --only and --skip would
+have run, and the e2e placeholder row is left out when this shard does not run e2e.
+ci/merge.py folds the shards into the one report and verdict.
 
 --known names gaps already filed (one `<regex over suite/id>  # reason, owner` per line): a failing
 check whose id matches stays a failure in the tables, marked known, and does not turn the verdict
@@ -55,6 +63,11 @@ NOT_LIVE = {"restore": "docker: rehearsal only", "image": "docker: rehearsal onl
             "logs": "reads the rehearsal's own log file", "pipelines": "runs pipelines (writes): rehearsal only",
             "ui": "signs in personas in Chromium: rehearsal only", "assistant": "signs in and spends the model key",
             "parity": "signs in a person: rehearsal only"}
+
+
+def picked(run: str, names: str) -> bool:
+    """Whether a comma list of run names names `run`: itself, or the suite it is a variant of."""
+    return any(n in (run, program(run)) for n in names.split(",") if n)
 
 
 def suites() -> list[str]:
@@ -200,7 +213,7 @@ def totals(rows) -> dict:
 
 
 def write(out: Path, base: str, runs: list[dict], seconds: int, fixed: list[str] | None = None,
-          note: str = "") -> bool:
+          note: str = "", extra: dict | None = None, report=None) -> bool:
     rows = [r for x in runs for r in x["rows"]]
     t = totals(rows)
     new_fails = [r for r in rows if r["result"] == FAIL and not r.get("known")]
@@ -210,7 +223,8 @@ def write(out: Path, base: str, runs: list[dict], seconds: int, fixed: list[str]
                 "known": sum(1 for r in x["rows"] if r.get("known")),
                 "seconds": x["seconds"], "exit": x["exit"]} for x in runs]
     doc = {"suite": "all", "base": base, "verdict": verdict, "seconds": seconds, "totals": t,
-           "newFailures": len(new_fails), "knownFixed": fixed or [], "suites": summary, "checks": rows}
+           "newFailures": len(new_fails), "knownFixed": fixed or [], **(extra or {}), "suites": summary,
+           "checks": rows}
     (out / "results.json").write_text(json.dumps(doc, indent=1, ensure_ascii=False))
     lines = [f"# Smoke suite `all`: {verdict}", "",
              (f"Base {base}; {len(rows)} checks, {t[PASS]} pass, {t[FAIL]} fail "
@@ -219,7 +233,8 @@ def write(out: Path, base: str, runs: list[dict], seconds: int, fixed: list[str]
              "| suite | checks | pass | fail | of them known | skip | seconds | report |",
              "|---|---|---|---|---|---|---|---|"]
     for s in summary:
-        rep = f"{s['suite']}/REPORT.md" if (out / s["suite"] / "REPORT.md").exists() else f"{s['suite']}/run.log"
+        rep = report(s["suite"]) if report else (
+            f"{s['suite']}/REPORT.md" if (out / s["suite"] / "REPORT.md").exists() else f"{s['suite']}/run.log")
         lines.append(f"| {s['suite']} | {s['checks']} | {s[PASS]} | {s[FAIL]} | {s['known']} | {s[SKIP]} "
                      f"| {s['seconds']} | {rep} |")
     known_n = t[FAIL] - len(new_fails)
@@ -268,6 +283,7 @@ def main(argv=None) -> int:
                         "its own result dir and row prefix (multiorg@path)")
     p.add_argument("--suite-timeout", type=float, default=3600)
     p.add_argument("--known", help="known gaps: <regex over suite/id>  # reason, one per line")
+    p.add_argument("--shard", help="this run is one shard of the gate: its name (ci/merge.py)")
     a = p.parse_args(argv)
     out = Path(a.out)
     cfg = None
@@ -290,9 +306,10 @@ def main(argv=None) -> int:
         if program(k) not in suites() or k.endswith("@"):
             p.error(f"--with names no suite {k!r}")
         a.extra[k] = (a.extra.get(k, "") + " " + v).strip()
-    chosen = [r for s in suites() if (not a.only or s in a.only.split(",")) and s not in a.skip.split(",")
-              for r in (s, *(k for k in a.extra if program(k) == s and k != s))]
-    unknown = [s for s in a.only.split(",") if s and s not in suites()]
+    plan = [r for s in suites() for r in (s, *(k for k in a.extra if program(k) == s and k != s))]
+    chosen = [r for r in plan if (not a.only or picked(r, a.only)) and not picked(r, a.skip)]
+    e2e = a.e2e and (not a.only or "e2e" in a.only.split(",")) and "e2e" not in a.skip.split(",")
+    unknown = [s for s in (a.only + "," + a.skip).split(",") if s and s != "e2e" and program(s) not in suites()]
     if unknown:
         p.error(f"no suite {', '.join(unknown)}; suites: {' '.join(suites())}")
     out.mkdir(parents=True, exist_ok=True)
@@ -313,10 +330,10 @@ def main(argv=None) -> int:
     if cfg:
         runs.append({"suite": "e2e", "seconds": 0, "exit": None, "call": "", "rows": [
             row("e2e", "cargo", "", "ok", "not run", SKIP, "live mode: jc's e2e tests run on the rehearsal")]})
-    elif a.e2e:
+    elif e2e:
         print("all: e2e (cargo test -p jc --tests) ...", flush=True)
         runs.append(run_e2e(out, a.suite_timeout))
-    else:
+    elif not a.shard:
         runs.append({"suite": "e2e", "seconds": 0, "exit": None, "call": "",
                      "rows": [row("e2e", "cargo", "cargo test --locked -p jc --tests", "ok", "not run", SKIP,
                                   "pass --e2e to run jc's e2e tests")]})
@@ -331,7 +348,8 @@ def main(argv=None) -> int:
         for x in runs:
             for r in x["rows"]:
                 r["actual"], r["reason"] = live.redact(r["actual"]), live.redact(r["reason"])
-    green = write(out, a.base_url, runs, round(time.time() - started), fixed, note)
+    shard = {"shard": a.shard, "plan": plan + (["e2e"] if a.e2e else [])} if a.shard else None
+    green = write(out, a.base_url, runs, round(time.time() - started), fixed, note, shard)
     print((out / "REPORT.md").read_text().split("\n## Failures")[0])
     return 0 if green else 1
 

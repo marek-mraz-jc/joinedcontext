@@ -20,6 +20,7 @@ fn opts() -> ApplyOptions {
         allow_literal_secrets: false,
         secrets_dir: None,
         env_vars: BTreeMap::new(),
+        outbound_private_hosts: Vec::new(),
     }
 }
 

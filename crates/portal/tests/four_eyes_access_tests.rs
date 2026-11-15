@@ -59,25 +59,33 @@ fn manifest(kind: &str) -> (String, String) {
     let spec = match kind {
         "Role" => json!({ "rules": [{ "kinds": ["ContextSpace"], "verbs": ["propose"] }] }),
         "RoleBinding" => json!({
-            "subjects": [{ "user": PROPOSER }],
+            // A person is named by their Keycloak user id (IDN-03), here the proposer's.
+            "subjects": [{ "user": "3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14" }],
             "role": "admin-role",
             "scope": { "organization": "bb" }
         }),
-        "Group" => json!({ "members": [{ "user": PROPOSER }] }),
-        "DataModel" => json!({ "version": "1.1.0", "linkml": "models/air.linkml.yaml" }),
+        "Group" => json!({ "members": [{ "user": "3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14" }] }),
+        "DataModel" => {
+            json!({ "version": "1.1.0", "linkml": "models/air.linkml.yaml", "lifecycle": "draft" })
+        }
         _ => json!({
-            "owner": { "user": PROPOSER },
+            "owner": { "user": "3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14" },
             "purpose": "the air-quality adapter",
-            "roles": [],
-            "credentials": []
+            "roles": [{ "role": "admin-role", "scope": { "organization": "bb" } }],
+            "credentials": [{ "kind": "oauth-client", "name": "main" }]
         }),
     };
     let name = format!("{}-x", kind.to_ascii_lowercase());
+    // A ServiceAccount belongs to a project, never to the organization (jc-core scope).
+    let namespace = match kind {
+        "ServiceAccount" => "ovzdusie",
+        _ => ORG_NAMESPACE,
+    };
     let yaml = format!(
-        "apiVersion: {API_VERSION}\nkind: {kind}\nmetadata:\n  name: {name}\n  namespace: {ORG_NAMESPACE}\nspec: {spec}\n"
+        "apiVersion: {API_VERSION}\nkind: {kind}\nmetadata:\n  name: {name}\n  namespace: {namespace}\nspec: {spec}\n"
     );
     let info = resource::by_kind(kind).expect("a served kind");
-    let path = resource::repository_path(info, ORG_NAMESPACE, None, &name).expect("a path");
+    let path = resource::repository_path(info, namespace, None, &name).expect("a path");
     (path, yaml)
 }
 

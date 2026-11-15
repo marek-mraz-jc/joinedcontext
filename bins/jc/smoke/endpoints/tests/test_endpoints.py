@@ -98,6 +98,23 @@ def test_the_export_names_tenant_bindings_and_datasets(tmp_path):
     assert eps["closed"].closed and not eps["open"].closed
 
 
+@pytest.mark.parametrize("spec,want", [
+    # omitted: every representation but sta, ical and feed (jc-core served_representations, EP-104)
+    ({}, ["ngsi-ld", "mcp", "csv", "ogc-features", "odata", "websocket"]),
+    ({"disabledRepresentations": ["websocket", "csv"], "mcp": False}, ["ngsi-ld", "ogc-features", "odata"]),
+    # listed: the list, plus ngsi-ld and mcp, which every Endpoint serves (EP-10, EP-24)
+    ({"enabledRepresentations": ["odata"]}, ["odata", "ngsi-ld", "mcp"]),
+    # feed is its outputs, listed or not
+    ({"enabledRepresentations": ["feed", "csv"]}, ["csv", "ngsi-ld", "mcp"]),
+    ({"enabledRepresentations": ["csv"], "representations": {"feed": [{"name": "news"}]}},
+     ["csv", "ngsi-ld", "mcp", "feed"]),
+])
+def test_an_endpoint_serves_what_the_gateway_serves(spec, want):
+    """An Endpoint without enabledRepresentations serves websocket and mcp on the gateway (the
+    t6025-full Endpoints' /ws answered 426 where the smoke expected 404, T-6969)."""
+    assert ex.served(spec) == want
+
+
 def test_expected_counts_follow_the_policy_patterns(tmp_path):
     b = bundle(tmp_path)
     eps = {e.name: e for e in ex.load_endpoints(b / "gitea" / "files")}
@@ -317,6 +334,32 @@ def run(tmp_path, base, now, synthetic=False, expires=False, writer=False):
 def now_iso():
     import datetime as dt
     return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_the_shard_key_is_stable_and_puts_every_slug_in_exactly_one_shard():
+    assert suite.shard_of("2otvm3oapms4vsucerjhnywlumdqf3px", 4) == suite.shard_of("2otvm3oapms4vsucerjhnywlumdqf3px", 4)
+    assert [suite.shard_of("gx2knuus75alkjgc24kjz7llte6q5jkk", n) for n in (1, 2, 3, 8)] == [1, 1, 2, 7]
+    slugs = [f"slug{i}" for i in range(400)]
+    for n in (1, 2, 3, 5):
+        shards = [{x for x in slugs if suite.shard_of(x, n) == k} for k in range(1, n + 1)]
+        assert sum(map(len, shards)) == len(slugs) and set().union(*shards) == set(slugs)
+        assert all(shards), f"an empty shard of {n}"
+    with pytest.raises(SystemExit):
+        suite.main(["--base-url", "http://127.0.0.1:1", "--export", "x", "--out", "y", "--shard", "3/2"])
+
+
+def test_the_shards_of_a_run_hold_the_same_rows_as_the_run(tmp_path, serve):
+    from collections import Counter
+    base, now = serve(Fake()), now_iso()
+    b = bundle(tmp_path / "x", now)
+
+    def ids(*extra):
+        out = tmp_path / ("out" + "".join(extra).replace("/", "-"))
+        suite.main(["--base-url", base, "--export", str(b), "--out", str(out), "--workers", "1", *extra])
+        return Counter(r["id"] for r in json.loads((out / "results.json").read_text())["checks"])
+
+    whole, one, two = ids(), ids("--shard", "1/2"), ids("--shard", "2/2")
+    assert one + two == whole and one["listing"] == 1 and two["listing"] == 0
 
 
 def test_a_healthy_gateway_is_green(tmp_path, serve):

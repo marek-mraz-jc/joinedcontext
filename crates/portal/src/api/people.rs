@@ -379,16 +379,36 @@ fn welcome_page(state: &AppState, project: Option<&str>) -> Option<(String, Stri
 
 /// One `person.changed` event (PF-90): the actor, the action, the person's id.
 pub(crate) async fn record(state: &AppState, identity: &Identity, action: &str, id: &str) {
+    record_rule(state, identity, action, id, None).await;
+}
+
+/// [`record`], naming the rule that allowed the action when it is one of the two PF-93 leaves
+/// open on a person holding a grant the caller does not cover.
+async fn record_rule(
+    state: &AppState,
+    identity: &Identity,
+    action: &str,
+    id: &str,
+    rule: Option<&str>,
+) {
+    let summary = match rule {
+        Some(rule) => format!("{} {action} person {id} ({rule})", identity.username),
+        None => format!("{} {action} person {id}", identity.username),
+    };
+    let mut details = json!({ "action": action, "person": id, "actor": identity.username });
+    if let Some(rule) = rule {
+        details["rule"] = json!(rule);
+    }
     let event = crate::activity::ActivityEvent {
         time: chrono::Utc::now(),
         project: ORG_NAMESPACE.to_owned(),
         space: None,
         kind: "person.changed".to_owned(),
         source: "portal".to_owned(),
-        summary: format!("{} {action} person {id}", identity.username),
+        summary,
         severity: "info".to_owned(),
         correlation_id: None,
-        details: json!({ "action": action, "person": id, "actor": identity.username }),
+        details,
     };
     if let Err(err) = state.activity.append(&[event]).await {
         tracing::warn!(person = %id, error = %err, "the person's change is not on the activity feed");
@@ -472,7 +492,7 @@ fn bindings_reaching(
 async fn holds_what_they_hold(
     state: &AppState,
     identity: &Identity,
-    admin: &Admin<'_>,
+    held: &[String],
     user: &KcUser,
 ) -> Result<(), ApiError> {
     let effective = crate::permissions::for_request(state, identity, ORG_NAMESPACE);
@@ -480,7 +500,6 @@ async fn holds_what_they_hold(
         return Ok(());
     }
     let email = email_of(user);
-    let held = admin.groups_and_roles(&user.id).await?;
     let bootstrap = &state.config.bootstrap_admins;
     if held.iter().any(|name| name == bootstrap) {
         return Err(ApiError::Denied(format!(
@@ -512,6 +531,138 @@ async fn holds_what_they_hold(
         })?;
     }
     Ok(())
+}
+
+/// Whether a Policy assignee (`user`, `group` or `role`) names `who`: the person, one of their
+/// Portal Groups or realm groups, or one of their realm roles.
+fn names(
+    assignee: &Value,
+    who: &Who,
+    groups: &[String],
+    realm: &(Vec<String>, Vec<String>),
+) -> bool {
+    let id = assignee["id"].as_str().unwrap_or_default();
+    !id.is_empty()
+        && match assignee["kind"].as_str() {
+            Some("user") => who.named_by(id),
+            Some("group") => groups.iter().chain(&realm.0).any(|g| g == id),
+            Some("role") => realm.1.iter().any(|r| r == id),
+            _ => false,
+        }
+}
+
+/// S-5-03 (PF-93): the grants reaching `who` that the caller could not change themselves, named
+/// like `Policy helsinki/air-read`: a Policy naming them (its own assignee or a rule's), an App
+/// access entry or an Endpoint role. The caller covers a grant when they may approve its manifest
+/// in its project (space and constraint narrowing apply). `realm` is the person's realm groups
+/// and realm roles.
+fn uncovered_grants(
+    state: &AppState,
+    identity: &Identity,
+    who: &Who,
+    groups: &[String],
+    realm: &(Vec<String>, Vec<String>),
+) -> Vec<String> {
+    let covered = |grant: &ResourceEnvelope| {
+        let project = grant.metadata.namespace.as_deref().unwrap_or(ORG_NAMESPACE);
+        serde_json::to_value(grant).is_ok_and(|manifest| {
+            crate::permissions::for_request(state, identity, project)
+                .check(&grant.kind, Verb::Approve, Some(&manifest))
+                .is_ok()
+        })
+    };
+    let subjects_of = |spec: &Value, list: &str| {
+        spec[list]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|entry| reaches(entry.get("subjects"), who, groups).is_some())
+    };
+    state
+        .mirror
+        .matching(|candidate| match candidate.kind.as_str() {
+            "Policy" => crate::api::data_access::assignees(&candidate.spec)
+                .any(|(_, assignee)| names(assignee, who, groups, realm)),
+            "App" => subjects_of(&candidate.spec, "access"),
+            "Endpoint" => subjects_of(&candidate.spec, "roles"),
+            _ => false,
+        })
+        .into_iter()
+        .filter(|grant| !covered(grant))
+        .map(|grant| {
+            format!(
+                "{} {}/{}",
+                grant.kind,
+                grant.metadata.namespace.as_deref().unwrap_or_default(),
+                grant.metadata.name
+            )
+        })
+        .collect()
+}
+
+/// PF-93: the caller holds every right the person holds through a RoleBinding (else refused),
+/// and the first grant reaching the person the caller does not cover ([`uncovered_grants`]);
+/// `None` for a platform administrator, who covers every grant.
+async fn takeover_guard(
+    state: &AppState,
+    identity: &Identity,
+    admin: &Admin<'_>,
+    user: &KcUser,
+) -> Result<Option<String>, ApiError> {
+    let realm = admin.groups_and_realm_roles(&user.id).await?;
+    let held: Vec<String> = realm.0.iter().chain(&realm.1).cloned().collect();
+    holds_what_they_hold(state, identity, &held, user).await?;
+    let effective = crate::permissions::for_request(state, identity, ORG_NAMESPACE);
+    if effective.bootstrap || effective.administers_organization() {
+        return Ok(None);
+    }
+    let who = Who::of(user);
+    let groups: Vec<String> = groups_of(state, &who)
+        .into_iter()
+        .map(|group| group.metadata.name)
+        .collect();
+    Ok(uncovered_grants(state, identity, &who, &groups, &realm)
+        .into_iter()
+        .next())
+}
+
+/// The refusal of every write but the two PF-93 leaves open on a person holding `grant`.
+fn holds_uncovered(user: &KcUser, grant: &str) -> ApiError {
+    ApiError::Denied(format!(
+        "{} holds {grant}, which you cannot change; only a password reset by e-mail or a \
+         second-factor removal with an e-mail is open to you (PF-93)",
+        email_of(user)
+    ))
+}
+
+/// Why the new person `id` would hold more than the caller may change ([`takeover_guard`]): a
+/// RoleBinding right the caller lacks, or a grant they do not cover; `None` when nothing does.
+async fn held_beyond(
+    state: &AppState,
+    identity: &Identity,
+    admin: &Admin<'_>,
+    id: &str,
+) -> Result<Option<String>, ApiError> {
+    let user = admin.get(id).await?;
+    match takeover_guard(state, identity, admin, &user).await {
+        Ok(grant) => Ok(grant.map(|grant| {
+            format!(
+                "{} is named in {grant}, which you cannot change",
+                email_of(&user)
+            )
+        })),
+        Err(ApiError::Denied(why)) => Ok(Some(why.trim_end_matches(" (PF-93)").to_owned())),
+        Err(other) => Err(other),
+    }
+}
+
+/// The refusal when one of those two needs mail and the realm cannot send it.
+fn needs_mail(user: &KcUser, grant: &str) -> ApiError {
+    ApiError::Denied(format!(
+        "{} holds {grant}; the realm cannot send mail, so only a platform admin can reset them \
+         (PF-93)",
+        email_of(user)
+    ))
 }
 
 /// PF-93, PF-03: nobody disables or deletes themselves, or the last Organization Administrator.
@@ -552,20 +703,38 @@ pub(super) fn refuse_bearer(identity: &Identity) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// The person `id`, after the verb and the takeover guard.
+/// The person `id`, after the verb and the takeover guard: a write on a person holding a grant
+/// the caller does not cover is refused (403 naming the grant).
 pub(crate) async fn target<'a>(
     state: &'a AppState,
     identity: &Identity,
     verb: Verb,
     id: &str,
 ) -> Result<(Admin<'a>, KcUser), ApiError> {
+    let (admin, user, uncovered) = target_held(state, identity, verb, id).await?;
+    if let Some(grant) = uncovered {
+        return Err(holds_uncovered(&user, &grant));
+    }
+    Ok((admin, user))
+}
+
+/// [`target`] for the two actions PF-93 leaves open on a person holding a grant the caller does
+/// not cover (a reset by e-mail, a second-factor removal with an e-mail): that grant, if any.
+async fn target_held<'a>(
+    state: &'a AppState,
+    identity: &Identity,
+    verb: Verb,
+    id: &str,
+) -> Result<(Admin<'a>, KcUser, Option<String>), ApiError> {
     allow(state, identity, verb)?;
     let admin = people(state)?.admin().await?;
     let user = admin.get(id).await?;
-    if verb != Verb::Read {
-        holds_what_they_hold(state, identity, &admin, &user).await?;
-    }
-    Ok((admin, user))
+    let uncovered = if verb == Verb::Read {
+        None
+    } else {
+        takeover_guard(state, identity, &admin, &user).await?
+    };
+    Ok((admin, user, uncovered))
 }
 
 /// Each person's last access, in the order of `users`, at most `LAST_SEEN_AT_ONCE` lookups in
@@ -652,7 +821,7 @@ pub async fn list_people(
     responses(
         (status = 201, description = "Created; the only answer that may carry a temporary password", body = CreatedPerson),
         (status = 400, description = "Invalid input", body = ProblemDetails),
-        (status = 403, description = "The caller lacks create on Person", body = ProblemDetails),
+        (status = 403, description = "The caller lacks create on Person, or a grant naming the address is one the caller cannot change and the realm cannot send mail (nothing is created)", body = ProblemDetails),
         (status = 404, description = "No project of that name the caller may read", body = ProblemDetails),
         (status = 409, description = "The e-mail is taken", body = ProblemDetails),
         (status = 503, description = "No Keycloak admin client", body = ProblemDetails),
@@ -698,14 +867,24 @@ pub(crate) async fn create(
         })?;
     let member_of = join_members(state, &admin, &id, project.as_deref()).await?;
     let back = welcome_page(state, project.as_deref());
-    let (email_sent, temporary_password) = invite(
-        state,
-        &admin,
-        &id,
-        &["VERIFY_EMAIL", "UPDATE_PASSWORD"],
-        back.as_ref().map(|(c, p)| (c.as_str(), p.as_str())),
-    )
-    .await?;
+    let back = back.as_ref().map(|(c, p)| (c.as_str(), p.as_str()));
+    let actions = ["VERIFY_EMAIL", "UPDATE_PASSWORD"];
+    // PF-93: a grant naming the address reaches the new account at once. When the caller could
+    // not change it, the account opens by the e-mail alone, never by a temporary password.
+    let (email_sent, temporary_password) = match held_beyond(state, identity, &admin, &id).await? {
+        None => invite(state, &admin, &id, &actions, back).await?,
+        Some(reason) => {
+            let lifespan = crate::api::organization_limits::invitation_lifespan(state);
+            if !admin.send_actions(&id, &actions, lifespan, back).await? {
+                admin.delete(&id).await?;
+                return Err(ApiError::Denied(format!(
+                    "{reason}; the realm cannot send mail and a temporary password would open \
+                     that account to you, so it was not created (PF-93)"
+                )));
+            }
+            (true, None)
+        }
+    };
     if email_sent {
         remember_invitation(state, &id, project.as_deref()).await;
     }
@@ -842,14 +1021,14 @@ pub async fn get_person(
     patch,
     path = "/api/v1/organization/people/{id}",
     summary = "Edit Person",
-    description = "Edits a person's name, e-mail or language.",
+    description = "Edits a person's name, e-mail or language; an e-mail change needs a Portal session (PF-93).",
     tag = "people",
     params(("id" = String, Path, description = "The Keycloak user id")),
     request_body(content = EditPerson, example = json!({ "lastName": "Nováková" })),
     responses(
         (status = 200, description = "The person as edited", body = Person),
         (status = 400, description = "Invalid input", body = ProblemDetails),
-        (status = 403, description = "The caller lacks update on Person, or a right the person holds", body = ProblemDetails),
+        (status = 403, description = "The caller lacks update on Person, or a right the person holds, or a token changes the e-mail", body = ProblemDetails),
         (status = 404, description = "No such person", body = ProblemDetails),
         (status = 409, description = "The e-mail is taken", body = ProblemDetails),
         (status = 503, description = "No Keycloak admin client", body = ProblemDetails),
@@ -875,6 +1054,15 @@ pub async fn edit_person(
         .map(|v| name("lastName", v))
         .transpose()?;
     let address = edit.email.as_deref().map(email).transpose()?;
+    if address.is_some() && identity.client.is_some() {
+        // The address is where a reset goes (PF-93): only a person in the Portal changes it.
+        return Err(ApiError::Denied(
+            "a person's e-mail address is changed only by a person in the Portal, never with a \
+             service account's or an agent's token; first name, last name and language stay open \
+             to it (PF-93)"
+                .into(),
+        ));
+    }
     let language = edit.locale.as_deref().map(locale).transpose()?;
     if first_name.is_none() && last_name.is_none() && address.is_none() && language.is_none() {
         return Err(ApiError::BadRequest(
@@ -1045,13 +1233,13 @@ pub async fn enable_person(
     post,
     path = "/api/v1/organization/people/{id}/reset-password",
     summary = "Reset Password",
-    description = "Sends the realm's password reset; without SMTP answers a temporary password once. Needs `update` on Person and every right the person holds.",
+    description = "Sends the realm's password reset; without SMTP answers a temporary password once. Needs `update` on Person and every right the person holds through a RoleBinding. For a person holding a Policy, App or Endpoint grant the caller could not change, a caller who is no platform admin resets by e-mail to the address on file only: without mail 403, never a temporary password (PF-93).",
     tag = "people",
     params(("id" = String, Path, description = "The Keycloak user id")),
     responses(
         (status = 202, description = "The reset e-mail went", body = PasswordReset),
         (status = 200, description = "The realm cannot send mail: a temporary password, once", body = PasswordReset),
-        (status = 403, description = "The caller lacks update on Person, or a right the person holds", body = ProblemDetails),
+        (status = 403, description = "The caller lacks update on Person, or a right the person holds, or the person holds a grant the caller cannot change and the realm cannot send mail", body = ProblemDetails),
         (status = 404, description = "No such person", body = ProblemDetails),
         (status = 503, description = "No Keycloak admin client", body = ProblemDetails),
     )
@@ -1064,7 +1252,31 @@ pub async fn reset_password(
     let identity = &user.0.identity;
     // The answer can carry a temporary password: a credential for a person, never for a token.
     refuse_bearer(identity)?;
-    let (admin, found) = target(&state, identity, Verb::Update, &id).await?;
+    let (admin, found, uncovered) = target_held(&state, identity, Verb::Update, &id).await?;
+    if let Some(grant) = uncovered {
+        // PF-93: the reset goes to the address on file alone, never as a temporary password.
+        let lifespan = crate::api::organization_limits::invitation_lifespan(&state);
+        if !admin
+            .send_actions(&found.id, &["UPDATE_PASSWORD"], lifespan, None)
+            .await?
+        {
+            return Err(needs_mail(&found, &grant));
+        }
+        let rule = format!("reset by e-mail, person holds {grant}");
+        record_rule(
+            &state,
+            identity,
+            "reset the password of",
+            &found.id,
+            Some(&rule),
+        )
+        .await;
+        let sent = PasswordReset {
+            email_sent: true,
+            temporary_password: None,
+        };
+        return Ok((StatusCode::ACCEPTED, Json(sent)).into_response());
+    }
     let (email_sent, temporary_password) =
         invite(&state, &admin, &found.id, &["UPDATE_PASSWORD"], None).await?;
     record(&state, identity, "reset the password of", &found.id).await;
@@ -1154,7 +1366,7 @@ pub async fn resend_invitation(
     post,
     path = "/api/v1/organization/people/{id}/remove-second-factor",
     summary = "Remove Second Factor",
-    description = "Removes every OTP and WebAuthn credential of the person. Needs `disable` on Person and every right the person holds.",
+    description = "Removes every OTP and WebAuthn credential of the person. Needs `disable` on Person and every right the person holds through a RoleBinding. For a person holding a Policy, App or Endpoint grant the caller could not change, a caller who is no platform admin removes it only after the realm mailed the person to set an authenticator app (TOTP; a WebAuthn user moves to TOTP); without mail 403 and nothing is removed (PF-93).",
     tag = "people",
     params(("id" = String, Path, description = "The Keycloak user id")),
     responses(
@@ -1171,9 +1383,31 @@ pub async fn remove_second_factor(
 ) -> Result<StatusCode, ApiError> {
     let identity = &user.0.identity;
     refuse_bearer(identity)?;
-    let (admin, found) = target(&state, identity, Verb::Disable, &id).await?;
+    let (admin, found, uncovered) = target_held(&state, identity, Verb::Disable, &id).await?;
+    let Some(grant) = uncovered else {
+        admin.remove_second_factor(&found.id).await?;
+        record(&state, identity, "removed the second factor of", &found.id).await;
+        return Ok(StatusCode::NO_CONTENT);
+    };
+    // PF-93: the person learns of it first and is asked to set an authenticator app again; a
+    // removal without that e-mail never happens.
+    let lifespan = crate::api::organization_limits::invitation_lifespan(&state);
+    if !admin
+        .send_actions(&found.id, &["CONFIGURE_TOTP"], lifespan, None)
+        .await?
+    {
+        return Err(needs_mail(&found, &grant));
+    }
     admin.remove_second_factor(&found.id).await?;
-    record(&state, identity, "removed the second factor of", &found.id).await;
+    let rule = format!("removed with an e-mail, person holds {grant}");
+    record_rule(
+        &state,
+        identity,
+        "removed the second factor of",
+        &found.id,
+        Some(&rule),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1401,7 +1635,9 @@ async fn removable(
             }
             other => other.into(),
         })?;
-        holds_what_they_hold(state, identity, admin, &user).await?;
+        if let Some(grant) = takeover_guard(state, identity, admin, &user).await? {
+            return Err(holds_uncovered(&user, &grant));
+        }
         not_self_nor_last(state, identity, &user)?;
         found.push(user);
     }

@@ -40,7 +40,7 @@ ENV = "JC_SMOKE_LIVE"
 SMOKE = Path(__file__).resolve().parent
 
 # bins/jc/src/module.rs Module::slug: where the rehearsal's slug mounts put each module.
-SLUGS = {"kaisatsu": "id", "dataroom": "opendata", "daiya": "dashboards", "viz": "viz",
+SLUGS = {"kaisatsu": "id", "dataroom": "opendata", "daiya": "dashboards", "viz": "embed",
          "assistant": "assistant", "model-tools": "model-tools"}
 # Module::root_paths of the gateway: it answers at these whole paths on every host.
 GATEWAY_ROOTS = ("/api/endpoint", "/api/endpoints", "/api/mcp", "/cs", "/catalog", "/catalog.jsonld",

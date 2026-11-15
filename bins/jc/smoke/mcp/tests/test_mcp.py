@@ -64,6 +64,19 @@ def test_totals_are_found_at_the_top_or_one_level_down():
     assert client.total_of({"entities": []}) is None
 
 
+def test_a_persona_the_portal_sees_under_another_subject_fails_and_its_own_id_passes():
+    # The Portal's `Me` flattens the identity beside `front` (crates/portal auth/oidc.rs); a
+    # nested `identity` member is not its answer (T-6994: train smoke 43702243897 read it so).
+    me = {"subject": "01a1de3a-e382", "username": "smoke-mcp-project", "groups": ["a", "b"],
+          "second_factor": True, "front": "bearer"}
+    actual, ok = suite.seen_as("01a1de3a-e382", 200, me)
+    assert ok and "is the realm id" in actual and "2 groups" in actual and "front bearer" in actual
+    assert not suite.seen_as("01a1de3a-e382", 200, {"identity": me})[1]
+    assert suite.seen_as("someone-else", 200, me) == (actual.replace(" is ", " is not ", 1), False)
+    assert suite.seen_as("01a1de3a-e382", 401, None) == ("401; no identity in the answer", False)
+    assert not suite.seen_as("", 200, {"subject": "", "front": "bearer"})[1]
+
+
 def test_the_persona_fixture_signs_in_at_the_realm_the_state_names(tmp_path, monkeypatch):
     import common
     import personas

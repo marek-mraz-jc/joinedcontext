@@ -29,6 +29,8 @@ metadata:
   name: alert-{{ title }}
 spec:
   title: {{ title }}
+  pages:
+    - layers: [base]
 ";
 
 /// The template writes a literal secret into the manifest it renders.
@@ -364,7 +366,10 @@ spec:
   build:
     node: \"22\"
   visibility: project
-  dataNeeds: []
+  dataNeeds:
+    - contextSpaceRef: ovzdusie
+      types: [AirQualityObserved]
+      operations: [queryEntity]
 ";
     let (server, state) = world().await;
     state.mirror.upsert(envelope(

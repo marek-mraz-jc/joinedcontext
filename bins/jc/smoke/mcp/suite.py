@@ -38,7 +38,7 @@ sys.path.append(str(HERE.parent / "endpoints"))
 
 import export as ex  # noqa: E402
 from client import WRITE_TOOLS, Mcp, entities_of, text_of, total_of  # noqa: E402
-from common import Http, Results, loopback_only, read_token  # noqa: E402
+from common import Http, Results, as_json, loopback_only, read_token  # noqa: E402
 
 HUB_TOOLS = {"initialize"}
 HUB_READS = {"search", "list_endpoints", "get_endpoint", "query_entities", "query_temporal", "describe_schema"}
@@ -70,6 +70,20 @@ def narrowed_count(a) -> tuple[str, str]:
     if a.refused and DEADLINE in a.brief(400):
         return "skip", "; the broker missed the read deadline counting them, and prod's count gives no total either"
     return "fail", ""
+
+
+def seen_as(uid: str, status: int, me) -> tuple[str, bool]:
+    """The verdict on the Portal's `/api/v1/auth/me` for a persona's token: its subject must be
+    the person's realm id, the only thing a RoleBinding subject names. The answer is the Portal's
+    `Me`: the identity's members flattened beside `front` (crates/portal auth/oidc.rs). The actual
+    names what the Portal saw (front, groups, second factor) and never the token."""
+    if status != 200 or not isinstance(me, dict) or "front" not in me:
+        return f"{status}; no identity in the answer", False
+    subject = me.get("subject")
+    groups = me.get("groups") or []
+    actual = (f"200 subject {'is' if subject == uid else 'is not'} the realm id; front {me.get('front')}; "
+              f"{len(groups)} groups; second factor {me.get('second_factor')}")
+    return actual, bool(uid) and subject == uid
 
 
 def instances(data) -> int:
@@ -546,6 +560,13 @@ class Suite:
             roles["organization"] = ("org-admin", {"organization": plan["other_org"]})
         fx.setup(roles)
         doors = {k: Mcp(self.http, "/api/v1/mcp", token=p.token) for k, p in fx.people.items()}
+        # A RoleBinding names its person by realm id (ADR-N-061): the Portal must see the token as
+        # that id, or no binding reaches the person (T-6969 class 1).
+        for k, p in fx.people.items():
+            st, _, raw = self.http.call("GET", "/api/v1/auth/me", token=p.token)
+            actual, ok = seen_as(p.uid, st, as_json(raw))
+            self.check(f"portal.{k}.identity", f"portal {k}", "GET /api/v1/auth/me with its MCP token",
+                       "the person's realm id as subject", actual, ok)
 
         def listed(k, project):
             a, tools = doors[k].tools({"project": project})

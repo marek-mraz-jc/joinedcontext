@@ -2059,6 +2059,11 @@ pub(crate) fn authorize_manifest(
         &envelope.kind,
         envelope,
     )?;
+    // The single door's checks that read who proposes, which approval cannot ask again (UIX-16,
+    // PF-117, PF-118, EP-80).
+    crate::api::organization_widgets::check(state, identity, envelope)?;
+    crate::mqtt_allowance::check_manifest(state, identity, project, envelope)?;
+    crate::catalog::check_contact(&state.mirror, identity, &envelope.kind, &envelope.spec)?;
     let references = (envelope.kind == "Endpoint")
         .then(|| serde_json::from_value::<jc_core::kinds::EndpointSpec>(envelope.spec.clone()).ok())
         .flatten();

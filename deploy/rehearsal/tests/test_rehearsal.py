@@ -609,6 +609,31 @@ def test_a_rerun_over_an_imported_repository_changes_nothing(tmp_path):
     assert [c[0] for c in forge.writes()] == ["POST"] and "branch_protections" in forge.writes()[0][1]
 
 
+def test_a_main_the_portal_protected_before_the_import_takes_the_files_as_a_merged_change(tmp_path):
+    """jc-dev helsinki-mobility (import 2026-11-11): the Portal protected the empty repository's
+    main before the files arrived, every rerun's direct push answered 403, and the project never
+    reached jc-dev (smoke names rows, T-6969). The files land through a pull request instead."""
+    class Protected(Forge):
+        def json(self, verb, url, headers=None, body=None):
+            if verb == "POST" and url.endswith("/contents") and (body or {}).get("branch") == "main":
+                self.calls.append((verb, url, body))
+                return 403, {"message": "branch 'main' is protected: direct push refused"}
+            if verb == "POST" and url.endswith("/pulls"):
+                self.calls.append((verb, url, body))
+                return 201, {"number": 7}
+            return super().json(verb, url, headers, body)
+
+    one_repo_export(tmp_path, {"spaces/helsinki/space.yaml": SPACE_FILE})
+    forge, report = Protected({"joinedcontext/helsinki": {}}), {}
+    rh.import_shako(forge, "token", tmp_path, report, validate=lambda _: [])
+    assert report["shako"][0]["result"] == "imported" and "problems" not in report, report
+    landed = [(v, u.split("/helsinki")[-1], (b or {}).get("branch")) for v, u, b in forge.writes()]
+    assert landed[:5] == [("POST", "/contents", "main"), ("POST", "/branches", None),
+                          ("POST", "/contents", landed[2][2]), ("POST", "/pulls", None),
+                          ("POST", "/pulls/7/merge", None)], landed
+    assert landed[2][2].startswith("rehearsal/")
+
+
 def test_an_imported_main_takes_the_portals_branch_rule(tmp_path):
     one_repo_export(tmp_path, {"spaces/helsinki/space.yaml": SPACE_FILE})
     forge, report = Forge(), {}
