@@ -1695,13 +1695,10 @@ async fn authenticate_page_post(
             )
             .await;
         }
-        if let Some(violation) = first_policy_violation(
-            &realm.password_policy,
-            new_password,
-            &user.username,
-            user.email.as_deref(),
-            &history,
-        ) {
+        if let Some(violation) =
+            policy_violation_off_runtime(&realm.password_policy, new_password, &user, history)
+                .await?
+        {
             return render_state_page(
                 &state,
                 &mount,
@@ -2801,13 +2798,10 @@ async fn action_token_post(
             )
             .await;
         }
-        if let Some(violation) = first_policy_violation(
-            &realm.password_policy,
-            new_password,
-            &user.username,
-            user.email.as_deref(),
-            &history,
-        ) {
+        if let Some(violation) =
+            policy_violation_off_runtime(&realm.password_policy, new_password, &user, history)
+                .await?
+        {
             let error = Some(("new_password", policy_message(&bundle, &violation)));
             return render_action_form(
                 &state,
@@ -3026,6 +3020,22 @@ async fn render_action_form(
 
 /// The message key and argument of the first password-policy rule a password breaks, in the
 /// words keycloak.v2 used (`invalidPasswordMinLengthMessage`, ...).
+/// [`first_policy_violation`] through [`kaisatsu_oidc::password_work`]: a `passwordHistory(n)`
+/// clause verifies the new password against up to n stored Argon2id hashes.
+async fn policy_violation_off_runtime(
+    policy: &str,
+    password: &str,
+    user: &UserRepresentation,
+    history: Vec<CredentialRecord>,
+) -> Result<Option<PolicyViolation>> {
+    let (policy, password) = (policy.to_owned(), password.to_owned());
+    let (username, email) = (user.username.clone(), user.email.clone());
+    kaisatsu_oidc::password_work(move || {
+        first_policy_violation(&policy, &password, &username, email.as_deref(), &history)
+    })
+    .await
+}
+
 fn policy_message(bundle: &Bundle, violation: &PolicyViolation) -> String {
     match violation {
         PolicyViolation::MinLength(n) => {
@@ -3054,6 +3064,42 @@ fn policy_message(bundle: &Bundle, violation: &PolicyViolation) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A password change under `passwordHistory(n)` verifies n stored hashes: that work leaves
+    /// the async workers free, as the change's own hash does (P-4-01).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn a_password_history_check_leaves_the_runtime_answering() {
+        let history: Vec<CredentialRecord> = (0..4)
+            .map(|i| CredentialRecord {
+                credential_type: "password-history".into(),
+                created_date: i,
+                secret_data: hash_password(&format!("old password {i}")).expect("hash"),
+                ..Default::default()
+            })
+            .collect();
+        let user = UserRepresentation {
+            username: "ana".into(),
+            ..Default::default()
+        };
+        let one = std::time::Instant::now();
+        kaisatsu_crypto::password::dummy_verify_password("calibrate");
+        let hash = one.elapsed();
+
+        let check = tokio::spawn(async move {
+            policy_violation_off_runtime("passwordHistory(4)", "a new password", &user, history)
+                .await
+        });
+        // A thread sleep: a tokio timer would itself wait for a blocked worker.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let ping = std::time::Instant::now();
+        tokio::spawn(async {}).await.expect("ping");
+        let waited = ping.elapsed();
+        assert_eq!(check.await.expect("join").expect("check"), None);
+        assert!(
+            waited < hash / 2,
+            "a spawned task waited {waited:?} behind a history check of 4 hashes of {hash:?} each"
+        );
+    }
 
     #[test]
     fn the_enrolment_uri_says_sha1() {
