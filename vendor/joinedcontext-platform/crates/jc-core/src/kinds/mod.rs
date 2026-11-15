@@ -34,6 +34,7 @@ pub mod mqtt_broker;
 pub mod org_settings;
 pub mod organization;
 pub mod pipeline;
+pub mod pipeline_attributes;
 pub mod pipeline_history;
 pub mod pipeline_identity;
 pub mod pipeline_lifetime;
@@ -134,6 +135,7 @@ pub use pipeline::{
     ProcessorStep, ReplaceConflict, SourceQuery, Step, SubscriptionTrigger, TemplatePart,
     TemporalWindow, Trigger,
 };
+pub use pipeline_attributes::{AttributeRule, AttributeRules, SourceDates, SystemMembers};
 pub use pipeline_history::{AttributeHistory, History, Keep};
 pub use pipeline_lifetime::{AttributeLifetime, End, Lifetime, LifetimeMode};
 pub use pipeline_source_deletes::{SourceDeleteMode, SourceDeletes};

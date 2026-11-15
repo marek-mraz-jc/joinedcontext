@@ -89,6 +89,8 @@ interface Stub {
   seen: Record<string, unknown>[];
   /** The bodies the workbench sent to jc_pipeline_try_mapping. */
   tried?: Record<string, unknown>[];
+  /** The pipeline listed, when not PIPELINE. */
+  pipeline?: typeof PIPELINE;
 }
 
 async function stubApi(page: Page, stub: Stub): Promise<void> {
@@ -119,7 +121,7 @@ async function stubApi(page: Page, stub: Stub): Promise<void> {
       return json({ kind: "Change", metadata: { name: "chg-1", namespace: "helsinki" }, status: { phase: "PendingApproval" } }, 202);
     }
     if (path === "/api/v1/projects") return json({ kind: "ProjectList", items: [{ name: "helsinki" }] });
-    if (path.endsWith("/pipelines")) return json(list([PIPELINE]));
+    if (path.endsWith("/pipelines")) return json(list([stub.pipeline ?? PIPELINE]));
     if (path.endsWith("/datasources")) {
       return json(list([{ kind: "DataSource", metadata: { name: "hfp", namespace: "helsinki" }, spec: { type: "http", http: { url: "https://hfp.hsl.fi/vehicles.json" } } }]));
     }
@@ -185,6 +187,32 @@ test.describe("the record check in the pipeline workbench", () => {
       await expect(row.getByText(source, { exact: true })).toBeVisible();
     }
     await shot(page, "refused");
+  });
+
+  // T-7064 (G-17): a backfill output is judged by the temporal append it writes with: an
+  // Endpoint whose Policy grants only the upsert refuses it, naming the Policy and the operation.
+  test("a backfill without its grant names the Policy to extend", async ({ page }) => {
+    const reason =
+      "no Policy bound to Endpoint helsinki-all grants this pipeline a temporal append of Vehicle: extend that Policy with the operation appendAttrsTemporal";
+    const validate = {
+      ...GREEN,
+      valid: 1,
+      rejected: 1,
+      verdicts: [
+        GREEN.verdicts[0],
+        { index: 1, ok: false, problems: [], endpoint: "helsinki-all", findings: [{ source: "endpoint", rule: "policy", field: "", reason }] },
+      ],
+    };
+    const pipeline = {
+      ...PIPELINE,
+      spec: { ...PIPELINE.spec, outputs: [{ ...PIPELINE.spec.outputs[0], mode: "backfill" }] },
+    };
+    await stubApi(page, { validate, seen: [], pipeline });
+    await openEditor(page);
+    const row = output(page).getByTestId("workbench-record-1");
+    await expect(row).toContainText("extend that Policy with the operation appendAttrsTemporal");
+    await expect(row.getByText("Endpoint", { exact: true })).toBeVisible();
+    await shot(page, "backfill-refused");
   });
 
   test("a check that cannot run says why", async ({ page }) => {
