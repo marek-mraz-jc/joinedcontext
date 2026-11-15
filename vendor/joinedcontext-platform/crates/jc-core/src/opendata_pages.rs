@@ -392,6 +392,8 @@ mod tests {
         assert!(!html.to_lowercase().contains("href=\"java"), "{html}");
         assert!(matches!(target(" java\tscript:x"), Target::Refused));
         assert!(matches!(target("VBScript:x"), Target::Refused));
+        let entities = render("[h](&#106;avascript:alert(1)) [i](javascript&colon;x)", &[]).html;
+        assert!(!entities.contains("href"), "{entities}");
         for other_host in ["/\\evil.example", "\\\\evil.example", "\\/evil.example"] {
             assert!(
                 matches!(target(other_host), Target::Elsewhere),
