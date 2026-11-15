@@ -38,7 +38,7 @@ pub struct ChatSettings {
     pub endpoint_url: Option<String>,
     /// `https://portal.{domain}`, which a `guide` source's sections link into (AG-118).
     pub portal_url: Option<String>,
-    /// `https://viz.{domain}`, the renderer a data answer's maps and charts are drawn on.
+    /// `https://embed.{domain}`, the renderer a data answer's maps and charts are drawn on.
     pub viz_url: Option<String>,
     /// The loopback listener of the `jc` that serves the gateway's host: the Endpoint counts
     /// go to that host over plain http there instead of through the edge.
@@ -79,7 +79,7 @@ pub enum Problem {
     NotAUrl(String),
     /// A path or a query beside scheme and authority.
     NotSchemeAndAuthority,
-    /// The chart renderer is not `https://viz.{domain}`.
+    /// The chart renderer is not `https://embed.{domain}`.
     NotViz,
     /// The reach is not a loopback address and port.
     NotLoopback,
@@ -91,7 +91,7 @@ impl Problem {
         match self {
             Problem::NotAUrl(why) => format!("{name}: {why}"),
             Problem::NotSchemeAndAuthority => format!("{name} is scheme and authority only"),
-            Problem::NotViz => format!("{name} is https://viz.{{domain}}"),
+            Problem::NotViz => format!("{name} is https://embed.{{domain}} (or viz.)"),
             Problem::NotLoopback => {
                 format!("{name} is a loopback address and port, e.g. 127.0.0.1:8080")
             }
@@ -144,7 +144,7 @@ pub fn endpoint_base(value: &str) -> Result<url::Url, Problem> {
     url::Url::parse(&format!("{}/", base(value)?)).map_err(|e| Problem::NotAUrl(e.to_string()))
 }
 
-/// The chart renderer `https://viz.{domain}` (T-4657): a host that is not `viz.` of a domain
+/// The chart renderer `https://embed.{domain}` (T-4657): a host that is not `embed.` (or the old `viz.`) of a domain
 /// would leave the maps without their basemap's domain.
 pub fn viz_url(value: &str) -> Result<url::Url, Problem> {
     let url = url::Url::parse(&base(value)?).map_err(|e| Problem::NotAUrl(e.to_string()))?;
