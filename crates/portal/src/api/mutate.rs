@@ -2731,16 +2731,49 @@ pub(crate) fn check_one_model(
 
 /// [`jcctl::commands::validate::unmade_writes`] over manifests of the mirror; a manifest that is no
 /// manifest, or a set the loader refuses, is judged by the checks that own it and yields nothing.
-fn unmade_writes(
+/// The open-data Endpoints of `project` by name (EP-187), each with `jcctl validate`'s sentence
+/// when it binds a Policy granting a write, `None` when it only reads: the reconciler marks them
+/// while the gateway refuses their writes; nothing is changed or deleted.
+pub(crate) fn open_data_writes(
+    mirror: &crate::store::Mirror,
+    project: &str,
+) -> std::collections::BTreeMap<String, Option<String>> {
+    let options = crate::store::ListOptions::default();
+    let envelopes: Vec<ResourceEnvelope> = WRITE_BINDING_KINDS
+        .iter()
+        .flat_map(|kind| mirror.list(project, kind, &options).items)
+        .collect();
+    let domain = crate::permissions::organization_domain(mirror, project).or_else(|| {
+        crate::permissions::project_domains(mirror, project)
+            .first()
+            .cloned()
+    });
+    repository_of(&envelopes, domain.as_deref())
+        .map(|repo| jcctl::commands::validate::open_data_endpoints(&repo))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(id, why)| (id.name, why))
+        .collect()
+}
+
+/// The envelopes as the repository `jcctl validate` reads, under `domain`.
+fn repository_of(
     envelopes: &[ResourceEnvelope],
     domain: Option<&str>,
-) -> Vec<jcctl::commands::validate::UnmadeWrite> {
+) -> Option<jcctl::Repository> {
     let manifests = envelopes
         .iter()
         .filter_map(|e| serde_json::to_value(e).ok())
         .filter_map(|v| serde_json::from_value::<jcctl::RawManifest>(v).ok())
         .collect();
-    jcctl::Repository::from_manifests(manifests, domain)
+    jcctl::Repository::from_manifests(manifests, domain).ok()
+}
+
+fn unmade_writes(
+    envelopes: &[ResourceEnvelope],
+    domain: Option<&str>,
+) -> Vec<jcctl::commands::validate::UnmadeWrite> {
+    repository_of(envelopes, domain)
         .map(|repo| jcctl::commands::validate::unmade_writes(&repo))
         .unwrap_or_default()
 }
@@ -5281,12 +5314,18 @@ mod tests {
         );
 
         // P-18 (T-6736): the Pipeline names public-air, so its derived write binds it beside
-        // the policyRef; only an Endpoint the project lacks is refused.
-        assert!(check(
+        // the policyRef; but public-air serves a public read, so it is open data and takes no
+        // write (EP-187, T-6972). An Endpoint the project lacks is refused as before.
+        let errors = refusal(check(
             Operation::Create,
-            manifest("Pipeline", "stations", air_pipeline("public-air"))
-        )
-        .is_ok());
+            manifest("Pipeline", "stations", air_pipeline("public-air")),
+        ));
+        assert!(
+            errors.len() == 1
+                && errors[0].contains("Endpoint public-air: an open-data Endpoint is read-only")
+                && errors[0].contains("Pipeline stations writes through it"),
+            "{errors:?}"
+        );
         let errors = refusal(check(
             Operation::Create,
             manifest("Pipeline", "lost", air_pipeline("no-such-endpoint")),
@@ -5298,9 +5337,11 @@ mod tests {
             "{errors:?}"
         );
 
-        // Fixed: an Endpoint of the space without policyRef binds both.
+        // Fixed: an Endpoint of the space without policyRef binds both; it is the
+        // organization's own, as a public one serving `public-read` is open data (EP-187).
         let mut air_write = public_air(None);
         air_write["slug"] = json!("bq3kz7xw2mdv6ksb3ncf5arw2y");
+        air_write["audience"] = json!("organization");
         state
             .mirror
             .upsert(manifest("Endpoint", "air-write", air_write.clone()));
@@ -5332,6 +5373,77 @@ mod tests {
             manifest("Endpoint", "air-write", air_write),
         ));
         assert!(errors[0].starts_with("Policy sensors-write"), "{errors:?}");
+    }
+
+    /// EP-187 (T-6972): an open-data Endpoint is read-only. A public Endpoint binding every
+    /// Policy of a space with a public read is refused at its own field when a write Policy joins
+    /// it, through the Policy and through the Endpoint, naming the Policy; the organization's
+    /// own Endpoint keeps the write. The reconciler marks the one already in a project.
+    #[test]
+    fn an_open_data_endpoint_that_would_bind_a_write_is_refused() {
+        let state = narrowed_space();
+        let check = |operation, envelope: ResourceEnvelope| {
+            check_unmade_writes(
+                &crate::judge::Ground::of(&state),
+                "ovzdusie",
+                operation,
+                &envelope,
+            )
+        };
+        let writer = manifest(
+            "Policy",
+            "sensors-write",
+            space_policy(
+                "{ \"kind\": \"serviceAccount\", \"id\": \"sensors\" }",
+                &["updateAttrs"],
+            ),
+        );
+        let mut open = public_air(None);
+        open["slug"] = json!("bq3kz7xw2mdv6ksb3ncf5arw2y");
+        state
+            .mirror
+            .upsert(manifest("Endpoint", "air-open", open.clone()));
+        let errors = refusal(check(Operation::Create, writer.clone()));
+        assert!(
+            errors.iter().any(|e| e.contains(
+                "Endpoint air-open: an open-data Endpoint is read-only (EP-187): \
+                 Policy sensors-write grants updateAttrs"
+            )),
+            "{errors:?}"
+        );
+
+        // The write already in the project: the Endpoint change that opens it is refused at
+        // its field, and the reconciler's mark names it.
+        state.mirror.upsert(writer.clone());
+        let mut internal = open.clone();
+        internal["audience"] = json!("organization");
+        state
+            .mirror
+            .upsert(manifest("Endpoint", "air-open", internal.clone()));
+        assert!(!open_data_writes(&state.mirror, "ovzdusie").contains_key("air-open"));
+        let errors = refusal(check(
+            Operation::Update,
+            manifest("Endpoint", "air-open", open.clone()),
+        ));
+        assert!(
+            errors[0].starts_with("spec.contextSpaceRef: Endpoint air-open: an open-data Endpoint"),
+            "{errors:?}"
+        );
+        assert!(check(
+            Operation::Update,
+            manifest("Endpoint", "air-open", internal)
+        )
+        .is_ok());
+        state.mirror.upsert(manifest("Endpoint", "air-open", open));
+        let marked = open_data_writes(&state.mirror, "ovzdusie");
+        assert!(
+            marked["air-open"]
+                .as_deref()
+                .is_some_and(|why| why.contains("Policy sensors-write grants updateAttrs")),
+            "{marked:?}"
+        );
+        // The narrowed public-air serves only its public read: open data that only reads.
+        assert_eq!(marked["public-air"], None);
     }
 
     /// T-5040: a finding the project already holds does not stop an unrelated change, so a broken
