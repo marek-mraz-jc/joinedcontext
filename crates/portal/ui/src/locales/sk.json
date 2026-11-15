@@ -7753,6 +7753,7 @@
     "lead": "Čo je rovnaké v každom projekte: nastavenia organizácie, jej členovia, roly, skupiny a servisné účty a jej projekty. Každá zmena sa tu navrhuje a schvaľuje.",
     "tab": {
       "settings": "Nastavenia",
+      "opendata-pages": "Stránky otvorených údajov",
       "people": "Ľudia",
       "members": "Členovia",
       "roles": "Roly",
@@ -12846,6 +12847,59 @@
       "noCatalogue": "Táto inštalácia zatiaľ neposkytuje katalóg otvorených dát, preto tento portál tu nevypíše žiadne datasety. Požiadajte operátora o zapnutie katalógu.",
       "toSources": "Prejsť na Zdroje",
       "noCatalogueTitle": "Zatiaľ tu nie je katalóg otvorených dát"
+    }
+  },
+  "opendataPages": {
+    "title": "Stránky portálu otvorených údajov",
+    "lead": "Texty, ktoré portál otvorených údajov organizácie {organization} zobrazuje na stránkach konektora, ochrany súkromia, podmienok, podpory a prístupnosti, v každom jazyku. Stránka zobrazuje vstavaný text, kým nezverejníte vlastný; zverejnenie navrhne zmenu, ktorú schváli administrátor.",
+    "noneOwn": "Každá stránka zobrazuje vstavaný text. Vlastný text napíšete cez Upraviť pri stránke a jazyku.",
+    "builtIn": "Vstavaný",
+    "own": "Váš text",
+    "pending": "Čaká na schválenie",
+    "edit": "Upraviť",
+    "editLabel": "Upraviť {title} ({lang})",
+    "page": {
+      "connector": "AI konektor",
+      "privacy": "Ochrana súkromia",
+      "terms": "Podmienky používania",
+      "support": "Podpora",
+      "accessibility": "Prístupnosť",
+      "other": "{page}"
+    },
+    "openChange": "Zmena organizácie čaká na schválenie. Schváľte ju alebo zamietnite, než zverejníte ďalší text:",
+    "editing": "{title} ({lang})",
+    "back": "Späť na stránky",
+    "pendingHere": "Text tejto stránky čaká na schválenie v otvorenej zmene.",
+    "toolbar": "Formátovanie",
+    "format": {
+      "bold": "Tučné",
+      "heading": "Nadpis",
+      "list": "Zoznam",
+      "link": "Odkaz",
+      "code": "Kód"
+    },
+    "markdown": "Text stránky v Markdowne",
+    "markdownHint": "Prvý riadok so znakom # je nadpis stránky, napríklad \"# Podpora\", potom \"Napíšte nám na **podpora@mesto.sk**\". HTML sa zobrazí ako text, obrázky sa vynechajú; najviac {max} KiB.",
+    "size": "{bytes} z {max} bajtov",
+    "write": "Písať",
+    "preview": "Náhľad",
+    "views": "Text alebo náhľad",
+    "previewEmpty": "Napíšte text a uvidíte stránku tak, ako ju ukáže portál.",
+    "publish": "Zverejniť",
+    "revert": "Použiť vstavaný text",
+    "revertTitle": "Znova použiť vstavaný text?",
+    "revertBody": "Váš text stránky {title} ({lang}) sa odstráni navrhnutou zmenou; po schválení portál zobrazí vstavaný text.",
+    "waits": "Portál zobrazí nový text, keď administrátor zmenu schváli.",
+    "refused": {
+      "403": "Stránky portálu otvorených údajov meniť nemôžete: {detail}",
+      "409": "Zmena organizácie čaká na schválenie. Schváľte ju alebo zamietnite a zverejnite znova. {detail}"
+    },
+    "history": "Predchádzajúce úpravy",
+    "historyEmpty": "Text žiadnej stránky sa zatiaľ nezmenil.",
+    "historyRow": "{who}, {at}: {phase}",
+    "phase": {
+      "merged": "zverejnené",
+      "rejected": "zamietnuté"
     }
   }
 }
