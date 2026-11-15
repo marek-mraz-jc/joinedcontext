@@ -82,6 +82,15 @@ pub enum Out {
     Refused,
 }
 
+/// The unix second now.
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            i64::try_from(since.as_secs()).unwrap_or(i64::MAX)
+        })
+}
+
 /// A connection's queue: bounded, coalesced per subscription and entity (ADR-N-049 §2.6).
 #[derive(Debug, Default)]
 pub struct Queue {
@@ -165,6 +174,9 @@ struct Conn {
     principal: String,
     /// The caller as admitted at the upgrade; its `client` (`azp`) a reload may stop admitting.
     subject: Subject,
+    /// The unix second the connection opened: a revocation marked at or after it names the
+    /// token the upgrade admitted (S-3-12).
+    opened: i64,
     queue: Arc<Queue>,
     subs: BTreeMap<u32, Sub>,
     next: u32,
@@ -321,6 +333,7 @@ impl Hub {
                 endpoint,
                 principal,
                 subject,
+                opened: unix_now(),
                 queue: Arc::clone(&queue),
                 subs: BTreeMap::new(),
                 next: 1,
@@ -592,6 +605,27 @@ impl Hub {
                     state.index.remove(sub.filter);
                 }
             }
+        }
+        state.forget_unwatched();
+        gone
+    }
+
+    /// Ends with `access-ended` every connection whose caller lost its access since the
+    /// upgrade (S-3-12): `ended` is asked with the caller and the unix second its connection
+    /// opened. Answers the connections it closes.
+    pub fn close_ended(&self, ended: impl Fn(&Subject, i64) -> bool) -> Vec<u64> {
+        let mut state = self.state();
+        let state = &mut *state;
+        let mut gone = Vec::new();
+        for (id, conn) in &mut state.conns {
+            if !ended(&conn.subject, conn.opened) {
+                continue;
+            }
+            conn.queue.push(Out::Closing("access-ended"));
+            for (_, sub) in std::mem::take(&mut conn.subs) {
+                state.index.remove(sub.filter);
+            }
+            gone.push(*id);
         }
         state.forget_unwatched();
         gone
@@ -1062,6 +1096,37 @@ mod tests {
 
     fn open(hub: &Hub) -> (u64, Arc<Queue>) {
         hub.open(endpoint(), "anonymous".into(), Subject::default())
+    }
+
+    /// S-3-12: a caller whose access ended closes with `access-ended`, its filters leave the
+    /// index so no later change reaches it, and every other connection stays.
+    #[test]
+    fn a_caller_whose_access_ended_closes_and_hears_nothing_more() {
+        let hub = Hub::new("s", 10);
+        let jana = Subject {
+            id: Some("jana".into()),
+            ..Subject::default()
+        };
+        let (gone, gone_queue) = hub.open(endpoint(), "user:jana".into(), jana);
+        subscribe(&hub, gone, json!({}));
+        let (kept, kept_queue) = open(&hub);
+        subscribe(&hub, kept, json!({}));
+        let closed = hub.close_ended(|subject, opened| {
+            assert!(opened > 0, "the open second is known");
+            subject.id.as_deref() == Some("jana")
+        });
+        assert_eq!(closed, [gone]);
+        assert_eq!(gone_queue.take().0, [Out::Closing("access-ended")]);
+        hub.apply(
+            bus("urn:ngsi-ld:Vehicle:1", 1.0, "x"),
+            chrono::DateTime::UNIX_EPOCH,
+        );
+        assert!(gone_queue.take().0.is_empty(), "nothing follows the close");
+        assert!(
+            !kept_queue.take().0.is_empty(),
+            "the other caller hears the change"
+        );
+        assert!(hub.close_ended(|_, _| false).is_empty());
     }
 
     /// A connection whose upgrade failed leaves the hub with its guard; a taken one stays.
