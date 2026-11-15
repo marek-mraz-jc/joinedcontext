@@ -112,6 +112,7 @@ export function SavedVisualization({
           open={asking}
           onOpenChange={setAsking}
           title={t("grafana.saved.remove", { title: item.title })}
+          description={t("grafana.saved.removeLead")}
           confirmLabel={t("grafana.saved.confirm")}
           pending={remove.isPending}
           onConfirm={() => remove.mutate()}

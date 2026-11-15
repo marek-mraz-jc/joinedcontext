@@ -6988,6 +6988,7 @@
       "open": "Otvoriť {title} v Grafane",
       "remove": "Odstrániť {title}",
       "confirm": "Odstrániť z Grafany",
+      "removeLead": "Zmizne z priečinka projektu v Grafane a jej odkaz prestane fungovať. Dáta Endpointu zostanú.",
       "emptyTitle": "Zatiaľ nič uložené",
       "empty": "Vyplňte formulár vyššie a uložte prvú vizualizáciu.",
       "emptyReader": "Keď niekto v projekte uloží vizualizáciu, zobrazí sa tu."

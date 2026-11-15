@@ -6988,6 +6988,7 @@
       "open": "Open {title} in Grafana",
       "remove": "Remove {title}",
       "confirm": "Remove from Grafana",
+      "removeLead": "It leaves the project's Grafana folder and its link stops working. The Endpoint's data stays.",
       "emptyTitle": "Nothing saved yet",
       "empty": "Fill in the form above and save your first visualization.",
       "emptyReader": "When someone in this project saves a visualization, it appears here."
