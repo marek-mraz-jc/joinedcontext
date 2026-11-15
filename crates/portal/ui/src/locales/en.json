@@ -2846,7 +2846,17 @@
       "lastSamples": "Last messages through this step",
       "lastSamplesNone": "Nothing has passed through this step yet.",
       "lastSamplesUnavailable": "The last messages are not available.",
-      "lastSamplesWithheld": "Withheld: the target endpoint hides attributes, and before the mapping they carry the source's own names. Select the output to see what was written."
+      "lastSamplesWithheld": "Withheld: the target endpoint hides attributes, and before the mapping they carry the source's own names. Select the output to see what was written.",
+      "tier": {
+        "forms": "Set up with a form",
+        "advanced": "Advanced: changes how messages flow",
+        "bloblang": "Written in Bloblang"
+      },
+      "tierHint": {
+        "forms": "No code: each opens a form with a hint per field, for example dedupe drops a record seen in the last hour.",
+        "advanced": "These have forms too, but they branch, loop or retry the steps inside them: a wrong setting can drop or repeat records. Run the pipeline test after each change.",
+        "bloblang": "A text box with hints: for mappings the mapper does not cover, for example root.name = this.name.uppercase()."
+      }
     },
     "emptyHint": "Add a data source and a pipeline with the button, or ask the assistant to build one from what you already have.",
     "expiryRemoves": "Entities not updated for {window} are removed",
@@ -3080,13 +3090,29 @@
         "title": "Lifetime",
         "hint": "When the entities, or some of their fields, leave the space. Saved as the pipeline's lifetime, never as mapping code.",
         "pickType": "Pick the target and the type the mapping writes first: the lifetime is set per type."
+      },
+      "schedule": {
+        "title": "When it runs",
+        "hint": "Pick how often in words; the next five starts show in your own time.",
+        "field": "Schedule",
+        "resident": "This pipeline runs all the time and writes each record as it arrives; set its class to scheduled under Basics to give it a schedule.",
+        "byPeriod": "The pipeline reads its source every {period}, as its period says. Add a schedule to run it at set times instead.",
+        "add": "Run on a schedule",
+        "remove": "Remove the schedule",
+        "floor": "This project allows a pipeline to run at most every {floor} s.",
+        "belowFloor": "This schedule starts every {gap} s, more often than the {floor} s this project allows (spec.quotas.minPipelinePeriodSeconds); pick a slower schedule or ask an admin to lower the minimum.",
+        "afterApply": "The first run starts at the first time listed above once the change is approved and applied.",
+        "hints": {
+          "field": "How often the pipeline reads its source, for example every day at 03:00. Times are UTC, as the runner reads them.",
+          "none": "No schedule: the pipeline runs when its source pushes records, for example an MQTT topic. Add a schedule for a source read on a clock, such as a CSV file."
+        }
       }
     },
     "mapper": {
       "mode": "How each record becomes an entity",
       "modeMap": "Map fields",
       "modeCode": "Write Bloblang",
-      "modeMapHint": "Pick a record field, an expression, a fixed value or a point for each attribute.",
+      "modeMapHint": "Pick a record field for each attribute, with steps such as trim or translate values, a link to another entity, one field per language, a geometry, joined fields, an expression or a fixed value.",
       "modeCodeHint": "Write the Bloblang step yourself.",
       "type": "Entity type",
       "typeHint": "A type of the target space's data model; its attributes are listed below.",
@@ -3124,12 +3150,104 @@
         "notBoolean": "{field} holds “{value}”, which is not true or false; {name} takes true or false. Pick another field or change the sample.",
         "notValue": "{field} holds “{value}”; {name} takes one of {values}. Pick another field or change the sample.",
         "noId": "Choose the field each entity's id comes from.",
-        "notTime": "{field} holds {value}, which is no time: use RFC 3339 text such as 2026-10-20T14:30:00Z or Unix seconds."
+        "notTime": "{field} holds {value}, which is no time: use RFC 3339 text such as 2026-10-20T14:30:00Z or Unix seconds.",
+        "notShaped": "{field} holds “{value}”, which the date format of {name} cannot read. Pick the format the source writes."
       },
       "expiry": {
         "migrated": "The end time this step used to write is now the pipeline's lifetime, in the Lifetime step. It is saved with your next proposal.",
         "migrateField": "This step writes expiresAt from the record field {field}, and no date-time attribute is mapped from that field. Map it to a date-time attribute, pick an end in the Lifetime step, or drop the step's own lines.",
         "drop": "Drop the step's own expiresAt"
+      },
+      "geojson": "Geometry from a GeoJSON field…",
+      "wkt": "Geometry from a WKT field…",
+      "ref": "Link to a {target} by a key field…",
+      "languagesChoice": "One field per language…",
+      "concatChoice": "Several fields joined…",
+      "refField": "Key field of the {target}",
+      "languages": "Text per language",
+      "language": "Language",
+      "languageField": "Field for {tag}",
+      "languageRemove": "Remove the language {tag}",
+      "languageAdd": "Add a language",
+      "remove": "Remove",
+      "wktField": "WKT field",
+      "geojsonField": "GeoJSON field",
+      "crs": "Coordinate system of the source",
+      "crsName": {
+        "EPSG_4326": "EPSG:4326 · WGS 84, degrees (GPS)",
+        "EPSG_4258": "EPSG:4258 · ETRS89, degrees",
+        "EPSG_3857": "EPSG:3857 · Web Mercator, metres",
+        "EPSG_25829": "EPSG:25829 · ETRS89 / UTM 29N (Portugal, Galicia)",
+        "EPSG_25830": "EPSG:25830 · ETRS89 / UTM 30N (central Spain)",
+        "EPSG_25831": "EPSG:25831 · ETRS89 / UTM 31N (Barcelona, Catalonia)",
+        "EPSG_25832": "EPSG:25832 · ETRS89 / UTM 32N (western Germany)",
+        "EPSG_25833": "EPSG:25833 · ETRS89 / UTM 33N (eastern Germany)",
+        "EPSG_25834": "EPSG:25834 · ETRS89 / UTM 34N (Poland east, Slovakia east)",
+        "EPSG_3879": "EPSG:3879 · ETRS89 / GK25 (Helsinki)",
+        "EPSG_3067": "EPSG:3067 · ETRS89 / TM35FIN (Finland)",
+        "EPSG_5514": "EPSG:5514 · S-JTSK / Krovak (Slovakia, Czechia)",
+        "EPSG_2056": "EPSG:2056 · CH1903+ / LV95 (Switzerland)",
+        "EPSG_27700": "EPSG:27700 · British National Grid (Great Britain)"
+      },
+      "concat": "Fields to join",
+      "concatPart": "Field {number}",
+      "concatRemove": "Remove the field {field} from the join",
+      "concatAdd": "Add a field",
+      "separator": "Between the fields",
+      "separatorNone": "nothing",
+      "separatorSpace": "a space",
+      "transforms": "Transforms of {name}",
+      "transform": {
+        "trim": "Trim spaces",
+        "lower": "Lower case",
+        "upper": "Upper case",
+        "decimalComma": "Number with a decimal comma",
+        "date": "Date in a format",
+        "lookup": "Translate to the model's values",
+        "default": "Value when empty"
+      },
+      "transformHint": {
+        "trim": "Drops the spaces around the text: “ Bo ” becomes “Bo”.",
+        "lower": "Writes the text in lower case: “Bo” becomes “bo”.",
+        "upper": "Writes the text in upper case: “bo” becomes “BO”.",
+        "decimalComma": "Reads text such as 1.234,5 as the number 1234.5: dots and spaces are thousands, the comma is the decimal point.",
+        "lookup": "Each value the sample holds that the model lacks gets one of the model's values; any other value stays as it is."
+      },
+      "transformRemove": "Remove the step {what}",
+      "transformAdd": "Change the value",
+      "transformPick": "— add a step —",
+      "dateFormat": "Date format of the field",
+      "dateFormats": {
+        "0": "day.month.year, 20.10.2025",
+        "1": "day/month/year, 20/10/2025",
+        "2": "month/day/year, 10/20/2025",
+        "3": "year-month-day, 2025-10-20",
+        "4": "day.month.year hour:minute, 20.10.2025 14:30",
+        "5": "day/month/year hour:minute, 20/10/2025 14:30",
+        "6": "year-month-day hour:minute:second, 2025-10-20 14:30:00"
+      },
+      "defaultValue": "Value when the field is empty",
+      "lookupEmpty": "Every value of the sample is already one of the model's; read another sample to translate others.",
+      "lookupHint": "Source value → the model's value",
+      "lookupRow": "“{from}” becomes",
+      "lookupKeep": "— keep as it is —",
+      "observedAt": "Observed at, for {name}",
+      "hint": {
+        "concat": "The fields are joined in this order, the empty ones skipped; for example a street and a house number give C/ Major 1.",
+        "concatPart": "A field of the sample, for example ADRECA.",
+        "crs": "The system the source's coordinates are in; the runner writes WGS 84. For example Barcelona's open data uses ETRS89 / UTM 31N.",
+        "dateFormat": "How the source writes a date; the attribute gets ISO 8601, for example 20/10/2025 becomes 2025-10-20.",
+        "defaultValue": "Written when a record leaves the field empty, for example 0 or unknown.",
+        "geojsonField": "A field holding a GeoJSON geometry, as text or an object, for example a Point with coordinates [2.17, 41.38].",
+        "languageField": "The field holding the {tag} text, for example NAME_{tag}.",
+        "language": "A language tag, for example en or ca.",
+        "languages": "Pick a field for each language the source has, for example NOM_CA for ca and NOM_ES for es. An empty field is left out.",
+        "lookupRow": "One of the model's values, for example {example}.",
+        "observedAt": "Optional: a field holding when the value was measured, as RFC 3339 text such as 2026-10-20T14:30:00Z or Unix seconds; it becomes the attribute's observedAt.",
+        "refField": "The field holding the {target}'s own id in this space, for example a district code such as 01.",
+        "separator": "What stands between two joined fields, for example a comma and a space.",
+        "transformAdd": "Optional steps applied to the field in order, for example trim spaces, then translate values to the model's.",
+        "wktField": "A field holding Well-Known Text, for example POINT (2.17 41.38)."
       }
     },
     "debug": {

@@ -17,6 +17,7 @@ import type { PipelineForm } from "../src/pages/pipelines/PipelineEditor";
 import { toEnvelope, toForm } from "../src/pages/pipelines/PipelineEditor";
 import {
   PROCESSOR_GROUPS,
+  PROCESSOR_TIERS,
   PipelineFlow,
   addSource,
   addStep,
@@ -154,6 +155,9 @@ describe("the lane's steps", () => {
       "offers custom functions for it",
     );
     expect(plainSummary("no link")).toBe("no link");
+    // Code spans and emphasis lose their marks too (T-7062 UI judge): "[`branch` processors]" read raw.
+    expect(plainSummary("runs [`branch` processors](processors.branch) _only_ once")).toBe("runs branch processors only once");
+    expect(plainSummary("keeps snake_case_names")).toBe("keeps snake_case_names");
   });
 
   it("writes the steps around the compute step, an empty configuration included", () => {
@@ -254,15 +258,23 @@ describe("the canvas and the step's block", () => {
     expect(follows(flow, processors)).toBe(true);
   });
 
-  it("lists every processor under its category with the runner's summary", () => {
+  it("lists every processor under its tier with its category and the runner's summary (G-23)", () => {
     canvas(withCompute, null);
     const palette = screen.getByTestId("palette-processors");
-    for (const { category, processors } of PROCESSOR_GROUPS) {
-      const list = within(palette).getByRole("list", { name: category, hidden: true });
+    for (const { tier, processors } of PROCESSOR_TIERS) {
+      const list = within(palette).getByRole("list", { name: i18n.t(`pipelines.flow.tier.${tier}`), hidden: true });
       expect(within(list).getAllByRole("listitem", { hidden: true })).toHaveLength(
         processors.length,
       );
     }
+    // The forms tier comes first and open; the advanced one is folded behind its warning.
+    expect(within(palette).getByTestId("palette-tier-forms").tagName).toBe("SECTION");
+    const advanced = within(palette).getByTestId("palette-tier-advanced");
+    expect(advanced.tagName).toBe("DETAILS");
+    expect(advanced).toHaveTextContent(/can drop or repeat records/);
+    expect(PROCESSOR_TIERS.flatMap(({ processors }) => processors).length).toBe(
+      PROCESSOR_GROUPS.flatMap(({ processors }) => processors).length,
+    );
     const unarchive = within(palette).getByTestId("palette-processor-unarchive").closest("li");
     expect(unarchive).toHaveTextContent("multiple messages within a batch");
     expect(unarchive).not.toHaveTextContent("/docs/configuration/batching");

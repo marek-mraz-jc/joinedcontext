@@ -21,6 +21,7 @@ import type { SampleFormat } from "./PipelineTest";
 import { SlotUnit } from "./SlotUnit";
 import { OutputMapper } from "./OutputMapper";
 import { LifetimeChoice } from "./LifetimeChoice";
+import { WorkbenchSchedule } from "./WorkbenchSchedule";
 import { timeSlotsOf } from "./history";
 import { withEntry } from "./lifetime";
 import { RecordsGrid } from "../../components/grid/RecordsGrid";
@@ -1178,7 +1179,11 @@ export function PipelineWorkbench({
         )}
       </Step>
 
-      <Step number={6} id="workbench-lifetime" title={t("pipelines.workbench.lifetime.title")} hint={t("pipelines.workbench.lifetime.hint")}>
+      <Step number={6} id="workbench-schedule-step" title={t("pipelines.workbench.schedule.title")} hint={t("pipelines.workbench.schedule.hint")}>
+        <WorkbenchSchedule project={project} draft={draft} onChange={onChange} />
+      </Step>
+
+      <Step number={7} id="workbench-lifetime" title={t("pipelines.workbench.lifetime.title")} hint={t("pipelines.workbench.lifetime.hint")}>
         {targetSpace && writtenType ? (
           <LifetimeChoice
             project={project}
@@ -1196,7 +1201,7 @@ export function PipelineWorkbench({
         )}
       </Step>
 
-      <Step number={7} id="workbench-validation" title={t("pipelines.workbench.validation.title")} hint={t("pipelines.workbench.validation.hint")}>
+      <Step number={8} id="workbench-validation" title={t("pipelines.workbench.validation.title")} hint={t("pipelines.workbench.validation.hint")}>
         {!draft?.targetEndpoint ? (
           <p className="text-caption text-fg-subtle">{t("pipelines.workbench.mapping.pickTarget")}</p>
         ) : records.length === 0 ? (
