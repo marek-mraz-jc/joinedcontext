@@ -535,7 +535,7 @@
 
 /* The pending bar's actions read as buttons, not as text beside the count. */
 .jc-grid-pending > button {
-  min-height: 2.75rem;
+  min-height: 44px;
   padding: var(--jc-space-1, 4px) var(--jc-space-3, 12px);
   border: 1px solid var(--jc-color-line, #e0e0e0);
   border-radius: var(--jc-radius-sm, 4px);
@@ -2323,7 +2323,8 @@ a.jc-cell--link:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: var(--jc-space-2, 8px);
-  min-height: 2.75rem;
+  /* In px: a host's smaller root (the Portal's 80 %) made 2.75rem a 35 px target. */
+  min-height: 44px;
   padding: var(--jc-space-1, 4px) var(--jc-space-3, 12px);
   border: 1px solid var(--jc-color-line, #e0e0e0);
   border-radius: var(--jc-radius-sm, 4px);

@@ -338,7 +338,7 @@ export const DEFAULT_LABELS: GridLabels = {
   empty: "No rows.",
   filtersMatchNothing: "None of the rows match your filters.",
   notSaved: "not saved",
-  refusedNext: "Change the value and apply again, or discard the changes to keep what is stored.",
+  refusedNext: "Discard the changes to keep what is stored. If the reason says you may not write here, ask the space's owner for access.",
   loading: "Loading…",
   filtering: "Filtering…",
   previous: "Previous",

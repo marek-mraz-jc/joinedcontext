@@ -5841,7 +5841,7 @@
     "empty": "Hier gibt es noch keine Entitäten. Daten kommen über eine Datenquelle, einen Import oder eine Pipeline.",
     "filtersMatchNothing": "Keine Zeile passt zu Ihren Filtern.",
     "notSaved": "nicht gespeichert",
-    "refusedNext": "Ändern Sie den Wert und wenden Sie ihn erneut an, oder verwerfen Sie die Änderungen, um den gespeicherten Wert zu behalten.",
+    "refusedNext": "Verwerfen Sie die Änderungen, um den gespeicherten Wert zu behalten. Wenn der Grund sagt, dass Sie hier nicht schreiben dürfen, bitten Sie den Eigentümer des Kontextraums um Zugriff.",
     "loading": "Lädt…",
     "filtering": "Filtert…",
     "previous": "Zurück",

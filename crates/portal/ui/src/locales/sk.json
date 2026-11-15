@@ -5841,7 +5841,7 @@
     "empty": "Zatiaľ tu nie sú žiadne entity. Údaje prichádzajú cez zdroj údajov, import alebo pipeline.",
     "filtersMatchNothing": "Vašim filtrom nezodpovedá žiadny riadok.",
     "notSaved": "neuložené",
-    "refusedNext": "Zmeňte hodnotu a použite ju znova, alebo zmeny zahoďte a ponechajte uloženú hodnotu.",
+    "refusedNext": "Zahoďte zmeny a ponechajte uloženú hodnotu. Ak dôvod hovorí, že sem nesmiete zapisovať, požiadajte vlastníka kontextového priestoru o prístup.",
     "loading": "Načítavam…",
     "filtering": "Filtrujem…",
     "previous": "Predchádzajúca",

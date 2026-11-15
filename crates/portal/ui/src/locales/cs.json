@@ -5841,7 +5841,7 @@
     "empty": "Zatím tu nejsou žádné entity. Data přicházejí přes zdroj dat, import nebo pipeline.",
     "filtersMatchNothing": "Vašim filtrům neodpovídá žádný řádek.",
     "notSaved": "neuloženo",
-    "refusedNext": "Změňte hodnotu a použijte ji znovu, nebo změny zahoďte a ponechte uloženou hodnotu.",
+    "refusedNext": "Zahoďte změny a ponechte uloženou hodnotu. Pokud důvod říká, že sem nesmíte zapisovat, požádejte vlastníka kontextového prostoru o přístup.",
     "loading": "Načítám…",
     "filtering": "Filtruji…",
     "previous": "Předchozí",
