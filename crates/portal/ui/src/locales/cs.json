@@ -3099,7 +3099,7 @@
       },
       "sourceCheck": {
         "title": "Zkontrolovat celý zdroj",
-        "hint": "Spustí uloženou pipeline nad každou stránkou zdroje a spočítá, co by ostrý běh přijal a odmítl, podle pravidla. Nic se nezapíše. Zastaví se po 60 s nebo 50 000 záznamech. Příklad: zdroj CKAN s 12 stránkami, 2 400 záznamů.",
+        "hint": "Spustí uloženou pipeline nad každou stránkou zdroje a spočítá, co by ostrý běh přijal a odmítl, podle pravidla. Nic se nezapíše. Zastaví se po 60 s nebo 50 000 záznamech. Příklad: zdroj CKAN s 12 stránkami, 2 300 záznamů.",
         "run": "Zkontrolovat celý zdroj",
         "again": "Zkontrolovat znovu",
         "running": "Čte se každá stránka zdroje; trvá to nejvýše 60 s.",
@@ -3111,7 +3111,8 @@
         "noneRejected": "Žádný záznam neporušuje pravidlo: ostrý běh by zapsal všechny.",
         "rows": "{count, plural, one {# odmítnutý záznam} few {První # odmítnuté záznamy} other {Prvních # odmítnutých záznamů}}",
         "place": "Záznam {place}",
-        "more": "{count, plural, one {Další # záznam je započítán} few {Další # záznamy jsou započítány} other {Dalších # záznamů je započítáno}} ve skupinách výše."
+        "more": "{count, plural, one {Další # záznam je započítán} few {Další # záznamy jsou započítány} other {Dalších # záznamů je započítáno}} ve skupinách výše.",
+        "groupsLead": "Každý záznam, který kontrola odmítla, spočítaný podle porušeného pravidla a atributu, největší skupina první. Opravte nejprve největší skupinu."
       }
     },
     "mapper": {

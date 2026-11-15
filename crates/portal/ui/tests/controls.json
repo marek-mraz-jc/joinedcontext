@@ -2033,6 +2033,14 @@
         "pipeline_rejected.test.tsx"
       ]
     },
+    "src/pages/pipelines/SourceCheck.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "pipeline_source_check.test.tsx"
+      ]
+    },
     "src/pages/pipelines/PipelineHealth.tsx": {
       "controls": {
         "Button": 1

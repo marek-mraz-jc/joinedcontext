@@ -100,7 +100,11 @@ function SourceCheckAnswer({ answer }: { answer: Checked }): JSX.Element {
         </ul>
       ) : null}
       {answer.groups.length > 0 ? (
-        <RejectedGroups groups={answer.groups} headingId="source-check-groups" />
+        <RejectedGroups
+          groups={answer.groups}
+          headingId="source-check-groups"
+          lead={t("pipelines.workbench.sourceCheck.groupsLead")}
+        />
       ) : answer.records > 0 ? (
         <p className="text-caption text-fg-subtle">{t("pipelines.workbench.sourceCheck.noneRejected")}</p>
       ) : null}
@@ -109,7 +113,12 @@ function SourceCheckAnswer({ answer }: { answer: Checked }): JSX.Element {
           <summary className="flex min-h-11 cursor-pointer items-center p-3 text-body text-fg">
             {t("pipelines.workbench.sourceCheck.rows", { count: answer.rows.length })}
           </summary>
-          <ol className="flex max-h-96 flex-col gap-2 overflow-y-auto px-3 pb-3">
+          {/* Scrolls on its own, so a keyboard reaches it (axe scrollable-region-focusable). */}
+          <ol
+            tabIndex={0}
+            aria-label={t("pipelines.workbench.sourceCheck.rows", { count: answer.rows.length })}
+            className="focus-ring flex max-h-96 flex-col gap-2 overflow-y-auto px-3 pb-3"
+          >
             {shown.map((row) => (
               <li key={row.id} className="flex min-w-0 flex-col gap-1 border-t border-border pt-2">
                 <div className="flex flex-wrap items-center gap-2">

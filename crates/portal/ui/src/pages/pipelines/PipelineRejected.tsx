@@ -328,6 +328,7 @@ export function RejectedGroups({
   onExport,
   fileName = "",
   headingId = "rejected-groups",
+  lead,
 }: {
   groups: RejectedGroup[];
   exporting?: boolean;
@@ -336,6 +337,8 @@ export function RejectedGroups({
   onExport?: () => void;
   fileName?: string;
   headingId?: string;
+  /** The line under the heading, when the records are not kept ones. */
+  lead?: string;
 }): JSX.Element {
   const { t } = useTranslation();
   return (
@@ -345,7 +348,7 @@ export function RejectedGroups({
           <h3 id={headingId} className="text-body font-semibold text-fg">
             {t("pipelines.rejected.groups.title")}
           </h3>
-          <p className="text-caption text-fg-subtle">{t("pipelines.rejected.groups.lead")}</p>
+          <p className="text-caption text-fg-subtle">{lead ?? t("pipelines.rejected.groups.lead")}</p>
         </div>
         {onExport ? <div className="shrink-0">
           <Button

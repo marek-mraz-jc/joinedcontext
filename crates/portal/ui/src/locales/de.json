@@ -3099,7 +3099,7 @@
       },
       "sourceCheck": {
         "title": "Ganze Quelle prüfen",
-        "hint": "Führt die gespeicherte Pipeline über jede Seite ihrer Quelle aus und zählt, was ein echter Lauf annehmen und ablehnen würde, nach Regel. Nichts wird geschrieben. Sie endet nach 60 s oder 50 000 Datensätzen. Beispiel: eine CKAN-Quelle mit 12 Seiten, 2 400 Datensätze.",
+        "hint": "Führt die gespeicherte Pipeline über jede Seite ihrer Quelle aus und zählt, was ein echter Lauf annehmen und ablehnen würde, nach Regel. Nichts wird geschrieben. Sie endet nach 60 s oder 50 000 Datensätzen. Beispiel: eine CKAN-Quelle mit 12 Seiten, 2 300 Datensätze.",
         "run": "Ganze Quelle prüfen",
         "again": "Erneut prüfen",
         "running": "Jede Seite der Quelle wird gelesen; das dauert bis zu 60 s.",
@@ -3111,7 +3111,8 @@
         "noneRejected": "Kein Datensatz verletzt eine Regel: ein echter Lauf würde alle schreiben.",
         "rows": "{count, plural, one {# abgelehnter Datensatz} other {Die ersten # abgelehnten Datensätze}}",
         "place": "Datensatz {place}",
-        "more": "{count, plural, one {# weiterer Datensatz ist} other {# weitere Datensätze sind}} in den Gruppen oben gezählt."
+        "more": "{count, plural, one {# weiterer Datensatz ist} other {# weitere Datensätze sind}} in den Gruppen oben gezählt.",
+        "groupsLead": "Jeder Datensatz, den die Prüfung abgelehnt hat, nach verletzter Regel und Attribut gezählt, die größte Gruppe zuerst. Beheben Sie zuerst die größte Gruppe."
       }
     },
     "mapper": {
