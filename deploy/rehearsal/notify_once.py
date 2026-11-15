@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""notify_once.py --base <url> [--base <url>]... [--writes 20]: each write notifies once.
+"""notify_once.py --base <url> [--base <url>]... --token-file <f> [--writes 20]: each write notifies once.
 
 The split layout's broker check (T-7014): one NGSI-LD subscription made on the first base, then
 --writes updates of one entity spread round robin over every base (each a broker replica's own
 listener, so every replica takes writes), and a receiver on loopback counts the notifications per
-written value. Passes when each value arrived exactly once: a replica that misses the others'
+written value; every call carries the broker's admin bearer (--token-file, the state dir's
+antares-admin-token, which the replicas share). Passes when each value arrived exactly once: a replica that misses the others'
 writes loses notifications, two replicas firing one write double them. Run on a jc on allow-all
 (up.sh REHEARSAL_IMPORT_POLICY=allow-all, loopback only) with ANTARES_EGRESS_ALLOW_PRIVATE=true,
 so the broker may notify a loopback receiver. The probe tenant's subscription and entity are
@@ -19,6 +20,7 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
+from pathlib import Path
 
 TENANT = "rehearsal-notify-once"
 
@@ -44,9 +46,10 @@ def loopback(url):
     return url.rstrip("/")
 
 
-def call(method, url, body=None):
+def call(method, url, token, body=None):
     data = None if body is None else json.dumps(body).encode()
-    headers = {"NGSILD-Tenant": TENANT, "Content-Type": "application/json"}
+    headers = {"NGSILD-Tenant": TENANT, "Content-Type": "application/json",
+               "Authorization": f"Bearer {token}"}
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -58,10 +61,12 @@ def call(method, url, body=None):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--base", action="append", required=True, help="a broker replica's jc base")
+    ap.add_argument("--token-file", required=True, type=Path, help="the broker's admin token")
     ap.add_argument("--writes", type=int, default=20)
     ap.add_argument("--wait", type=float, default=15, help="seconds to wait for the last notification")
     a = ap.parse_args(argv)
     bases = [loopback(b) for b in a.base]
+    token = a.token_file.read_text().strip()
 
     received = []
     lock = threading.Lock()
@@ -91,11 +96,11 @@ def main(argv=None):
     broker = lambda b: f"{b}/broker/ngsi-ld/v1"
     out = {"bases": len(bases), "writes": a.writes}
     try:
-        st = call("POST", f"{broker(bases[0])}/entities",
+        st = call("POST", f"{broker(bases[0])}/entities", token,
                   {"id": entity, "type": "NotifyOnce", "seq": {"type": "Property", "value": -1}})
         if st != 201:
             raise SystemExit(f"notify_once: entity create answered {st}")
-        st = call("POST", f"{broker(bases[0])}/subscriptions", {
+        st = call("POST", f"{broker(bases[0])}/subscriptions", token, {
             "id": sub, "type": "Subscription", "entities": [{"type": "NotifyOnce", "id": entity}],
             "watchedAttributes": ["seq"],
             "notification": {"endpoint": {"uri": receiver, "accept": "application/json"}}})
@@ -103,7 +108,7 @@ def main(argv=None):
             raise SystemExit(f"notify_once: subscription create answered {st}")
         time.sleep(2)  # every replica learns the subscription (bus or store)
         for i in range(a.writes):
-            st = call("PATCH", f"{broker(bases[i % len(bases)])}/entities/{urllib.parse.quote(entity, safe='')}/attrs",
+            st = call("PATCH", f"{broker(bases[i % len(bases)])}/entities/{urllib.parse.quote(entity, safe='')}/attrs", token,
                       {"seq": {"type": "Property", "value": i}})
             if st != 204:
                 raise SystemExit(f"notify_once: write {i} on base {i % len(bases)} answered {st}")
@@ -117,8 +122,8 @@ def main(argv=None):
         with lock:
             out.update(tally(received, a.writes), notifications=len(received))
     finally:
-        call("DELETE", f"{broker(bases[0])}/subscriptions/{urllib.parse.quote(sub, safe='')}")
-        call("DELETE", f"{broker(bases[0])}/entities/{urllib.parse.quote(entity, safe='')}")
+        call("DELETE", f"{broker(bases[0])}/subscriptions/{urllib.parse.quote(sub, safe='')}", token)
+        call("DELETE", f"{broker(bases[0])}/entities/{urllib.parse.quote(entity, safe='')}", token)
         server.shutdown()
     print(json.dumps(out))
     return 1 if out["missing"] or out["doubled"] else 0
