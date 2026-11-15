@@ -159,6 +159,21 @@ describe("a grid's map switches to tiles past the count", () => {
     expect(fetchImpl).toHaveBeenCalledWith(PATH, expect.objectContaining({ credentials: "same-origin" }));
   });
 
+  it("reads no points page while the count and the tileset decide that tiles draw the type", async () => {
+    tilesetFetch();
+    const points = vi.fn(async () => ({ points: [], read: 0 }));
+    render(<EntityGrid config={config} source={{ ...tiled(TILE_THRESHOLD + 1), points }} />);
+    await waitFor(() => expect(added.sources.some(([id]) => id === "tiles")).toBe(true));
+    expect(points).not.toHaveBeenCalled();
+  });
+
+  it("reads the points once the tileset answers none", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 404 })));
+    const points = vi.fn(async () => ({ points: [], read: 0 }));
+    render(<EntityGrid config={config} source={{ ...tiled(TILE_THRESHOLD + 1), points }} />);
+    await waitFor(() => expect(points).toHaveBeenCalled());
+  });
+
   it("stays on the page's shapes at or under the threshold", async () => {
     const fetchImpl = tilesetFetch();
     render(<EntityGrid config={config} source={tiled(TILE_THRESHOLD)} />);

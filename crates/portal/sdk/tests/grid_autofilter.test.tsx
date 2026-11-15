@@ -132,6 +132,25 @@ describe("the header filter (T-6328)", () => {
     await waitFor(() => expect(asked.at(-1)?.q).toBe('name~="a\\x22b\\.\\("'));
   });
 
+  it("stops reading the value list once it closes, after the page in flight", async () => {
+    const many = Array.from({ length: VALUE_PAGE * 3 }, (_, n) => kpi(n, String(2000 + (n % 20)), n));
+    const inner = fixtureSource(many);
+    const scans: (() => void)[] = [];
+    const source: EntitySource = {
+      // The grid's own page answers at once; each value page waits until the test lets it go.
+      query: (q: GridQuery, page) => page.limit < VALUE_PAGE ? inner.query(q, page) : new Promise((resolve) => scans.push(() => resolve(inner.query(q, page)))),
+      get: inner.get,
+    };
+    render(<EntityGrid config={config} source={source} filterRow={false} />);
+    await screen.findByText("Nehody 1");
+    openFilter("Period");
+    await waitFor(() => expect(scans).toHaveLength(1));
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "Filter: Period" }), { key: "Escape" });
+    scans[0]();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(scans).toHaveLength(1);
+  });
+
   it("Escape and a click outside close it, Escape back to its funnel", async () => {
     const { source } = recording(entities);
     render(<EntityGrid config={config} source={source} filterRow={false} />);

@@ -77,7 +77,7 @@ export function useColumnControls(
   const { source: gridSource } = options;
   const { valuesQuery } = grid;
   const loadValues = useCallback(
-    (column: FilterColumn) => () => columnValues(gridSource, valuesQuery(column.key), column.attr ?? ""),
+    (column: FilterColumn) => (signal?: AbortSignal) => columnValues(gridSource, valuesQuery(column.key), column.attr ?? "", signal),
     [gridSource, valuesQuery],
   );
   const hideColumn = useCallback((attr: string) => {

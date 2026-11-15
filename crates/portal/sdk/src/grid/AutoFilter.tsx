@@ -20,7 +20,7 @@ export interface AutoFilterProps {
   labels: GridLabels;
   filter: ColumnFilter | undefined;
   /** Reads the column's values for the tick list; absent where the column lists none. */
-  load?: () => Promise<ColumnValues>;
+  load?: (signal?: AbortSignal) => Promise<ColumnValues>;
   /** A value as the column's cells show it. */
   formatValue: (value: string) => string;
   onApply: (filter: ColumnFilter | undefined) => void;
@@ -52,14 +52,12 @@ export function AutoFilter({ column, label, labels, filter, load, formatValue, o
   useEffect(() => {
     (lists ? search.current : box.current?.querySelector<HTMLElement>("select"))?.focus();
     if (!lists || !load) return;
-    let gone = false;
-    load().then(
-      (read) => !gone && setLoaded({ state: "done", ...read }),
-      (err: unknown) => !gone && setLoaded({ state: "error", message: err instanceof Error ? err.message : String(err) }),
+    const closed = new AbortController();
+    load(closed.signal).then(
+      (read) => !closed.signal.aborted && setLoaded({ state: "done", ...read }),
+      (err: unknown) => !closed.signal.aborted && setLoaded({ state: "error", message: err instanceof Error ? err.message : String(err) }),
     );
-    return () => {
-      gone = true;
-    };
+    return () => closed.abort();
   }, [lists, load, box]);
 
   const all = loaded.state === "done" ? loaded.values : [];
@@ -278,7 +276,7 @@ export function HeaderFilter({
   open: boolean;
   onOpen: () => void;
   onClose: () => void;
-  load: () => Promise<ColumnValues>;
+  load: (signal?: AbortSignal) => Promise<ColumnValues>;
   onApply: (filter: ColumnFilter | undefined) => void;
 }): React.JSX.Element {
   const filtered = complete(filter);
