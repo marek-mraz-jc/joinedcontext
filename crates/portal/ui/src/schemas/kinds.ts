@@ -439,6 +439,11 @@ export function generateSlug(): string {
 // and the first type is the one a new form opens on (T-3211).
 /** A `records` path of an http DataSource: 1 to 8 dot-separated names (jc-core records_mapping). */
 export const RECORDS_PATH = "^[A-Za-z0-9_-]{1,64}(\\.[A-Za-z0-9_-]{1,64}){0,7}$";
+/**
+ * A sheet name a workbook can hold, as jc-core's `sheet_name_gap` checks it (T-7086): 1 to 31
+ * characters, none of `: \\ / ? * [ ]` or a control character, no `'` or space at either end.
+ */
+export const SHEET_NAME = "^(?![' ])(?!.*[' ]$)[^:\\\\/?*\\[\\]\\p{Cc}]{1,31}$";
 
 export const DATA_SOURCE_TYPES = ["http", "mqtt", "websocket", "gtfs-rt"] as const;
 
@@ -634,6 +639,13 @@ export function dataSourceSchema(
           title: t("datasources.field.records"),
           pattern: RECORDS_PATH,
         },
+        // T-7086: how the body becomes records; a spreadsheet is read one row per record.
+        format: {
+          type: "string",
+          title: t("datasources.field.format"),
+          oneOf: (["csv", "xlsx"] as const).map((format) => ({ const: format, title: t(`choice.httpBodyFormat.${format}`) })),
+        },
+        sheet: { type: "string", title: t("datasources.sheet.label"), pattern: SHEET_NAME },
         authorization: {
           type: "object",
           title: t("datasources.field.authorization"),

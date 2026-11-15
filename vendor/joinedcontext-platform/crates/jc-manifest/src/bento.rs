@@ -332,7 +332,12 @@ pub fn prepended_processors(spec: &DataSourceSpec, context: &InputContext) -> Ve
         }
         match http.format {
             Some(HttpBodyFormat::Csv) => processors.push(rows_of("csv")),
-            Some(HttpBodyFormat::Xlsx) => processors.push(rows_of("xlsx")),
+            // A named sheet goes as `xlsx:<sheet>`, which validate keeps to a tab name a workbook
+            // can hold (`sheet_name_gap`), so no `:` splits it again (T-7086).
+            Some(HttpBodyFormat::Xlsx) => processors.push(rows_of(&match &http.sheet {
+                Some(sheet) => format!("xlsx:{sheet}"),
+                None => "xlsx".to_string(),
+            })),
             None => {}
         }
         if let Some(mapping) = http

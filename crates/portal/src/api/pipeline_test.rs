@@ -100,6 +100,10 @@ pub struct SampleRequest {
     /// How the sample is split into messages.
     #[serde(default)]
     pub format: SampleFormatRequest,
+    /// The sheet of an `xlsx` sample by its tab name, such as `Stations 2026`; absent, the
+    /// first sheet.
+    #[serde(default)]
+    pub sheet: Option<String>,
 }
 
 /// How a sample is split: one message, a CSV row each, or a JSON array's elements.
@@ -111,11 +115,18 @@ pub enum SampleFormatRequest {
     Text,
     Csv,
     Json,
+    /// A spreadsheet by `url`: one message per row of `sheet`, or of the first sheet.
+    Xlsx,
 }
 
 impl From<SampleRequest> for Sample {
     fn from(request: SampleRequest) -> Self {
-        let SampleRequest { text, url, format } = request;
+        let SampleRequest {
+            text,
+            url,
+            format,
+            sheet,
+        } = request;
         Sample {
             text,
             url,
@@ -123,8 +134,10 @@ impl From<SampleRequest> for Sample {
                 SampleFormatRequest::Text => SampleFormat::Text,
                 SampleFormatRequest::Csv => SampleFormat::Csv,
                 SampleFormatRequest::Json => SampleFormat::Json,
+                SampleFormatRequest::Xlsx => SampleFormat::Xlsx,
             },
             records: None,
+            sheet,
         }
     }
 }
@@ -462,6 +475,7 @@ fn messages_sample(messages: &[Value]) -> Sample {
         url: None,
         format: SampleFormat::Text,
         records: None,
+        sheet: None,
     }
 }
 
@@ -756,7 +770,7 @@ fn answers_xml(spec: &Value, url: &str) -> bool {
 
 /// How one fetch of a DataSource at `url` is read, shared by the workbench's sample and the
 /// DataSource Check (MF-39, PL-43): a CSV split into rows when the connection says `format: csv`
-/// (PL-114) or into the elements of its `records` array, and kept whole otherwise, as the runner hands it over, an XML feed taken as it is and turned
+/// (PL-114), a spreadsheet into the rows of its `sheet` when it says `format: xlsx` (T-7086) or into the elements of its `records` array, and kept whole otherwise, as the runner hands it over, an XML feed taken as it is and turned
 /// into JSON by the same `xml` step a pipeline reading it starts with, anything else parsed as
 /// JSON. Reading XML as JSON failed on its first `<` and the page said the source answered a
 /// web page (T-4818). The spec's target is the minimum a PipelineSpec needs to exist.
@@ -772,8 +786,13 @@ pub(crate) fn sampling(
     let xml = answers_xml(spec, &url);
     // The runner splits an `http` body into rows only when the DataSource says `format: csv`
     // (PL-114); any other CSV reaches the steps whole, so the sample does too (T-5350).
-    let rows = spec.pointer("/http/format").and_then(Value::as_str) == Some("csv");
-    let format = if xml {
+    let body_format = spec.pointer("/http/format").and_then(Value::as_str);
+    let rows = body_format == Some("csv");
+    // A spreadsheet is split into its rows by the same `unarchive` the live source renders
+    // (T-7086); it is binary, so neither the XML nor the JSON read below applies to it.
+    let format = if body_format == Some("xlsx") {
+        SampleFormat::Xlsx
+    } else if xml {
         SampleFormat::Text
     } else if rows {
         SampleFormat::Csv
@@ -804,6 +823,10 @@ pub(crate) fn sampling(
         url: Some(url),
         format,
         records,
+        sheet: spec
+            .pointer("/http/sheet")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     };
     Ok((sample, serde_json::from_value(plan)?))
 }
@@ -1002,6 +1025,7 @@ mod tests {
             url: None,
             format: SampleFormat::Json,
             records: None,
+            sheet: None,
         };
         let config = harnessed(
             &mirror,
@@ -1044,6 +1068,7 @@ mod tests {
             url: None,
             format: SampleFormat::Json,
             records: None,
+            sheet: None,
         };
         let mut config = harness(&spec, &sample, "http://portal-internal:9090/x").expect("harness");
         let before = config["pipeline"]["processors"]
@@ -1088,6 +1113,7 @@ mod tests {
             url: Some("https://feed.example/x.json".into()),
             format: SampleFormat::Json,
             records: None,
+            sheet: None,
         });
         assert_eq!(url["input"]["generate"]["count"], 1);
         assert!(url["input"].get("http_client").is_none());
@@ -1110,6 +1136,7 @@ mod tests {
             url: None,
             format: SampleFormat::Json,
             records: None,
+            sheet: None,
         });
         assert!(text["input"]["generate"]["mapping"]
             .as_str()
@@ -1129,6 +1156,7 @@ mod tests {
             url: None,
             format: SampleFormat::Csv,
             records: None,
+            sheet: None,
         });
         let processors = csv["pipeline"]["processors"]
             .as_array()
@@ -1164,6 +1192,7 @@ mod tests {
             url: None,
             format: SampleFormat::Json,
             records: None,
+            sheet: None,
         });
         let oauth2 = &config["output"]["http_client"]["oauth2"];
         assert_eq!(oauth2["enabled"], true, "{config}");
@@ -1185,6 +1214,7 @@ mod tests {
             url: None,
             format: SampleFormat::Json,
             records: None,
+            sheet: None,
         });
         let envelope = config["pipeline"]["processors"]
             .as_array()
@@ -1323,11 +1353,21 @@ mod tests {
                 json!({ "url": "https://x.example/export", "format": "csv" }),
                 SampleFormat::Csv,
             ),
+            // T-7086: a spreadsheet splits into rows as the live run does, by any URL.
+            (
+                json!({ "url": "https://x.example/stats", "format": "xlsx", "sheet": "2026" }),
+                SampleFormat::Xlsx,
+            ),
+            (
+                json!({ "url": "https://x.example/stats.xlsx", "format": "xlsx" }),
+                SampleFormat::Xlsx,
+            ),
         ] {
             let url = http["url"].as_str().expect("url").to_owned();
             let spec = json!({ "type": "http", "http": http });
             let (sample, plan) = sampling(&spec, url.clone()).expect("plan");
             assert_eq!(sample.format, format, "{http}");
+            assert_eq!(sample.sheet.as_deref(), http["sheet"].as_str(), "{http}");
             assert!(plan.steps().is_empty(), "{url}");
         }
     }

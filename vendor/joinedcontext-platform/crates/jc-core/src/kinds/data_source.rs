@@ -182,6 +182,10 @@ pub struct HttpConnection {
     /// keyed by the header's column names; absent, the whole body is one message (PL-114).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<HttpBodyFormat>,
+    /// The sheet of an `xlsx` body to read, by its name as the workbook's tab shows it
+    /// (`Stations 2026`); absent, the first sheet (T-7086).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet: Option<String>,
     /// Where the records sit in a JSON body: a dotted path to an array, `data.stations` for a
     /// GBFS feed. The runner hands each element to the steps as one message; absent, the whole
     /// body is one message. Names only, never an expression (PL-114).
@@ -263,6 +267,25 @@ pub enum HttpBodyFormat {
     /// keyed by the header row, each value as text the way the sheet's CSV export writes it,
     /// dates in RFC 3339 (the runner's `unarchive` format `xlsx`, T-7058).
     Xlsx,
+}
+
+/// Why `name` cannot be the `sheet` of an `xlsx` body, or `None`: the rules a spreadsheet's own
+/// tab names keep (1 to 31 characters, none of `: \ / ? * [ ]`, no control character, not
+/// starting or ending with `'`), so the name the runner is handed is one a workbook can hold.
+pub fn sheet_name_gap(name: &str) -> Option<&'static str> {
+    let length = name.chars().count();
+    if !(1..=31).contains(&length) {
+        Some("a sheet name is 1 to 31 characters, such as Stations 2026")
+    } else if name
+        .chars()
+        .any(|c| c.is_control() || matches!(c, ':' | '\\' | '/' | '?' | '*' | '[' | ']'))
+    {
+        Some("a sheet name holds no control character and none of : \\ / ? * [ ]")
+    } else if name.starts_with('\'') || name.ends_with('\'') || name.trim() != name {
+        Some("a sheet name neither starts nor ends with ' or a space")
+    } else {
+        None
+    }
 }
 
 /// The named members of the archive an `http` connection serves (PL-72, Architecture/08 §6).
@@ -604,13 +627,13 @@ impl HttpPaging {
                 "page and offset paging, total and maxRecords count the records: name their array in records",
             );
         }
-        if http.archive.is_some() || http.format == Some(HttpBodyFormat::Csv) {
+        if http.archive.is_some() || http.format.is_some() {
             return refuse(
                 "spec.http.paging",
-                if http.archive.is_some() {
-                    "archive"
-                } else {
-                    "csv"
+                match http.format {
+                    _ if http.archive.is_some() => "archive",
+                    Some(HttpBodyFormat::Xlsx) => "xlsx",
+                    _ => "csv",
                 }
                 .to_string(),
                 "paging reads JSON pages; an archive or a csv body is read whole",
@@ -1413,6 +1436,20 @@ impl DataSourceSpec {
                             field: "spec.http.records",
                             value: records.clone(),
                             reason: "records splits a JSON body; a body of format csv or xlsx is split by its rows already",
+                        });
+                    }
+                }
+                if let Some(sheet) = &http.sheet {
+                    let reason = if http.format != Some(HttpBodyFormat::Xlsx) {
+                        Some("sheet names the sheet of an xlsx body: set format: xlsx, or drop sheet")
+                    } else {
+                        sheet_name_gap(sheet)
+                    };
+                    if let Some(reason) = reason {
+                        return Err(Error::Name {
+                            field: "spec.http.sheet",
+                            value: sheet.clone(),
+                            reason,
                         });
                     }
                 }

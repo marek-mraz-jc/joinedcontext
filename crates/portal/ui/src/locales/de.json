@@ -2452,7 +2452,13 @@
       "broker": "Broker",
       "externalBroker": "Externer Broker (URL und Secret unten)",
       "records": "Datensätze stehen in",
-      "recordsHelp": "Bei einer JSON-Antwort mit den Datensätzen in einem Array der Pfad dorthin, zum Beispiel data.stations; jedes Element wird ein Datensatz. Leer gelassen wird die ganze Antwort ein Datensatz."
+      "recordsHelp": "Bei einer JSON-Antwort mit den Datensätzen in einem Array der Pfad dorthin, zum Beispiel data.stations; jedes Element wird ein Datensatz. Leer gelassen wird die ganze Antwort ein Datensatz.",
+      "format": "Format der Antwort"
+    },
+    "sheet": {
+      "label": "Blatt",
+      "help": "Das zu lesende Blatt nach dem Namen auf seinem Reiter, zum Beispiel Stationen 2026; die erste Zeile des Blatts benennt die Spalten. Leer gelassen wird das erste Blatt gelesen.",
+      "problem": "Ein Blattname hat 1 bis 31 Zeichen ohne : \\ / ? * [ ]."
     },
     "probe": {
       "title": "Ein Abruf des Feeds",
@@ -2490,6 +2496,12 @@
         "what": "Eine als .csv veröffentlichte Tabelle, bei jedem Lauf gelesen.",
         "url": "Adresse der CSV-Datei",
         "urlHelp": "Die Adresse, die die Datei selbst herunterlädt, beginnend mit https://."
+      },
+      "xlsx": {
+        "title": "Tabelle (Excel, ODS) unter einer Adresse",
+        "what": "Eine als .xlsx oder .ods veröffentlichte Arbeitsmappe, ein Datensatz je Zeile eines Blatts, bei jedem Lauf gelesen.",
+        "url": "Adresse der Tabelle",
+        "urlHelp": "Die Adresse, die die Datei selbst herunterlädt, beginnend mit https://, zum Beispiel https://data.example.org/stations.xlsx."
       },
       "json": {
         "title": "REST-API (JSON)",
@@ -9072,6 +9084,10 @@
       "0": "0: höchstens einmal (eine Nachricht kann verloren gehen)",
       "1": "1: mindestens einmal (eine Nachricht kann doppelt kommen)",
       "2": "2: genau einmal (am langsamsten)"
+    },
+    "httpBodyFormat": {
+      "csv": "CSV",
+      "xlsx": "Tabelle (xlsx, ods)"
     }
   },
   "picker": {

@@ -180,4 +180,35 @@ test.describe("ready-made set-ups on Data sources", () => {
     await shot(page, "records-applied");
     expect(await axeViolations(page)).toEqual([]);
   });
+
+  // T-7086: a statistics office's workbook is read one record per row of the sheet its tab names;
+  // a name no workbook can hold is refused before anything is proposed, and the form that is
+  // saved carries the format and the sheet.
+  test("a spreadsheet template names its sheet, refuses a name no workbook holds, and fills the form", async ({ page }) => {
+    await stubApi(page);
+    await page.goto(`/projects/${PROJECT}/datasources/new?lang=en`);
+    await page.getByText("Start from a template").click();
+    await page.getByRole("button", { name: /Spreadsheet \(Excel, ODS\)/ }).click();
+    const gallery = page.getByTestId("datasource-templates");
+    const sheet = gallery.getByRole("textbox", { name: "Sheet", exact: true });
+    await expect(sheet).toBeVisible();
+    await expect(gallery.getByText("The sheet to read, by the name on its tab, for example Stations 2026", { exact: false })).toBeVisible();
+    await shot(page, "sheet-empty");
+    await page.getByLabel("Address of the spreadsheet").fill("https://data.example.org/stats/stations-2026.xlsx");
+    await sheet.fill("2026/Q1");
+    await page.getByRole("button", { name: "Fill the form and check" }).click();
+    const refused = "A sheet name is 1 to 31 characters with none of : \\ / ? * [ ].";
+    await expect(gallery.getByText(refused)).toBeVisible();
+    await shot(page, "sheet-refused");
+    await sheet.fill("Stations 2026");
+    await expect(gallery.getByText(refused)).toBeHidden();
+    await shot(page, "sheet-filled");
+    await page.getByRole("button", { name: "Fill the form and check" }).click();
+    const form = page.getByRole("group", { name: "HTTP endpoint" });
+    await expect(form.getByRole("textbox", { name: "Sheet", exact: true })).toHaveValue("Stations 2026");
+    await expect(form.getByRole("combobox", { name: "Body format" })).toHaveValue(/xlsx|1/);
+    await expect(form.getByRole("textbox", { name: /URL/ })).toHaveValue("https://data.example.org/stats/stations-2026.xlsx");
+    await shot(page, "sheet-applied");
+    expect(await axeViolations(page)).toEqual([]);
+  });
 });

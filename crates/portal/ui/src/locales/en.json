@@ -2471,7 +2471,13 @@
       "broker": "Broker",
       "externalBroker": "External broker (URL and secret below)",
       "records": "Records are in",
-      "recordsHelp": "For a JSON answer that holds its records in an array, the path to it, for example data.stations; each item becomes one record. Leave empty to read the whole answer as one record."
+      "recordsHelp": "For a JSON answer that holds its records in an array, the path to it, for example data.stations; each item becomes one record. Leave empty to read the whole answer as one record.",
+      "format": "Body format"
+    },
+    "sheet": {
+      "label": "Sheet",
+      "help": "The sheet to read, by the name on its tab, for example Stations 2026; the first row of the sheet names the columns. Leave empty to read the first sheet.",
+      "problem": "A sheet name is 1 to 31 characters with none of : \\ / ? * [ ]."
     },
     "probe": {
       "title": "One fetch of the feed",
@@ -2490,6 +2496,12 @@
         "what": "A table published as a .csv file, read on every run.",
         "url": "Address of the CSV file",
         "urlHelp": "The address that downloads the file itself, starting with https://."
+      },
+      "xlsx": {
+        "title": "Spreadsheet (Excel, ODS) at an address",
+        "what": "A workbook published as .xlsx or .ods, one record per row of a sheet, read on every run.",
+        "url": "Address of the spreadsheet",
+        "urlHelp": "The address that downloads the file itself, starting with https://, for example https://data.example.org/stations.xlsx."
       },
       "json": {
         "title": "REST API (JSON)",
@@ -9072,6 +9084,10 @@
       "0": "0: at most once (may lose a message)",
       "1": "1: at least once (may repeat a message)",
       "2": "2: exactly once (slowest)"
+    },
+    "httpBodyFormat": {
+      "csv": "CSV",
+      "xlsx": "Spreadsheet (xlsx, ods)"
     }
   },
   "picker": {

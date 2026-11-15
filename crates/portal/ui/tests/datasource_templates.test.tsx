@@ -48,6 +48,23 @@ describe("data source templates", () => {
     expect(problemOf(template("ckan"), { ...ok, url: "https://data.gov.sk/dataset/x/resource/y/download/a.csv" })).toBeUndefined();
     expect(problemOf(template("wfs"), { ...ok, url: "https://gis.example.org/wfs" })).toBe("layer");
     expect(problemOf(template("wfs"), { ...ok, url: "https://gis.example.org/parky.geojson" })).toBeUndefined();
+    // T-7086: a sheet name a workbook can hold, as jc-core checks it.
+    expect(problemOf(template("xlsx"), { ...ok, sheet: "Stanice 2026" })).toBeUndefined();
+    expect(problemOf(template("xlsx"), { ...ok, sheet: "" })).toBeUndefined();
+    for (const sheet of ["a:b", "a/b", "[1]", "x".repeat(32), "'quoted'"]) {
+      expect(problemOf(template("xlsx"), { ...ok, sheet })).toBe("sheet");
+    }
+  });
+
+  it("reads a spreadsheet one record per row of the sheet named, or of the first sheet (T-7086)", () => {
+    expect(fromTemplate(template("xlsx"), { name: "stanice", url: "https://data.example.org/s.xlsx", sheet: " Stanice 2026 " })).toEqual({
+      type: "http",
+      form: { name: "stanice", http: { url: "https://data.example.org/s.xlsx", verb: "GET", format: "xlsx", sheet: "Stanice 2026" } },
+    });
+    expect(fromTemplate(template("xlsx"), { name: "stanice", url: "https://data.example.org/s.ods", sheet: "" })).toEqual({
+      type: "http",
+      form: { name: "stanice", http: { url: "https://data.example.org/s.ods", verb: "GET", format: "xlsx" } },
+    });
   });
 
   it("names a source after its address, as a DNS label", () => {
@@ -113,6 +130,34 @@ describe("the template gallery", () => {
     expect(onUse).toHaveBeenCalledWith("http", {
       name: "station-information",
       http: { url: "https://gbfs.example.org/gbfs/station_information.json", verb: "GET", records: "data.stations" },
+    });
+  });
+
+  it("asks a spreadsheet for its sheet, refuses a name no workbook holds, and hands it over (T-7086)", async () => {
+    const user = userEvent.setup();
+    const onUse = vi.fn();
+    render(
+      <I18nextProvider i18n={i18n}>
+        <TemplateGallery onUse={onUse} />
+      </I18nextProvider>,
+    );
+    const xlsx = en.datasources.template.xlsx;
+    await user.click(screen.getByRole("button", { name: (name) => name.startsWith(xlsx.title) }));
+    await user.type(screen.getByLabelText(new RegExp(xlsx.url)), "https://data.example.org/stats/stanice-2026.xlsx");
+    const sheet = screen.getByRole("textbox", { name: en.datasources.sheet.label });
+    expect(screen.getByText(en.datasources.sheet.help)).toBeInTheDocument();
+    await user.type(sheet, "2026/Q1");
+    await user.click(screen.getByRole("button", { name: en.datasources.template.use }));
+    expect(screen.getByText(en.datasources.sheet.problem)).toBeInTheDocument();
+    expect(onUse).not.toHaveBeenCalled();
+
+    await user.clear(sheet);
+    expect(screen.queryByText(en.datasources.sheet.problem)).not.toBeInTheDocument();
+    await user.type(sheet, "Stanice 2026");
+    await user.click(screen.getByRole("button", { name: en.datasources.template.use }));
+    expect(onUse).toHaveBeenCalledWith("http", {
+      name: "stanice-2026",
+      http: { url: "https://data.example.org/stats/stanice-2026.xlsx", verb: "GET", format: "xlsx", sheet: "Stanice 2026" },
     });
   });
 });

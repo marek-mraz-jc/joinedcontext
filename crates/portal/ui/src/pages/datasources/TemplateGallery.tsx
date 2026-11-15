@@ -23,16 +23,19 @@ export function TemplateGallery({ onUse }: TemplateGalleryProps): JSX.Element {
   const [url, setUrl] = useState("");
   const [layer, setLayer] = useState("");
   const [records, setRecords] = useState("");
+  const [sheet, setSheet] = useState("");
   const [name, setName] = useState("");
   const [named, setNamed] = useState(false);
   const [problem, setProblem] = useState<TemplateProblem | null>(null);
   const shownName = named ? name : nameFrom(url);
   const errorsFor = (field: TemplateProblem | TemplateProblem[]) =>
-    problem && ([] as TemplateProblem[]).concat(field).includes(problem) ? [t(`datasources.template.problem.${problem}`)] : undefined;
+    problem && ([] as TemplateProblem[]).concat(field).includes(problem)
+      ? [t(problem === "sheet" ? "datasources.sheet.problem" : `datasources.template.problem.${problem}`)]
+      : undefined;
 
   const use = () => {
     if (!picked) return;
-    const values = { name: shownName, url, layer, records };
+    const values = { name: shownName, url, layer, records, sheet };
     const found = problemOf(picked, values);
     setProblem(found ?? null);
     if (found) return;
@@ -101,6 +104,24 @@ export function TemplateGallery({ onUse }: TemplateGalleryProps): JSX.Element {
                 onChange={(e) => {
                   setRecords(e.target.value);
                   if (problem === "records") setProblem(null);
+                }}
+              />
+            </Field>
+          ) : null}
+          {picked.asksSheet ? (
+            <Field
+              id="template-sheet"
+              label={t("datasources.sheet.label")}
+              help={t("datasources.sheet.help")}
+              errors={errorsFor("sheet")}
+            >
+              <Input
+                id="template-sheet"
+                maxLength={31}
+                value={sheet}
+                onChange={(e) => {
+                  setSheet(e.target.value);
+                  if (problem === "sheet") setProblem(null);
                 }}
               />
             </Field>
