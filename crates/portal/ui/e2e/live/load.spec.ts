@@ -16,7 +16,7 @@ const PROJECT = "helsinki";
 const SUFFIX = process.env.E2E_SUFFIX ?? new Date().toISOString().slice(11, 16).replace(":", "");
 const SOURCE = `hsl-citybikes-free-${SUFFIX}`;
 const PIPELINE = `citybikes-free-${SUFFIX}`;
-const TARGET = "urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all";
+const TARGET = "urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all-write";
 
 test("a data source and a pipeline, checked, tested, proposed and approved through the UI; entities in Explore", async ({ browser }, info) => {
   const steward = await signIn(browser, STEWARD, `/projects/${PROJECT}/datasources?lang=en`);
