@@ -585,6 +585,9 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked --no-fail-fast
+      # The inventory gate (T-7054 G-01): every Bento 1.22 name is in ekiben, refused with a
+      # reason, or listed missing in tests/parity/missing.json; an ekiben-only name has a reason.
+      - run: cargo build --locked --bin ekiben && python3 scripts/parity-inventory.py --ekiben target/debug/ekiben --check
   portal-clippy:
     needs: changes
     if: needs.changes.outputs.portal == 'true'
