@@ -53,7 +53,8 @@ function usePending(data: Pages | undefined): { changes: ChangeProposal[]; pendi
   const list = useQuery({
     queryKey: queryKeys.changes(ORG_NAMESPACE),
     enabled: data !== undefined,
-    queryFn: async () => unwrap(await api.GET("/api/v1/projects/{project}/changes", { params: { path: { project: ORG_NAMESPACE } } })),
+    queryFn: async () =>
+      unwrap(await api.GET("/api/v1/projects/{project}/changes", { params: { path: { project: ORG_NAMESPACE } } })),
   });
   const changes = (list.data?.items ?? []).filter((change) => {
     const params = change.summary.params as Record<string, unknown>;
@@ -74,8 +75,9 @@ function usePending(data: Pages | undefined): { changes: ChangeProposal[]; pendi
   proposed.forEach((answer, at) => {
     const manifest = answer.data?.items.find((item) => item.kind === "Organization");
     if (!manifest || !data) return;
-    const texts = ((manifest.spec as { appearance?: { pages?: { page: string; lang: string; markdown: string }[] } })
-      .appearance?.pages ?? []);
+    const texts =
+      (manifest.spec as { appearance?: { pages?: { page: string; lang: string; markdown: string }[] } }).appearance
+        ?.pages ?? [];
     for (const row of data.pages) {
       const next = texts.find((text) => text.page === row.page && text.lang === row.lang)?.markdown;
       if (next !== row.markdown) pending.set(keyOf(row.page, row.lang), changes[at].metadata.name);
@@ -103,7 +105,7 @@ export function OpendataPages(): JSX.Element {
   if (pages.isPending) return <PageLoading label={t("app.loading")} />;
   if (pages.isError) {
     return pages.error instanceof ApiError && pages.error.status === 403 ? (
-      <Alert tone="info">{problem(pages.error)}</Alert>
+      <Alert tone="info">{t("opendataPages.refused.list")}</Alert>
     ) : (
       <PageFailed error={pages.error} onRetry={() => void pages.refetch()} />
     );
@@ -117,7 +119,7 @@ export function OpendataPages(): JSX.Element {
         </h2>
         <p className="text-body text-fg-muted">{t("opendataPages.lead", { organization: data.organization })}</p>
       </div>
-      {changes.length > 0 ? (
+      {changes.length > 0 && !open ? (
         <Alert tone="warning">
           <span className="flex flex-wrap items-center gap-2">
             {t("opendataPages.openChange")}
@@ -139,7 +141,8 @@ export function OpendataPages(): JSX.Element {
           key={keyOf(open.page, open.lang)}
           text={open}
           maxBytes={data.maxBytes}
-          pendingChange={pending.get(keyOf(open.page, open.lang))}
+          pendingChange={pending.get(keyOf(open.page, open.lang)) ?? changes[0]?.metadata.name}
+          ownPending={pending.has(keyOf(open.page, open.lang))}
           onClose={() => setOpen(null)}
         />
       ) : (
@@ -165,13 +168,13 @@ function PageList({
   const own = data.pages.some((text) => text.markdown !== undefined);
   return (
     <div className="flex flex-col gap-3">
-      {own ? null : (
-        <Alert tone="info">{t("opendataPages.noneOwn")}</Alert>
-      )}
+      {own ? null : <Alert tone="info">{t("opendataPages.noneOwn")}</Alert>}
       <ul className="grid gap-3 lg:grid-cols-2" data-testid="opendata-pages-list">
         {names.map((name) => (
           <li key={name} className="flex flex-col gap-2 rounded-md border border-border bg-surface p-4">
-            <h3 className="text-body font-semibold text-fg">{t(`opendataPages.page.${PAGE_KEYS[name] ?? "other"}`, { page: name })}</h3>
+            <h3 className="text-body font-semibold text-fg">
+              {t(`opendataPages.page.${PAGE_KEYS[name] ?? "other"}`, { page: name })}
+            </h3>
             <ul className="flex flex-col divide-y divide-border">
               {data.pages
                 .filter((text) => text.page === name)
@@ -241,7 +244,12 @@ function Preview({ markdown }: { markdown: string }): JSX.Element {
 function Toolbar({ onFormat }: { onFormat: (format: Format) => void }): JSX.Element {
   const { t } = useTranslation();
   return (
-    <div role="toolbar" aria-label={t("opendataPages.toolbar")} aria-controls="opendata-page-markdown" className="flex flex-wrap gap-1">
+    <div
+      role="toolbar"
+      aria-label={t("opendataPages.toolbar")}
+      aria-controls="opendata-page-markdown"
+      className="flex flex-wrap gap-1"
+    >
       {FORMATS.map((format) => (
         <Button key={format} size="sm" variant="ghost" onClick={() => onFormat(format)}>
           {t(`opendataPages.format.${format}`)}
@@ -275,11 +283,14 @@ function PageEditor({
   text,
   maxBytes,
   pendingChange,
+  ownPending,
   onClose,
 }: {
   text: PageText;
   maxBytes: number;
+  /** The open Change of the Organization: this page's text in it, or another edit (a publish would meet a 409). */
   pendingChange: string | undefined;
+  ownPending: boolean;
   onClose: () => void;
 }): JSX.Element {
   const { t } = useTranslation();
@@ -297,22 +308,42 @@ function PageEditor({
   };
   const publish = useMutation({
     mutationFn: async () =>
-      unwrap(await api.PUT("/api/v1/organization/opendata/pages/{page}/{lang}", { params: { path }, body: { markdown } })),
+      unwrap(
+        await api.PUT("/api/v1/organization/opendata/pages/{page}/{lang}", { params: { path }, body: { markdown } }),
+      ),
     onSuccess: settle,
+    // A refused text goes back to the field, on a phone from the preview tab too.
+    onError: (failure) => {
+      if (!(failure instanceof ApiError) || failure.status !== 422) return;
+      setView("write");
+      requestAnimationFrame(() => area.current?.focus());
+    },
   });
   const revert = useMutation({
-    mutationFn: async () => unwrap(await api.DELETE("/api/v1/organization/opendata/pages/{page}/{lang}", { params: { path } })),
+    mutationFn: async () =>
+      unwrap(await api.DELETE("/api/v1/organization/opendata/pages/{page}/{lang}", { params: { path } })),
     onSuccess: settle,
   });
   const write = publish.isSuccess ? publish : revert;
   const done = (write.data as Change | undefined) ?? null;
   const error = publish.error ?? revert.error;
-  const invalid = error instanceof ApiError && error.status === 422 ? problem(error) : null;
+  // The server names the manifest field; the person reads the reason alone, under the field.
+  const invalid =
+    error instanceof ApiError && error.status === 422
+      ? problem(error).replace(/^spec\.appearance\.pages\[\d+\]\.\w+:\s*/, "")
+      : null;
+  // Publish meets a 409 while a Change of the Organization is open: say so once, beside the buttons.
+  const blocked = pendingChange !== undefined && !done;
   const bytes = new TextEncoder().encode(markdown).length;
 
   const format = (kind: Format) => {
     const box = area.current;
-    const edit = applyFormat(markdown, box?.selectionStart ?? markdown.length, box?.selectionEnd ?? markdown.length, kind);
+    const edit = applyFormat(
+      markdown,
+      box?.selectionStart ?? markdown.length,
+      box?.selectionEnd ?? markdown.length,
+      kind,
+    );
     setMarkdown(edit.text);
     requestAnimationFrame(() => {
       box?.focus();
@@ -345,7 +376,9 @@ function PageEditor({
   );
   const preview = (
     <div className="flex flex-col gap-2 rounded-md border border-border bg-surface p-4">
-      <h4 className="text-caption font-semibold uppercase tracking-wide text-fg-subtle">{t("opendataPages.preview")}</h4>
+      <h4 className="text-caption font-semibold uppercase tracking-wide text-fg-subtle">
+        {t("opendataPages.preview")}
+      </h4>
       <Preview markdown={markdown} />
     </div>
   );
@@ -364,11 +397,15 @@ function PageEditor({
           {t("opendataPages.back")}
         </Button>
       </div>
-      {pendingChange ? (
-        <Alert tone="warning">
+      {blocked ? (
+        <Alert tone="warning" id="opendata-page-blocked">
           <span className="flex flex-wrap items-center gap-2">
-            {t("opendataPages.pendingHere")}
-            <Link to="/projects/$project/approvals/$id" params={{ project: ORG_NAMESPACE, id: pendingChange }} className={buttonClass("secondary", "sm")}>
+            {t(ownPending ? "opendataPages.pendingHere" : "opendataPages.openChange")}
+            <Link
+              to="/projects/$project/approvals/$id"
+              params={{ project: ORG_NAMESPACE, id: pendingChange }}
+              className={buttonClass("secondary", "sm")}
+            >
               {t("changes.review")}
             </Link>
           </span>
@@ -386,16 +423,29 @@ function PageEditor({
         </div>
       )}
       <Outcome change={done} error={error} />
-      <div className="flex flex-wrap gap-2">
-        <Button variant="primary" loading={publish.isPending} onClick={() => publish.mutate()}>
-          {t("opendataPages.publish")}
-        </Button>
-        {text.markdown !== undefined ? (
-          <Button variant="secondary" onClick={() => setConfirming(true)}>
-            {t("opendataPages.revert")}
+      {done ? null : (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="primary"
+            loading={publish.isPending}
+            disabled={blocked}
+            aria-describedby={blocked ? "opendata-page-blocked" : undefined}
+            onClick={() => publish.mutate()}
+          >
+            {t("opendataPages.publish")}
           </Button>
-        ) : null}
-      </div>
+          {text.markdown !== undefined ? (
+            <Button
+              variant="secondary"
+              disabled={blocked}
+              aria-describedby={blocked ? "opendata-page-blocked" : undefined}
+              onClick={() => setConfirming(true)}
+            >
+              {t("opendataPages.revert")}
+            </Button>
+          ) : null}
+        </div>
+      )}
       <ConfirmDialog
         open={confirming}
         onOpenChange={setConfirming}
@@ -414,7 +464,7 @@ function touchesPages(fields: { path: string; from?: unknown; to?: unknown }[] |
   return (fields ?? []).some(
     (field) =>
       field.path.startsWith("spec.appearance.pages") ||
-      (field.path.startsWith("spec.appearance") && JSON.stringify([field.from, field.to]).includes("\"pages\"")),
+      (field.path.startsWith("spec.appearance") && JSON.stringify([field.from, field.to]).includes('"pages"')),
   );
 }
 
@@ -459,9 +509,14 @@ function PagesHistory({ organization }: { organization: string }): JSX.Element {
       </h3>
       {history.isError ? <InlineError>{problem(history.error)}</InlineError> : null}
       {loading && !history.isError ? <p className="text-caption text-fg-muted">{t("app.loading")}</p> : null}
-      {!loading && shown.length === 0 ? <p className="text-caption text-fg-muted">{t("opendataPages.historyEmpty")}</p> : null}
+      {!loading && shown.length === 0 ? (
+        <p className="text-caption text-fg-muted">{t("opendataPages.historyEmpty")}</p>
+      ) : null}
       {shown.length > 0 ? (
-        <ul className="flex flex-col divide-y divide-border rounded-md border border-border" data-testid="opendata-pages-history">
+        <ul
+          className="flex flex-col divide-y divide-border rounded-md border border-border"
+          data-testid="opendata-pages-history"
+        >
           {shown.map((change) => (
             <li key={change.metadata.name} className="flex flex-wrap items-center justify-between gap-2 p-3">
               <span className="text-body text-fg">

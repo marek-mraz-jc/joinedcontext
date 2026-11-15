@@ -18,7 +18,13 @@ import { expectNoAxeViolations, json, renderPage } from "./page_contract";
 const ADMIN = {
   project: "org",
   bootstrap: false,
-  grants: [{ role: "org-admin", binding: "admins", rule: { kinds: ["RoleBinding", "Organization"], verbs: ["read", "propose", "approve", "delete"] } }],
+  grants: [
+    {
+      role: "org-admin",
+      binding: "admins",
+      rule: { kinds: ["RoleBinding", "Organization"], verbs: ["read", "propose", "approve", "delete"] },
+    },
+  ],
 } as unknown as Effective;
 
 const BUILT_IN = "# Konektor\n\nVstavaný text.";
@@ -30,7 +36,11 @@ const text = (page: string, lang: string, markdown?: string) => ({
   ...(markdown ? { markdown } : {}),
 });
 
-const change = (name: string, phase: string, params: Record<string, unknown> = { kind: "Organization", name: "bbsk" }) => ({
+const change = (
+  name: string,
+  phase: string,
+  params: Record<string, unknown> = { kind: "Organization", name: "bbsk" },
+) => ({
   apiVersion: "joinedcontext.com/v1",
   kind: "ChangeProposal",
   metadata: { name, namespace: "org" },
@@ -54,7 +64,13 @@ function renderPages(setup: Setup = {}, alone = false) {
   const result = renderPage(page, {
     path: "/organization/opendata-pages",
     answer: async (url, request) => {
-      const body = request.method === "GET" ? undefined : await request.clone().text().then((raw) => (raw ? JSON.parse(raw) : undefined));
+      const body =
+        request.method === "GET"
+          ? undefined
+          : await request
+              .clone()
+              .text()
+              .then((raw) => (raw ? JSON.parse(raw) : undefined));
       requests.push({ method: request.method, path: url.pathname, body });
       if (url.pathname.endsWith("/permissions/me")) return json(ADMIN);
       if (url.pathname === "/api/v1/organization/opendata/pages") {
@@ -64,7 +80,12 @@ function renderPages(setup: Setup = {}, alone = false) {
             organization: "bbsk",
             languages: ["sk", "en"],
             maxBytes: 16384,
-            pages: [text("connector", "sk", setup.own), text("connector", "en"), text("privacy", "sk"), text("privacy", "en")],
+            pages: [
+              text("connector", "sk", setup.own),
+              text("connector", "en"),
+              text("privacy", "sk"),
+              text("privacy", "en"),
+            ],
           })
         );
       }
@@ -79,15 +100,37 @@ function renderPages(setup: Setup = {}, alone = false) {
         return setup.write ?? json(change("chg-0000abcd", "PendingApproval"), 202);
       }
       if (url.pathname === "/api/v1/projects/org/changes") {
-        return json({ apiVersion: "v1", kind: "ChangeList", items: setup.open ? [change("chg-11112222", "PendingApproval")] : [] });
+        return json({
+          apiVersion: "v1",
+          kind: "ChangeList",
+          items: setup.open ? [change("chg-11112222", "PendingApproval")] : [],
+        });
       }
       if (url.pathname === "/api/v1/projects/org/changes/chg-11112222/manifests") {
         return json({
-          items: [{ apiVersion: "v1", kind: "Organization", metadata: { name: "bbsk" }, spec: { appearance: { pages: [{ page: "connector", lang: "sk", markdown: "# Náš konektor" }, { page: "connector", lang: "en", markdown: "# New" }] } } }],
+          items: [
+            {
+              apiVersion: "v1",
+              kind: "Organization",
+              metadata: { name: "bbsk" },
+              spec: {
+                appearance: {
+                  pages: [
+                    { page: "connector", lang: "sk", markdown: "# Náš konektor" },
+                    { page: "connector", lang: "en", markdown: "# New" },
+                  ],
+                },
+              },
+            },
+          ],
         });
       }
       if (url.pathname === "/api/v1/projects/org/changes/history") {
-        return json({ apiVersion: "v1", kind: "ChangeList", items: [change("chg-aaaa0001", "Merged"), change("chg-aaaa0002", "Merged")] });
+        return json({
+          apiVersion: "v1",
+          kind: "ChangeList",
+          items: [change("chg-aaaa0001", "Merged"), change("chg-aaaa0002", "Merged")],
+        });
       }
       if (url.pathname === "/api/v1/projects/org/changes/chg-aaaa0001") {
         return json({ ...change("chg-aaaa0001", "Merged"), planFields: [{ path: "spec.appearance.pages", to: [] }] });
@@ -185,6 +228,17 @@ describe("open data pages", () => {
     expect(screen.getByRole("textbox", { name: /Page text in Markdown/ })).toHaveAttribute("aria-invalid", "true");
   });
 
+  it("while_a_change_of_the_organization_is_open_publish_waits_and_says_why", async () => {
+    renderPages({ open: true });
+    await screen.findAllByText("Waits for approval");
+    await openEditor(/Edit Konektor \(en\)/);
+    const publish = screen.getByRole("button", { name: "Publish" });
+    expect(publish).toBeDisabled();
+    expect(document.getElementById(publish.getAttribute("aria-describedby") ?? "")?.textContent).toMatch(
+      /A text for this page waits for approval/,
+    );
+  });
+
   it("a_409_says_to_decide_the_open_change_first", async () => {
     renderPages({ write: problem(409, "a Change on Organization bbsk is open") });
     const user = await openEditor();
@@ -198,8 +252,11 @@ describe("open data pages", () => {
     await user.click(screen.getByRole("button", { name: "Publish" }));
     expect(await screen.findByText(/You may not change the open data portal's pages/)).toBeInTheDocument();
     cleanup();
-    renderPages({ list: problem(403, "editing the open data portal's pages is for the Organization's administrators") }, true);
-    expect(await screen.findByText(/is for the Organization's administrators/)).toBeInTheDocument();
+    renderPages(
+      { list: problem(403, "editing the open data portal's pages is for the Organization's administrators") },
+      true,
+    );
+    expect(await screen.findByText(/Only the Organization's administrators edit/)).toBeInTheDocument();
   });
 
   it("goes_back_to_the_built_in_text_after_a_confirmation", async () => {
@@ -208,7 +265,9 @@ describe("open data pages", () => {
     await user.click(screen.getByRole("button", { name: "Use the built-in text" }));
     const dialog = await screen.findByRole("alertdialog");
     await user.click(within(dialog).getByRole("button", { name: "Use the built-in text" }));
-    await waitFor(() => expect(requests.some((r) => r.method === "DELETE" && r.path.endsWith("/connector/sk"))).toBe(true));
+    await waitFor(() =>
+      expect(requests.some((r) => r.method === "DELETE" && r.path.endsWith("/connector/sk"))).toBe(true),
+    );
     expect(await screen.findByText("chg-0000abcd")).toBeInTheDocument();
   });
 });
@@ -224,7 +283,11 @@ describe("page markdown", () => {
 
   it("keeps_only_the_renderers_elements", () => {
     const { container } = render(
-      <div>{previewElements('<h2 onclick="x()">H</h2><iframe src="https://evil"></iframe><a href="/about">in</a><span style="color:red">s</span>')}</div>,
+      <div>
+        {previewElements(
+          '<h2 onclick="x()">H</h2><iframe src="https://evil"></iframe><a href="/about">in</a><span style="color:red">s</span>',
+        )}
+      </div>,
     );
     expect(container.innerHTML).toBe('<div><p class="text-title font-semibold">H</p><a href="/about">in</a>s</div>');
   });

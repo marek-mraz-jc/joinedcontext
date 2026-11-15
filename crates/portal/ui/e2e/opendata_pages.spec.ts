@@ -12,11 +12,13 @@ import { join } from "node:path";
 const IDENTITY = { subject: "b7c1e0f4", username: "ada", name: "Ada Admin", email: "ada@bbsk.sk", roles: [] };
 const list = (items: unknown[]) => ({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items });
 const BUILT_IN: Record<string, string> = {
-  connector: "# AI konektor\n\nPripojte svojho asistenta k otvoreným údajom.\n\n## Claude\n\n- Otvorte nastavenia\n- Pridajte konektor",
+  connector:
+    "# AI konektor\n\nPripojte svojho asistenta k otvoreným údajom.\n\n## Claude\n\n- Otvorte nastavenia\n- Pridajte konektor",
   privacy: "# Ochrana súkromia\n\nAké údaje portál spracúva.",
   support: "# Podpora\n\nNapíšte nám.",
 };
-const OWN = "# Náš AI konektor\n\nBanskobystrický kraj pripája asistentov k **otvoreným údajom**.\n\n## Ako na to\n\n- Otvorte nastavenia asistenta\n- Vložte adresu konektora\n\nViac na [podpora](https://www.bbsk.sk/podpora).";
+const OWN =
+  "# Náš AI konektor\n\nBanskobystrický kraj pripája asistentov k **otvoreným údajom**.\n\n## Ako na to\n\n- Otvorte nastavenia asistenta\n- Vložte adresu konektora\n\nViac na [podpora](https://www.bbsk.sk/podpora).";
 
 const change = (name: string, phase: string) => ({
   apiVersion: "joinedcontext.com/v1",
@@ -34,10 +36,18 @@ function render(markdown: string): { title?: string; html: string } {
   const lines = markdown.split("\n");
   const title = lines[0]?.startsWith("# ") ? lines.shift()?.slice(2) : undefined;
   const inline = (text: string) =>
-    text.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" rel="noopener nofollow">$1</a>');
+    text
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" rel="noopener nofollow">$1</a>');
   const html = lines
     .filter((line) => line.trim() !== "")
-    .map((line) => (line.startsWith("## ") ? `<h2>${inline(line.slice(3))}</h2>` : line.startsWith("- ") ? `<ul><li>${inline(line.slice(2))}</li></ul>` : `<p>${inline(line)}</p>`))
+    .map((line) =>
+      line.startsWith("## ")
+        ? `<h2>${inline(line.slice(3))}</h2>`
+        : line.startsWith("- ")
+          ? `<ul><li>${inline(line.slice(2))}</li></ul>`
+          : `<p>${inline(line)}</p>`,
+    )
     .join("");
   return { title, html };
 }
@@ -55,18 +65,48 @@ async function stubApi(page: Page, stub: Stub = {}): Promise<void> {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     const json = (body: unknown, status = 200) =>
-      route.fulfill({ status, contentType: status >= 400 ? "application/problem+json" : "application/json", body: JSON.stringify(body) });
+      route.fulfill({
+        status,
+        contentType: status >= 400 ? "application/problem+json" : "application/json",
+        body: JSON.stringify(body),
+      });
     if (path.endsWith("/auth/me")) return json(IDENTITY);
     if (path === "/api/v1/projects") return json({ kind: "ProjectList", items: [{ name: "doprava" }] });
     if (path.endsWith("/permissions/me")) {
-      return json({ project: "org", bootstrap: false, grants: [{ role: "r", binding: "b", rule: { kinds: ["RoleBinding", "Organization"], verbs: ["read", "propose", "approve", "delete"] } }] });
+      return json({
+        project: "org",
+        bootstrap: false,
+        grants: [
+          {
+            role: "r",
+            binding: "b",
+            rule: { kinds: ["RoleBinding", "Organization"], verbs: ["read", "propose", "approve", "delete"] },
+          },
+        ],
+      });
     }
     if (path === "/api/v1/organization/opendata/pages") {
-      if (stub.list) return json({ type: "about:blank", title: "Forbidden", status: stub.list, detail: "editing the open data portal's pages is for the Organization's administrators, on the Administration page (UI-87)" }, stub.list);
+      if (stub.list)
+        return json(
+          {
+            type: "about:blank",
+            title: "Forbidden",
+            status: stub.list,
+            detail:
+              "editing the open data portal's pages is for the Organization's administrators, on the Administration page (UI-87)",
+          },
+          stub.list,
+        );
       const pages = ["connector", "privacy", "support"].flatMap((name) =>
         ["sk", "en"].map((lang) => {
           const own = stub.own && name === "connector" && lang === "sk";
-          return { page: name, lang, title: (own ? OWN : BUILT_IN[name]).split("\n")[0].slice(2), builtIn: BUILT_IN[name], ...(own ? { markdown: OWN } : {}) };
+          return {
+            page: name,
+            lang,
+            title: (own ? OWN : BUILT_IN[name]).split("\n")[0].slice(2),
+            builtIn: BUILT_IN[name],
+            ...(own ? { markdown: OWN } : {}),
+          };
         }),
       );
       return json({ organization: "bbsk", languages: ["sk", "en"], maxBytes: 16384, pages });
@@ -79,9 +119,18 @@ async function stubApi(page: Page, stub: Stub = {}): Promise<void> {
       published = true;
       return json(change("chg-7041a0b1", "PendingApproval"), 202);
     }
-    if (path === "/api/v1/projects/org/changes") return json({ kind: "ChangeList", items: published ? [change("chg-7041a0b1", "PendingApproval")] : [] });
+    if (path === "/api/v1/projects/org/changes")
+      return json({ kind: "ChangeList", items: published ? [change("chg-7041a0b1", "PendingApproval")] : [] });
     if (path === "/api/v1/projects/org/changes/chg-7041a0b1/manifests") {
-      return json({ items: [{ kind: "Organization", metadata: { name: "bbsk" }, spec: { appearance: { pages: [{ page: "connector", lang: "sk", markdown: "# Nový text" }] } } }] });
+      return json({
+        items: [
+          {
+            kind: "Organization",
+            metadata: { name: "bbsk" },
+            spec: { appearance: { pages: [{ page: "connector", lang: "sk", markdown: "# Nový text" }] } },
+          },
+        ],
+      });
     }
     if (path === "/api/v1/projects/org/changes/history") {
       return json({ kind: "ChangeList", items: stub.history ? [change("chg-00c0ffee", "Merged")] : [] });
@@ -98,15 +147,21 @@ async function shot(page: Page, name: string, phoneStep?: (page: Page) => Promis
   if (!dir) return;
   mkdirSync(dir, { recursive: true });
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: join(dir, `opendata-pages-${name}-desktop.png`), fullPage: true });
   await page.setViewportSize({ width: 400, height: 900 });
   if (phoneStep) await phoneStep(page);
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: join(dir, `opendata-pages-${name}-phone.png`), fullPage: true });
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 
 const editConnectorSk = (page: Page) =>
-  page.getByTestId("opendata-pages-list").getByRole("button", { name: /\(sk\)$/ }).first().click();
+  page
+    .getByTestId("opendata-pages-list")
+    .getByRole("button", { name: /\(sk\)$/ })
+    .first()
+    .click();
 
 test.describe("Administration → Open data pages", () => {
   test("every page shows the built-in text and the list says what to do", async ({ page }) => {
@@ -138,6 +193,7 @@ test.describe("Administration → Open data pages", () => {
     const box = page.getByRole("textbox", { name: /Page text in Markdown/ });
     await box.fill("# Nový text\n\nKonektor kraja.");
     await page.getByRole("button", { name: "Bold" }).click();
+    await expect(page.locator("strong", { hasText: "text" })).toBeVisible();
     await page.getByRole("button", { name: "Publish" }).click();
     await expect(page.getByText(/once an administrator approves the change/)).toBeVisible();
     await expect(page.getByText("chg-7041a0b1").first()).toBeVisible();
@@ -145,9 +201,13 @@ test.describe("Administration → Open data pages", () => {
   });
 
   test("a 422 marks the field with the server's words", async ({ page }) => {
-    await stubApi(page, { write: { status: 422, detail: "spec.appearance.pages[0].markdown: the text is 17 210 bytes, at most 16 384" } });
+    await stubApi(page, {
+      write: { status: 422, detail: "spec.appearance.pages[0].markdown: the text is 18 464 bytes, at most 16 384" },
+    });
     await page.goto("/organization/opendata-pages?lang=en");
     await editConnectorSk(page);
+    // A pasted export, too long for one page: the counter turns red before the server says so.
+    await page.getByRole("textbox", { name: /Page text in Markdown/ }).fill(`# Dlhý text\n\n${"Odsek o otvorených údajoch. ".repeat(615)}`);
     await page.getByRole("button", { name: "Publish" }).click();
     await expect(page.getByText(/at most 16 384/)).toBeVisible();
     await shot(page, "error");
@@ -165,7 +225,7 @@ test.describe("Administration → Open data pages", () => {
   test("somebody who does not administer the Organization is told whose page it is", async ({ page }) => {
     await stubApi(page, { list: 403 });
     await page.goto("/organization/opendata-pages?lang=en");
-    await expect(page.getByText(/is for the Organization's administrators/)).toBeVisible();
+    await expect(page.getByText(/Only the Organization's administrators edit/)).toBeVisible();
     await shot(page, "refused");
   });
 });

@@ -26,11 +26,15 @@ async function texts(page: Page): Promise<PageText[]> {
   return ((await answer.json()) as { pages: PageText[] }).pages;
 }
 
-const own = async (page: Page, lang: string) => (await texts(page)).find((t) => t.page === "connector" && t.lang === lang)?.markdown;
+const own = async (page: Page, lang: string) =>
+  (await texts(page)).find((t) => t.page === "connector" && t.lang === lang)?.markdown;
 
 async function publishInScreen(page: Page, approver: Page, lang: string, markdown: string): Promise<void> {
   await page.goto("/organization/opendata-pages?lang=en");
-  const connector = page.getByTestId("opendata-pages-list").getByRole("listitem").filter({ has: page.getByRole("heading", { name: "AI connector" }) });
+  const connector = page
+    .getByTestId("opendata-pages-list")
+    .getByRole("listitem")
+    .filter({ has: page.getByRole("heading", { name: "AI connector" }) });
   await connector.getByRole("button", { name: new RegExp(`\\(${lang}\\)$`) }).click();
   const box = page.getByRole("textbox", { name: /Page text in Markdown/ });
   await box.fill(markdown);
@@ -42,7 +46,9 @@ async function publishInScreen(page: Page, approver: Page, lang: string, markdow
   await expect.poll(() => own(page, lang), { timeout: 240_000, intervals: [5_000] }).toBe(markdown);
 }
 
-test("an administrator edits the connector page in sk and en, publishes, approves, and the open data portal shows it", async ({ browser }) => {
+test("an administrator edits the connector page in sk and en, publishes, approves, and the open data portal shows it", async ({
+  browser,
+}) => {
   const steward = await signIn(browser, STEWARD, "/organization/opendata-pages?lang=en");
   const approver = await signIn(browser, APPROVER, "/organization/opendata-pages?lang=en");
   const { page } = steward;
@@ -60,7 +66,10 @@ test("an administrator edits the connector page in sk and en, publishes, approve
     for (const lang of ["sk", "en"] as const) {
       await publishInScreen(page, approver.page, lang, wanted[lang]);
       await expect
-        .poll(async () => (await page.request.get(`${opendata}/connector?lang=${lang}`)).text(), { timeout: 300_000, intervals: [10_000] })
+        .poll(async () => (await page.request.get(`${opendata}/connector?lang=${lang}`)).text(), {
+          timeout: 300_000,
+          intervals: [10_000],
+        })
         .toContain(`${lang === "sk" ? "Konektor" : "Connector"} ${marker}`);
     }
     await page.goto("/organization/opendata-pages?lang=en");
@@ -71,9 +80,10 @@ test("an administrator edits the connector page in sk and en, publishes, approve
     for (const lang of ["sk", "en"] as const) {
       if ((await own(page, lang)) === before[lang]) continue;
       const path = `/api/v1/organization/opendata/pages/connector/${lang}`;
-      const sent = before[lang] === undefined
-        ? await page.request.delete(path, { headers })
-        : await page.request.put(path, { headers, data: { markdown: before[lang] } });
+      const sent =
+        before[lang] === undefined
+          ? await page.request.delete(path, { headers })
+          : await page.request.put(path, { headers, data: { markdown: before[lang] } });
       if (sent.status() === 202) {
         await approve(approver.page, "org", ((await sent.json()) as { metadata: { name: string } }).metadata.name);
         await expect.poll(() => own(page, lang), { timeout: 240_000, intervals: [5_000] }).toBe(before[lang]);

@@ -9,8 +9,31 @@ import { safeHref } from "../../components/ui";
  * only, no attribute but a link's `href` survives, and that one only through `safeHref`.
  */
 const ELEMENTS = new Set([
-  "h1", "h2", "h3", "h4", "h5", "h6", "p", "ul", "ol", "li", "a", "strong", "em", "del", "code", "pre",
-  "blockquote", "table", "thead", "tbody", "tr", "th", "td", "hr", "br",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "p",
+  "ul",
+  "ol",
+  "li",
+  "a",
+  "strong",
+  "em",
+  "del",
+  "code",
+  "pre",
+  "blockquote",
+  "table",
+  "thead",
+  "tbody",
+  "tr",
+  "th",
+  "td",
+  "hr",
+  "br",
 ]);
 
 /** `href` of an `a` the server sent: kept when safe, external ones open nothing of this page. */
@@ -30,7 +53,11 @@ function rebuild(node: Node, key: number): ReactNode {
   // A heading of the page is a bold line here: the preview sits under the editor's own headings,
   // and the page's levels would break their order for a screen reader.
   if (/^h[1-6]$/.test(tag)) {
-    return createElement("p", { key, className: tag === "h1" || tag === "h2" ? "text-title font-semibold" : "text-body font-semibold" }, ...children);
+    return createElement(
+      "p",
+      { key, className: tag === "h1" || tag === "h2" ? "text-title font-semibold" : "text-body font-semibold" },
+      ...children,
+    );
   }
   const props = tag === "a" ? linkProps(element) : {};
   return tag === "hr" || tag === "br"

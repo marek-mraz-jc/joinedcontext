@@ -12892,7 +12892,8 @@
     "waits": "Das Portal zeigt den neuen Text, sobald ein Administrator die Änderung genehmigt.",
     "refused": {
       "403": "Sie dürfen die Seiten des Open-Data-Portals nicht ändern: {detail}",
-      "409": "Eine Änderung der Organisation wartet auf Genehmigung. Genehmigen oder ablehnen, dann erneut veröffentlichen. {detail}"
+      "409": "Eine Änderung der Organisation wartet auf Genehmigung. Genehmigen oder ablehnen, dann erneut veröffentlichen. {detail}",
+      "list": "Nur die Administratoren der Organisation bearbeiten die Seiten ihres Open-Data-Portals. Bitten Sie einen von ihnen auf der Seite Mitglieder, einen Text zu ändern oder Ihnen diese Rolle zu geben."
     },
     "history": "Frühere Bearbeitungen",
     "historyEmpty": "Noch kein Seitentext wurde geändert.",

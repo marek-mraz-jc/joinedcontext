@@ -12892,7 +12892,8 @@
     "waits": "Portál zobrazí nový text, keď administrátor zmenu schváli.",
     "refused": {
       "403": "Stránky portálu otvorených údajov meniť nemôžete: {detail}",
-      "409": "Zmena organizácie čaká na schválenie. Schváľte ju alebo zamietnite a zverejnite znova. {detail}"
+      "409": "Zmena organizácie čaká na schválenie. Schváľte ju alebo zamietnite a zverejnite znova. {detail}",
+      "list": "Stránky portálu otvorených údajov upravujú len administrátori organizácie. Požiadajte niektorého z nich na stránke Členovia o zmenu textu alebo o túto rolu."
     },
     "history": "Predchádzajúce úpravy",
     "historyEmpty": "Text žiadnej stránky sa zatiaľ nezmenil.",

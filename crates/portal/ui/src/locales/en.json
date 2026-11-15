@@ -12892,7 +12892,8 @@
     "waits": "The portal shows the new text once an administrator approves the change.",
     "refused": {
       "403": "You may not change the open data portal's pages: {detail}",
-      "409": "A change to the organization waits for approval. Approve or reject it, then publish again. {detail}"
+      "409": "A change to the organization waits for approval. Approve or reject it, then publish again. {detail}",
+      "list": "Only the Organization's administrators edit its open data portal's pages. Ask one of them on the Members page to change a text, or to give you that role."
     },
     "history": "Earlier edits",
     "historyEmpty": "No page text was changed yet.",
