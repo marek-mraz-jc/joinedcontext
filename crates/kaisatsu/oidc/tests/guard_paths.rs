@@ -3,7 +3,7 @@
 //! allow-list, forbidden addresses (literal and resolved), upstream errors, redirects, the 1 MiB
 //! cap (declared and streamed), invalid JSON, bearer tokens and form posts.
 
-use kaisatsu_oidc::guard::{MAX_OUTBOUND_BYTES, OutboundGuard, OutboundPolicy};
+use kaisatsu_oidc::guard::{MAX_OUTBOUND_BYTES, OutboundGuard, OutboundPolicy, PrivateHost};
 use serde_json::Value;
 use std::net::IpAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -57,7 +57,7 @@ async fn server() -> (u16, std::sync::Arc<parking_lot::Mutex<String>>) {
 
 fn local_guard() -> OutboundGuard {
     OutboundGuard::new(OutboundPolicy {
-        in_cluster_hosts: vec!["127.0.0.1".into(), ".svc.cluster.local".into()],
+        test_loopback: true,
         ..OutboundPolicy::default()
     })
 }
@@ -159,19 +159,46 @@ async fn refusals_before_any_connection() {
         ..OutboundPolicy::default()
     });
     assert!(listed.validate_url("https://vscode.dev/x", None).is_err());
-    // In-cluster hosts may use http and private addresses.
+    // No in-cluster suffix rule: an unlisted Service name needs https and a public address, and
+    // the Kubernetes API takes https only.
+    for url in [
+        "http://jwks.kube-system.svc.cluster.local/x",
+        "http://kubernetes.default.svc/x",
+        "http://kubernetes.default.svc.evil.example/x",
+    ] {
+        let e = g.validate_url(url, None).unwrap_err().to_string();
+        assert!(e.contains("https required"), "{url}: {e}");
+    }
+    let e = g
+        .get_json::<Value>("https://jwks.kube-system.svc.cluster.local/x", None, None)
+        .await
+        .unwrap_err();
+    assert!(!e.to_string().is_empty());
+    // A listed exact host may use http; its neighbours may not.
+    let listed = OutboundGuard::new(OutboundPolicy {
+        private_hosts: vec![PrivateHost::parse("jwks.kube-system.svc.cluster.local").unwrap()],
+        ..OutboundPolicy::default()
+    });
     assert!(
-        g.validate_url("http://jwks.kube-system.svc.cluster.local/x", None)
+        listed
+            .validate_url("http://jwks.kube-system.svc.cluster.local/x", None)
             .is_ok()
     );
     assert!(
-        g.validate_url("http://kubernetes.default.svc/x", None)
-            .is_ok()
-    );
-    assert!(
-        g.validate_url("http://kubernetes.default.svc.evil.example/x", None)
+        listed
+            .validate_url("http://other.kube-system.svc.cluster.local/x", None)
             .is_err()
     );
+    // A listed name that resolves to loopback is still refused.
+    let local = OutboundGuard::new(OutboundPolicy {
+        private_hosts: vec![PrivateHost::parse("localhost").unwrap()],
+        ..OutboundPolicy::default()
+    });
+    let e = local
+        .get_json::<Value>("http://localhost:9/x", None, None)
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("private/loopback"), "{e}");
     // A public name that resolves to loopback, and a name that does not resolve.
     let e = g
         .get_json::<Value>("https://localhost:9/x", None, None)

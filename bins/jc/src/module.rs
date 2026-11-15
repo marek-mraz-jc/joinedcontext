@@ -70,7 +70,17 @@ impl Module {
             Module::Shako => "git",
             Module::ModelTools => "model-tools",
             Module::Assistant => "assistant",
-            Module::Viz => "viz",
+            Module::Viz => "embed",
+        }
+    }
+
+    /// The slug and host label the module answered at before a rename (T-6992): an entry under
+    /// the old name answers `308` to the same path and query under the new one.
+    #[must_use]
+    pub fn renamed_from(self) -> Option<&'static str> {
+        match self {
+            Module::Viz => Some("viz"),
+            _ => None,
         }
     }
 

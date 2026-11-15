@@ -355,7 +355,12 @@ def viz_server(held: dict, drawn: dict):
             headers, body = {"Content-Type": "text/html"}, ""
             if path == "/opendata/dataset/x":
                 # Another origin than the page, as an opaque sandboxed frame is: its location is not the page's to read.
-                body = f'<iframe class="jc-explorer-frame" src="http://localhost:{self.server.server_port}/viz/explore.html#slug1&inline&type=Alert"></iframe>'
+                body = f'<iframe class="jc-explorer-frame" src="http://localhost:{self.server.server_port}/embed/explore.html#slug1&inline&type=Alert"></iframe>'
+            elif self.path == suite.MOVED_PAGE[0]:
+                self.send_response(308)
+                self.send_header("Location", suite.MOVED_PAGE[1])
+                self.end_headers()
+                return
             elif path in suite.SANDBOX_PAGES:
                 headers["Content-Security-Policy"] = "sandbox allow-scripts"
                 body = EXPLORE.replace("DRAWN", json.dumps(drawn))
@@ -393,4 +398,19 @@ def test_an_explorer_opened_on_an_empty_type_still_owes_rows_of_a_type_the_endpo
         assert said in row["actual"], row["actual"]
     finally:
         ctx.close()
+        srv.shutdown()
+
+
+def test_the_embed_pages_are_sandboxed_and_the_old_viz_path_moves_with_its_query(page):
+    """T-6992: the explorer pages answer under /embed; /viz/... answers 308 to /embed/... with its query."""
+    srv = viz_server({"Alert": 1}, {"Alert": 1})
+    try:
+        w = object.__new__(suite.Walker)
+        w.res, w.base = Results("ui", "http://x"), f"http://127.0.0.1:{srv.server_port}"
+        suite.frame_csp_rows(w, page, True)
+        rows = {r["id"]: r for r in w.res.rows}
+        assert all(rows[f"viz.csp:{p}"]["result"] == "pass" for p in suite.SANDBOX_PAGES), rows
+        moved = rows[f"viz.moved:{suite.MOVED_PAGE[0]}"]
+        assert moved["result"] == "pass", moved["actual"]
+    finally:
         srv.shutdown()

@@ -109,7 +109,7 @@ pub fn vars(
     );
     put("JC_ASSISTANT_PUBLIC_ORIGIN", origin(Module::Assistant));
     // The chart renderer the widget frames (T-6884): only an origin the assistant itself accepts
-    // and the widget frames (`https://viz.{domain}`, no port); viz under a path, on http or off
+    // and the widget frames (`https://embed.{domain}`, no port); viz under a path, on http or off
     // leaves the charts off, as before.
     put(
         "JC_ASSISTANT_VIZ_URL",
@@ -631,7 +631,10 @@ mod tests {
             Some("127.0.0.1:4100".parse().unwrap()),
             None,
         );
-        assert_eq!(filled["JC_ASSISTANT_VIZ_URL"], "https://viz.smartcity.test");
+        assert_eq!(
+            filled["JC_ASSISTANT_VIZ_URL"],
+            "https://embed.smartcity.test"
+        );
         let none = |_: &str| None;
         let config = assistant::host::chat_config(
             &lookup(&none, &filled),
@@ -639,7 +642,7 @@ mod tests {
         )
         .unwrap();
         let viz = config.viz.expect("the chat gets the renderer");
-        assert_eq!(viz.as_str(), "https://viz.smartcity.test/");
+        assert_eq!(viz.as_str(), "https://embed.smartcity.test/");
         assert_eq!(assistant::chat::viz::domain(&viz), Some("smartcity.test"));
     }
 
@@ -669,7 +672,11 @@ mod tests {
             .map(str::trim)
             .filter(|d| d.starts_with("frame-src"))
             .collect();
-        assert_eq!(frames, ["frame-src https://viz.smartcity.test"], "{policy}");
+        assert_eq!(
+            frames,
+            ["frame-src https://embed.smartcity.test"],
+            "{policy}"
+        );
         assert!(policy.contains("default-src 'none'"), "{policy}");
     }
 
@@ -735,7 +742,7 @@ mod tests {
         let blank = |k: &str| (k == "JC_ASSISTANT_VIZ_URL").then(|| " ".to_owned());
         assert_eq!(
             lookup(&blank, &filled)("JC_ASSISTANT_VIZ_URL").as_deref(),
-            Some("https://viz.smartcity.test")
+            Some("https://embed.smartcity.test")
         );
     }
 

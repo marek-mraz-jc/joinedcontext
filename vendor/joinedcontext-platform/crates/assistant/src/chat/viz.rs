@@ -1,14 +1,14 @@
 //! Charts and maps of a data answer (T-4657, ADR-N-053 §2.9, API/05 §1.3 and §1.4). Code builds
 //! every spec from the rows the answer read: the model only names a table and its columns with
 //! [`TOOL`], and a table whose rows carry a location gets a map without being asked. The specs
-//! are drawn by the renderer on `viz.{domain}`, which checks them again.
+//! are drawn by the renderer on `embed.{domain}`, which checks them again.
 
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use super::agent::Table;
 
-/// The tool the data loop offers when the deployment has a `viz.{domain}`.
+/// The tool the data loop offers when the deployment has an `embed.{domain}`.
 pub const TOOL: &str = "show_visualization";
 /// The map spec's `$schema` (ADR-N-053 §2.9).
 pub const MAP_SCHEMA: &str = "urn:joinedcontext:map:v1";
@@ -19,9 +19,12 @@ const TITLE_CHARS: usize = 80;
 /// The fewest values a chart is drawn of (T-4682).
 const MIN_POINTS: usize = 3;
 
-/// The domain a viz origin serves: `https://viz.dev.example.org` → `dev.example.org`.
+/// The domain a renderer origin serves: `https://embed.dev.example.org` → `dev.example.org`, the
+/// old name `viz.` alike (jc T-6992).
 pub fn domain(viz: &url::Url) -> Option<&str> {
-    viz.host_str()?.strip_prefix("viz.")
+    let host = viz.host_str()?;
+    host.strip_prefix("embed.")
+        .or_else(|| host.strip_prefix("viz."))
 }
 
 /// A GeoJSON geometry the map draws, every position in range and rounded to 6 decimals;
@@ -877,6 +880,8 @@ mod tests {
     fn the_domain_is_the_viz_hosts_parent() {
         let viz = url::Url::parse("https://viz.dev.example.org").expect("url");
         assert_eq!(domain(&viz), Some("dev.example.org"));
+        let embed = url::Url::parse("https://embed.dev.example.org").expect("url");
+        assert_eq!(domain(&embed), Some("dev.example.org"));
         let other = url::Url::parse("https://charts.dev.example.org").expect("url");
         assert_eq!(domain(&other), None);
     }

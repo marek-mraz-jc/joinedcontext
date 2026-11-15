@@ -26,9 +26,9 @@ judging it at every width by resizing the open page, as walker.spec.ts does. A p
   without a reason.
 
 Then, anonymously and as the admin: dataroom (/opendata: home, dataset list, the first dataset,
-the first organization; on the first dataset with a "live data" frame, `viz` rows: /viz/explore.html
-and /viz/embed.html answer a CSP sandbox without allow-same-origin when viz shares the Portal's
-origin, the framed explorer runs in an opaque origin that reads no cookie of the host, and its grid
+the first organization; on the first dataset with a "live data" frame, `viz` rows: /embed/explore.html
+and /embed/embed.html answer a CSP sandbox without allow-same-origin when viz shares the Portal's
+origin, /viz/explore.html answers 308 to /embed/ with its query (T-6992), the framed explorer runs in an opaque origin that reads no cookie of the host, and its grid
 draws rows), shako (/git: the repository list and the first repository, with
 --shako-token-file; a browser person without one is reported), and the daiya dashboards the
 Portal lists for the project (/projects/{p}/grafana and every dashboard link on it).
@@ -356,7 +356,9 @@ def dataroom(w: Walker):
         ctx.close()
 
 
-SANDBOX_PAGES = ("/viz/explore.html", "/viz/embed.html")
+SANDBOX_PAGES = ("/embed/explore.html", "/embed/embed.html")
+# T-6992: the old slug answers 308 to the same path and query under /embed.
+MOVED_PAGE = ("/viz/explore.html?lang=sk", "/embed/explore.html?lang=sk")
 
 
 def frame_csp_rows(w: Walker, page, shared: bool):
@@ -369,6 +371,11 @@ def frame_csp_rows(w: Walker, page, shared: bool):
         w.res.check(f"viz.csp:{path}", "viz", f"GET {path}",
                     "CSP sandbox without allow-same-origin" if shared else "CSP without a sandbox (own origin)",
                     f"{r.status} {csp[-120:]}", r.status == 200 and sandboxed == shared)
+    old, new = MOVED_PAGE
+    r = page.request.get(w.base + old, max_redirects=0)
+    location = r.headers.get("location", "")
+    w.res.check(f"viz.moved:{old}", "viz", f"GET {old}", f"308 to {new}", f"{r.status} {location}",
+                r.status == 308 and location.endswith(new) and not location.startswith("//"))
 
 
 def viz_sandbox(w: Walker, ctx, page, dataset: str):

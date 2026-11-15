@@ -41,6 +41,7 @@ pub async fn setup_dev_realm_on(store: Arc<dyn Store>, kek: Kek) -> KaisatsuStat
         dry_run: false,
         allow_literal_secrets: false,
         secrets_dir: None,
+        outbound_private_hosts: Vec::new(),
         env_vars: BTreeMap::from([
             (
                 "USER_PASSWORD_DEMO_STEWARD".into(),

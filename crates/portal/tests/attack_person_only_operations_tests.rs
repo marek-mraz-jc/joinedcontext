@@ -679,6 +679,42 @@ async fn a_bearer_token_never_deletes_a_person_or_removes_their_second_factor() 
     }
 }
 
+/// PF-93: a token changes a person's name and language, never their e-mail address (where a
+/// reset goes); the e-mail is refused before the realm is asked.
+#[tokio::test]
+async fn a_bearer_token_changes_a_name_but_never_an_email() {
+    let shako = MockServer::start().await;
+    let mut state = state_for_tokens(&shako);
+    // A token carries no second factor: where the deployment turned the floor off (dev), the
+    // e-mail rule is what refuses it.
+    let mut config = (*state.config).clone();
+    config.decisions_need_second_factor = false;
+    state.config = Arc::new(config);
+    let person = "/api/v1/organization/people/0b6f0e4c-1d2e-4f00-9a7b-3c4d5e6f7a8b";
+    for (who, token) in tokens() {
+        let (status, text) = with_token(
+            &state,
+            &token,
+            "PATCH",
+            person,
+            json!({ "email": "ola.new@hel.fi" }),
+        )
+        .await;
+        assert_eq!(StatusCode::FORBIDDEN, status, "{who}: {text}");
+        assert!(text.contains("e-mail address"), "{who}: {text}");
+        // A name change passes the token rule and goes on to the realm (none here: 503).
+        let (status, text) = with_token(
+            &state,
+            &token,
+            "PATCH",
+            person,
+            json!({ "firstName": "Ola" }),
+        )
+        .await;
+        assert_eq!(StatusCode::SERVICE_UNAVAILABLE, status, "{who}: {text}");
+    }
+}
+
 // --- a session without a second factor at the decision doors (T-5567; AUT-2, PF-128) ---------
 
 /// Every decision door of the Portal, as (method, path, body, who knocks): approving or rejecting

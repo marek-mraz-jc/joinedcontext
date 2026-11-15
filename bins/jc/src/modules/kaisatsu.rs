@@ -15,7 +15,7 @@ use kaisatsu_core::{
 };
 use kaisatsu_crypto::Kek;
 use kaisatsu_import::{ApplyOptions, apply_realm_files};
-use kaisatsu_oidc::OutboundGuard;
+use kaisatsu_oidc::{OutboundGuard, OutboundPolicy, PrivateHost};
 use kaisatsu_server::{KaisatsuState, load_realm_files_from_path, router};
 use kaisatsu_store_memory::MemoryStore;
 use kaisatsu_store_pg::{PgStore, PgStoreConfig};
@@ -87,6 +87,7 @@ async fn apply_import_dir(
     store: &Arc<dyn Store>,
     dir: &std::path::Path,
     secrets_dir: Option<std::path::PathBuf>,
+    outbound_private_hosts: &[String],
     realm: &setup::Realm,
 ) -> Result<bool, StartError> {
     let err = |e: &dyn std::fmt::Display| StartError::module(Module::Kaisatsu, e);
@@ -116,6 +117,7 @@ async fn apply_import_dir(
     }
     let options = ApplyOptions {
         secrets_dir,
+        outbound_private_hosts: outbound_private_hosts.to_vec(),
         ..ApplyOptions::default()
     };
     let mut brings_portal = false;
@@ -128,9 +130,12 @@ async fn apply_import_dir(
                     .any(|c| c["clientId"].as_str() == Some(setup::PORTAL_CLIENT))
             });
         }
-        apply_realm_files(store, files, &options)
+        let report = apply_realm_files(store, files, &options)
             .await
             .map_err(|e| err(&e))?;
+        for warning in &report.warnings {
+            tracing::warn!(realm = %report.realm, %warning, "kaisatsu realm import");
+        }
     }
     Ok(brings_portal)
 }
@@ -607,6 +612,19 @@ fn organization_block(
     base.sanitised()
 }
 
+/// kaisatsu's outgoing calls: the Kubernetes API and `[kaisatsu] outbound_private_hosts` (checked
+/// at config load) may resolve to a private address, nothing else.
+fn outbound_guard(cfg: &KaisatsuSection) -> OutboundGuard {
+    OutboundGuard::new(OutboundPolicy {
+        private_hosts: cfg
+            .outbound_private_hosts
+            .iter()
+            .filter_map(|h| PrivateHost::parse(h).ok())
+            .collect(),
+        ..OutboundPolicy::default()
+    })
+}
+
 pub async fn build(
     cfg: &KaisatsuSection,
     organizations: &[crate::config::OrganizationSection],
@@ -632,8 +650,14 @@ pub async fn build(
     if let Some(dir) = &cfg.import_dir {
         // A realm file reads no environment here: its secrets are `$(file:...)` under the
         // configured directory.
-        import_brings_portal =
-            apply_import_dir(&store, dir, cfg.import_secrets_dir.clone(), realm).await?;
+        import_brings_portal = apply_import_dir(
+            &store,
+            dir,
+            cfg.import_secrets_dir.clone(),
+            &cfg.outbound_private_hosts,
+            realm,
+        )
+        .await?;
     }
     apply_portal_realm(&store, ctx, existed_before, import_brings_portal).await?;
     if let Some(file) = &cfg.branding_file {
@@ -650,16 +674,11 @@ pub async fn build(
     follow_appearances(&store, realm, organizations, shutdown, tasks);
     #[cfg(not(feature = "portal"))]
     let _ = organizations;
-    let state = KaisatsuState::new(
-        store,
-        kek,
-        OutboundGuard::default(),
-        Arc::new(LocalAuthorizer),
-    )
-    .with_second_factor(match cfg.second_factor {
-        crate::config::SecondFactorFloor::Optional => kaisatsu_server::SecondFactor::Optional,
-        crate::config::SecondFactorFloor::Required => kaisatsu_server::SecondFactor::Required,
-    });
+    let state = KaisatsuState::new(store, kek, outbound_guard(cfg), Arc::new(LocalAuthorizer))
+        .with_second_factor(match cfg.second_factor {
+            crate::config::SecondFactorFloor::Optional => kaisatsu_server::SecondFactor::Optional,
+            crate::config::SecondFactorFloor::Required => kaisatsu_server::SecondFactor::Required,
+        });
     Ok(router(state, mount))
 }
 
@@ -952,7 +971,7 @@ mod tests {
         let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek));
         let dev = setup::Realm::parse("dev").unwrap();
         assert!(
-            !apply_import_dir(&store, dir.path(), None, &dev)
+            !apply_import_dir(&store, dir.path(), None, &[], &dev)
                 .await
                 .unwrap()
         );
@@ -963,7 +982,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !apply_import_dir(&store, dir.path(), None, &dev)
+            !apply_import_dir(&store, dir.path(), None, &[], &dev)
                 .await
                 .unwrap()
         );
@@ -994,12 +1013,12 @@ mod tests {
         let dev = setup::Realm::parse("dev").unwrap();
         let other = setup::Realm::parse("smartcity").unwrap();
         assert!(
-            apply_import_dir(&store, dir.path(), None, &dev)
+            apply_import_dir(&store, dir.path(), None, &[], &dev)
                 .await
                 .unwrap()
         );
         assert!(
-            !apply_import_dir(&store, dir.path(), None, &other)
+            !apply_import_dir(&store, dir.path(), None, &[], &other)
                 .await
                 .unwrap()
         );
@@ -1028,7 +1047,7 @@ mod tests {
         // A file naming no realm is ambiguous among several.
         std::fs::write(dir.path().join("30-none.json"), r#"{"enabled": true}"#).unwrap();
         assert!(
-            apply_import_dir(&store, dir.path(), None, &dev)
+            apply_import_dir(&store, dir.path(), None, &[], &dev)
                 .await
                 .is_err()
         );
@@ -1085,6 +1104,7 @@ mod tests {
             database: None,
             branding_file: None,
             second_factor: Default::default(),
+            outbound_private_hosts: Vec::new(),
         };
         let store = open_kaisatsu_store(&mem_section, kek).await.unwrap();
         assert!(store.list_realms().await.unwrap().is_empty());
@@ -1128,6 +1148,7 @@ mod tests {
                 database: None,
                 branding_file: None,
                 second_factor: Default::default(),
+                outbound_private_hosts: Vec::new(),
             }
         };
 
