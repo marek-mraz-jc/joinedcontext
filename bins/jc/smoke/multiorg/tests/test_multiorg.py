@@ -375,9 +375,11 @@ class PortalJc:
 
         class Data:
             def names(self, path):
-                return [f"{o}-air" for o in jc.orgs if o == org or (jc.leaky and path.startswith("/-/"))]
+                return [f"{o}-air" for o in jc.orgs if o == org or (jc.leaky and path.startswith(("/-/", "/data/-/")))]
 
             def json(self, method, path, body=None, headers=None):
+                if kind == "opendata" and method != "GET":
+                    return 405, None  # the open data host answers reads only (T-6995)
                 if path.endswith("/mcp"):
                     return 200, {"result": {"content": [{"text": json.dumps({"datasets": [{"name": n} for n in self.names(path)]})}]}}
                 return 200, {"result": {"results": [{"name": n} for n in self.names(path)]}}

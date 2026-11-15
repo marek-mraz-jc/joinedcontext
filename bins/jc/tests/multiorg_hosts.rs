@@ -162,6 +162,22 @@ async fn the_open_data_host_takes_no_write_and_no_credential() {
         .await
         .unwrap();
     assert!(resp.headers().get("set-cookie").is_none());
+    // MCP is a POST: the open data host refuses it, the working host's `/data` answers it
+    // anonymously (design §2; the multiorg smoke's catalogue tool rows call it there).
+    let rpc = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"});
+    let call = Call {
+        body: Some(rpc.clone()),
+        ..Call::on("opendata.alpha.test")
+    };
+    let (status, body) = send(addr, call, "/mcp").await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{body}");
+    let call = Call {
+        body: Some(rpc),
+        ..Call::on("portal.alpha.test")
+    };
+    let (status, body) = send(addr, call, "/data/mcp").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("jc_dataset_search"), "{body}");
     // A page of the working host's `/data` moves to the open data host.
     let resp = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
