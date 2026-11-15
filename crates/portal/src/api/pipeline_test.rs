@@ -1054,13 +1054,27 @@ mod tests {
             "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:intake" }]
         }))
         .expect("spec");
-        let sample = Sample { text: Some("{}".into()), url: None, format: SampleFormat::Json, records: None };
+        let sample = Sample {
+            text: Some("{}".into()),
+            url: None,
+            format: SampleFormat::Json,
+            records: None,
+        };
         let mirror = crate::store::Mirror::new();
         mirror.upsert(script("published"));
-        let config = harnessed(&mirror, "helsinki", &spec, &sample, "http://portal-internal:9090/x")
-            .expect("harness");
+        let config = harnessed(
+            &mirror,
+            "helsinki",
+            &spec,
+            &sample,
+            "http://portal-internal:9090/x",
+        )
+        .expect("harness");
         let text = config.to_string();
-        assert!(text.contains("javascript") && text.contains("tested"), "{text}");
+        assert!(
+            text.contains("javascript") && text.contains("tested"),
+            "{text}"
+        );
         mirror.upsert(script("draft"));
         assert!(harnessed(&mirror, "helsinki", &spec, &sample, "http://x").is_err());
     }

@@ -37,12 +37,12 @@ pub fn pins(spec: &PipelineSpec) -> Vec<(String, ScriptRef)> {
     for (r, route) in spec.routes.iter().enumerate() {
         pins.extend(step_pins(format!("spec.routes[{r}].steps"), &route.steps));
     }
-    pins.extend(
-        spec.scripts
-            .iter()
-            .enumerate()
-            .map(|(i, applied)| (format!("spec.scripts[{i}].scriptRef"), applied.script_ref.clone())),
-    );
+    pins.extend(spec.scripts.iter().enumerate().map(|(i, applied)| {
+        (
+            format!("spec.scripts[{i}].scriptRef"),
+            applied.script_ref.clone(),
+        )
+    }));
     pins
 }
 
@@ -71,11 +71,18 @@ fn pipelines_of(mirror: &Mirror, project: &str) -> Vec<(String, PipelineSpec)> {
     let held = mirror
         .kind_where(project, "Pipeline", |_| true)
         .into_iter()
-        .filter(|e| !bundled.iter().any(|m| m["metadata"]["name"] == e.metadata.name))
+        .filter(|e| {
+            !bundled
+                .iter()
+                .any(|m| m["metadata"]["name"] == e.metadata.name)
+        })
         .map(|e| (e.metadata.name, e.spec))
         .collect::<Vec<_>>();
     let proposed = bundled.into_iter().filter_map(|m| {
-        Some((m["metadata"]["name"].as_str()?.to_owned(), m["spec"].clone()))
+        Some((
+            m["metadata"]["name"].as_str()?.to_owned(),
+            m["spec"].clone(),
+        ))
     });
     held.into_iter()
         .chain(proposed)
@@ -93,7 +100,11 @@ fn refused(field: &str, detail: String) -> ApiError {
 /// The judge's `scripts` check (PL-118, PL-119): a Pipeline's pins name published versions; a
 /// Script keeps every published version as it stands on `main`, and every version a pipeline
 /// pins.
-pub fn check(ground: &Ground<'_>, project: &str, envelope: &ResourceEnvelope) -> Result<(), ApiError> {
+pub fn check(
+    ground: &Ground<'_>,
+    project: &str,
+    envelope: &ResourceEnvelope,
+) -> Result<(), ApiError> {
     match envelope.kind.as_str() {
         "Pipeline" => {
             let Ok(spec) = serde_json::from_value::<PipelineSpec>(envelope.spec.clone()) else {
@@ -145,7 +156,11 @@ pub fn check(ground: &Ground<'_>, project: &str, envelope: &ResourceEnvelope) ->
                 .get(project, "Script", name)
                 .and_then(|e| serde_json::from_value::<ScriptSpec>(e.spec).ok())
             {
-                for old in held.versions.iter().filter(|v| v.state == ScriptState::Published) {
+                for old in held
+                    .versions
+                    .iter()
+                    .filter(|v| v.state == ScriptState::Published)
+                {
                     match proposed.version(&old.version) {
                         Some(new)
                             if (new.code != old.code
@@ -194,7 +209,9 @@ pub fn lane(mirror: &Mirror, project: &str, envelope: &ResourceEnvelope, lane: L
         return lane;
     }
     let public = pipelines_of(mirror, project).into_iter().any(|(_, spec)| {
-        pins(&spec).iter().any(|(_, pin)| pin.name == envelope.metadata.name)
+        pins(&spec)
+            .iter()
+            .any(|(_, pin)| pin.name == envelope.metadata.name)
             && spec.outputs().iter().any(|output| {
                 mirror
                     .get(project, "Endpoint", output.target_endpoint.local_id())
@@ -209,11 +226,21 @@ pub fn lane(mirror: &Mirror, project: &str, envelope: &ResourceEnvelope, lane: L
 }
 
 /// One rendered `javascript` processor of a pin, after the digest check (PL-120).
-fn processor(mirror: &Mirror, project: &str, field: &str, pin: &ScriptRef) -> Result<Value, String> {
+fn processor(
+    mirror: &Mirror,
+    project: &str,
+    field: &str,
+    pin: &ScriptRef,
+) -> Result<Value, String> {
     let script = mirror
         .get(project, "Script", &pin.name)
         .and_then(|e| serde_json::from_value::<ScriptSpec>(e.spec).ok())
-        .ok_or_else(|| format!("{field} names Script '{}', which is not in the project", pin.name))?;
+        .ok_or_else(|| {
+            format!(
+                "{field} names Script '{}', which is not in the project",
+                pin.name
+            )
+        })?;
     let version = script
         .version(&pin.version)
         .filter(|v| v.state == ScriptState::Published)
@@ -274,7 +301,12 @@ pub fn inline(mirror: &Mirror, project: &str, spec: &mut PipelineSpec) -> Result
                         .script_ref
                         .clone()
                         .ok_or_else(|| format!("{at}[{i}] is a script step without scriptRef"))?;
-                    *step_at = step(processor(mirror, project, &format!("{at}[{i}].scriptRef"), &pin)?);
+                    *step_at = step(processor(
+                        mirror,
+                        project,
+                        &format!("{at}[{i}].scriptRef"),
+                        &pin,
+                    )?);
                 }
             }
         }
@@ -308,8 +340,10 @@ mod tests {
     use crate::resource::ResourceEnvelope;
     use jc_core::kinds::OrganizationBounds;
 
-    const V1: &str = "let m = bento.v0_msg_as_structured(); m.v = 1; bento.v0_msg_set_structured(m);";
-    const V2: &str = "let m = bento.v0_msg_as_structured(); m.v = 2; bento.v0_msg_set_structured(m);";
+    const V1: &str =
+        "let m = bento.v0_msg_as_structured(); m.v = 1; bento.v0_msg_set_structured(m);";
+    const V2: &str =
+        "let m = bento.v0_msg_as_structured(); m.v = 2; bento.v0_msg_set_structured(m);";
 
     fn envelope(kind: &str, name: &str, spec: Value) -> ResourceEnvelope {
         serde_json::from_value(json!({
@@ -327,7 +361,11 @@ mod tests {
     }
 
     fn script(versions: Value) -> ResourceEnvelope {
-        envelope("Script", "flag", json!({ "language": "javascript", "versions": versions }))
+        envelope(
+            "Script",
+            "flag",
+            json!({ "language": "javascript", "versions": versions }),
+        )
     }
 
     fn pipeline_spec(pin: &str, extra: Value) -> Value {
@@ -348,7 +386,13 @@ mod tests {
 
     fn judged(mirror: &Mirror, proposed: &ResourceEnvelope) -> Result<(), ApiError> {
         let bounds = OrganizationBounds::default();
-        let ground = Ground { mirror, bounds: &bounds, apex: None, domain: None, portals: None };
+        let ground = Ground {
+            mirror,
+            bounds: &bounds,
+            apex: None,
+            domain: None,
+            portals: None,
+        };
         check(&ground, "helsinki", proposed)
     }
 
@@ -366,7 +410,10 @@ mod tests {
 
     fn code_at(spec: &PipelineSpec, i: usize) -> String {
         match &spec.steps[i] {
-            Step::Processor(p) => p.processor["javascript"]["code"].as_str().expect("code").to_owned(),
+            Step::Processor(p) => p.processor["javascript"]["code"]
+                .as_str()
+                .expect("code")
+                .to_owned(),
             other => panic!("not a processor: {other:?}"),
         }
     }
@@ -377,17 +424,34 @@ mod tests {
     fn a_new_version_changes_nothing_until_the_pin_moves() {
         let mirror = Mirror::new();
         mirror.upsert(script(json!([version("1.0.0", "published", V1)])));
-        assert_eq!(code_at(&rendered(&mirror, pipeline_spec("1.0.0", json!({}))).expect("ok"), 1), V1);
+        assert_eq!(
+            code_at(
+                &rendered(&mirror, pipeline_spec("1.0.0", json!({}))).expect("ok"),
+                1
+            ),
+            V1
+        );
         mirror.upsert(script(json!([
             version("1.0.0", "published", V1),
             version("1.1.0", "published", V2)
         ])));
         let pinned = rendered(&mirror, pipeline_spec("1.0.0", json!({}))).expect("ok");
         assert_eq!(code_at(&pinned, 1), V1);
-        let Step::Processor(p) = &pinned.steps[1] else { panic!("processor") };
+        let Step::Processor(p) = &pinned.steps[1] else {
+            panic!("processor")
+        };
         assert_eq!(p.processor["javascript"]["timeout_ms"], 50);
-        assert!(p.processor["label"].as_str().expect("label").starts_with("script_flag_"));
-        assert_eq!(code_at(&rendered(&mirror, pipeline_spec("1.1.0", json!({}))).expect("ok"), 1), V2);
+        assert!(p.processor["label"]
+            .as_str()
+            .expect("label")
+            .starts_with("script_flag_"));
+        assert_eq!(
+            code_at(
+                &rendered(&mirror, pipeline_spec("1.1.0", json!({}))).expect("ok"),
+                1
+            ),
+            V2
+        );
     }
 
     /// PL-120: code that no longer matches its digest renders nothing.
@@ -422,8 +486,13 @@ mod tests {
         assert_eq!(spec.steps.len(), 4);
         assert!(spec.scripts.is_empty());
         assert_eq!(code_at(&spec, 0), V1);
-        let Step::Processor(last) = &spec.steps[3] else { panic!("processor") };
-        assert_eq!(last.processor["switch"][0]["check"], r#"["ParkingSpot"].contains(this.type)"#);
+        let Step::Processor(last) = &spec.steps[3] else {
+            panic!("processor")
+        };
+        assert_eq!(
+            last.processor["switch"][0]["check"],
+            r#"["ParkingSpot"].contains(this.type)"#
+        );
         assert!(matches!(&spec.steps[1], Step::Compute(c) if c.kind == ComputeKind::Bloblang));
     }
 
@@ -435,14 +504,24 @@ mod tests {
             version("1.0.0", "published", V1),
             version("1.1.0", "draft", V2)
         ])));
-        let draft = judged(&mirror, &envelope("Pipeline", "p", pipeline_spec("1.1.0", json!({}))))
-            .expect_err("draft");
+        let draft = judged(
+            &mirror,
+            &envelope("Pipeline", "p", pipeline_spec("1.1.0", json!({}))),
+        )
+        .expect_err("draft");
         assert!(format!("{draft:?}").contains("is a draft"));
         assert_eq!(field_of(draft), vec!["spec.steps[1].scriptRef"]);
-        let unknown = judged(&mirror, &envelope("Pipeline", "p", pipeline_spec("2.0.0", json!({}))))
-            .expect_err("unknown");
+        let unknown = judged(
+            &mirror,
+            &envelope("Pipeline", "p", pipeline_spec("2.0.0", json!({}))),
+        )
+        .expect_err("unknown");
         assert!(format!("{unknown:?}").contains("keeps 1.0.0, 1.1.0"));
-        judged(&mirror, &envelope("Pipeline", "p", pipeline_spec("1.0.0", json!({})))).expect("published");
+        judged(
+            &mirror,
+            &envelope("Pipeline", "p", pipeline_spec("1.0.0", json!({}))),
+        )
+        .expect("published");
     }
 
     /// PL-118: a published version never changes, and a pinned one never goes.
@@ -459,7 +538,10 @@ mod tests {
         assert!(format!("{dropped:?}").contains("Pipeline 'p' pins version 1.0.0"));
         judged(
             &mirror,
-            &script(json!([version("1.0.0", "published", V1), version("1.1.0", "draft", V2)])),
+            &script(json!([
+                version("1.0.0", "published", V1),
+                version("1.1.0", "draft", V2)
+            ])),
         )
         .expect("a new version beside it");
     }
@@ -470,9 +552,23 @@ mod tests {
         let mirror = Mirror::new();
         mirror.upsert(envelope("Pipeline", "p", pipeline_spec("1.0.0", json!({}))));
         let proposed = script(json!([version("1.0.0", "published", V1)]));
-        mirror.upsert(envelope("Endpoint", "intake", json!({ "audience": "organization" })));
-        assert_eq!(lane(&mirror, "helsinki", &proposed, Lane::Yellow), Lane::Yellow);
-        mirror.upsert(envelope("Endpoint", "intake", json!({ "audience": "public" })));
-        assert_eq!(lane(&mirror, "helsinki", &proposed, Lane::Yellow), Lane::Red);
+        mirror.upsert(envelope(
+            "Endpoint",
+            "intake",
+            json!({ "audience": "organization" }),
+        ));
+        assert_eq!(
+            lane(&mirror, "helsinki", &proposed, Lane::Yellow),
+            Lane::Yellow
+        );
+        mirror.upsert(envelope(
+            "Endpoint",
+            "intake",
+            json!({ "audience": "public" }),
+        ));
+        assert_eq!(
+            lane(&mirror, "helsinki", &proposed, Lane::Yellow),
+            Lane::Red
+        );
     }
 }
