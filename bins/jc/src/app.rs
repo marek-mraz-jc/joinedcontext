@@ -1429,7 +1429,10 @@ mod tests {
         .unwrap();
         assert!(setup.value(Secret::ShakoToken).is_some());
         assert!(setup.value(Secret::ForgeWebhookSecret).is_some());
-        assert!(state.join("forge-webhook-secret").is_file(), "kept across restarts");
+        assert!(
+            state.join("forge-webhook-secret").is_file(),
+            "kept across restarts"
+        );
     }
 
     /// Which module the planned router table sends `host` `path` to, and the path it hands over
