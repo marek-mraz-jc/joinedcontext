@@ -6,6 +6,7 @@ use ekiben_core::{Batch, ComponentConfig, CoreError, ProcContext, Processor, Reg
 use serde_json::Value as JsonValue;
 
 use crate::client::{extract_status_code_from_err, HttpClient};
+use crate::paginate::{self, PaginateConf};
 
 pub fn register(registry: &Registry) {
     registry.register_processor("http", |conf, ctx| {
@@ -18,6 +19,8 @@ pub struct HttpProcessor {
     client: Arc<HttpClient>,
     batch_as_multipart: bool,
     parallel: bool,
+    /// ekiben extension `paginate` (T-7056): each message walks its source's pages.
+    paginate: Option<Arc<PaginateConf>>,
 }
 
 impl HttpProcessor {
@@ -34,10 +37,23 @@ impl HttpProcessor {
             .and_then(JsonValue::as_bool)
             .unwrap_or(false);
 
+        let paginate = conf
+            .config
+            .get("paginate")
+            .filter(|v| !v.is_null())
+            .map(|v| PaginateConf::from_json(v, &ctx.blobl_env))
+            .transpose()?;
+        if paginate.is_some() && (batch_as_multipart || parallel) {
+            return Err(CoreError::config(
+                "http.paginate walks pages one after another: it cannot be combined with batch_as_multipart or parallel",
+            ));
+        }
+
         Ok(Self {
             client,
             batch_as_multipart,
             parallel,
+            paginate,
         })
     }
 }
@@ -55,6 +71,10 @@ impl Processor for HttpProcessor {
     ) -> Result<Vec<Batch>, CoreError> {
         if batch.is_empty() {
             return Ok(Vec::new());
+        }
+
+        if let Some(conf) = &self.paginate {
+            return paginate::process_paged(&self.client, conf, ctx, batch).await;
         }
 
         if self.batch_as_multipart || batch.len() == 1 {
