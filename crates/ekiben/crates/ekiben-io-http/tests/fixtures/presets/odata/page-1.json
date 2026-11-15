@@ -1,0 +1,106 @@
+{
+ "@odata.context": "https://services.odata.org/V4/Northwind/Northwind.svc/$metadata#Customers(CustomerID,CompanyName,City)",
+ "value": [
+  {
+   "CustomerID": "ALFKI",
+   "CompanyName": "Alfreds Futterkiste",
+   "City": "Berlin"
+  },
+  {
+   "CustomerID": "ANATR",
+   "CompanyName": "Ana Trujillo Emparedados y helados",
+   "City": "México D.F."
+  },
+  {
+   "CustomerID": "ANTON",
+   "CompanyName": "Antonio Moreno Taquería",
+   "City": "México D.F."
+  },
+  {
+   "CustomerID": "AROUT",
+   "CompanyName": "Around the Horn",
+   "City": "London"
+  },
+  {
+   "CustomerID": "BERGS",
+   "CompanyName": "Berglunds snabbköp",
+   "City": "Luleå"
+  },
+  {
+   "CustomerID": "BLAUS",
+   "CompanyName": "Blauer See Delikatessen",
+   "City": "Mannheim"
+  },
+  {
+   "CustomerID": "BLONP",
+   "CompanyName": "Blondesddsl père et fils",
+   "City": "Strasbourg"
+  },
+  {
+   "CustomerID": "BOLID",
+   "CompanyName": "Bólido Comidas preparadas",
+   "City": "Madrid"
+  },
+  {
+   "CustomerID": "BONAP",
+   "CompanyName": "Bon app'",
+   "City": "Marseille"
+  },
+  {
+   "CustomerID": "BOTTM",
+   "CompanyName": "Bottom-Dollar Markets",
+   "City": "Tsawassen"
+  },
+  {
+   "CustomerID": "BSBEV",
+   "CompanyName": "B's Beverages",
+   "City": "London"
+  },
+  {
+   "CustomerID": "CACTU",
+   "CompanyName": "Cactus Comidas para llevar",
+   "City": "Buenos Aires"
+  },
+  {
+   "CustomerID": "CENTC",
+   "CompanyName": "Centro comercial Moctezuma",
+   "City": "México D.F."
+  },
+  {
+   "CustomerID": "CHOPS",
+   "CompanyName": "Chop-suey Chinese",
+   "City": "Bern"
+  },
+  {
+   "CustomerID": "COMMI",
+   "CompanyName": "Comércio Mineiro",
+   "City": "Sao Paulo"
+  },
+  {
+   "CustomerID": "CONSH",
+   "CompanyName": "Consolidated Holdings",
+   "City": "London"
+  },
+  {
+   "CustomerID": "DRACD",
+   "CompanyName": "Drachenblut Delikatessen",
+   "City": "Aachen"
+  },
+  {
+   "CustomerID": "DUMON",
+   "CompanyName": "Du monde entier",
+   "City": "Nantes"
+  },
+  {
+   "CustomerID": "EASTC",
+   "CompanyName": "Eastern Connection",
+   "City": "London"
+  },
+  {
+   "CustomerID": "ERNSH",
+   "CompanyName": "Ernst Handel",
+   "City": "Graz"
+  }
+ ],
+ "@odata.nextLink": "Customers?$select=CustomerID,CompanyName,City&$skiptoken='ERNSH'"
+}

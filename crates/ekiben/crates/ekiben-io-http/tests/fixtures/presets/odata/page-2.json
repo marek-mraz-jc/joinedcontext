@@ -1,0 +1,106 @@
+{
+ "@odata.context": "https://services.odata.org/V4/Northwind/Northwind.svc/$metadata#Customers(CustomerID,CompanyName,City)",
+ "value": [
+  {
+   "CustomerID": "FAMIA",
+   "CompanyName": "Familia Arquibaldo",
+   "City": "Sao Paulo"
+  },
+  {
+   "CustomerID": "FISSA",
+   "CompanyName": "FISSA Fabrica Inter. Salchichas S.A.",
+   "City": "Madrid"
+  },
+  {
+   "CustomerID": "FOLIG",
+   "CompanyName": "Folies gourmandes",
+   "City": "Lille"
+  },
+  {
+   "CustomerID": "FOLKO",
+   "CompanyName": "Folk och fä HB",
+   "City": "Bräcke"
+  },
+  {
+   "CustomerID": "FRANK",
+   "CompanyName": "Frankenversand",
+   "City": "München"
+  },
+  {
+   "CustomerID": "FRANR",
+   "CompanyName": "France restauration",
+   "City": "Nantes"
+  },
+  {
+   "CustomerID": "FRANS",
+   "CompanyName": "Franchi S.p.A.",
+   "City": "Torino"
+  },
+  {
+   "CustomerID": "FURIB",
+   "CompanyName": "Furia Bacalhau e Frutos do Mar",
+   "City": "Lisboa"
+  },
+  {
+   "CustomerID": "GALED",
+   "CompanyName": "Galería del gastrónomo",
+   "City": "Barcelona"
+  },
+  {
+   "CustomerID": "GODOS",
+   "CompanyName": "Godos Cocina Típica",
+   "City": "Sevilla"
+  },
+  {
+   "CustomerID": "GOURL",
+   "CompanyName": "Gourmet Lanchonetes",
+   "City": "Campinas"
+  },
+  {
+   "CustomerID": "GREAL",
+   "CompanyName": "Great Lakes Food Market",
+   "City": "Eugene"
+  },
+  {
+   "CustomerID": "GROSR",
+   "CompanyName": "GROSELLA-Restaurante",
+   "City": "Caracas"
+  },
+  {
+   "CustomerID": "HANAR",
+   "CompanyName": "Hanari Carnes",
+   "City": "Rio de Janeiro"
+  },
+  {
+   "CustomerID": "HILAA",
+   "CompanyName": "HILARION-Abastos",
+   "City": "San Cristóbal"
+  },
+  {
+   "CustomerID": "HUNGC",
+   "CompanyName": "Hungry Coyote Import Store",
+   "City": "Elgin"
+  },
+  {
+   "CustomerID": "HUNGO",
+   "CompanyName": "Hungry Owl All-Night Grocers",
+   "City": "Cork"
+  },
+  {
+   "CustomerID": "ISLAT",
+   "CompanyName": "Island Trading",
+   "City": "Cowes"
+  },
+  {
+   "CustomerID": "KOENE",
+   "CompanyName": "Königlich Essen",
+   "City": "Brandenburg"
+  },
+  {
+   "CustomerID": "LACOR",
+   "CompanyName": "La corne d'abondance",
+   "City": "Versailles"
+  }
+ ],
+ "@odata.nextLink": "Customers?$select=CustomerID,CompanyName,City&$skiptoken='LACOR'"
+}

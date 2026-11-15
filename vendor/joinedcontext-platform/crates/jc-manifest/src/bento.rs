@@ -325,6 +325,7 @@ pub fn input_of(spec: &DataSourceSpec, context: &InputContext) -> Value {
 /// `records` into one message per element of that array (PL-114).
 pub fn prepended_processors(spec: &DataSourceSpec, context: &InputContext) -> Vec<Value> {
     if let (DataSourceType::Http, Some(http)) = (&spec.source_type, spec.http.as_ref()) {
+        let http = http.effective();
         let mut processors = body_bound(http.max_bytes());
         if let Some(archive) = &http.archive {
             processors.extend(archive_processors(spec, archive, context));
@@ -670,6 +671,7 @@ fn http(spec: &DataSourceSpec, context: &InputContext) -> Mapping {
     let Some(connection) = &spec.http else {
         return Mapping::new();
     };
+    let connection = connection.effective();
     let mut out = Mapping::new();
     out.insert(key("url"), text(&connection.url));
     out.insert(

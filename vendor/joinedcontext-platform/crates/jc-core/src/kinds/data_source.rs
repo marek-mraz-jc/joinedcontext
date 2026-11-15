@@ -195,6 +195,11 @@ pub struct HttpConnection {
     /// message, split by `records` as a single body is. Absent, the URL is read once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paging: Option<HttpPaging>,
+    /// A known kind of open data API (T-7067): the runner sends its query parameters and walks
+    /// its pages, so `paging` and `records` stay unset. CKAN, ArcGIS, OData, WFS, OGC API
+    /// Features or SensorThings, with the URL of its search, query or items resource.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<HttpPreset>,
 }
 
 impl HttpConnection {
@@ -206,6 +211,15 @@ impl HttpConnection {
     /// The bound in force.
     pub fn max_bytes(&self) -> u64 {
         self.max_bytes.unwrap_or(Self::DEFAULT_MAX_BYTES)
+    }
+
+    /// The connection the runner reads: with a `preset`, its query parameters on the URL and its
+    /// `paging` and `records` in place (T-7067); without one, the connection as written.
+    pub fn effective(&self) -> std::borrow::Cow<'_, Self> {
+        match &self.preset {
+            Some(preset) => std::borrow::Cow::Owned(preset.apply(self)),
+            None => std::borrow::Cow::Borrowed(self),
+        }
     }
 }
 
@@ -646,6 +660,388 @@ impl HttpPaging {
     }
 }
 
+/// A known kind of open data API an `http` connection reads (T-7067): the preset sends the
+/// API's own query parameters and walks its pages, so a person picks the kind and the URL and
+/// types no parameter. Each field belongs to the kinds its comment names; another kind refuses it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HttpPreset {
+    /// `ckan`, `arcgisFeature`, `odata`, `wfs`, `ogcFeatures` or `sensorThings`.
+    pub kind: HttpPresetKind,
+    /// Every kind: the records asked for per page, 1 to 10000, 1000 when absent. `odata` with
+    /// a page size pages by `$top`/`$skip`; without one it follows `@odata.nextLink`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u64>,
+    /// `ckan` (`package_search`): the one organization whose datasets are read, `bcn`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organization: Option<String>,
+    /// `ckan` (`datastore_search`): the resource whose rows are read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_id: Option<String>,
+    /// `arcgisFeature`: the field that keeps the order stable across pages, `OBJECTID` when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_id_field: Option<String>,
+    /// `arcgisFeature`: the fields read, named one by one (never `*`), so a new column of the
+    /// layer reaches no pipeline unasked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub out_fields: Vec<String>,
+    /// `wfs`: the feature type read, `avoindata:Helsinki_osoiteluettelo`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_names: Option<String>,
+    /// `wfs`: the coordinate system asked for, `EPSG:4326` when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub srs_name: Option<String>,
+    /// `sensorThings`: the related entities read with each one, `Datastreams/Observations`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expand: Option<String>,
+}
+
+/// The open data APIs a preset reads.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum HttpPresetKind {
+    /// CKAN `package_search` (datasets) or `datastore_search` (rows of one resource).
+    #[default]
+    Ckan,
+    /// An ArcGIS Feature Service layer's `query`.
+    ArcgisFeature,
+    /// An OData v4 entity set.
+    Odata,
+    /// A WFS 2.0 `GetFeature`.
+    Wfs,
+    /// An OGC API Features collection's `items`.
+    OgcFeatures,
+    /// An OGC SensorThings entity set, `Things` or `Datastreams`.
+    SensorThings,
+}
+
+impl HttpPresetKind {
+    /// The manifest's name of the kind.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ckan => "ckan",
+            Self::ArcgisFeature => "arcgisFeature",
+            Self::Odata => "odata",
+            Self::Wfs => "wfs",
+            Self::OgcFeatures => "ogcFeatures",
+            Self::SensorThings => "sensorThings",
+        }
+    }
+}
+
+impl HttpPreset {
+    /// The page size when the manifest names none.
+    pub const DEFAULT_PAGE_SIZE: u64 = 1000;
+    /// The largest page size a manifest may set.
+    pub const MAX_PAGE_SIZE: u64 = 10_000;
+
+    fn page_size(&self) -> u64 {
+        self.page_size.unwrap_or(Self::DEFAULT_PAGE_SIZE)
+    }
+
+    fn validate(&self, http: &HttpConnection) -> Result<()> {
+        let refuse = |field, value: String, reason| {
+            Err(Error::Name {
+                field,
+                value,
+                reason,
+            })
+        };
+        if http.paging.is_some() || http.records.is_some() {
+            let field = if http.paging.is_some() {
+                "spec.http.paging"
+            } else {
+                "spec.http.records"
+            };
+            return refuse(
+                field,
+                self.kind.as_str().to_string(),
+                "a preset sets paging and records itself: leave them out",
+            );
+        }
+        use HttpPresetKind as K;
+        let fields: [(&'static str, bool, &[K]); 7] = [
+            (
+                "spec.http.preset.organization",
+                self.organization.is_some(),
+                &[K::Ckan],
+            ),
+            (
+                "spec.http.preset.resourceId",
+                self.resource_id.is_some(),
+                &[K::Ckan],
+            ),
+            (
+                "spec.http.preset.objectIdField",
+                self.object_id_field.is_some(),
+                &[K::ArcgisFeature],
+            ),
+            (
+                "spec.http.preset.outFields",
+                !self.out_fields.is_empty(),
+                &[K::ArcgisFeature],
+            ),
+            (
+                "spec.http.preset.typeNames",
+                self.type_names.is_some(),
+                &[K::Wfs],
+            ),
+            (
+                "spec.http.preset.srsName",
+                self.srs_name.is_some(),
+                &[K::Wfs],
+            ),
+            (
+                "spec.http.preset.expand",
+                self.expand.is_some(),
+                &[K::SensorThings],
+            ),
+        ];
+        if let Some((field, _, _)) = fields
+            .iter()
+            .find(|(_, set, kinds)| *set && !kinds.contains(&self.kind))
+        {
+            return refuse(
+                field,
+                self.kind.as_str().to_string(),
+                "this field belongs to another preset kind",
+            );
+        }
+        if let Some(size) = self.page_size {
+            if !(1..=Self::MAX_PAGE_SIZE).contains(&size) {
+                return refuse(
+                    "spec.http.preset.pageSize",
+                    size.to_string(),
+                    "pageSize is 1 to 10000",
+                );
+            }
+        }
+        let names = [
+            (
+                "spec.http.preset.organization",
+                &self.organization,
+                100,
+                "_-",
+            ),
+            ("spec.http.preset.resourceId", &self.resource_id, 100, "_-"),
+            (
+                "spec.http.preset.objectIdField",
+                &self.object_id_field,
+                64,
+                "_",
+            ),
+            ("spec.http.preset.typeNames", &self.type_names, 128, "_-.:"),
+            ("spec.http.preset.srsName", &self.srs_name, 64, "_-.:"),
+            ("spec.http.preset.expand", &self.expand, 256, "/,"),
+        ];
+        for (field, name, max, extra) in names {
+            if let Some(name) = name {
+                if !plain(name, max, extra) {
+                    return refuse(field, name.clone(), "a name of letters, digits and the separators of its API only, such as avoindata:Helsinki_osoiteluettelo, EPSG:4326 or Datastreams/Observations");
+                }
+            }
+        }
+        if let Some(name) = self.out_fields.iter().find(|n| !plain(n, 64, "_")) {
+            return refuse(
+                "spec.http.preset.outFields",
+                name.clone(),
+                "each out field is one field name of letters, digits and '_', never *",
+            );
+        }
+        let path = http
+            .url
+            .split(['?', '#'])
+            .next()
+            .unwrap_or_default()
+            .trim_end_matches('/');
+        let (ends, needs): (&str, Option<(&'static str, bool, &'static str)>) = match self.kind {
+            K::Ckan if self.resource_id.is_some() => ("/action/datastore_search", None),
+            K::Ckan => ("/action/package_search", None),
+            K::ArcgisFeature => (
+                "/query",
+                Some((
+                    "spec.http.preset.outFields",
+                    !self.out_fields.is_empty(),
+                    "an arcgisFeature preset names the fields it reads in outFields",
+                )),
+            ),
+            K::Wfs => (
+                "",
+                Some((
+                    "spec.http.preset.typeNames",
+                    self.type_names.is_some(),
+                    "a wfs preset names the feature type it reads in typeNames",
+                )),
+            ),
+            K::OgcFeatures => ("/items", None),
+            K::Odata | K::SensorThings => ("", None),
+        };
+        if !path.ends_with(ends) {
+            return refuse(
+                "spec.http.url",
+                http.url.clone(),
+                match self.kind {
+                    K::Ckan if self.resource_id.is_some() => "a ckan preset with resourceId reads .../api/3/action/datastore_search",
+                    K::Ckan => "a ckan preset reads .../api/3/action/package_search",
+                    K::ArcgisFeature => "an arcgisFeature preset reads a layer's query, .../FeatureServer/0/query",
+                    _ => "an ogcFeatures preset reads a collection's items, .../collections/{id}/items",
+                },
+            );
+        }
+        if let Some((field, true_, reason)) = needs {
+            if !true_ {
+                return refuse(field, self.kind.as_str().to_string(), reason);
+            }
+        }
+        Ok(())
+    }
+
+    /// The connection with this preset's query parameters, `paging` and `records`.
+    fn apply(&self, http: &HttpConnection) -> HttpConnection {
+        use HttpPresetKind as K;
+        let size = self.page_size();
+        let mut params: Vec<(&str, String)> = Vec::new();
+        let offset = |offset: &str, limit: &str| HttpPaging {
+            mode: HttpPagingMode::Offset,
+            offset_param: Some(offset.to_string()),
+            limit_param: Some(limit.to_string()),
+            limit: Some(size),
+            ..HttpPaging::default()
+        };
+        let next_url = |next: &str| HttpPaging {
+            mode: HttpPagingMode::NextUrl,
+            next: Some(next.to_string()),
+            ..HttpPaging::default()
+        };
+        let (records, paging) = match self.kind {
+            K::Ckan => match &self.resource_id {
+                Some(resource) => {
+                    params.push(("resource_id", resource.clone()));
+                    (
+                        "result.records",
+                        HttpPaging {
+                            total: Some("result.total".to_string()),
+                            ..offset("offset", "limit")
+                        },
+                    )
+                }
+                None => {
+                    if let Some(org) = &self.organization {
+                        params.push(("fq", format!("organization:{org}")));
+                    }
+                    (
+                        "result.results",
+                        HttpPaging {
+                            total: Some("result.count".to_string()),
+                            ..offset("start", "rows")
+                        },
+                    )
+                }
+            },
+            K::ArcgisFeature => {
+                if !query_has(&http.url, "where") {
+                    params.push(("where", "1=1".to_string()));
+                }
+                params.push(("outFields", self.out_fields.join(",")));
+                params.push(("outSR", "4326".to_string()));
+                params.push(("f", "geojson".to_string()));
+                (
+                    "features",
+                    HttpPaging {
+                        more: Some("properties.exceededTransferLimit".to_string()),
+                        order_by: Some(HttpPagingOrder {
+                            param: "orderByFields".to_string(),
+                            value: self
+                                .object_id_field
+                                .clone()
+                                .unwrap_or_else(|| "OBJECTID".to_string()),
+                        }),
+                        ..offset("resultOffset", "resultRecordCount")
+                    },
+                )
+            }
+            K::Odata if self.page_size.is_some() => ("value", offset("$skip", "$top")),
+            K::Odata => ("value", next_url("@odata.nextLink")),
+            K::Wfs => {
+                params.push(("service", "WFS".to_string()));
+                params.push(("version", "2.0.0".to_string()));
+                params.push(("request", "GetFeature".to_string()));
+                params.push(("typeNames", self.type_names.clone().unwrap_or_default()));
+                params.push((
+                    "srsName",
+                    self.srs_name
+                        .clone()
+                        .unwrap_or_else(|| "EPSG:4326".to_string()),
+                ));
+                params.push(("outputFormat", "application/json".to_string()));
+                (
+                    "features",
+                    HttpPaging {
+                        total: Some("numberMatched".to_string()),
+                        ..offset("startIndex", "count")
+                    },
+                )
+            }
+            K::OgcFeatures => {
+                params.push(("limit", size.to_string()));
+                ("features", next_url("links[rel=next].href"))
+            }
+            K::SensorThings => {
+                params.push(("$top", size.to_string()));
+                if let Some(expand) = &self.expand {
+                    params.push(("$expand", expand.clone()));
+                }
+                ("value", next_url("@iot.nextLink"))
+            }
+        };
+        HttpConnection {
+            url: with_query(&http.url, &params),
+            records: Some(records.to_string()),
+            paging: Some(paging),
+            preset: None,
+            ..http.clone()
+        }
+    }
+}
+
+/// The query of `url` names `name`.
+fn query_has(url: &str, name: &str) -> bool {
+    let query = url.split('#').next().unwrap_or_default();
+    query
+        .split_once('?')
+        .is_some_and(|(_, q)| form_urlencoded::parse(q.as_bytes()).any(|(key, _)| key == name))
+}
+
+/// `url` with each of `params` set: a parameter of the same name the URL already holds is
+/// replaced, every other one kept as written.
+fn with_query(url: &str, params: &[(&str, String)]) -> String {
+    let (url, fragment) = match url.split_once('#') {
+        Some((url, fragment)) => (url, Some(fragment)),
+        None => (url, None),
+    };
+    let (base, query) = url.split_once('?').unwrap_or((url, ""));
+    let mut out = form_urlencoded::Serializer::new(String::new());
+    for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+        if !params.iter().any(|(name, _)| *name == key) {
+            out.append_pair(&key, &value);
+        }
+    }
+    for (name, value) in params {
+        out.append_pair(name, value);
+    }
+    let query = out.finish();
+    let mut url = base.to_string();
+    if !query.is_empty() {
+        url.push('?');
+        url.push_str(&query);
+    }
+    if let Some(fragment) = fragment {
+        url.push('#');
+        url.push_str(fragment);
+    }
+    url
+}
+
 /// `value` is 1 to `max` bytes of ASCII letters, digits and `extra`.
 fn plain(value: &str, max: usize, extra: &str) -> bool {
     !value.is_empty()
@@ -990,7 +1386,11 @@ impl DataSourceSpec {
             }
             DataSourceType::Http => {
                 self.validate_typed_common()?;
-                let http = self.http.as_ref().expect("checked above");
+                let written = self.http.as_ref().expect("checked above");
+                if let Some(preset) = &written.preset {
+                    preset.validate(written)?;
+                }
+                let http = &*written.effective();
                 url(&http.url, HTTP_SCHEMES, "spec.http.url")?;
                 if let Some(authorization) = &http.authorization {
                     header_name(authorization.header_name())?;
