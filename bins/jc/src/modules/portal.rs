@@ -300,7 +300,7 @@ pub(crate) fn reconciler_vars(cfg: &crate::config::Config) -> BTreeMap<String, S
         .collect()
 }
 
-/// `JC_PORTAL_INGEST_URL`, where a webhook DataSource's sender posts (PL-118): the ekiben entry
+/// `JC_PORTAL_INGEST_URL`, where a webhook DataSource's sender posts (PL-122): the ekiben entry
 /// at [`crate::module::INGEST_PREFIX`] on a host, `{scheme}://{host}/ingest/default`, since
 /// every stream of jc's runner belongs to its default organization. Empty without one, so the
 /// Portal shows no address.

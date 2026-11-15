@@ -51,7 +51,7 @@ export function ConnectionTest({ project, name, type }: { project: string; name:
   return (
     <section aria-labelledby={type === "webhook" ? "datasource-webhook-heading" : "datasource-test-heading"} className="flex flex-col gap-3" data-testid="datasource-connection">
       {type === "webhook" ? (
-        // A webhook has no feed to read: it waits for its sender (PL-118).
+        // A webhook has no feed to read: it waits for its sender (PL-122).
         <WebhookPanel project={project} name={name} />
       ) : (
         <>

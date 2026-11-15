@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
 
-// PL-118: a steward adds a webhook data source, reads where its sender posts and sends a test
+// PL-122: a steward adds a webhook data source, reads where its sender posts and sends a test
 // event. `vite preview` has no Portal API behind it, so the browser answers it; the clicks, the
 // form and the rendering are the real ones. The runner's own answers (200, 401, 413, 404 after a
 // delete) are proven in jc's `a_webhook_stream_answers_only_its_sender_and_goes_with_its_stream`.

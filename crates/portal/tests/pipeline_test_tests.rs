@@ -1291,7 +1291,7 @@ async fn a_failed_read_is_said_in_plain_words() {
     );
 }
 
-/// PL-118 (T-7088): a webhook source's addresses need a session and a grant that reads the
+/// PL-122 (T-7088): a webhook source's addresses need a session and a grant that reads the
 /// DataSource; its test event needs one that proposes it. Anonymous is 401 on both, a project
 /// member who reads only pipelines is 403 on the addresses, and a reader is 403 on the test event.
 #[tokio::test]

@@ -43,7 +43,7 @@ pub enum DataSourceType {
     WebSocket,
     /// A GTFS-realtime protobuf feed, polled over HTTP and decoded by the runner.
     GtfsRt,
-    /// Events a sender pushes to the runner's shared ingest listener (PL-118, ADR-N-071).
+    /// Events a sender pushes to the runner's shared ingest listener (PL-122, ADR-N-071).
     Webhook,
     /// Any input the pinned Bento runner ships (PL-50).
     Runner(String),
@@ -1168,7 +1168,7 @@ impl Authorization {
     }
 }
 
-/// A pushed feed: the runner's shared ingest listener answers its POSTs (PL-118, ADR-N-071).
+/// A pushed feed: the runner's shared ingest listener answers its POSTs (PL-122, ADR-N-071).
 ///
 /// Only the reconciler renders the `http_server` input this becomes, so the managed door keeps
 /// authentication and both caps whatever a manifest says; an author-written `http_server` stays
@@ -1816,7 +1816,7 @@ impl DataSourceSpec {
     }
 }
 
-/// `spec.webhook`: one credential, a header name for `hmac`, both caps in range (PL-118).
+/// `spec.webhook`: one credential, a header name for `hmac`, both caps in range (PL-122).
 fn validate_webhook(webhook: &WebhookConnection) -> Result<()> {
     match (&webhook.auth.hmac, &webhook.auth.bearer) {
         (Some(hmac), None) => header_name(&hmac.header).map_err(|_| Error::Name {
@@ -2463,7 +2463,7 @@ mod webhook_tests {
 
     const HMAC: &str = "X-Hub-Signature-256";
 
-    /// PL-118: an hmac or a bearer webhook is valid, resident, and its one credential is the
+    /// PL-122: an hmac or a bearer webhook is valid, resident, and its one credential is the
     /// reference the reconciler resolves.
     #[test]
     fn an_hmac_or_a_bearer_webhook_is_a_resident_source_with_one_credential() {

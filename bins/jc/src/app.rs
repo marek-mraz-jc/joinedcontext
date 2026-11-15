@@ -2326,7 +2326,7 @@ mod tests {
         assert!(modules::portal::apps_vars(&none).is_empty());
     }
 
-    /// PL-118: the ekiben entry at `/ingest` on a host is where a webhook sender posts, and the
+    /// PL-122: the ekiben entry at `/ingest` on a host is where a webhook sender posts, and the
     /// Portal is told so; without one it shows no address.
     #[test]
     fn the_ekiben_ingest_entry_tells_the_portal_where_webhooks_post() {

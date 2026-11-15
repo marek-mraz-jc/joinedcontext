@@ -304,7 +304,7 @@ def test_jc_prod_carries_the_cutover_parts(rendered):
     assert (env["JC_SHAKO_URL"], env["JC_SHAKO_OWNER"], env["JC_SHAKO_REPO"]) == ("http://localhost:8080/git", "joinedcontext", "configuration")
     mounts = jc_toml(docs)["mounts"]
     assert [m["host"] for m in mounts["antares"]] == ["localhost:8080"]
-    # ekiben's API stays inside the pod; only its ingest listener has a public entry (PL-118).
+    # ekiben's API stays inside the pod; only its ingest listener has a public entry (PL-122).
     assert [(m["host"], m["path_prefix"]) for m in mounts["ekiben"]] == [
         ("localhost:8080", "/streams"), ("portal.smartcity.joinedcontext.com", "/ingest")]
     assert (env["JC_PORTAL_PIPELINE_RUNNER_URL"], env["JC_PORTAL_BROKER_URL"]) == ("http://localhost:8080/streams", "http://localhost:8080/broker")

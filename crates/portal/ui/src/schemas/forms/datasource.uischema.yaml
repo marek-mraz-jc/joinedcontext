@@ -27,7 +27,7 @@ spec:
       hinterlegten Secrets.
   # The form shows one connection at a time, the one the person picked; the others are
   # arranged here all the same and passed over while they are not on the form.
-  # A webhook carries no tls: the sender calls the installation's own HTTPS edge (PL-118).
+  # A webhook carries no tls: the sender calls the installation's own HTTPS edge (PL-122).
   variants: [mqtt, http, webSocket, gtfsRt, webhook, tls]
   order: [name, title, mqtt, http, webSocket, gtfsRt, webhook, tls]
   groups:

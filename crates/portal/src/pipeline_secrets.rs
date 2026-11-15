@@ -136,7 +136,7 @@ pub trait RunnerSecrets: Send + Sync {
     fn replace(&self, values: BTreeMap<String, String>);
 
     /// The value a sync handed under `name`, for the Portal's own call through the runner's
-    /// door: the test event a webhook DataSource signs with its credential (PL-118). `None` for
+    /// door: the test event a webhook DataSource signs with its credential (PL-122). `None` for
     /// a name the host set itself, which no manifest may borrow, and for an unknown one.
     fn credential(&self, _name: &str) -> Option<zeroize::Zeroizing<String>> {
         None

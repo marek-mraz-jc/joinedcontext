@@ -440,7 +440,7 @@ export function generateSlug(): string {
 /** A `records` path of an http DataSource: 1 to 8 dot-separated names (jc-core records_mapping). */
 export const RECORDS_PATH = "^[A-Za-z0-9_-]{1,64}(\\.[A-Za-z0-9_-]{1,64}){0,7}$";
 
-// A webhook last: the one type a sender pushes to, rendered on the runner's ingest listener (PL-118).
+// A webhook last: the one type a sender pushes to, rendered on the runner's ingest listener (PL-122).
 export const DATA_SOURCE_TYPES = ["http", "mqtt", "websocket", "gtfs-rt", "webhook"] as const;
 
 export type TypedDataSourceType = (typeof DATA_SOURCE_TYPES)[number];
@@ -658,7 +658,7 @@ export function dataSourceSchema(
         openMessage: { type: "string", title: t("datasources.field.openMessage") },
       },
     },
-    // PL-118: exactly one credential, chosen first; jc-core refuses none, two, or `public`.
+    // PL-122: exactly one credential, chosen first; jc-core refuses none, two, or `public`.
     webhook: {
       type: "object",
       title: t("datasources.type.webhook"),

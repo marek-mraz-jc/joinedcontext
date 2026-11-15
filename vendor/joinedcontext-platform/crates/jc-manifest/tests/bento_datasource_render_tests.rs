@@ -155,7 +155,7 @@ fn an_http_connection_becomes_an_http_client_poll() {
     assert_eq!(rendered(&source(HTTP), "aq-opendata"), HTTP_INPUT);
 }
 
-/// PL-118: a webhook becomes the managed `http_server` on the shared ingest listener: POST
+/// PL-122: a webhook becomes the managed `http_server` on the shared ingest listener: POST
 /// only at `/{source}`, the credential as an interpolation, both caps and no `sync_response` (the listener answers 200); never an
 /// `address`, a certificate or `public`.
 #[test]

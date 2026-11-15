@@ -38,7 +38,7 @@ function Address({ pipeline, url }: { pipeline: string; url: string }): JSX.Elem
 }
 
 /**
- * A webhook DataSource's addresses and its test event (PL-118). The addresses and the pipeline
+ * A webhook DataSource's addresses and its test event (PL-122). The addresses and the pipeline
  * choices come from the server, which lists only pipelines that read this source; the test event
  * is signed server-side, so the credential never reaches the browser.
  */

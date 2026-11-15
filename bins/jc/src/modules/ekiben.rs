@@ -171,7 +171,7 @@ async fn build_with(
     ))
 }
 
-/// The API, and ekiben's shared ingest listener (PL-118, ADR-N-071): a `[[mounts.ekiben]]` entry
+/// The API, and ekiben's shared ingest listener (PL-122, ADR-N-071): a `[[mounts.ekiben]]` entry
 /// at [`INGEST_PREFIX`] answers only the ingest router, `/{org}/{stream}/{source}`, never the
 /// token API; every other entry answers the API and, under `/ingest/`, the same ingest router,
 /// so the Portal's test event reaches on the in-pod listener the handler a sender reaches.
@@ -506,7 +506,7 @@ mod tests {
         (status, String::from_utf8_lossy(&body).into_owned())
     }
 
-    /// PL-118: the public `/ingest` entry reaches only the ingest router, never the token API;
+    /// PL-122: the public `/ingest` entry reaches only the ingest router, never the token API;
     /// the in-pod entry answers the API and the ingest router under `/ingest/`.
     #[tokio::test]
     async fn the_ingest_entry_answers_only_the_ingest_router() {
@@ -609,7 +609,7 @@ mod tests {
         (runner, setup.value(Secret::EkibenToken).unwrap().to_owned())
     }
 
-    /// PL-118 end to end on jc's ekiben: a webhook stream as the reconciler renders it, its
+    /// PL-122 end to end on jc's ekiben: a webhook stream as the reconciler renders it, its
     /// bearer read from the runner's variables, answers a sender 200 on the ingest router; a
     /// missing and a wrong credential get the same 401, a body over the cap 413, an unknown
     /// stream 404, and once the stream is deleted its route answers 404 too.

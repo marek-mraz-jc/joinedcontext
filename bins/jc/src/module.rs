@@ -6,7 +6,7 @@ use std::str::FromStr;
 
 /// A module of the platform that `jc` can mount.
 /// The path prefix of the `[[mounts.ekiben]]` entry that serves ekiben's shared ingest listener
-/// to webhook senders (PL-118): that entry answers only the ingest router.
+/// to webhook senders (PL-122): that entry answers only the ingest router.
 pub const INGEST_PREFIX: &str = "/ingest";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

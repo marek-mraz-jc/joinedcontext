@@ -1,4 +1,4 @@
-//! A webhook DataSource's addresses and its test event (PL-118, ADR-N-071).
+//! A webhook DataSource's addresses and its test event (PL-122, ADR-N-071).
 //!
 //! A webhook is the one source a sender pushes to: the runner's shared ingest listener answers
 //! it at `{ingest_url}/{project}.{pipeline}/{dataSource}`, one address per pipeline reading the
@@ -97,7 +97,7 @@ fn address(ingest_url: &str, project: &str, pipeline: &str, name: &str) -> Strin
     format!("{ingest_url}/{}/{name}", stream_id(project, pipeline))
 }
 
-/// `GET /api/v1/projects/{project}/datasources/{name}/webhook` (PL-118).
+/// `GET /api/v1/projects/{project}/datasources/{name}/webhook` (PL-122).
 #[utoipa::path(
     get,
     path = "/api/v1/projects/{project}/datasources/{name}/webhook",
@@ -186,7 +186,7 @@ fn signed(
     }
 }
 
-/// `POST /api/v1/projects/{project}/datasources/{name}/test-event` (PL-118).
+/// `POST /api/v1/projects/{project}/datasources/{name}/test-event` (PL-122).
 #[utoipa::path(
     post,
     path = "/api/v1/projects/{project}/datasources/{name}/test-event",

@@ -281,7 +281,7 @@ pub struct Config {
     /// call the Portal API with the viewer's session (T-2476), and another App's. `None` serves
     /// on every host, as a Portal without an edge in front of it does.
     pub apps_url: Option<Url>,
-    /// Where a webhook DataSource's sender posts (`JC_PORTAL_INGEST_URL`, PL-118, e.g.
+    /// Where a webhook DataSource's sender posts (`JC_PORTAL_INGEST_URL`, PL-122, e.g.
     /// `https://portal.{domain}/ingest/default`): a pipeline's address is
     /// `{ingest_url}/{project}.{pipeline}/{dataSource}`. `None`: this installation publishes no
     /// ingest listener, and the DataSource page says so.

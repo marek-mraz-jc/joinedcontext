@@ -777,7 +777,7 @@ fn websocket(spec: &DataSourceSpec) -> Mapping {
     out
 }
 
-/// The managed `http_server` of a webhook (PL-118, ADR-N-071): on the runner's shared ingest
+/// The managed `http_server` of a webhook (PL-122, ADR-N-071): on the runner's shared ingest
 /// listener at `/{source}` of the stream, POST only, authenticated and capped. Never an
 /// `address`, a certificate or `public: true`, whatever the manifest holds.
 fn webhook(spec: &DataSourceSpec, context: &InputContext) -> Mapping {
