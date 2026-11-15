@@ -745,7 +745,8 @@ def test_an_export_older_than_ep187_writes_through_a_door_and_reads_as_before():
         assert {k for k in before if before[k] != files[k]} == {"spaces/verejne/endpoints/city.yaml",
                                                                   "pipelines/feed/pipeline.yaml"}
         assert moved == [{"endpoint": "zl/city", "door": "zl/city-write", "reads": ["read"],
-                          "writers": sorted(set(served) - {"read"}), "pipelines": ["pipelines/feed/pipeline.yaml"]}]
+                          "writers": sorted(set(served) - {"read"}), "pipelines": ["pipelines/feed/pipeline.yaml"],
+                          "publicReadsLost": []}]
     # The slug is the same on a rerun under the same forge token, another under another one.
     def slug(key):
         prepared = _zl()
@@ -756,6 +757,45 @@ def test_an_export_older_than_ep187_writes_through_a_door_and_reads_as_before():
     prepared = _zl()
     assert rh.write_doors(prepared, ["projects/zl/x.yaml:1 (document 1): Endpoint city: spec is missing"], "k") == []
     assert prepared == _zl()
+
+
+def test_a_door_names_the_policies_under_the_projects_own_domain():
+    """The gateway binds a policyRef only under the project's domains (its spec.domain, its
+    Organization's) and renders {orgDomain} with the installation's: in a multi-org export the
+    refs carry the project's domain, or the door and the open-data Endpoint bind nothing and the
+    anonymous reads answer 404 (train smoke 43747812305)."""
+    import yaml
+    org = {"organizations/zilina.yaml": b"kind: Organization\nmetadata: { name: zilina }\nspec:\n  domain: zilina.sk\n",
+           "organizations/hel.yaml": b"kind: Organization\nmetadata: { name: hel }\nspec:\n  domain: hel.fi\n",
+           "projects/zl.yaml": b"kind: Project\nmetadata: { name: zl }\nspec:\n  organizationRef: zilina\n"}
+    for project, domain in ((b"", "zilina.sk"), (b"  domain: data.zilina.sk\n", "data.zilina.sk")):
+        files = dict(org, **{"projects/zl.yaml": org["projects/zl.yaml"] + project})
+        prepared = _zl() + [({}, "joinedcontext", "configuration", "main", files)]
+        rh.write_doors(prepared, [EP187], "k")
+        zl = prepared[0][4]
+        door = yaml.safe_load(zl["spaces/verejne/endpoints/city-write.yaml"])["spec"]["policyRefs"]
+        assert door == [f"urn:ngsi-ld:Policy:{domain}:zl-verejne:read"]
+        city = yaml.safe_load(zl["spaces/verejne/endpoints/city.yaml"])["spec"]["policyRefs"]
+        assert city == [f"urn:ngsi-ld:Policy:{domain}:zl-verejne:read"]
+
+
+def test_a_door_that_would_take_a_public_read_off_the_open_data_endpoint_is_refused(tmp_path):
+    """A public Policy that also writes cannot stay on the open-data Endpoint nor leave it without
+    the public losing its read: the move names it and the import writes nothing."""
+    public = POLICY.format(n="write", s="verejne", ops="createEntity, queryEntity") + "  assignee: { kind: role, id: public }\n"
+    prepared = _zl(**{"spaces/verejne/endpoints/city.yaml": OPEN_EP.replace(
+        b"  policyRef: urn:ngsi-ld:Policy:zilina.sk:verejne:read\n", b""),
+        "spaces/verejne/policies/write.yaml": public.encode()})
+    assert rh.write_doors(prepared, [EP187], "k")[0]["publicReadsLost"] == ["write"]
+    assert rh.write_doors(_zl(), [EP187], "k")[0]["publicReadsLost"] == []
+    _zl_export(tmp_path)
+    (tmp_path / "gitea/files/joinedcontext/zl/spaces/verejne/policies/write.yaml").write_text(public)
+    (tmp_path / "gitea/files/joinedcontext/zl/spaces/verejne/endpoints/city.yaml").write_bytes(
+        OPEN_EP.replace(b"  policyRef: urn:ngsi-ld:Policy:zilina.sk:verejne:read\n", b""))
+    report = {}
+    rh.import_shako(None, "token", tmp_path, report, validate=lambda prepared: [] if any(
+        "spaces/verejne/endpoints/city-write.yaml" in f for *_, f in prepared) else [EP187])
+    assert report["shako"] == [] and "would lose its public read write" in report["manifestRefusals"][0]
 
 
 def _zl_export(export):
