@@ -144,3 +144,7 @@ note = "adds entity_id_remap and the remint functions; an older release never re
 [0034]
 rollback = "compatible"
 note = "replaces the remint functions and adds antares_remint_batched; an older release calls none of them"
+
+[0035]
+rollback = "compatible"
+note = "replaces remint_apply with range-bounded statements; an older release calls no remint function"
