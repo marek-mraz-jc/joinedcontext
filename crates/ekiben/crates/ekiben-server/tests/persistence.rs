@@ -124,3 +124,37 @@ async fn a_refused_save_refuses_the_create() {
     assert!(err.contains("was not saved"), "{err}");
     assert!(m.read("live", Some(&OrgId("city-a".into()))).await.is_err());
 }
+
+#[tokio::test]
+async fn an_update_that_does_not_start_keeps_the_previous_version_running_and_saved() {
+    let rec = Arc::new(Recorder::default());
+    let m = manager(&rec);
+    let org = OrgId("city-a".into());
+    post(&m, "live", STREAM).await.unwrap();
+    // Parses, then fails to build: the processor names a resource nobody registered.
+    let broken = r#"{"org":"city-a","input":{"generate":{"mapping":"root = 2","interval":"1s"}},"pipeline":{"processors":[{"resource":"not_registered"}]},"output":{"drop":{}}}"#;
+    let (conf, _) = m.parse_config(broken, false).unwrap();
+    let err = m
+        .update_posted("live", conf, Some(&org), StreamConfig::posted_json(broken))
+        .await
+        .unwrap_err();
+    assert!(!err.to_string().contains("could not be restored"), "{err}");
+    let listed = m.list(Some(&org)).await;
+    assert!(listed["live"].active, "previous version runs again");
+    let rows = rec.rows.lock().unwrap().clone();
+    let saved = &rows[&("city-a".to_owned(), "live".to_owned())];
+    assert_eq!(saved["input"]["generate"]["interval"], json!("1s"));
+    assert!(
+        saved.get("pipeline").is_none(),
+        "the previous version stays saved"
+    );
+
+    // A finished run keeps its record.
+    post(&m, "once", ONCE).await.unwrap();
+    let (conf, _) = m.parse_config(broken, false).unwrap();
+    assert!(m
+        .update_posted("once", conf, Some(&org), StreamConfig::posted_json(broken))
+        .await
+        .is_err());
+    assert!(m.read("once", Some(&org)).await.is_ok());
+}
