@@ -20,6 +20,7 @@ import argparse
 import base64
 import datetime as dt
 import hashlib
+import hmac
 import html
 import ipaddress
 import json
@@ -1476,6 +1477,124 @@ def jcctl_refusals(jcctl_bin: str, prepared: list) -> list[str]:
     return lines or [f"jcctl validate exited {r.returncode} and said nothing"]
 
 
+# The operations that change context data, as jc-core's OperationRef::writes_entities reads them
+# (Operation::is_write less the subscription operations, plus the groups updateOps and
+# redirectionOps). jcctl validate judges the result again, so a name missing here refuses the import.
+ENTITY_WRITES = frozenset((
+    "createEntity updateEntity appendAttrs updateAttrs deleteAttrs deleteEntity createBatch upsertBatch "
+    "updateBatch deleteBatch upsertTemporal appendAttrsTemporal deleteAttrsTemporal updateAttrInstanceTemporal "
+    "deleteAttrInstanceTemporal deleteTemporal mergeEntity replaceEntity replaceAttrs mergeBatch purgeEntity "
+    "updateOps redirectionOps").split())
+# jcctl's finding on an open-data Endpoint that serves a write or a Pipeline's output (EP-187).
+_OPEN_DATA_WRITE = re.compile(r"^projects/([^/]+)/(\S+\.ya?ml):\d+ \(document \d+\): Endpoint ([^:\s]+): "
+                              r"an open-data Endpoint is read-only \(EP-187\)")
+
+
+def _space_of(spec: dict) -> str | None:
+    ref = spec.get("contextSpaceRef")
+    return ref.get("name") if isinstance(ref, dict) else ref
+
+
+def _writes(spec: dict) -> bool:
+    """Whether a Policy spec grants a write of context data in itself or in any of its rules; a
+    prohibition grants nothing."""
+    rules = spec.get("rules") or [spec]
+    return any((r.get("effect") or "permission") != "prohibition"
+               and any(op in ENTITY_WRITES for op in r.get("operations") or []) for r in rules)
+
+
+def write_doors(prepared: list, refused: list[str], key: str) -> list[dict]:
+    """An export taken before EP-187 (T-6972) maps onto write doors, as T-6980 moved the
+    deployment's seeds: each open-data Endpoint `refused` names gets an internal Endpoint
+    `<name>-write` beside it (audience organization, the Policies it served, a fresh slug), every
+    Pipeline output of its project aimed at it aims at the door, and the open-data Endpoint keeps
+    only the Policies that write nothing. No entity, Policy or Pipeline is removed and nobody's
+    access changes: the writers write through the door, readers read as before. The slug is an
+    HMAC of the door under `key` (the import's forge token), unguessable and the same on a rerun.
+    Returns one row per door made; `prepared` is changed in place."""
+    import yaml
+    flagged = {(m.group(1), m.group(2), m.group(3)) for m in map(_OPEN_DATA_WRITE.match, refused) if m}
+    moved = []
+    for _, owner, project, _, files in prepared:
+        if owner == APPS_OWNER:
+            continue
+        docs = {}
+        for rel, data in files.items():
+            if rel.endswith((".yaml", ".yml")) and re.search(rb"^kind:\s*(Policy|Pipeline)\s*$", data, re.M):
+                try:
+                    docs[rel] = [d for d in yaml.safe_load_all(data) if isinstance(d, dict)]
+                except yaml.YAMLError:
+                    continue  # jcctl refuses it by itself
+        spaces = {}
+        for rel, data in files.items():
+            if m := re.fullmatch(r"spaces/([^/]+)/space\.ya?ml", rel):
+                try:
+                    spaces[m.group(1)] = [d for d in yaml.safe_load_all(data) if isinstance(d, dict)]
+                except yaml.YAMLError:
+                    continue
+        policies = [(d["metadata"]["name"], d.get("spec") or {}) for ds in docs.values() for d in ds
+                    if d.get("kind") == "Policy" and (d.get("metadata") or {}).get("name")]
+        for fproject, rel, name in sorted(flagged):
+            if fproject != project or rel not in files:
+                continue
+            endpoint = yaml.safe_load(files[rel])
+            spec, space = endpoint["spec"], _space_of(endpoint["spec"])
+            served = spec.get("policyRefs") or ([spec["policyRef"]] if spec.get("policyRef") else None)
+            served_names = {u.rsplit(":", 1)[-1] for u in served} if served else \
+                {n for n, s in policies if _space_of(s) == space}
+            # The URN names the space by its segment (urnSegment, else its name) under the
+            # organization's domain, which the reconciler fills in for {orgDomain} (CC-74).
+            segment = next((d.get("spec", {}).get("urnSegment") for d in spaces.get(space, [])), None) or space
+            urn = lambda kind, n: f"urn:ngsi-ld:{kind}:{{orgDomain}}:{segment}:{n}"
+            reads = sorted(n for n, s in policies if n in served_names and _space_of(s) == space and not _writes(s))
+            door = f"{name}-write"
+            slug = base64.b32encode(hmac.new(key.encode(), f"{project}/{space}/{door}".encode(),
+                                             hashlib.sha256).digest()[:20]).decode().lower()
+            door_rel = f"{rel.rsplit('/', 1)[0]}/{door}.yaml"
+            files[door_rel] = (
+                f"# The write door of {name} (EP-187, T-6972): made by the rehearsal import from an\n"
+                f"# export older than the rule; the writes {name} served go through it.\n"
+                + yaml.safe_dump({
+                    "apiVersion": endpoint["apiVersion"], "kind": "Endpoint",
+                    "metadata": {"name": door, "namespace": project,
+                                 "title": {"en": f"{name}: writes"}},
+                    "spec": {"contextSpaceRef": space, "policyRefs": [urn("Policy", n) for n in sorted(served_names)],
+                             "slug": slug, "audience": "organization",
+                             "enabledRepresentations": ["ngsi-ld", "websocket", "ogc-features", "mcp"]}},
+                    sort_keys=False, allow_unicode=True)).encode()
+            files[rel] = _bind_policies(files[rel], [urn("Policy", n) for n in reads])
+            target = re.compile(r"^(\s*-?\s*targetEndpoint:\s*['\"]?)(urn:ngsi-ld:Endpoint:[^:\s]+:"
+                                + re.escape(space) + ":)?" + re.escape(name) + r"(['\"]?\s*)$", re.M)
+            aimed = []
+            for prel in sorted(docs):
+                text = files[prel].decode()
+                if any(d.get("kind") == "Pipeline" for d in docs[prel]) and target.search(text):
+                    files[prel] = target.sub(lambda m: m.group(1) + (m.group(2) or "") + door + m.group(3),
+                                             text).encode()
+                    aimed.append(prel)
+            moved.append({"endpoint": f"{project}/{name}", "door": f"{project}/{door}", "reads": reads,
+                          "writers": sorted(served_names - set(reads)), "pipelines": aimed})
+    return moved
+
+
+def _bind_policies(data: bytes, refs: list[str]) -> bytes:
+    """The Endpoint manifest `data` with spec.policyRef / spec.policyRefs replaced by `refs`, every
+    other line, comment included, kept."""
+    lines = data.decode().splitlines(keepends=True)
+    out, skip = [], False
+    for line in lines:
+        if skip and re.match(r"^\s{4,}- |^\s*#", line):
+            continue
+        skip = False
+        if re.match(r"^  policyRefs?:", line):
+            skip = not re.match(r"^  policyRefs?:\s*\S", line)
+            continue
+        out.append(line)
+        if re.match(r"^spec:\s*$", line):
+            out.append("  policyRefs:\n" + "".join(f"    - {r}\n" for r in refs) if refs else "  policyRefs: []\n")
+    return "".join(out).encode()
+
+
 def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: bytes = REHEARSAL_CATALOGUE,
                  *, validate):
     """Creates each repository of the export and commits its files, after `validate` (the
@@ -1518,6 +1637,10 @@ def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: byt
             report["reader"] = f"{owner}/{name}/{READER_BINDING}"
         prepared.append((r, owner, name, branch, files))
     refused = validate(prepared)
+    doors = write_doors(prepared, refused, token) if refused else []
+    if doors:
+        report["writeDoors"] = doors
+        refused = validate(prepared)
     if refused:
         report["manifestRefusals"] = refused
         report.setdefault("problems", []).append(
