@@ -97,6 +97,23 @@ class SecondFactor:
             self.sleep(wait + 0.5)
         return totp(seed, step * period, alg, digits, period)
 
+    def fresh(self, api, username: str, uid: str) -> int:
+        """Drops the otp credentials of a person a suite made or reused (after its reset-password),
+        so its next sign-in enrols a seed this process holds. `api(method, path)` calls the realm's
+        admin API (path from /users) and returns (status, parsed JSON). Returns how many it dropped;
+        a refused call raises RuntimeError."""
+        st, creds = api("GET", f"/users/{uid}/credentials")
+        if st != 200 or not isinstance(creds, list):
+            raise RuntimeError(f"credentials of {username}: {st}")
+        otp = [c["id"] for c in creds if isinstance(c, dict) and c.get("type") == "otp" and c.get("id")]
+        for cid in otp:
+            st, _ = api("DELETE", f"/users/{uid}/credentials/{cid}")
+            if st not in (200, 204, 404):
+                raise RuntimeError(f"otp credential of {username}: {st}")
+        with self._lock:
+            self._seeds.pop(username, None)
+        return len(otp)
+
     def answer(self, call, url: str, st: int, headers: dict, body: bytes, username: str):
         """After the password's POST to `url`: when its answer (st, headers, body) is a second-factor
         page, posts the code with `call("POST", url, form=...)` and returns that answer; else the

@@ -123,6 +123,7 @@ class Admin:
                              {"type": "password", "value": password, "temporary": False})
         if st not in (200, 204):
             raise RuntimeError(f"password of {self.username}: {st}")
+        SECOND_FACTOR.fresh(self._api, self.username, self.uid)
         st, tree = self._api("GET", "/groups?briefRepresentation=false")
         todo, gid = list(tree or []), None
         while todo:

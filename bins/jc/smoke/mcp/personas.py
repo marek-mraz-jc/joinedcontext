@@ -25,7 +25,7 @@ from pathlib import Path
 
 import yaml
 
-from common import SECOND_FACTOR, Http, realm_of
+from common import SECOND_FACTOR, Http, as_json, realm_of
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "deploy" / "rehearsal"))
 import rehearsal as R  # noqa: E402  (merge_change: the kit's one way onto a protected main)
@@ -172,6 +172,11 @@ class Fixture:
                                     body={"type": "password", "value": p.password, "temporary": False})
         if st not in (200, 204):
             raise RuntimeError(f"password of {p.username}: {st}")
+
+        def admin_api(method, path):
+            st, _, raw = self.http.call(method, f"/id/admin/realms/{self.realm}{path}", token=admin)
+            return st, as_json(raw)
+        SECOND_FACTOR.fresh(admin_api, p.username, p.uid)
 
     def mcp_token(self, p: Person, scope: str = "mcp:portal") -> str:
         """The person's own token from `mcp-local` by code + PKCE: the code is read from the

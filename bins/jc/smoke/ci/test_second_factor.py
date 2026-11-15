@@ -104,3 +104,44 @@ def test_no_seed_in_repr():
     f = sf.SecondFactor()
     f.code("p", sf.parse(SETUP))
     assert RFC_SEED not in repr(f) and "GEZD" not in repr(f)
+
+
+class Admin:
+    """The realm admin API of one person's credentials; records the calls."""
+
+    def __init__(self, creds, delete_status=204):
+        self.creds, self.calls, self.delete_status = list(creds), [], delete_status
+
+    def __call__(self, method, path):
+        self.calls.append((method, path))
+        if method == "GET":
+            return 200, [dict(c) for c in self.creds]
+        cid = path.rsplit("/", 1)[1]
+        self.creds = [c for c in self.creds if c["id"] != cid]
+        return self.delete_status, None
+
+
+def test_a_reused_person_with_an_otp_credential_comes_out_without_one():
+    clock = Clock(59.0)
+    f = sf.SecondFactor(clock=clock, sleep=clock.sleep)
+    f.code("smoke-charts", sf.parse(SETUP))  # an earlier enrolment of this process
+    admin = Admin([{"id": "p1", "type": "password"}, {"id": "o1", "type": "otp"}, {"id": "o2", "type": "otp"}])
+    assert f.fresh(admin, "smoke-charts", "u1") == 2
+    assert admin.creds == [{"id": "p1", "type": "password"}]
+    assert ("DELETE", "/users/u1/credentials/o1") in admin.calls
+    with pytest.raises(RuntimeError, match="did not set up"):  # the old seed is gone too
+        f.code("smoke-charts", sf.parse(OTP))
+
+
+def test_a_password_only_person_is_left_unchanged():
+    admin = Admin([{"id": "p1", "type": "password"}])
+    assert sf.SecondFactor().fresh(admin, "smoke-logs", "u1") == 0
+    assert admin.calls == [("GET", "/users/u1/credentials")]
+    assert admin.creds == [{"id": "p1", "type": "password"}]
+
+
+def test_a_refused_credential_call_raises():
+    with pytest.raises(RuntimeError, match="credentials of smoke-logs: 403"):
+        sf.SecondFactor().fresh(lambda m, p: (403, None), "smoke-logs", "u1")
+    with pytest.raises(RuntimeError, match="otp credential of smoke-logs: 500"):
+        sf.SecondFactor().fresh(Admin([{"id": "o1", "type": "otp"}], 500), "smoke-logs", "u1")

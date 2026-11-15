@@ -47,7 +47,7 @@ sys.path.insert(0, str(HERE.parent / "mcp"))
 sys.path.append(str(HERE.parent / "endpoints"))
 
 import common
-from common import Http, Results, as_json, jwt_claims, loopback_only, read_token
+from common import SECOND_FACTOR, Http, Results, as_json, jwt_claims, loopback_only, read_token
 from fetch_prod_identity import (
     CONNECTOR_ID,
     PROBES,
@@ -383,6 +383,11 @@ class Live:
                                   token=admin, body={"type": "password", "value": self.password, "temporary": False})
         if st not in (200, 204):
             raise RuntimeError(f"password of {self.user}: {st}")
+
+        def admin_api(method, path):
+            st, _, raw = self.http.call(method, f"/id/admin/realms/{self.realm}{path}", token=admin)
+            return st, as_json(raw)
+        SECOND_FACTOR.fresh(admin_api, self.user, self.uid)
 
     def remove_person(self) -> str:
         if not self.uid:

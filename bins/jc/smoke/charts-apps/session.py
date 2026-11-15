@@ -137,6 +137,7 @@ def make_person(s: Session, token: str, groups=("/platform-admins",), realm: str
                       body={"type": "password", "value": password, "temporary": False})
     if st not in (200, 204):
         raise RuntimeError(f"password of {PERSON}: {st}")
+    SECOND_FACTOR.fresh(lambda m, p: s.json(m, f"/id/admin/realms/{realm}{p}", headers=auth), PERSON, uid)
     st, tree = s.json("GET", f"/id/admin/realms/{realm}/groups?briefRepresentation=false", headers=auth)
     by_path, todo = {}, list(tree or [])
     while todo:

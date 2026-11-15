@@ -2350,6 +2350,7 @@ def make_person(h: Http, token: str, realm: str, username: str, groups=()):
                       body={"type": "password", "value": password, "temporary": False})
     if st not in (200, 204):
         raise RuntimeError(f"password of {username}: {st} {body}")
+    SECOND_FACTOR.fresh(lambda m, p: h.json(m, f"/id/admin/realms/{realm}{p}", headers=auth), username, uid)
     # Group membership is set explicitly: a create body's `groups` is not honoured everywhere.
     st, tree = h.json("GET", f"/id/admin/realms/{realm}/groups?briefRepresentation=false", headers=auth)
     by_path, todo = {}, list(tree or [])
