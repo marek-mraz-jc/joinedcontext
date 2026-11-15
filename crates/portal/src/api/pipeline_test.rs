@@ -138,7 +138,6 @@ impl From<SampleRequest> for Sample {
             },
             records: None,
             sheet,
-            sheet: None,
         }
     }
 }

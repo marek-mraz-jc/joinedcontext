@@ -12174,6 +12174,11 @@ export interface components {
         PipelineTestSample: {
             /** @description How the sample is split into messages. */
             format?: components["schemas"]["PipelineTestSampleFormat"];
+            /**
+             * @description The sheet of an `xlsx` sample by its tab name, such as `Stations 2026`; absent, the
+             *     first sheet.
+             */
+            sheet?: string | null;
             /** @description The sample inline, at most five mebibytes. */
             text?: string | null;
             /** @description An http(s) URL the runner fetches the sample from instead. */
@@ -12183,7 +12188,7 @@ export interface components {
          * @description How a sample is split: one message, a CSV row each, or a JSON array's elements.
          * @enum {string}
          */
-        PipelineTestSampleFormat: "text" | "csv" | "json";
+        PipelineTestSampleFormat: "text" | "csv" | "json" | "xlsx";
         /** @description A page of the Portal a person went to or starred: where it is and what it was called. */
         Place: {
             /** @description A path inside the Portal, with its query: `/projects/helsinki/pipelines/air?tab=runs`. */
