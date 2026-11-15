@@ -24,7 +24,14 @@ enum Placement {
     Host,
 }
 
-const SLUGS: [&str; 6] = ["id", "git", "streams", "opendata", "dashboards", "broker"];
+const SLUGS: [&str; 6] = [
+    "login",
+    "git",
+    "streams",
+    "opendata",
+    "dashboards",
+    "broker",
+];
 
 struct Jc {
     child: Child,
@@ -1118,7 +1125,7 @@ async fn the_portal_runs_on_its_sibling_modules() {
 }
 
 /// Host mode: every module on its own host name, the Portal on `portal.localhost`. The Portal
-/// signs a person in through kaisatsu on `id.localhost`, keeps its cookies on its own host, writes
+/// signs a person in through kaisatsu on `login.localhost`, keeps its cookies on its own host, writes
 /// people to kaisatsu and proposals to shako, and a module's slug on the Portal's host reaches the
 /// Portal, not the module. The deployment names its realm `dev`: jc makes it on first start (its
 /// first-start files, the first admin), and no realm `jc`.
