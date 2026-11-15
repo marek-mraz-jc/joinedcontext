@@ -2531,7 +2531,8 @@
       "button": "Otestovat připojení",
       "running": "Testuje se…",
       "read": "Připojeno: {records, plural, one {načten # záznam} few {načteny # záznamy} other {načteno # záznamů}} ({bytes} bajtů). První z nich:",
-      "failed": "Nic se nenačetlo: {reason}. Zkontrolujte adresu a přihlašovací údaje a otestujte znovu."
+      "failed": "Nic se nenačetlo: {reason}. Zkontrolujte adresu a přihlašovací údaje a otestujte znovu.",
+      "pages": "Přečteno {pages, plural, one {# stránka} few {# stránky} other {# stránek}}."
     },
     "usedBy": {
       "title": "Používají ho",
@@ -2541,6 +2542,78 @@
       "title": "Připravená nastavení",
       "lead": "Nastavení zapíše zdroj, jeho pipeline i plán v jedné změně z několika odpovědí. Příklad: kanál GBFS sdílených kol načítaný každou minutu.",
       "back": "Zpět na zdroje dat"
+    },
+    "preset": {
+      "title": "Předvolba otevřeného API",
+      "hint": "Pro službu CKAN, ArcGIS, OData, WFS, OGC API Features nebo SensorThings: platforma ji sama stránkuje a najde záznamy. Při volbě předvolby nechte Stránkování a Záznamy jsou v prázdné.",
+      "kind": "API",
+      "kinds": {
+        "ckan": "CKAN (datové sady nebo řádky datastore)",
+        "arcgisFeature": "ArcGIS Feature Service",
+        "odata": "OData v4",
+        "wfs": "WFS 2.0",
+        "ogcFeatures": "OGC API Features",
+        "sensorThings": "OGC SensorThings"
+      },
+      "pageSize": "Záznamů na stránku",
+      "organization": "Organizace",
+      "resourceId": "ID zdroje",
+      "objectIdField": "Pole ID objektu",
+      "outFields": "Čtená pole",
+      "typeNames": "Typ prvku",
+      "srsName": "Souřadnicový systém",
+      "expand": "Související entity"
+    },
+    "paging": {
+      "title": "Stránkování",
+      "hint": "Pro stránkované API bez předvolby: jak se žádá o další stránku. Test připojení projde všechny stránky a řekne, kolik jich přečetl.",
+      "mode": "Další stránka podle",
+      "modes": {
+        "page": "Číslo stránky",
+        "offset": "Posun a limit",
+        "cursor": "Kurzor v odpovědi",
+        "link": "Hlavička Link (rel=next)",
+        "nextUrl": "Další URL v odpovědi"
+      },
+      "param": "Parametr stránky",
+      "start": "První stránka nebo posun",
+      "sizeParam": "Parametr velikosti stránky",
+      "size": "Velikost stránky",
+      "offsetParam": "Parametr posunu",
+      "limitParam": "Parametr limitu",
+      "limit": "Limit",
+      "cursor": "Cesta ke kurzoru",
+      "cursorParam": "Parametr kurzoru",
+      "cursorHeader": "Hlavička kurzoru",
+      "next": "Cesta k další URL",
+      "total": "Cesta k celkovému počtu",
+      "more": "Cesta k dalším stránkám",
+      "maxPages": "Nejvíc stránek",
+      "maxRecords": "Nejvíc záznamů",
+      "delay": "Pauza mezi stránkami"
+    },
+    "discover": {
+      "title": "Najít ve službě",
+      "hint": "Přečte vlastní seznam služby jednou na runneru projektu, jen veřejné služby, a nabídne, co tato předvolba umí číst.",
+      "needs": "Zvolte API v Předvolbě otevřeného API a napište URL služby, abyste viděli, co nabízí.",
+      "button": "Najít",
+      "running": "Čtu službu…",
+      "pick": "Nalezeno {count, plural, one {# položka} few {# položky} other {# položek}}",
+      "pickHint": "Vyberte jednu; Použít ji zapíše do formuláře, kde ji ještě můžete změnit.",
+      "use": "Použít",
+      "truncated": "Služba vypisuje víc, než Portál čte; chybí-li vaše položka, zadejte užší URL.",
+      "none": "Služba nevypisuje nic, co by tato předvolba četla. Zkontrolujte URL a druh API.",
+      "failed": "Nic se nevypsalo: {reason}. Zkontrolujte URL a druh API a zkuste to znovu.",
+      "used": "Zapsáno do formuláře: {value}.",
+      "fields": {
+        "organization": "Organizace",
+        "layer": "Vrstva",
+        "entitySet": "Sada entit",
+        "typeNames": "Typ prvku",
+        "collection": "Kolekce",
+        "thing": "Thing"
+      },
+      "refused": "Požádejte správce projektu o roli, která navrhuje datové zdroje."
     }
   },
   "pipelines": {

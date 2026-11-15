@@ -2531,7 +2531,8 @@
       "button": "Test connection",
       "running": "Testing…",
       "read": "Connected: {records, plural, one {# record} other {# records}} read ({bytes} bytes). The first one:",
-      "failed": "Nothing was read: {reason}. Check the address and the credentials, then test again."
+      "failed": "Nothing was read: {reason}. Check the address and the credentials, then test again.",
+      "pages": "Read {pages, plural, one {# page} other {# pages}}."
     },
     "usedBy": {
       "title": "Used by",
@@ -2541,6 +2542,78 @@
       "title": "Ready-made set-ups",
       "lead": "A set-up writes the source, its pipeline and its schedule in one change, from a few answers. Example: a city-bike GBFS feed polled every minute.",
       "back": "Back to data sources"
+    },
+    "preset": {
+      "title": "Open data API preset",
+      "hint": "For a CKAN, ArcGIS, OData, WFS, OGC API Features or SensorThings service: the platform pages it and finds the records itself, so a source with a preset needs no \"Paging\" and no \"Records are in\".",
+      "kind": "API",
+      "kinds": {
+        "ckan": "CKAN (datasets or datastore rows)",
+        "arcgisFeature": "ArcGIS Feature Service",
+        "odata": "OData v4",
+        "wfs": "WFS 2.0",
+        "ogcFeatures": "OGC API Features",
+        "sensorThings": "OGC SensorThings"
+      },
+      "pageSize": "Records per page",
+      "organization": "Organization",
+      "resourceId": "Resource ID",
+      "objectIdField": "Object ID field",
+      "outFields": "Fields read",
+      "typeNames": "Feature type",
+      "srsName": "Coordinate system",
+      "expand": "Related entities"
+    },
+    "paging": {
+      "title": "Paging",
+      "hint": "For a paged API no preset reads: how its next page is asked for. The connection test walks every page and says how many it read.",
+      "mode": "Next page by",
+      "modes": {
+        "page": "Page number",
+        "offset": "Offset and limit",
+        "cursor": "Cursor in the answer",
+        "link": "Link header (rel=next)",
+        "nextUrl": "Next URL in the answer"
+      },
+      "param": "Page parameter",
+      "start": "First page or offset",
+      "sizeParam": "Page size parameter",
+      "size": "Page size",
+      "offsetParam": "Offset parameter",
+      "limitParam": "Limit parameter",
+      "limit": "Limit",
+      "cursor": "Cursor path",
+      "cursorParam": "Cursor parameter",
+      "cursorHeader": "Cursor header",
+      "next": "Next link path",
+      "total": "Total path",
+      "more": "More pages path",
+      "maxPages": "Most pages",
+      "maxRecords": "Most records",
+      "delay": "Pause between pages"
+    },
+    "discover": {
+      "title": "Find in the service",
+      "hint": "Reads the service's own list once on the project's runner, public services only, and offers what this preset can read.",
+      "needs": "Choose an API under Open data API preset and type the service's URL to list what it offers.",
+      "button": "Find",
+      "running": "Reading the service…",
+      "pick": "Found {count, plural, one {# entry} other {# entries}}",
+      "pickHint": "Pick one; Use writes it into the form, where you can still change it.",
+      "use": "Use",
+      "truncated": "The service lists more than the Portal reads; type a narrower URL if yours is missing.",
+      "none": "The service lists nothing this preset can read. Check the URL and the API kind.",
+      "failed": "Nothing was listed: {reason}. Check the URL and the API kind, then try again.",
+      "used": "Written into the form: {value}.",
+      "fields": {
+        "organization": "Organization",
+        "layer": "Layer",
+        "entitySet": "Entity set",
+        "typeNames": "Feature type",
+        "collection": "Collection",
+        "thing": "Thing"
+      },
+      "refused": "Ask a project administrator for a role that proposes data sources."
     }
   },
   "pipelines": {

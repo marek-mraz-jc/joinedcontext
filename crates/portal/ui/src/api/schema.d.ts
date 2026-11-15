@@ -2778,6 +2778,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/datasource-discovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Data Source Discovery
+         * @description Reads the listing of a public open data service once on the project's runner and answers what a preset of that kind can pick: CKAN organizations, ArcGIS layers, OData entity sets, WFS feature types, OGC API collections or SensorThings Things. Nothing is written.
+         */
+        post: operations["discover_datasource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/datasources/{name}/test": {
         parameters: {
             query?: never;
@@ -9350,6 +9370,16 @@ export interface components {
         };
         /** @enum {string} */
         CheckState: "green" | "red" | "stale" | "unreadable";
+        /** @description One thing the person can pick. */
+        Choice: {
+            /** @description What the person reads. */
+            label: string;
+            /**
+             * @description What the form writes: an organization name, a layer id, an entity set, a feature type
+             *     name, a collection id or a Thing id.
+             */
+            value: string;
+        };
         /** @description The CKAN picture of one project. */
         CkanStatus: {
             /** @description Every catalogue this project can publish to. */
@@ -10010,6 +10040,41 @@ export interface components {
              */
             passed?: string[];
             run?: string | null;
+        };
+        /**
+         * @description What to list: the preset kind and the service's URL as the person typed it.
+         * @example {
+         *       "kind": "wfs",
+         *       "url": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs"
+         *     }
+         */
+        DiscoverRequest: {
+            /**
+             * @description `ckan`, `arcgisFeature`, `odata`, `wfs`, `ogcFeatures` or `sensorThings`.
+             * @example arcgisFeature
+             */
+            kind: string;
+            /**
+             * @description The service or any address under it, `https://geodata.example/rest/services/X/FeatureServer/0/query`.
+             * @example https://kartta.hel.fi/ws/geoserver/avoindata/wfs
+             */
+            url: string;
+        };
+        /** @description The listing of one service, or why there is none. */
+        Discovery: {
+            /** @description What the service lists, in its order, at most `MAX_CHOICES`. */
+            choices: components["schemas"]["Choice"][];
+            /**
+             * @description The form field a choice fills: `organization`, `layer`, `entitySet`, `typeNames`,
+             *     `collection` or `thing`.
+             */
+            field: string;
+            /** @description Why nothing is listed: the service did not answer, or answered something else. */
+            skipped?: string | null;
+            /** @description The answer was longer than the Portal reads, or listed more than `MAX_CHOICES`. */
+            truncated: boolean;
+            /** @description The listing's address the runner read. */
+            url: string;
         };
         /**
          * @description How a bar gauge fills its bars, Grafana's `displayMode`.
@@ -12477,6 +12542,8 @@ export interface components {
         /** @description One fetch of a DataSource on the project's runner, or why there was none (MF-39). */
         Probe: {
             bytes?: number | null;
+            /** @description The pages a paged source's read walked (`spec.http.paging` or a preset); absent unpaged. */
+            pages?: number | null;
             /** @description Messages after the format split; one for a JSON document, one per element of an array. */
             records?: number | null;
             /** @description The first record as data. */
@@ -22473,6 +22540,78 @@ export interface operations {
                 };
             };
             /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    discover_datasource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project slug */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoverRequest"];
+            };
+        };
+        responses: {
+            /** @description The choices, or `skipped` with the reason in plain words */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Discovery"];
+                };
+            };
+            /** @description The URL does not name a service of the kind, or names one the runner may not reach */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No grant proposes a DataSource in this project */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A test of this project is already running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No pipeline runner is configured, or it did not answer */
             503: {
                 headers: {
                     [name: string]: unknown;
