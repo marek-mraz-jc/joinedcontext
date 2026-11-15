@@ -42,13 +42,12 @@ An HTTP resource the runner polls (Architecture/08 §6).
 |---|---|---|---|
 | `archive` | [HttpArchive](#httparchive) | no | The members of a zip archive to read, by HTTP `Range`, instead of the whole body (PL-72). |
 | `authorization` | [Authorization](#authorization) | no | The `Authorization` header, built from a secret (CC-06). |
-| `format` | [HttpBodyFormat](#httpbodyformat) | no | How the body becomes messages: `csv` or `xlsx` hands each row to the steps as one message keyed by the header's column names, `shapefile` each record of a zipped shapefile as a WGS 84 GeoJSON Feature; absent, the whole body is one message (PL-114). |
+| `format` | [HttpBodyFormat](#httpbodyformat) | no | How the body becomes messages: `csv` or `xlsx` hands each row to the steps as one message keyed by the header's column names; absent, the whole body is one message (PL-114). |
 | `headers` | map of string | no | Static request headers. A header carrying a credential belongs in `authorization`. |
 | `maxBytes` | integer (uint64) | no | The largest response body accepted, in bytes; 32 MiB when absent, at most 256 MiB. The runner refuses a larger body before any step of the pipeline sees it (PL-113). |
 | `paging` | [HttpPaging](#httppaging) | no | How the runner walks a paged source page by page (PL-31, T-7056): each page is one message, split by `records` as a single body is. Absent, the URL is read once. |
 | `preset` | [HttpPreset](#httppreset) | no | A known kind of open data API (T-7067): the runner sends its query parameters and walks its pages, so `paging` and `records` stay unset. CKAN, ArcGIS, OData, WFS, OGC API Features or SensorThings, with the URL of its search, query or items resource. |
 | `records` | string | no | Where the records sit in a JSON body: a dotted path to an array, `data.stations` for a GBFS feed. The runner hands each element to the steps as one message; absent, the whole body is one message. Names only, never an expression (PL-114). |
-| `sheet` | string | no | The sheet of an `xlsx` body to read, by its name as the workbook's tab shows it (`Stations 2026`); absent, the first sheet (T-7086). |
 | `timeout` | string | no | Request timeout as a Bento duration, `10s`. |
 | `url` | string | yes | The URL to fetch, `http://` or `https://`. |
 | `verb` | string | no | HTTP method, `GET` when absent. |
@@ -135,7 +134,7 @@ An `Authorization` header whose value is assembled from a secret (CC-06).
 
 How an `http` connection splits the body it fetched into messages (PL-114).
 
-Type: one of `"csv"`, `"xlsx"`, `"shapefile"`
+Type: one of `"csv"`, `"xlsx"`
 
 ## HttpPaging
 
