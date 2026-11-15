@@ -3099,12 +3099,17 @@
         "byPeriod": "Pipeline čte zdroj každých {period}, jak říká její perioda. Přidejte rozvrh, má-li běžet v určených časech.",
         "add": "Spouštět podle rozvrhu",
         "remove": "Odebrat rozvrh",
-        "floor": "Tento projekt dovoluje pipeline běžet nejvýše každých {floor} s.",
-        "belowFloor": "Tento rozvrh se spouští každých {gap} s, častěji než {floor} s, které projekt dovoluje (spec.quotas.minPipelinePeriodSeconds); vyberte pomalejší rozvrh nebo požádejte správce o snížení minima.",
+        "floor": "Tento projekt dovoluje pipeline běžet nejvýše {floor}.",
+        "belowFloor": "Tento rozvrh běží {gap}, častěji, než projekt dovoluje ({floor}). Vyberte pomalejší rozvrh nebo požádejte správce o snížení minima projektu.",
         "afterApply": "První běh se spustí v prvním čase výše, jakmile je změna schválena a nasazena.",
         "hints": {
           "field": "Jak často pipeline čte svůj zdroj, například každý den v 03:00. Časy jsou v UTC, jak je čte runner.",
           "none": "Bez rozvrhu: pipeline běží, když zdroj pošle záznamy, například téma MQTT. Přidejte rozvrh pro zdroj čtený podle času, například soubor CSV."
+        },
+        "clock": {
+          "hours": "{count, plural, one {jednou za hodinu} few {každé # hodiny} other {každých # hodin}}",
+          "minutes": "{count, plural, one {každou minutu} few {každé # minuty} other {každých # minut}}",
+          "seconds": "{count, plural, one {každou sekundu} few {každé # sekundy} other {každých # sekund}}"
         }
       }
     },

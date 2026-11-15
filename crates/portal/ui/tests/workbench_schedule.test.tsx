@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import type { PipelineForm } from "../src/pages/pipelines/PipelineEditor";
-import { FIRST_SCHEDULE, WorkbenchSchedule, scheduleGap, scheduled } from "../src/pages/pipelines/WorkbenchSchedule";
+import { FIRST_SCHEDULE, WorkbenchSchedule, clockWords, scheduleGap, scheduled } from "../src/pages/pipelines/WorkbenchSchedule";
 
 const w = en.pipelines.workbench.schedule;
 let floor: number | undefined;
@@ -91,9 +91,9 @@ describe("the workbench's When it runs step", () => {
     floor = 3600;
     const user = userEvent.setup();
     show({ class: "scheduled", schedule: FIRST_SCHEDULE });
-    expect(await screen.findByText(/at most every 3600 s/)).toBeInTheDocument();
+    expect(await screen.findByText(/at most once an hour/)).toBeInTheDocument();
     await user.selectOptions(screen.getByRole("combobox", { name: en.pipelines.schedule.how }), "minutes");
-    expect(await screen.findByText(/starts every 900 s, more often than the 3600 s this project allows/)).toBeInTheDocument();
+    expect(await screen.findByText(/runs every 15 minutes, more often than this project allows \(once an hour\)/)).toBeInTheDocument();
   });
 
   it("says a resident pipeline runs as records arrive, and a push source has no clock", () => {
@@ -106,5 +106,7 @@ describe("the workbench's When it runs step", () => {
     expect(scheduled(undefined, "0 3 * * *").class).toBe("scheduled");
     expect(scheduleGap("*/15 * * * *")).toBe(900);
     expect(scheduleGap("not a cron")).toBeUndefined();
+    const say = (key: string, options: Record<string, unknown>) => i18n.t(key, options);
+    expect([clockWords(3600, say), clockWords(7200, say), clockWords(900, say), clockWords(90, say)]).toEqual(["once an hour", "every 2 hours", "every 15 minutes", "every 90 seconds"]);
   });
 });

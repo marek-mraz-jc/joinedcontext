@@ -2020,7 +2020,7 @@
         "evidence/T-7062/shots/g23-schedule-1440.png",
         "evidence/T-7062/shots/g23-schedule-400.png",
         "evidence/T-7062/shots/g23-schedule-refused-1440.png",
-        "evidence/T-7062/shots/g23-palette-tiers-400.png"
+        "evidence/T-7062/shots/g23-schedule-refused-400.png"
       ]
     },
     "src/pages/policies/TryAPerson.tsx": {

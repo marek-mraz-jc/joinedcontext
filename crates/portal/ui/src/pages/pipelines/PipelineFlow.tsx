@@ -60,6 +60,7 @@ const PROCESSOR_COUNT = paletteProcessors.length;
 export const plainSummary = (summary: string): string =>
   summary
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]*)\]\[[^\]]*\]/g, "$1")
     .replace(/`([^`]*)`/g, "$1")
     .replace(/\b_([^_]+)_\b/g, "$1");
 
@@ -1503,13 +1504,13 @@ export function PipelineFlow({
         <p className="text-caption text-fg-muted">{t("pipelines.flow.processorsHint")}</p>
         {PROCESSOR_TIERS.map(({ tier, processors }) => {
           const list = (
-            <ul className="flex flex-col gap-1 p-2" aria-label={t(`pipelines.flow.tier.${tier}`)}>
+            <ul className="flex flex-col gap-3 p-2 sm:gap-1" aria-label={t(`pipelines.flow.tier.${tier}`)}>
               {processors.map((processor) => (
-                <li key={processor.name} className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+                <li key={processor.name} className="flex flex-col gap-0.5 sm:grid sm:grid-cols-[13rem_minmax(0,1fr)] sm:items-baseline sm:gap-2">
                   <Button
                     size="sm"
                     variant="secondary"
-                    className="shrink-0 font-mono"
+                    className="shrink-0 self-start justify-self-start font-mono"
                     data-testid={`palette-processor-${processor.name}`}
                     draggable
                     onDragStart={(e) => {
@@ -1519,7 +1520,7 @@ export function PipelineFlow({
                   >
                     + {processor.name}
                   </Button>
-                  <span className="text-caption text-fg-muted">
+                  <span className="max-w-prose text-caption text-fg-muted">
                     {processor.category} · {plainSummary(processor.summary)}
                   </span>
                 </li>
@@ -1538,7 +1539,7 @@ export function PipelineFlow({
             </section>
           ) : (
             <details key={tier} className="rounded-md border border-border bg-surface" data-testid={`palette-tier-${tier}`}>
-              <summary className="focus-ring cursor-pointer rounded-md px-2 py-1 text-caption font-medium text-fg">
+              <summary className="focus-ring cursor-pointer rounded-md px-2 py-1 text-body font-medium text-fg">
                 {t(`pipelines.flow.tier.${tier}`)} ({processors.length})
               </summary>
               <Alert tone={tier === "advanced" ? "warning" : "info"} className="mx-2">

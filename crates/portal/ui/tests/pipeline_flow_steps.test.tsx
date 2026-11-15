@@ -158,6 +158,7 @@ describe("the lane's steps", () => {
     // Code spans and emphasis lose their marks too (T-7062 UI judge): "[`branch` processors]" read raw.
     expect(plainSummary("runs [`branch` processors](processors.branch) _only_ once")).toBe("runs branch processors only once");
     expect(plainSummary("keeps snake_case_names")).toBe("keeps snake_case_names");
+    expect(plainSummary("a topology of [`branch` processors][processors.branch]")).toBe("a topology of branch processors");
   });
 
   it("writes the steps around the compute step, an empty configuration included", () => {

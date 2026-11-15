@@ -27,6 +27,13 @@ export function scheduled(draft: PipelineForm | undefined, schedule: string | un
   return next;
 }
 
+/** A clock in seconds said in words: whole hours, else whole minutes, else seconds. */
+export function clockWords(seconds: number, t: (key: string, options: Record<string, unknown>) => string): string {
+  if (seconds % 3600 === 0) return t("pipelines.workbench.schedule.clock.hours", { count: seconds / 3600 });
+  if (seconds % 60 === 0) return t("pipelines.workbench.schedule.clock.minutes", { count: seconds / 60 });
+  return t("pipelines.workbench.schedule.clock.seconds", { count: seconds });
+}
+
 /** The shortest gap between two starts of `schedule`, or `undefined` when it is no cron. */
 export function scheduleGap(schedule: string | undefined, from: Date = new Date()): number | undefined {
   const cron = schedule ? parseCron(schedule) : undefined;
@@ -76,14 +83,14 @@ export function WorkbenchSchedule({ project, draft, onChange }: WorkbenchSchedul
     onChange: (value: unknown) => onChange(scheduled(draft, typeof value === "string" && value !== "" ? value : undefined)),
     onBlur: () => undefined,
     onFocus: () => undefined,
-    rawErrors: below ? [t("pipelines.workbench.schedule.belowFloor", { gap, floor })] : undefined,
+    rawErrors: below ? [t("pipelines.workbench.schedule.belowFloor", { gap: clockWords(gap ?? 0, t), floor: clockWords(Number(floor), t) })] : undefined,
   } as unknown as WidgetProps;
   return (
     <FormProjectContext.Provider value={project}>
       <FormDataContext.Provider value={draft}>
         {below ? (
           <Alert tone="danger" role="alert">
-            {t("pipelines.workbench.schedule.belowFloor", { gap, floor })}
+            {t("pipelines.workbench.schedule.belowFloor", { gap: clockWords(gap ?? 0, t), floor: clockWords(Number(floor), t) })}
           </Alert>
         ) : null}
         <Field
@@ -94,14 +101,14 @@ export function WorkbenchSchedule({ project, draft, onChange }: WorkbenchSchedul
           <CronScheduleWidget {...widget} />
         </Field>
         {typeof floor === "number" && !below ? (
-          <p className="text-caption text-fg-subtle">{t("pipelines.workbench.schedule.floor", { floor })}</p>
+          <p className="text-caption text-fg-subtle">{t("pipelines.workbench.schedule.floor", { floor: clockWords(floor, t) })}</p>
         ) : null}
         {below ? null : (
           <Alert tone="info" role="status">
             {t("pipelines.workbench.schedule.afterApply")}
           </Alert>
         )}
-        <Button size="sm" variant="ghost" className="self-start" onClick={() => {
+        <Button size="sm" variant="secondary" className="self-start" onClick={() => {
             setOpen(false);
             onChange({ ...draft, schedule: undefined, class: draft?.class === "scheduled" ? "auto" : draft?.class });
           }}>

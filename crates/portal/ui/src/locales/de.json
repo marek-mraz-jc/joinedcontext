@@ -3099,12 +3099,17 @@
         "byPeriod": "Die Pipeline liest ihre Quelle alle {period}, wie ihre Periode sagt. Fügen Sie einen Zeitplan hinzu, um sie zu festen Zeiten laufen zu lassen.",
         "add": "Nach Zeitplan ausführen",
         "remove": "Zeitplan entfernen",
-        "floor": "Dieses Projekt erlaubt einer Pipeline höchstens alle {floor} s zu laufen.",
-        "belowFloor": "Dieser Zeitplan startet alle {gap} s, öfter als die {floor} s, die das Projekt erlaubt (spec.quotas.minPipelinePeriodSeconds); wählen Sie einen langsameren Zeitplan oder bitten Sie einen Admin, das Minimum zu senken.",
+        "floor": "Dieses Projekt erlaubt einer Pipeline höchstens {floor} zu laufen.",
+        "belowFloor": "Dieser Zeitplan läuft {gap}, öfter, als das Projekt erlaubt ({floor}). Wählen Sie einen langsameren Zeitplan oder bitten Sie einen Admin, das Minimum des Projekts zu senken.",
         "afterApply": "Der erste Lauf startet zur ersten oben genannten Zeit, sobald die Änderung genehmigt und angewendet ist.",
         "hints": {
           "field": "Wie oft die Pipeline ihre Quelle liest, zum Beispiel täglich um 03:00. Zeiten sind UTC, wie der Runner sie liest.",
           "none": "Kein Zeitplan: die Pipeline läuft, wenn die Quelle Datensätze sendet, zum Beispiel ein MQTT-Thema. Fügen Sie einen Zeitplan für eine zeitgesteuert gelesene Quelle hinzu, etwa eine CSV-Datei."
+        },
+        "clock": {
+          "hours": "{count, plural, one {einmal pro Stunde} other {alle # Stunden}}",
+          "minutes": "{count, plural, one {jede Minute} other {alle # Minuten}}",
+          "seconds": "{count, plural, one {jede Sekunde} other {alle # Sekunden}}"
         }
       }
     },

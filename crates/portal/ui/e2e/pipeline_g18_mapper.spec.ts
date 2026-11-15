@@ -134,11 +134,11 @@ test.describe("G-18 mapper and G-23 schedule step", () => {
     const schedule = dialog.getByRole("region", { name: /When it runs$/ });
     await schedule.getByRole("button", { name: "Run on a schedule" }).click();
     await expect(schedule.getByRole("combobox", { name: "How often" })).toHaveValue("daily");
-    await expect(schedule.getByText(/at most every 3600 s/)).toBeVisible();
+    await expect(schedule.getByText(/at most once an hour/)).toBeVisible();
     await schedule.scrollIntoViewIfNeeded();
     await shot(page, "g23-schedule-1440");
     await schedule.getByRole("combobox", { name: "How often" }).selectOption("minutes");
-    await expect(schedule.getByText(/more often than the 3600 s this project allows/).first()).toBeVisible();
+    await expect(schedule.getByText(/more often than this project allows/).first()).toBeVisible();
     await shot(page, "g23-schedule-refused-1440");
     await schedule.getByRole("combobox", { name: "How often" }).selectOption("daily");
 
@@ -149,6 +149,9 @@ test.describe("G-18 mapper and G-23 schedule step", () => {
     await shot(page, "g18-mapper-transforms-400");
     await schedule.scrollIntoViewIfNeeded();
     await shot(page, "g23-schedule-400");
+    await schedule.getByRole("combobox", { name: "How often" }).selectOption("minutes");
+    await schedule.scrollIntoViewIfNeeded();
+    await shot(page, "g23-schedule-refused-400");
   });
 
   test("offers the processors in tiers: forms first, advanced behind its warning", async ({ page }) => {

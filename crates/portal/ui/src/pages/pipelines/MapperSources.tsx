@@ -88,7 +88,7 @@ export function SourceEditor({ id, attribute, source, fields, onChange, records 
           {m("hint.languages")}
         </p>
         {rows.map(([tag, field], index) => (
-          <div key={tag} className="grid items-end gap-2 sm:grid-cols-[8rem_1fr_auto]">
+          <div key={tag} className="grid items-end gap-2 sm:grid-cols-[12rem_1fr_auto]">
             <Field id={`${id}-lang-${index}`} label={m("language")} description={m("hint.language")}>
               <Select
                 id={`${id}-lang-${index}`}
@@ -110,7 +110,7 @@ export function SourceEditor({ id, attribute, source, fields, onChange, records 
               fields={fields}
               onChange={(next) => set(rows.map((row, at) => (at === index ? [row[0], next] : row)))}
             />
-            <Button size="sm" variant="ghost" onClick={() => set(rows.filter((_, at) => at !== index))} aria-label={m("languageRemove", { tag })}>
+            <Button size="sm" variant="ghost" className="justify-self-end" onClick={() => set(rows.filter((_, at) => at !== index))} aria-label={m("languageRemove", { tag })}>
               {m("remove")}
             </Button>
           </div>
@@ -166,7 +166,7 @@ export function SourceEditor({ id, attribute, source, fields, onChange, records 
               fields={fields}
               onChange={(next) => set(source.concat.map((one, at) => (at === index ? next : one)))}
             />
-            <Button size="sm" variant="ghost" onClick={() => set(source.concat.filter((_, at) => at !== index))} aria-label={m("concatRemove", { field })}>
+            <Button size="sm" variant="ghost" className="justify-self-end" onClick={() => set(source.concat.filter((_, at) => at !== index))} aria-label={m("concatRemove", { field })}>
               {m("remove")}
             </Button>
           </div>
@@ -332,7 +332,7 @@ function LookupTable({ id, values, seen, table, onChange }: LookupProps): JSX.El
     <fieldset className="flex flex-col gap-1">
       <legend className="text-caption text-fg-muted">{t("pipelines.mapper.lookupHint")}</legend>
       {rows.map((from, index) => (
-        <Field key={from} id={`${id}-${index}`} label={t("pipelines.mapper.lookupRow", { from })} description={t("pipelines.mapper.hint.lookupRow", { example: values[0] })}>
+        <Field key={from} id={`${id}-${index}`} className="sm:max-w-xs" label={t("pipelines.mapper.lookupRow", { from })} description={t("pipelines.mapper.hint.lookupRow", { example: values[0] })}>
           <Select
             id={`${id}-${index}`}
             value={table[from] ?? ""}
