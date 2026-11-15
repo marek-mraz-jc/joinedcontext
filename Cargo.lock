@@ -3411,6 +3411,7 @@ dependencies = [
  "ekiben-core",
  "flate2",
  "futures",
+ "linkml-model",
  "quick-xml 0.42.0",
  "regex",
  "serde",

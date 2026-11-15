@@ -6,6 +6,7 @@ pub mod branch;
 pub mod buffer_system_window;
 pub mod flow;
 pub mod json_schema;
+pub mod linkml_validate;
 pub mod mapping;
 pub mod processor_cached;
 pub mod processor_group_by;
@@ -25,6 +26,7 @@ pub fn register_all(registry: &Registry) {
     switch::register(registry);
     flow::register(registry);
     json_schema::register(registry);
+    linkml_validate::register(registry);
     archive::register(registry);
     utility::register(registry);
     resources::register(registry);

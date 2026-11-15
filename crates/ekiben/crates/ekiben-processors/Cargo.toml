@@ -23,6 +23,13 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
+# The space's LinkML model check the broker runs too (PL-59): one verdict on the runner and the gateway.
+linkml-model = { path = "../../../antares/crates/linkml-model" }
 
 [dev-dependencies]
 serde_norway = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "validate_bench"
+harness = false
