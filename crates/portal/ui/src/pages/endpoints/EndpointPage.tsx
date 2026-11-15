@@ -208,6 +208,9 @@ export function EndpointPage({
   }
 
   const manifest = endpoint.data as Manifest;
+  const conditions = manifest.status?.conditions ?? [];
+  const openData = conditions.some((c) => c.type === "OpenData" && c.status === "True");
+  const openDataWrite = conditions.find((c) => c.type === "Degraded" && c.reason === "OpenDataWritePolicy");
   const spec = manifest.spec as EndpointSpec;
   const catalogue = catalogueLink(project, manifest);
   const slug = spec.slug ?? "";
@@ -276,6 +279,12 @@ export function EndpointPage({
         />
       <div className="flex flex-wrap items-center gap-2">
         <LifecycleBadge kind="phase" value={manifest.status?.phase} />
+        {/* EP-187: the reconciler marks an open-data Endpoint; the gateway refuses every write. */}
+        {openData ? (
+          <Badge tone="info" title={t("endpoints.page.openDataHint")}>
+            {t("endpoints.page.openData")}
+          </Badge>
+        ) : null}
         {manifest.status?.sourceUrl ? (
           <SourceLink href={manifest.status.sourceUrl} label={t("spaces.field.source")} />
         ) : null}
@@ -339,6 +348,14 @@ export function EndpointPage({
         />
       </div>
       </div>
+
+      {openDataWrite ? (
+        <Alert tone="warning" role="status">
+          <p className="font-medium">{t("endpoints.page.openDataWrite")}</p>
+          <p className="text-sm">{openDataWrite.message}</p>
+          <p className="text-sm text-fg-muted">{t("endpoints.page.openDataWriteHint")}</p>
+        </Alert>
+      ) : null}
 
       {/* What it answers, as one row of links (owner 2026-10-30). */}
       <ul className="flex flex-wrap gap-1" aria-label={t("endpoints.field.representations")}>

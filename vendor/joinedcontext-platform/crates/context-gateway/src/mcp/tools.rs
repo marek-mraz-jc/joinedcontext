@@ -1079,22 +1079,29 @@ fn broken_rule(error: &jsonschema::ValidationError<'_>) -> String {
 }
 
 /// Whether the caller holds any of the tool's operations, asked of the PDP that also
-/// enforces them, so discovery and enforcement cannot drift (SP-16).
+/// enforces them, so discovery and enforcement cannot drift (SP-16). An open-data Endpoint
+/// grants no write, as `view_request` refuses them (EP-187).
 pub(crate) fn granted(
     gateway: &Gateway,
     endpoint: &Endpoint,
     subject: &Subject,
     operations: &[Operation],
 ) -> bool {
+    let refused = |operation: &&Operation| {
+        endpoint.open_data && jc_core::kinds::OperationRef::Single(**operation).writes_entities()
+    };
     operations.is_empty()
-        || operations.iter().any(|operation| {
-            !matches!(
-                gateway
-                    .pdp
-                    .decide(subject, *operation, &PolicyRequest::default(), endpoint),
-                Verdict::Deny
-            )
-        })
+        || operations
+            .iter()
+            .filter(|op| !refused(op))
+            .any(|operation| {
+                !matches!(
+                    gateway
+                        .pdp
+                        .decide(subject, *operation, &PolicyRequest::default(), endpoint),
+                    Verdict::Deny
+                )
+            })
 }
 
 /// Whether the caller may read anything on this Endpoint: a data tool its grants cover. An

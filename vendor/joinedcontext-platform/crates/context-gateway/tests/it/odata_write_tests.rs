@@ -21,7 +21,8 @@ use tower::ServiceExt;
 const HOST: &str = "https://hel.example.fi";
 /// A public form: minted ids, one create a day, `contact` hidden.
 const FORM: &str = "ffffffffffffffffffffffffff";
-/// A public Endpoint with no write guard of its own.
+/// A public form with no write guard of its own: it keeps the caller's id and counts nothing.
+/// Without `creates` it would be open data, which takes no write (EP-187).
 const OPEN: &str = "oooooooooooooooooooooooooo";
 
 const SPACE: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  \
@@ -54,7 +55,10 @@ fn repo(test: &str) -> PathBuf {
              hiddenAttributes: [contact]\n",
         ),
     );
-    write("open.yaml", &endpoint("helsinki-bikes", OPEN, ""));
+    write(
+        "open.yaml",
+        &endpoint("helsinki-bikes", OPEN, "  creates: {}\n"),
+    );
     write(
         "policy.yaml",
         "apiVersion: joinedcontext.com/v1alpha1\nkind: Policy\nmetadata:\n  name: public\n  \
