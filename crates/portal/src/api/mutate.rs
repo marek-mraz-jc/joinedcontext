@@ -5314,12 +5314,18 @@ mod tests {
         );
 
         // P-18 (T-6736): the Pipeline names public-air, so its derived write binds it beside
-        // the policyRef; only an Endpoint the project lacks is refused.
-        assert!(check(
+        // the policyRef; but public-air serves a public read, so it is open data and takes no
+        // write (EP-187, T-6972). An Endpoint the project lacks is refused as before.
+        let errors = refusal(check(
             Operation::Create,
-            manifest("Pipeline", "stations", air_pipeline("public-air"))
-        )
-        .is_ok());
+            manifest("Pipeline", "stations", air_pipeline("public-air")),
+        ));
+        assert!(
+            errors.len() == 1
+                && errors[0].contains("Endpoint public-air: an open-data Endpoint is read-only")
+                && errors[0].contains("Pipeline stations writes through it"),
+            "{errors:?}"
+        );
         let errors = refusal(check(
             Operation::Create,
             manifest("Pipeline", "lost", air_pipeline("no-such-endpoint")),
