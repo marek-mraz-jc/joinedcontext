@@ -440,7 +440,8 @@ fn an_idle_tick_reads_the_checkout_links_and_walks_no_project_file() {
         renders: Default::default(),
     };
     let (endpoints, spaces, ..) = store::load_from(&tree.org, Some(&checkouts)).expect("loads");
-    assert_eq!(endpoints.len(), 200);
+    // 200 public Endpoints and the internal one every tenth feeds through (EP-187).
+    assert_eq!(endpoints.len(), 220);
     let gateway = Arc::new(
         Gateway::new(
             Broker::new("http://127.0.0.1:1".to_owned()),

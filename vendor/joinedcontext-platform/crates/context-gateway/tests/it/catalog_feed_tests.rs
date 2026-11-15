@@ -59,6 +59,7 @@ fn endpoint(slug: &str, space: &str, audience: Audience) -> Endpoint {
         calendars: Vec::new(),
         map_defaults: Default::default(),
         page: None,
+        open_data: false,
         policy_names: Vec::new(),
         manifest_name: String::new(),
         policies: vec![policy],
@@ -155,6 +156,67 @@ async fn the_feed_lists_every_public_endpoint_and_nothing_else() {
     for secret in [CLOSED, "interne"] {
         assert!(!body.contains(secret), "the feed names {secret}: {body}");
     }
+}
+
+/// EP-69: a record describes what an anonymous caller of the Endpoint reads: the schema index
+/// is asked with the Endpoint's `callerRole`, as the caller's own schema request is.
+#[tokio::test]
+async fn a_record_is_read_with_the_endpoints_caller_role() {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let kept = seen.clone();
+    let broker = axum::Router::new().fallback(axum::routing::any(move |request: Request<Body>| {
+        let kept = kept.clone();
+        async move {
+            if request.uri().path().ends_with("schema/index.json") {
+                let roles = request
+                    .headers()
+                    .get("x-jc-roles")
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default()
+                    .to_owned();
+                if let Ok(mut held) = kept.lock() {
+                    held.push(roles);
+                }
+            }
+            axum::Json(json!({"models": []}))
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a free port");
+    let address = listener.local_addr().expect("the bound address");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, common::plain_tree(broker)).await;
+    });
+
+    let mut open = endpoint(OPEN, "ovzdusie", Audience::Public);
+    let caller = jc_core::kinds::endpoint_role(&open.project, OPEN, None);
+    open.roles.caller = Some(caller.clone());
+    let realm = common::Realm::new();
+    let app = router(Arc::new(
+        Gateway::new(
+            Broker::new(format!("http://{address}")),
+            Box::new(PolicyPdp),
+            "banskabystrica.sk",
+        )
+        .serve(vec![open])
+        .authenticate(
+            Arc::new(realm.verifier()),
+            ServiceAccounts::new(),
+            Some(HOST.to_owned()),
+        ),
+    ));
+    let (status, _, _, body) = get(app, "/catalog.jsonld", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let asked = seen.lock().map(|held| held.clone()).unwrap_or_default();
+    assert!(!asked.is_empty(), "the schema index was not asked");
+    assert!(
+        // The roles travel percent-encoded, `endpoint%3A{project}%2F{slug}`.
+        asked
+            .iter()
+            .all(|roles| roles.contains("endpoint%3A") && roles.contains(OPEN)),
+        "the index was asked without {caller}: {asked:?}"
+    );
 }
 
 /// EP-139, T-4744: a door over a space whose types are split into datasets of their own stays

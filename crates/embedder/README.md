@@ -56,8 +56,8 @@ max_in_flight = 4               # per deployment
 
 [[deployments]]
 name = "dev"
-issuer = "https://jc.dev.example/id/realms/jc"
-jwks_url = "https://jc.dev.example/id/realms/jc/protocol/openid-connect/certs"
+issuer = "https://jc.dev.example/login/realms/jc"
+jwks_url = "https://jc.dev.example/login/realms/jc/protocol/openid-connect/certs"
 clients = ["jc-assistant"]
 max_texts_per_minute = 1200
 ```

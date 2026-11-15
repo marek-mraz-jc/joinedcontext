@@ -165,7 +165,7 @@ async function fill(page: Page, editor: Locator, kpi: Kpi): Promise<void> {
     await editor.getByRole("textbox", { name: /formula/i }).fill(kpi.typed);
   }
   await editor.getByLabel("Unit code").fill(kpi.unit);
-  await editor.getByLabel("Written through").selectOption({ label: "helsinki-kpi" });
+  await editor.getByLabel("Written through").selectOption({ label: "helsinki-kpi-write" });
 }
 
 /** What a person meets when a field is wrong: the words, and where the fix is. */

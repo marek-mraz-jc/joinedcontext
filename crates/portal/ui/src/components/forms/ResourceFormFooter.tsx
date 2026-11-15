@@ -192,7 +192,13 @@ export function ResourceFormFooter({
         </>
       ) : null}
       {error ? (
-        <span data-testid="footer-error" role="alert" className="basis-full text-right text-caption text-danger">
+        // First and full width, wrapping at body size: a server's refusal is a sentence the person
+        // acts on, not a caption beside the buttons (T-6972 UI judge).
+        <span
+          data-testid="footer-error"
+          role="alert"
+          className="order-first basis-full min-w-0 whitespace-pre-line break-words text-sm text-danger"
+        >
           {error}
         </span>
       ) : null}

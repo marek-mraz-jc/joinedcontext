@@ -20,7 +20,7 @@ rh.loopback_only(a.base)
 h = rh.Http(a.base)
 tok = rh.admin_token(h, Path(a.state))
 realm = realm_of(a.state)
-_, tree = h.json("GET", f"/id/admin/realms/{realm}/groups?briefRepresentation=false", headers={"Authorization": f"Bearer {tok}"})
+_, tree = h.json("GET", f"/login/admin/realms/{realm}/groups?briefRepresentation=false", headers={"Authorization": f"Bearer {tok}"})
 have = {g.get("path") for g in tree or []}
 want = [f"/{g}" for g in a.groups.split(",")]
 groups = [g for g in want if g in have]

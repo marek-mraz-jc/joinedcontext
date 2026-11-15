@@ -88,6 +88,7 @@ fn endpoint(audience: Audience) -> Endpoint {
         calendars: Vec::new(),
         map_defaults: Default::default(),
         page: None,
+        open_data: false,
         base_path: format!("/api/endpoint/{SLUG}"),
         models: vec![air_quality()],
         policy_names: Vec::new(),
@@ -662,8 +663,26 @@ async fn widget(app: axum::Router) -> (StatusCode, Value) {
     (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
 }
 
-fn with_map_defaults(audience: Audience) -> Endpoint {
+/// The demo endpoint with a public grant of every attribute of both classes, so the
+/// projection's hidden attributes are the only narrowing the widget meets.
+fn open_endpoint(audience: Audience) -> Endpoint {
     let mut endpoint = endpoint(audience);
+    endpoint.policies = vec![policy(
+        r#"contextSpaceRef: ovzdusie
+assigner: did:web:banskabystrica.sk
+assignee: { kind: role, id: public }
+operations: [queryEntity, retrieveEntity]
+information:
+  - entities:
+      - type: AirQualityObserved
+      - type: WeatherObserved
+"#,
+    )];
+    endpoint
+}
+
+fn with_map_defaults(audience: Audience) -> Endpoint {
+    let mut endpoint = open_endpoint(audience);
     let outputs: Vec<jc_core::kinds::WidgetOutput> = serde_json::from_value(json!([{
         "name": "mapa",
         "sources": [{"type": "AirQualityObserved", "cluster": false,
@@ -694,7 +713,7 @@ async fn the_widget_reads_the_map_defaults_without_a_hidden_attribute() {
 /// an order or a filter naming an attribute the projection hides is left out.
 #[tokio::test]
 async fn the_widget_reads_the_table_defaults_without_a_hidden_attribute() {
-    let mut endpoint = endpoint(Audience::Public);
+    let mut endpoint = open_endpoint(Audience::Public);
     let outputs: Vec<jc_core::kinds::WidgetOutput> = serde_json::from_value(json!([{
         "name": "tabulka",
         "sources": [
@@ -717,6 +736,46 @@ async fn the_widget_reads_the_table_defaults_without_a_hidden_attribute() {
         })
     );
     assert_eq!(body["map"]["AirQualityObserved"], json!({}));
+}
+
+/// EP-06, EP-61: the widget names only what the caller's own grant reads, as the schema routes
+/// do. The demo's public grant reads `pm10` and `pm25` of AirQualityObserved: an attribute it
+/// leaves out is no popup field, colour or column, a filter on one is dropped while a filter
+/// whose value merely looks like a name stays, and a class it does not grant is not listed.
+#[tokio::test]
+async fn the_widget_names_no_attribute_the_callers_grant_leaves_out() {
+    let mut endpoint = endpoint(Audience::Public);
+    let outputs: Vec<jc_core::kinds::WidgetOutput> = serde_json::from_value(json!([{
+        "name": "mapa",
+        "sources": [
+            {"type": "AirQualityObserved", "cluster": false,
+                "mapping": {"colour": "internalNote", "popup": ["pm10", "internalNote"]},
+                "table": {"filter": "pm25==\"internalNote\"", "orderBy": "internalNote",
+                    "columns": ["pm10", "internalNote"]}},
+            {"type": "InternalIncident", "cluster": false, "mapping": {"popup": ["severity"]},
+                "table": {"filter": "pm10>40"}}
+        ]
+    }]))
+    .expect("the outputs parse");
+    endpoint.map_defaults = jc_core::kinds::map_defaults(&outputs);
+    let (status, body) = widget(widget_app(endpoint.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body,
+        json!({
+            "map": {"AirQualityObserved": {"popup": ["pm10"], "cluster": false}},
+            "table": {"AirQualityObserved": {"filter": "pm25==\"internalNote\"", "columns": ["pm10"]}}
+        })
+    );
+    let mut filtered = endpoint;
+    let outputs: Vec<jc_core::kinds::WidgetOutput> = serde_json::from_value(json!([{
+        "name": "tabulka",
+        "sources": [{"type": "AirQualityObserved", "table": {"filter": "pm10>40;internalNote==\"x\""}}]
+    }]))
+    .expect("the outputs parse");
+    filtered.map_defaults = jc_core::kinds::map_defaults(&outputs);
+    let (_, body) = widget(widget_app(filtered)).await;
+    assert_eq!(body["table"], json!({"AirQualityObserved": {}}), "{body}");
 }
 
 /// The defaults of an Endpoint a caller may not read are refused as its other routes are.

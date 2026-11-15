@@ -2129,7 +2129,7 @@ fn only_drops_grants(before: &Value, head: &ServiceAccountSpec) -> bool {
     })
 }
 
-fn in_group(identity: &Identity, group: &str) -> bool {
+pub(crate) fn in_group(identity: &Identity, group: &str) -> bool {
     // Keycloak realm roles count as groups here: the dev realm assigns people through them
     // and a realm role, like a group, says who somebody is, not what they may do (PF-50).
     identity.groups.iter().any(|g| g == group) || identity.roles.iter().any(|r| r == group)

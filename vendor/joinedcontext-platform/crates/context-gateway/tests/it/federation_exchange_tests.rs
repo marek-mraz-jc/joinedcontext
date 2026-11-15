@@ -84,6 +84,7 @@ fn endpoint(slug: &str, space: &str, audience: Audience) -> Endpoint {
         calendars: Vec::new(),
         map_defaults: Default::default(),
         page: None,
+        open_data: false,
         policy_names: Vec::new(),
         manifest_name: String::new(),
         policies: vec![policy(space), writer(space)],
@@ -207,11 +208,14 @@ fn gateway(
     ])
     .authenticate(Arc::new(realm.verifier()), ServiceAccounts::new(), None);
     let gateway = match token_url {
-        Some(url) => gateway.exchange_with(Exchanger::new(
-            url,
-            "context-gateway".to_owned(),
-            ClientCredential::Secret(Secret::new("gateway-secret")),
-        )),
+        Some(url) => gateway.exchange_with(
+            Exchanger::new(
+                url,
+                "context-gateway".to_owned(),
+                ClientCredential::Secret(Secret::new("gateway-secret")),
+            )
+            .expect("a client builds"),
+        ),
         None => gateway,
     };
     gateway.replace_federation(table);

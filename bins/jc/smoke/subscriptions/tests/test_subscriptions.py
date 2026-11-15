@@ -140,7 +140,7 @@ class Jc:
         body = h.rfile.read(int(hdrs.get("content-length", "0") or 0))
         if path.startswith("/api/endpoint/") and path.endswith("/ws"):
             return self.ws(h, path.split("/")[3], hdrs)
-        if path == "/id/realms/smartcity/protocol/openid-connect/token":
+        if path == "/login/realms/smartcity/protocol/openid-connect/token":
             form = dict(x.split("=", 1) for x in body.decode().split("&"))
             ok = form.get("client_secret") == SECRET
             return self.answer(h, 200 if ok else 401, json.dumps({"access_token": sa_token(form["client_id"])}

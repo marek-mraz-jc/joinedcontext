@@ -215,10 +215,16 @@ impl Mirror {
     /// looks like: previews stop being served and a line says why, rather than the listener
     /// answering anybody who reaches the port.
     pub async fn follow(mut self, url: String, token: Option<std::sync::Arc<WorkloadToken>>) {
-        let client = reqwest::Client::builder()
+        let client = match reqwest::Client::builder()
             .timeout(Duration::from_secs(20))
             .build()
-            .expect("a client with a timeout builds");
+        {
+            Ok(client) => client,
+            Err(error) => {
+                tracing::error!(%error, "cannot build the client for the Portal's preview list: no previews are served");
+                return;
+            }
+        };
         let mut ticker = tokio::time::interval(INTERVAL);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // The tag of the list last written: the Portal answers `304` while it still holds, so an

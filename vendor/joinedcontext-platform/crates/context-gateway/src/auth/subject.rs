@@ -326,7 +326,11 @@ pub fn with_endpoint_roles(subject: &mut Subject, roles: &EndpointRoles, claims:
         .roles
         .retain(|role| !role.starts_with(jc_core::kinds::ENDPOINT_ROLE_PREFIX));
     let held: Vec<String> = roles
-        .held_by(subject.user_principal(), &subject.groups, &client_roles)
+        .held_by(
+            subject.user_principal(),
+            subject.grant_groups(),
+            &client_roles,
+        )
         .map(str::to_owned)
         .collect();
     subject.roles.extend(held);
@@ -425,6 +429,17 @@ pub(crate) fn subject_of(
     if let Some(azp) = claims.azp.as_deref() {
         let accounts = gateway.accounts.load();
         let account = accounts.resolve(azp);
+        // Its client stays enabled in the realm after the credentials end, so the gateway is
+        // where an ended account stops: for its own calls and for the people it acts for.
+        if let Some(account) = account.filter(|account| account.has_ended(crate::pdp::now())) {
+            tracing::warn!(
+                azp,
+                slug = %endpoint.slug,
+                project = %account.project,
+                "the account's credentials have ended"
+            );
+            return Err(Box::new(ProblemDetails::forbidden()));
+        }
         // A person's token the account's client exchanged (ADR-N-038, AG-95): the subject is
         // a person, not the client's own service-account user. Decided as that person when the
         // account declares delegation, and refused when it does not, so no client can carry a
@@ -802,6 +817,8 @@ pub(crate) fn admit(
     }
     // ADR-N-054 2.6 (DM-122): a public Endpoint never serves a personal attribute, so one whose
     // model and projection would is refused whole until its owner hides them or narrows it.
+    // The answer reaches anyone, before authentication: which attributes are personal goes to
+    // the operator's log and the owner's model, never into it.
     let personal = endpoint.public_personal_attributes();
     if !personal.is_empty() {
         tracing::warn!(slug, attributes = ?personal, "refused: a public endpoint exposes personal data");
@@ -811,10 +828,9 @@ pub(crate) fn admit(
                 "personal-data-public",
                 "Personal Data on a Public Endpoint",
             )
-            .with_detail(format!(
-                "the model marks {} as personal data; hide them or narrow the audience",
-                personal.join(", ")
-            ))
+            .with_detail(
+                "the Endpoint's model marks attributes it would serve publicly as personal data",
+            )
             .into_response(),
         ));
     }
@@ -963,6 +979,42 @@ mod tests {
             anonymous_with(&app).roles,
             BTreeSet::from(["public".to_owned(), "endpoint:city/app-map".to_owned()])
         );
+    }
+
+    /// ADR-N-067 2.3: an Endpoint role given to a group is matched as a Policy's `group` assignee
+    /// is, against the groups of the Endpoint's Organization: the person's group there holds it,
+    /// a same-named group under another Organization does not.
+    #[test]
+    fn an_endpoint_role_of_a_group_is_held_by_that_group_of_the_endpoints_organization() {
+        let claims = |paths: &[&str]| -> Claims {
+            serde_json::from_value(serde_json::json!({
+                "sub": "5b1e", "iss": "realm", "exp": 1, "azp": "portal-ui",
+                "preferred_username": "reader", "groups": paths, "jc_groups": paths,
+            }))
+            .expect("claims")
+        };
+        let spec: jc_core::kinds::EndpointSpec = serde_json::from_value(serde_json::json!({
+            "contextSpaceRef": "air", "slug": "w3nq7pzk2mtv6hx5brj4gcdsfa", "audience": "public",
+            "enabledRepresentations": ["ngsi-ld"],
+            "roles": [{"name": "analyst", "subjects": [{"group": "analysts"}]}]
+        }))
+        .expect("an Endpoint spec");
+        let roles = EndpointRoles::of("city", "air", &spec);
+        let holds = |paths: &[&str]| {
+            let claims = claims(paths);
+            let mut subject = person(&claims, Audience::Public, Some("hel")).expect("a person");
+            with_endpoint_roles(&mut subject, &roles, Some(&claims));
+            subject.roles.contains("endpoint:city/air/analyst")
+        };
+        assert!(
+            holds(&["/hel/analysts"]),
+            "the group of the Endpoint's Organization"
+        );
+        assert!(
+            !holds(&["/esp/analysts"]),
+            "a same-named group of another Organization"
+        );
+        assert!(!holds(&["/analysts"]), "a group under no Organization");
     }
 
     /// The panel reader of the synthetic bundle (jc-panel-grant): the reconciler writes the

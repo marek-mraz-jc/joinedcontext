@@ -102,7 +102,7 @@ const CREATES: Create[] = [
     // and the platform's own run of each on one fetch refused all three ("invalid character '<'").
     // The refusals were right; the sentence was wrong (2026-09-19).
     sentence: (name) =>
-      `Create a pipeline called ${name} that reads the hsl-citybikes-gbfs-info data source every 15 minutes and writes into the helsinki space through the helsinki-all endpoint`,
+      `Create a pipeline called ${name} that reads the hsl-citybikes-gbfs-info data source every 15 minutes and writes into the helsinki space through the helsinki-all-write endpoint`,
     route: /\/projects\/helsinki\/pipelines/,
     handOver: "the mapping is finished in the editor, with its own test (PF-57)",
   },

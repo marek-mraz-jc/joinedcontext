@@ -2,8 +2,7 @@
 
 use crate::app::{Gateway, HostOrganization};
 use crate::auth::subject::admit;
-use crate::auth::subject::Subject;
-use crate::handlers::{endpoint_surface, schema_routes, space_surface};
+use crate::handlers::{endpoint_surface, schema, schema_routes, space_surface};
 use crate::middleware::tenancy;
 use axum::body::Body;
 use axum::extract::{Path, Request, State};
@@ -158,7 +157,6 @@ async fn public_records(
     if let Some(records) = gateway.catalog_records.get(&key, &table) {
         return records.as_ref().clone();
     }
-    let anonymous = Subject::anonymous();
     let mut records = Vec::new();
     // Sorted by slug, so the feed a harvester reads twice reads the same way twice.
     let mut endpoints: Vec<_> = table.values().cloned().collect();
@@ -176,6 +174,8 @@ async fn public_records(
         {
             continue;
         }
+        // What an anonymous caller of this Endpoint reads, its `callerRole` included (EP-69).
+        let anonymous = crate::auth::subject::anonymous_on(&endpoint);
         let index = schema_routes::index_for(gateway, &endpoint, &endpoint.slug, &anonymous).await;
         let index =
             crate::handlers::mappings::with_mappings(gateway, &endpoint, &anonymous, index).await;
@@ -318,26 +318,30 @@ pub(crate) async fn publisher_catalog(
 
 /// The catalogue widget's defaults per class (API/11 EP-163, EP-164): the geometry, colour field,
 /// popup fields and clustering its map starts from, and where its table starts. Admitted as the
-/// Endpoint's other routes are, and an attribute the Endpoint's projection hides is never named.
+/// Endpoint's other routes are, and an attribute the caller may not read (the projection hides
+/// it, a Policy prohibits it or grants it to nobody the caller is) is never named, nor a class
+/// the caller reads nothing of: the same surface the schema routes describe (EP-06, EP-61).
 pub(crate) async fn widget_defaults(
     State(gateway): State<Arc<Gateway>>,
     Path(slug): Path<String>,
     mut request: Request,
 ) -> Response<Body> {
     tenancy::strip_client_headers(&mut request);
-    let (endpoint, _) = match admit(&gateway, &slug, None, request.headers()) {
+    let (endpoint, subject) = match admit(&gateway, &slug, None, request.headers()) {
         Ok(admitted) => admitted,
         Err(problem) => return *problem,
     };
-    let hidden = |path: &str| {
-        let first = path.split('.').next().unwrap_or_default();
-        endpoint.hidden_attributes.contains(first)
-    };
+    let visible = schema::visible(&subject, &endpoint, crate::pdp::now());
     let mut table = std::collections::BTreeMap::new();
     let map: std::collections::BTreeMap<_, _> = endpoint
         .map_defaults
         .iter()
+        .filter(|(class, _)| visible.covers_type(class))
         .map(|(class, defaults)| {
+            let hidden = |path: &str| {
+                let first = path.split('.').next().unwrap_or_default();
+                !visible.shows(class, first)
+            };
             let mut shown = defaults.clone();
             shown.geometry = shown.geometry.filter(|p| !hidden(p));
             shown.colour = shown.colour.filter(|p| !hidden(p));
@@ -363,10 +367,13 @@ pub(crate) async fn widget_defaults(
     axum::Json(serde_json::json!({ "map": map, "table": table })).into_response()
 }
 
-/// Whether a default filter names an attribute the projection hides: its terms' first segments.
+/// Whether a default filter names an attribute `hidden` withholds: the top-level attributes of
+/// its parsed paths, never its values. A filter that does not parse, or one that hops to a linked
+/// entity whose attributes this check cannot see, is dropped whole too.
 fn names_hidden(q: &str, hidden: &impl Fn(&str) -> bool) -> bool {
-    q.split(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .any(|word| !word.is_empty() && hidden(word))
+    antares_ql::parse_q(q).map_or(true, |node| {
+        node.has_linked_paths() || node.attribute_paths().into_iter().any(hidden)
+    })
 }
 
 /// This surface's routes; `app::router` merges them under its guards.

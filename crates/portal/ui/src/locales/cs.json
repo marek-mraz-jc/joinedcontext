@@ -1586,7 +1586,7 @@
       "open": "Otevřená",
       "custom": "Vlastní"
     },
-    "publicNotice": "Endpoint s veřejným publikem odpovídá anonymnímu volajícímu a ten smí pouze číst. Zápisy a odběry stále vyžadují přihlášení, ať jsou zapnuté kterékoli reprezentace.",
+    "publicNotice": "Endpoint s veřejným publikem odpovídá anonymním volajícím, kteří jen čtou. Jakmile slouží politice pro roli public nebo publikuje do katalogu, jsou to otevřená data, jen pro čtení pro každého: Portál odmítne politiku, kterou slouží a která zapisuje. Zapisujte přes interní endpoint téhož prostoru, např. s publikem Organizace a politikou, která povoluje updateAttrs.",
     "data": {
       "title": "Co tento endpoint odpovídá",
       "type": "Typ entity",
@@ -1866,7 +1866,11 @@
       "firstCallCopy": "Kopírovat příkaz",
       "firstCallPublic": "Volat ho může kdokoli, token není potřeba.",
       "filterUntouched": "Nejprve změňte filtr: je stejný jako uložený.",
-      "filterFaulty": "Nejprve opravte označená pole."
+      "filterFaulty": "Nejprve opravte označená pole.",
+      "openData": "Otevřená data: jen pro čtení",
+      "openDataHint": "Každý zápis přes tento Endpoint je odmítnut, pro každého. Vlastník dat zapisuje přes interní Endpoint prostoru, takový s publikem Organizace.",
+      "openDataWrite": "Tento Endpoint otevřených dat váže politiku, která zapisuje",
+      "openDataWriteHint": "Čtení pokračuje a každý zápis je odmítnut. V policyRefs uveďte jen politiky pro čtení, např. politiku public-read, nebo přesuňte zapisující politiku na interní Endpoint."
     },
     "condition": {
       "title": "Přidat podmínku",
@@ -8658,6 +8662,34 @@
       "noMatchHint": "Vymažte filtr nebo zvolte Každý stav a uvidíte i odvolané a vypršelé konektory.",
       "callsPerDay": "Volání za 24 hodin",
       "denialsPerDay": "Odmítnuté za 24 hodin"
+    },
+    "addresses": {
+      "title": "Adresy",
+      "lead": "Kde lidé a programy najdou každou organizaci, tak jak ji směruje toto nasazení. Nastavuje je operátor v jc.toml; nic se zde nezadává.",
+      "empty": "Nejsou uvedeny žádné adresy organizací",
+      "emptyHint": "Toto nasazení neuvádí žádné organizace s vlastními hostiteli. Operátor přidá každou pod [[organizations]] v jc.toml (například portal = \"portal.bbsk.sk\"); do té doby všichni používají vlastní adresu tohoto Portálu.",
+      "id": "ID organizace: {id}",
+      "noId": "ID organizace: zatím nenastaveno. Operátor jej vydá z ověřené domény organizace (z bbsk.sk vznikne sk_bbsk).",
+      "kind": {
+        "portal": "Portál",
+        "shared": "Cesta na sdíleném hostiteli",
+        "host": "Vlastní hostitel",
+        "portal-site": "Další portál",
+        "opendata": "Otevřená data",
+        "api": "API",
+        "mcp": "MCP servery",
+        "sign-in": "Přihlášení"
+      },
+      "hint": {
+        "portal": "Vlastní hostitel Portálu: zde lidé pracují v organizaci.",
+        "shared": "Cesta na hostiteli, kterého sdílejí organizace, např. https://smartcity.sk/sk_bbsk/; první segment je ID organizace.",
+        "host": "Vlastní hostitel vázaný na organizaci, např. data.bbsk.sk.",
+        "portal-site": "Další veřejný portál, který uvedl operátor, např. mobility.bbsk.sk.",
+        "opendata": "Katalog otevřených dat, čitelný bez přihlášení.",
+        "api": "Kde programy volají její Endpointy, např. …/api/endpoint/air-quality.",
+        "mcp": "Každý MCP server odpovídá na této adrese, za kterou následuje jeho projekt a název, např. …/api/mcp/doprava/cestovne-poriadky.",
+        "sign-in": "Poskytovatel identity, kde se její lidé přihlašují; hesla a druhé faktory se zadávají jen tam."
+      }
     }
   },
   "projectDelete": {

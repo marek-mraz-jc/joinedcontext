@@ -85,6 +85,8 @@ pub mod odata_ops;
 pub mod odata_org;
 pub mod opendata_pages;
 pub mod ops;
+pub mod organization_addresses;
+pub mod organization_ids;
 pub mod organization_limits;
 pub mod organization_widgets;
 pub mod people;
@@ -209,6 +211,8 @@ pub fn router() -> Router<AppState> {
         .merge(visualization_templates::router())
         .merge(organization_limits::router())
         .merge(opendata_pages::router())
+        .merge(organization_ids::router())
+        .merge(organization_addresses::router())
         .merge(organization_widgets::router())
         .merge(brokers::router())
         .merge(costs::router())

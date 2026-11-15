@@ -2786,6 +2786,202 @@
         }
       }
     },
+    "/api/v1/organization-ids": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Mint An Organization Id",
+        "description": "Mints the Organization id of a domain (`bbsk.sk` -> `sk_bbsk`) once its `_joinedcontext.{domain}` TXT record carries the challenge (EP-186, PF-41). A minted id is never renamed, released or reused (PF-78). Needs an operator who proved a second factor.",
+        "operationId": "mint",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MintRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The id is minted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Minted"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an operator, or no second factor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The id is minted already",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The domain gives no id, has no challenge yet, or its TXT record does not carry it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No database",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization-ids/challenge": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Ask For An Organization Id Challenge",
+        "description": "The TXT record an operator publishes to prove a domain before its Organization id is minted (EP-186, PF-41). The same domain always gets the same challenge. 409 naming organizationId when the id is minted already.",
+        "operationId": "request_challenge",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MintRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The record to publish",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Challenge"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an operator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The id is minted already",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The domain gives no id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No database",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/addresses": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List Organization Addresses",
+        "description": "Every address of each Organization the caller belongs to, as the deployment routes it: its own hosts, its /{id}/ path on a shared host, where its people sign in and its MCP servers (API/15 §2, EP-186). On an Organization's own host, that Organization alone.",
+        "operationId": "list_addresses",
+        "responses": {
+          "200": {
+            "description": "The caller's Organizations with their addresses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationAddresses"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/organization/agents": {
       "get": {
         "tags": [
@@ -45838,6 +46034,20 @@
         },
         "additionalProperties": false
       },
+      "AddressKind": {
+        "type": "string",
+        "description": "What answers at one address of an Organization (API/15 §2, T-7013).",
+        "enum": [
+          "portal",
+          "opendata",
+          "api",
+          "mcp",
+          "portal-site",
+          "host",
+          "shared",
+          "sign-in"
+        ]
+      },
       "Admission": {
         "type": "object",
         "description": "Whether the signed-in person reads Endpoint `name` through the gateway.",
@@ -49022,6 +49232,39 @@
           "writes": {
             "type": "boolean",
             "description": "Whether a connector of the caller may hold a write item."
+          }
+        }
+      },
+      "Challenge": {
+        "type": "object",
+        "description": "The record that proves the domain, to publish before the mint.",
+        "required": [
+          "domain",
+          "organizationId",
+          "name",
+          "value",
+          "record"
+        ],
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "The domain, e.g. `bbsk.sk`."
+          },
+          "name": {
+            "type": "string",
+            "description": "Where the TXT record goes, e.g. `_joinedcontext.bbsk.sk`."
+          },
+          "organizationId": {
+            "type": "string",
+            "description": "The id the mint gives it, e.g. `sk_bbsk`."
+          },
+          "record": {
+            "type": "string",
+            "description": "The whole record as a DNS zone writes it."
+          },
+          "value": {
+            "type": "string",
+            "description": "The TXT string, e.g. `jc-verify=3q2-...`. Not a secret: it is published in DNS."
           }
         }
       },
@@ -54377,6 +54620,46 @@
           }
         }
       },
+      "MintRequest": {
+        "type": "object",
+        "description": "The domain an operator mints an Organization id from.",
+        "required": [
+          "domain"
+        ],
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "The Organization's own domain, lowercase, e.g. `bbsk.sk`; its id is `sk_bbsk`."
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "domain": "bbsk.sk"
+        }
+      },
+      "Minted": {
+        "type": "object",
+        "description": "A minted Organization id.",
+        "required": [
+          "organizationId",
+          "domain",
+          "mintedAt"
+        ],
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "The domain that proved it, e.g. `bbsk.sk`."
+          },
+          "mintedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "organizationId": {
+            "type": "string",
+            "description": "The id, e.g. `sk_bbsk`: the shared-host path segment and the owner segment of its URNs."
+          }
+        }
+      },
       "ModelChange": {
         "type": "object",
         "description": "Single detected difference between the published model and the candidate LinkML source.",
@@ -55350,6 +55633,71 @@
           "write",
           "history"
         ]
+      },
+      "OrganizationAddress": {
+        "type": "object",
+        "description": "One address: what answers and where.",
+        "required": [
+          "kind",
+          "url"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/AddressKind"
+          },
+          "url": {
+            "type": "string",
+            "description": "The address, e.g. `https://portal.bbsk.sk/` or `https://smartcity.sk/sk_bbsk/`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "OrganizationAddressList": {
+        "type": "object",
+        "description": "The addresses of one Organization.",
+        "required": [
+          "organization",
+          "title",
+          "addresses"
+        ],
+        "properties": {
+          "addresses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrganizationAddress"
+            }
+          },
+          "organization": {
+            "type": "string",
+            "description": "The Organization's name, e.g. `bbsk`."
+          },
+          "organizationId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its id, e.g. `sk_bbsk` (EP-186); absent until the operator sets one."
+          },
+          "title": {
+            "type": "string",
+            "description": "The title people know it by, e.g. `Banskobystrický kraj`; its name when it has none."
+          }
+        }
+      },
+      "OrganizationAddresses": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrganizationAddressList"
+            },
+            "description": "One entry per Organization the caller belongs to, by name; empty when the deployment\nlists no Organization addresses."
+          }
+        }
       },
       "OrganizationLimits": {
         "type": "object",

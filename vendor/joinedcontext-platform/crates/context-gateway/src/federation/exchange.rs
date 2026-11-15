@@ -68,20 +68,26 @@ struct Issued {
 
 impl Exchanger {
     /// An exchanger asking `token_url` as `client_id`, proven by `credential` (PF-47).
-    pub fn new(token_url: String, client_id: String, credential: ClientCredential) -> Self {
+    ///
+    /// Errs when the client cannot be built: a default client in its place would follow
+    /// redirects and wait forever.
+    pub fn new(
+        token_url: String,
+        client_id: String,
+        credential: ClientCredential,
+    ) -> Result<Self, reqwest::Error> {
         // No redirect: the form carries the caller's token and this client's secret, and a 307
         // or 308 would send both on to whatever host the answer names (T-3591).
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap_or_default();
-        Self {
+            .build()?;
+        Ok(Self {
             http,
             token_url,
             client_id,
             credential,
-        }
+        })
     }
 
     /// The scope string that names `brokers`' audiences, one `context-broker-{name}` each.
@@ -188,6 +194,7 @@ mod tests {
             "context-gateway".to_owned(),
             ClientCredential::Secret(jc_core::Secret::new("s3cret")),
         )
+        .expect("a client builds")
     }
 
     fn brokers(names: &[&str]) -> BTreeSet<String> {

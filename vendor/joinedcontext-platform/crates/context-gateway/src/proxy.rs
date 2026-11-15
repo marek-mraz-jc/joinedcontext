@@ -53,7 +53,18 @@ pub struct Broker {
     /// A header every hop to a broker carries, set by the host and never by a client: `jc`'s
     /// private broker listener admits the gateway by it ([`Broker::with_hop_header`]).
     hop: Option<(HeaderName, axum::http::HeaderValue)>,
+    /// How long the broker has to start its answer ([`BROKER_ANSWER`]).
+    answer_within: std::time::Duration,
 }
+
+/// How long a connection to the broker may take to open (COD-08).
+const BROKER_CONNECT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How long the broker has to send an answer's status and headers, for every request the
+/// gateway forwards (COD-08): a hung broker otherwise holds the caller's in-flight slot and
+/// write permit for good. The body then streams without this bound (a file download). Writes
+/// arrive buffered, so a slow client's upload is not counted here.
+const BROKER_ANSWER: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// The broker address of each space (by tenant) and each view (by name) whose broker is not
 /// `main`; `None` is a broker with no address, refused rather than sent to `main`.
@@ -86,6 +97,9 @@ pub enum ProxyError {
     /// The broker did not answer.
     #[error("the broker did not answer: {0}")]
     Unreachable(String),
+    /// The broker did not begin its answer within [`BROKER_ANSWER`].
+    #[error("the broker did not answer within {0:?}")]
+    Timeout(std::time::Duration),
     /// The request names a JSON-LD context other than the core one (T-3287).
     #[error("{0}")]
     Context(&'static str),
@@ -106,6 +120,12 @@ impl From<ProxyError> for ProblemDetails {
         // The caller learns that the platform, not their request, is at fault, and nothing
         // about the topology behind the endpoint.
         tracing::error!(%error, "forwarding failed");
+        if let ProxyError::Timeout(_) = error {
+            return ProblemDetails::new(504, "upstream-unavailable", "Broker Timeout").with_detail(
+                "the data broker did not answer in time; the request may still complete, so \
+                 read the resource before sending a write again",
+            );
+        }
         ProblemDetails::new(502, "upstream-unavailable", "Broker Unavailable")
     }
 }
@@ -247,18 +267,22 @@ impl Broker {
         let tls = rustls::ClientConfig::builder()
             .with_root_certificates(roots)
             .with_no_client_auth();
+        let mut http = HttpConnector::new();
+        http.enforce_http(false);
+        http.set_connect_timeout(Some(BROKER_CONNECT));
         let connector = hyper_rustls::HttpsConnectorBuilder::new()
             .with_tls_config(tls)
             // Plain HTTP stays available: the broker hop is in-cluster and never TLS.
             .https_or_http()
             .enable_http1()
-            .build();
+            .wrap_connector(http);
         Self {
             client: Client::builder(TokioExecutor::new()).build(connector),
             base: base.into(),
             template: None,
             routes: Default::default(),
             hop: None,
+            answer_within: BROKER_ANSWER,
         }
     }
 
@@ -356,9 +380,12 @@ impl Broker {
             .map_err(|e| ProxyError::Uri(e.to_string()))?;
 
         let started = std::time::Instant::now();
-        let response = self.client.request(request).await;
+        let response = tokio::time::timeout(self.answer_within, self.client.request(request))
+            .await
+            .map_err(|_| ProxyError::Timeout(self.answer_within))
+            .and_then(|answer| answer.map_err(|e| ProxyError::Unreachable(e.to_string())));
         crate::telemetry::broker_round_trip(started.elapsed().as_secs_f64(), response.is_ok());
-        let response = response.map_err(|e| ProxyError::Unreachable(e.to_string()))?;
+        let response = response?;
 
         let (parts, body) = response.into_parts();
         let mut answer = Response::builder().status(parts.status);
@@ -451,6 +478,7 @@ pub fn with_body(
 mod tests {
     use super::*;
     use axum::http::HeaderValue;
+    use std::time::Duration;
 
     #[test]
     fn the_hop_header_replaces_a_clients_and_never_prints() {
@@ -548,6 +576,63 @@ mod tests {
             1
         );
         assert_eq!(roots.len(), 2);
+    }
+
+    /// COD-08: a broker that accepts and never answers ends in a 504 at the answer deadline,
+    /// for a write as for a read; one that answers in time is relayed.
+    #[tokio::test]
+    async fn a_broker_that_never_answers_is_a_timeout_and_one_that_answers_is_relayed() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listen = |answer: Option<&'static [u8]>| async move {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("a port");
+            let addr = listener.local_addr().expect("an address");
+            tokio::spawn(async move {
+                while let Ok((mut socket, _)) = listener.accept().await {
+                    tokio::spawn(async move {
+                        let mut buf = [0u8; 4096];
+                        let _ = socket.read(&mut buf).await;
+                        match answer {
+                            Some(answer) => {
+                                let _ = socket.write_all(answer).await;
+                            }
+                            None => tokio::time::sleep(Duration::from_secs(30)).await,
+                        }
+                    });
+                }
+            });
+            let mut broker = Broker::new(format!("http://{addr}"));
+            broker.answer_within = Duration::from_millis(200);
+            broker
+        };
+        let hung = listen(None).await;
+        let error = hung
+            .send(
+                Method::PATCH,
+                "/ngsi-ld/v1/entities/urn:ngsi-ld:T:1/attrs",
+                HeaderMap::new(),
+                Body::from("{}"),
+            )
+            .await
+            .expect_err("no answer");
+        assert!(matches!(error, ProxyError::Timeout(_)), "{error:?}");
+        assert_eq!(ProblemDetails::from(error).status, 504);
+
+        let answering = listen(Some(
+            b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\n\r\n",
+        ))
+        .await;
+        let answer = answering
+            .send(
+                Method::PATCH,
+                "/ngsi-ld/v1/entities/urn:ngsi-ld:T:1/attrs",
+                HeaderMap::new(),
+                Body::from("{}"),
+            )
+            .await
+            .expect("an answer");
+        assert_eq!(answer.status(), StatusCode::NO_CONTENT);
     }
 
     #[tokio::test]

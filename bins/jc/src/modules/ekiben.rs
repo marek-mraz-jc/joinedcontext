@@ -829,7 +829,7 @@ mod tests {
         assert_eq!(vars["JC_GATEWAY_HOST"], "127.0.0.1:8443");
         assert_eq!(
             vars["JC_TOKEN_URL"],
-            "https://city.example/id/realms/jc/protocol/openid-connect/token"
+            "https://city.example/login/realms/jc/protocol/openid-connect/token"
         );
         // The domain first-start provisioning gives the Organization.
         assert_eq!(vars["JC_ORG_DOMAIN"], "city.example");
@@ -885,11 +885,11 @@ mod tests {
             "http://127.0.0.1:8443/api/endpoint/abc/ngsi-ld/v1/entityOperations/upsert"
         ));
         assert!(admits(
-            "http://127.0.0.1:8443/id/realms/jc/protocol/openid-connect/token"
+            "http://127.0.0.1:8443/login/realms/jc/protocol/openid-connect/token"
         ));
         for refused in [
             "http://127.0.0.1:8443/broker/ngsi-ld/v1/entities",
-            "http://127.0.0.1:8443/id/admin/realms/jc/users",
+            "http://127.0.0.1:8443/login/admin/realms/jc/users",
             "http://127.0.0.1:8443/streams/streams",
             "http://127.0.0.1:8443/api/v1/projects",
             "http://127.0.0.1:8443/api/mcp",

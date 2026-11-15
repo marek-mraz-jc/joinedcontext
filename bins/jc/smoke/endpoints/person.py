@@ -97,7 +97,7 @@ def cmd_token(a) -> int:
     s = {"username": USER, "client_id": CLIENT, "password": (d / PASSWORD_FILE).read_text().strip(),
          "client_secret": (d / SECRET_FILE).read_text().strip()}
     st, _, raw = Http(a.base_url).call(
-        "POST", f"/id/realms/{realm_of(a.state)}/protocol/openid-connect/token",
+        "POST", f"/login/realms/{realm_of(a.state)}/protocol/openid-connect/token",
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         body=urllib.parse.urlencode({"grant_type": "password", "client_id": s["client_id"],
                                      "client_secret": s["client_secret"], "username": s["username"],

@@ -632,6 +632,10 @@ pub async fn build_router(
     if let Some(table) = host_table(cfg, &plans)? {
         builder = builder.hosts(table);
     }
+    if let Some(spec) = old_sign_in_spec(cfg) {
+        let old = old_sign_in(cfg.scheme.clone(), cfg.base_host.clone());
+        builder = builder.mount(spec, access::layer(Module::Kaisatsu.name(), old));
+    }
     let mut portal = None;
     // Filled when the Portal's plan comes; the forge's public mount hands it the read door before.
     let portal_slot = LateRouter::default();
@@ -791,6 +795,42 @@ pub async fn build_router(
         portal,
         gateway,
     })
+}
+
+/// T-7006: the entry of kaisatsu's old slug (`/id`), in slug mode where kaisatsu has its
+/// default mount here. A configured `[mounts.kaisatsu]` places the sign-in itself and gets none.
+fn old_sign_in_spec(cfg: &Config) -> Option<MountSpec> {
+    (matches!(cfg.mode, MountMode::Slug)
+        && cfg.roles.contains(&Module::Kaisatsu)
+        && !cfg.mounts.contains_key(&Module::Kaisatsu))
+    .then(|| MountSpec {
+        module: Module::Kaisatsu.name().to_owned(),
+        host: None,
+        path_prefix: Some(format!("/{}", Module::KAISATSU_OLD_SLUG)),
+    })
+}
+
+/// T-7006: `/id/{rest}?{query}` answers `308` to `/login/{rest}?{query}`, method and body kept.
+/// The Location is absolute on the configured scheme and base host, where slug mode's default
+/// kaisatsu mount and its issuer live: no request header, a trusted edge's `X-Forwarded-Host`
+/// included, ever becomes the target, and the Location is never `//...`. Only the
+/// Organization's path segment comes from the matched mount.
+fn old_sign_in(scheme: String, host: String) -> Router {
+    Router::new().fallback(
+        move |axum::Extension(mount): axum::Extension<Mount>, uri: axum::http::Uri| {
+            let old = format!("/{}", Module::KAISATSU_OLD_SLUG);
+            let base = mount
+                .path_prefix
+                .strip_suffix(old.as_str())
+                .unwrap_or(&mount.path_prefix);
+            let rest = uri.path_and_query().map_or("/", |pq| pq.as_str());
+            let location = format!("{scheme}://{host}{base}/{}{rest}", Module::Kaisatsu.slug());
+            std::future::ready((
+                StatusCode::PERMANENT_REDIRECT,
+                [(header::LOCATION, location)],
+            ))
+        },
+    )
 }
 
 /// The forge's public mount in host mode (T-6896): a clone's two requests,
@@ -1551,6 +1591,7 @@ mod tests {
                 placed.insert(m.host.split('.').next().unwrap_or(m.host).to_owned());
             }
         }
+        placed.insert(Module::KAISATSU_OLD_SLUG.to_owned());
         for module in Module::ALL {
             placed.insert(module.slug().to_owned());
             placed.insert(module.host_label().to_owned());
@@ -1693,6 +1734,87 @@ mod tests {
             let (_, body) = routed(&plans, host, path).await;
             assert!(!body.starts_with("shako"), "{host}{path}: {body}");
         }
+    }
+
+    /// T-7006: kaisatsu answers at `/login`; its old slug `/id` answers `308` to the same path
+    /// and query there, on the base host whatever Host or X-Forwarded-Host a caller sends.
+    #[tokio::test]
+    async fn the_old_sign_in_slug_answers_308_on_the_base_host() {
+        let cfg = dev_config("all", "mode = \"slug\"\nbase_host = \"city.test\"\n");
+        let plans = plan_mounts(&cfg).unwrap();
+        let kaisatsu = plans.iter().find(|p| p.module == Module::Kaisatsu).unwrap();
+        assert_eq!(kaisatsu.spec.path_prefix.as_deref(), Some("/login"));
+        assert_eq!(
+            kaisatsu.mount.realm_issuer("jc"),
+            "https://city.test/login/realms/jc"
+        );
+        let mut builder = JcRouterBuilder::new("https", "city.test");
+        for plan in &plans {
+            let name = plan.module.name();
+            let router = Router::new()
+                .fallback(move |uri: axum::http::Uri| async move { format!("{name} {uri}") });
+            builder = mount_all(builder, plan, &router);
+        }
+        let old = old_sign_in(cfg.scheme.clone(), cfg.base_host.clone());
+        builder = builder
+            .trust_proxy("10.0.0.0/8".parse().unwrap())
+            .mount(old_sign_in_spec(&cfg).unwrap(), old);
+        let router = builder.build().unwrap();
+        let send = |method: &str, path: &str| {
+            Request::builder()
+                .method(method)
+                .uri(path)
+                .header(header::HOST, "evil.example")
+                .header("x-forwarded-host", "evil.example")
+                .header("x-forwarded-proto", "http")
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+        for (method, path, location) in [
+            ("GET", "/id/x?y=1", "https://city.test/login/x?y=1"),
+            (
+                "POST",
+                "/id/realms/jc/protocol/openid-connect/token",
+                "https://city.test/login/realms/jc/protocol/openid-connect/token",
+            ),
+            ("GET", "/id", "https://city.test/login/"),
+            (
+                "GET",
+                "/id//evil.example/x",
+                "https://city.test/login//evil.example/x",
+            ),
+        ] {
+            // A direct caller and a trusted edge forwarding a spoofed X-Forwarded-Host alike.
+            for peer in [None, Some("10.1.2.3".parse().unwrap())] {
+                let resp = router.dispatch(send(method, path), peer).await;
+                assert_eq!(
+                    resp.status(),
+                    StatusCode::PERMANENT_REDIRECT,
+                    "{path} {peer:?}"
+                );
+                assert_eq!(
+                    resp.headers()[header::LOCATION],
+                    location,
+                    "{path} {peer:?}"
+                );
+            }
+        }
+        // The new slug is kaisatsu's; a segment that only starts with `id` is not the old slug.
+        let resp = router.dispatch(send("GET", "/login/realms/jc"), None).await;
+        let body = axum::body::to_bytes(resp.into_body(), 1 << 16)
+            .await
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&body), "kaisatsu /realms/jc");
+        let resp = router.dispatch(send("GET", "/identity"), None).await;
+        assert_ne!(resp.status(), StatusCode::PERMANENT_REDIRECT);
+        // A configured kaisatsu mount and host mode place the sign-in themselves: no old slug.
+        let configured = dev_config(
+            "all",
+            "mode = \"slug\"\nbase_host = \"city.test\"\n[mounts.kaisatsu]\npath_prefix = \"/sso\"\n",
+        );
+        assert_eq!(old_sign_in_spec(&configured), None);
+        let host = dev_config("all", "mode = \"host\"\nbase_host = \"city.test\"\n");
+        assert_eq!(old_sign_in_spec(&host), None);
     }
 
     /// T-6896: the forge's public mount in host mode hands the Portal a clone's two requests at
@@ -1928,8 +2050,8 @@ mod tests {
                     ("opendata", "/portal/x", "dataroom /portal/x".to_owned()),
                     (
                         "opendata",
-                        "/id/realms/x",
-                        "dataroom /id/realms/x".to_owned(),
+                        "/login/realms/x",
+                        "dataroom /login/realms/x".to_owned(),
                     ),
                     (
                         "api",
@@ -2142,15 +2264,24 @@ mod tests {
             let err = org_refusal(&format!("{host_mode}{extra}{TWO_ORGS}"));
             assert!(err.contains(says), "{extra}: {err}");
         }
-        // A mode default host: host mode places dataroom on opendata.{base_host}.
+        // A mode default host: host mode places daiya on dashboards.{base_host}. Kaisatsu's
+        // default host is login_host's too, which refuses it first (T-7006).
         let err = org_refusal(&format!(
             "{host_mode}{}",
-            TWO_ORGS.replace("opendata.alpha.test", "id.city.test")
+            TWO_ORGS.replace("opendata.alpha.test", "dashboards.city.test")
         ));
-        assert!(
-            err.contains("also used by another mount (kaisatsu)"),
-            "{err}"
+        assert!(err.contains("also used by another mount (daiya)"), "{err}");
+        let file = format!(
+            "{host_mode}{}",
+            TWO_ORGS.replace("opendata.alpha.test", "login.city.test")
         );
+        let file = Config::parse_file(std::path::Path::new("jc.toml"), &file).unwrap();
+        let cli = crate::config::Cli {
+            role: Some("kaisatsu,portal".into()),
+            ..crate::config::Cli::default()
+        };
+        let err = Config::merge(cli, file).unwrap_err().to_string();
+        assert!(err.contains("also a host of login_host"), "{err}");
     }
 
     #[cfg(feature = "portal")]

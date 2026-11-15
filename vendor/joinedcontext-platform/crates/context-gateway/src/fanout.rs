@@ -31,6 +31,11 @@ const CELL: f64 = 0.01;
 /// the filter is matched by its types instead, the entity is a candidate for every geo filter.
 const MAX_CELLS: usize = 4096;
 
+/// The grid cells one [`Index`] holds at most, over all its filters: a filter whose cells would
+/// pass it is matched by its types instead, so many distinct areas cannot grow one hub's grid
+/// without bound (a connection holds 64 filters of up to [`MAX_CELLS`] cells each).
+const MAX_GRID_CELLS: usize = 16_384;
+
 /// Metres per degree of latitude.
 const METRES_PER_DEGREE: f64 = 111_320.0;
 
@@ -400,6 +405,8 @@ pub struct Index {
     upper: HashMap<String, BTreeMap<Bound, BTreeSet<FilterId>>>,
     grid: HashMap<(i32, i32), BTreeSet<FilterId>>,
     on_grid: BTreeSet<FilterId>,
+    /// The cells the filters on the grid hold together, at most [`MAX_GRID_CELLS`].
+    placed: usize,
 }
 
 impl Index {
@@ -419,8 +426,14 @@ impl Index {
     }
 
     /// Adds a filter under `id`, replacing the one held there (`x-update`).
-    pub fn insert(&mut self, id: FilterId, filter: Filter) {
+    pub fn insert(&mut self, id: FilterId, mut filter: Filter) {
         self.remove(id);
+        if let Key::Cells(cells) = &filter.key {
+            if self.placed + cells.len() > MAX_GRID_CELLS {
+                let entities = filter.sub.get("entities").and_then(Value::as_array);
+                filter.key = types_key(entities.map(Vec::as_slice));
+            }
+        }
         match &filter.key {
             Key::Any => {
                 self.any.insert(id);
@@ -456,6 +469,7 @@ impl Index {
                 for cell in cells {
                     self.grid.entry(*cell).or_default().insert(id);
                 }
+                self.placed += cells.len();
                 self.on_grid.insert(id);
             }
         }
@@ -511,6 +525,7 @@ impl Index {
                 for cell in cells {
                     drop_from(&mut self.grid, cell, id);
                 }
+                self.placed -= cells.len();
                 self.on_grid.remove(&id);
             }
         }
@@ -925,6 +940,44 @@ mod tests {
             .expect("held")
             .sent(chrono::Utc::now() - chrono::Duration::seconds(61));
         assert_eq!(index.notified(&b, Some(&a), &ctx()), [1]);
+    }
+
+    /// PRF-04: distinct areas place at most [`MAX_GRID_CELLS`] cells on one hub's grid; a filter
+    /// past the budget is matched by its types and still notifies a change inside its area.
+    #[test]
+    fn the_grid_holds_a_bounded_number_of_cells_and_a_filter_past_it_still_matches() {
+        let area = |n: u32| {
+            let (west, south) = (f64::from(n) * 0.7, 10.0);
+            sub(
+                json!({"geoQ": {"georel": "within", "geometry": "Polygon", "coordinates": [[
+                [west, south], [west + 0.6, south], [west + 0.6, south + 0.6],
+                [west, south + 0.6], [west, south]]]}}),
+            )
+        };
+        let mut index = Index::default();
+        for n in 0..64u32 {
+            index.insert(u64::from(n), filter(area(n)));
+        }
+        assert!(
+            index.placed <= MAX_GRID_CELLS,
+            "{} cells placed",
+            index.placed
+        );
+        assert!(
+            index.grid.len() <= MAX_GRID_CELLS,
+            "{} grid entries",
+            index.grid.len()
+        );
+        let inside_last = vehicle(1, 1.0, "bus", 63.0 * 0.7 + 0.3, 10.3);
+        assert!(index.candidates(&inside_last, &ctx()).contains(&63));
+        assert!(index.decides(63, &inside_last, (&BTreeSet::new(), true), &ctx()));
+        let inside_first = vehicle(2, 1.0, "bus", 0.3, 10.3);
+        assert!(index.candidates(&inside_first, &ctx()).contains(&0));
+        for n in 0..64 {
+            assert!(index.remove(n).is_some());
+        }
+        assert_eq!(index.placed, 0);
+        assert!(index.grid.is_empty() && index.by_type.is_empty());
     }
 
     #[test]

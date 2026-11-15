@@ -889,6 +889,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/organization-ids": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint An Organization Id
+         * @description Mints the Organization id of a domain (`bbsk.sk` -> `sk_bbsk`) once its `_joinedcontext.{domain}` TXT record carries the challenge (EP-186, PF-41). A minted id is never renamed, released or reused (PF-78). Needs an operator who proved a second factor.
+         */
+        post: operations["mint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization-ids/challenge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask For An Organization Id Challenge
+         * @description The TXT record an operator publishes to prove a domain before its Organization id is minted (EP-186, PF-41). The same domain always gets the same challenge. 409 naming organizationId when the id is minted already.
+         */
+        post: operations["request_challenge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/addresses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Organization Addresses
+         * @description Every address of each Organization the caller belongs to, as the deployment routes it: its own hosts, its /{id}/ path on a shared host, where its people sign in and its MCP servers (API/15 §2, EP-186). On an Organization's own host, that Organization alone.
+         */
+        get: operations["list_addresses"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/organization/agents": {
         parameters: {
             query?: never;
@@ -8018,6 +8078,11 @@ export interface components {
             /** @description One of the role's publish filters; required when the role publishes. */
             topic?: string | null;
         };
+        /**
+         * @description What answers at one address of an Organization (API/15 §2, T-7013).
+         * @enum {string}
+         */
+        AddressKind: "portal" | "opendata" | "api" | "mcp" | "portal-site" | "host" | "shared" | "sign-in";
         /** @description Whether the signed-in person reads Endpoint `name` through the gateway. */
         Admission: {
             /**
@@ -9120,6 +9185,19 @@ export interface components {
             segments: string[];
             /** @description Whether a connector of the caller may hold a write item. */
             writes: boolean;
+        };
+        /** @description The record that proves the domain, to publish before the mint. */
+        Challenge: {
+            /** @description The domain, e.g. `bbsk.sk`. */
+            domain: string;
+            /** @description Where the TXT record goes, e.g. `_joinedcontext.bbsk.sk`. */
+            name: string;
+            /** @description The id the mint gives it, e.g. `sk_bbsk`. */
+            organizationId: string;
+            /** @description The whole record as a DNS zone writes it. */
+            record: string;
+            /** @description The TXT string, e.g. `jc-verify=3q2-...`. Not a secret: it is published in DNS. */
+            value: string;
         };
         /** @description The `Change` resource describing a proposed configuration update. */
         Change: {
@@ -11153,6 +11231,25 @@ export interface components {
              */
             unresolved: string[];
         };
+        /**
+         * @description The domain an operator mints an Organization id from.
+         * @example {
+         *       "domain": "bbsk.sk"
+         *     }
+         */
+        MintRequest: {
+            /** @description The Organization's own domain, lowercase, e.g. `bbsk.sk`; its id is `sk_bbsk`. */
+            domain: string;
+        };
+        /** @description A minted Organization id. */
+        Minted: {
+            /** @description The domain that proved it, e.g. `bbsk.sk`. */
+            domain: string;
+            /** Format: date-time */
+            mintedAt: string;
+            /** @description The id, e.g. `sk_bbsk`: the shared-host path segment and the owner segment of its URNs. */
+            organizationId: string;
+        };
         /** @description Single detected difference between the published model and the candidate LinkML source. */
         ModelChange: {
             reason: string;
@@ -11531,6 +11628,29 @@ export interface components {
          * @enum {string}
          */
         Operations: "read" | "write" | "history";
+        /** @description One address: what answers and where. */
+        OrganizationAddress: {
+            kind: components["schemas"]["AddressKind"];
+            /** @description The address, e.g. `https://portal.bbsk.sk/` or `https://smartcity.sk/sk_bbsk/`. */
+            url: string;
+        };
+        /** @description The addresses of one Organization. */
+        OrganizationAddressList: {
+            addresses: components["schemas"]["OrganizationAddress"][];
+            /** @description The Organization's name, e.g. `bbsk`. */
+            organization: string;
+            /** @description Its id, e.g. `sk_bbsk` (EP-186); absent until the operator sets one. */
+            organizationId?: string | null;
+            /** @description The title people know it by, e.g. `Banskobystrický kraj`; its name when it has none. */
+            title: string;
+        };
+        OrganizationAddresses: {
+            /**
+             * @description One entry per Organization the caller belongs to, by name; empty when the deployment
+             *     lists no Organization addresses.
+             */
+            items: components["schemas"]["OrganizationAddressList"][];
+        };
         OrganizationLimits: {
             entries: components["schemas"]["LimitEntry"][];
             projects: components["schemas"]["ProjectQuota"][];
@@ -16084,6 +16204,173 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    mint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MintRequest"];
+            };
+        };
+        responses: {
+            /** @description The id is minted */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Minted"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not an operator, or no second factor */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The id is minted already */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The domain gives no id, has no challenge yet, or its TXT record does not carry it */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No database */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    request_challenge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MintRequest"];
+            };
+        };
+        responses: {
+            /** @description The record to publish */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Challenge"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not an operator */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The id is minted already */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The domain gives no id */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No database */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    list_addresses: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's Organizations with their addresses */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationAddresses"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
             };
         };
     };

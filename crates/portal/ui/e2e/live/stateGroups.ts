@@ -70,7 +70,7 @@ export const NARROW_GRANTS: Record<string, string> = {
 export const SHARED_SEEDS: Record<string, string> = {
   helsinki: "the seeded project every journey works in; each names what it makes after its task or its start time",
   "helsinki-events": "a seeded Endpoint and App the specs only read",
-  "urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all": "the seeded write target; the pipelines aimed at it are each spec's own",
+  "urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all-write": "the seeded write door of the helsinki space (T-6980); the pipelines aimed at it are each spec's own",
 };
 
 /** A Playwright project per group, one for the free specs and the exclusive one last. */
