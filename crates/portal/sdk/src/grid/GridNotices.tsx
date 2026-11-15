@@ -2,6 +2,7 @@ import React, { useRef, useState } from "react";
 import { FilterChips } from "./AutoFilter";
 import { TypeChoiceCell } from "./GridFilterRow";
 import { GridPending } from "./GridReview";
+import { DEFAULT_LABELS } from "./useEntityGrid";
 import type { GridLabels } from "./useEntityGrid";
 import type { GridView } from "./useGridView";
 
@@ -51,9 +52,16 @@ export function GridNotices({ view }: { view: GridView }): React.JSX.Element {
 
 /** The grid with nothing to show yet: no rows, still reading, or the read failed. */
 export function GridStatus({ view }: { view: GridView }): React.JSX.Element {
-  const { props, grid, labels, filterable } = view;
+  const { props, grid, labels, filterable, activeFilters, asText } = view;
   const { rows, loading, error } = grid;
   const { typeChoice, empty: emptySlot } = props;
+  // The person's own filters, typed query or drawn area left no row: say so, and undo them in one click (T-7063).
+  const narrowedByPerson = activeFilters > 0 || asText;
+  const clearAll = () => {
+    grid.setFilter(Object.keys(grid.state.filters), undefined);
+    if (asText) grid.setFilterText(null);
+    if (grid.area) grid.setArea(null);
+  };
   return (
     <>
       {!loading && rows.length === 0 && !error && (
@@ -61,6 +69,14 @@ export function GridStatus({ view }: { view: GridView }): React.JSX.Element {
           {/* A type with no rows and no model has no filter row: the way to another type stays. */}
           {typeChoice && filterable.size === 0 && <TypeChoiceCell choice={typeChoice} />}
           {emptySlot ?? labels.empty}
+          {narrowedByPerson && (
+            <p className="jc-grid-empty-hint">
+              <span>{labels.filtersMatchNothing ?? DEFAULT_LABELS.filtersMatchNothing}</span>
+              <button type="button" className="jc-grid-arrange-btn" onClick={clearAll}>
+                {labels.clearFilters}
+              </button>
+            </p>
+          )}
         </div>
       )}
 

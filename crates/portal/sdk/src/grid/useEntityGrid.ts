@@ -43,6 +43,10 @@ export interface GridLabels {
   unit: string;
   datasetId: string;
   empty: string;
+  /** Under the empty state when the person's own filters left no row, beside a one-click clear (T-7063). */
+  filtersMatchNothing?: string;
+  /** Before the source's sentence on a refused write in the review: "not saved" (T-7063). */
+  notSaved?: string;
   loading: string;
   /** Said over the dimmed rows while a narrowed question is read again (T-5623). */
   filtering: string;
@@ -113,6 +117,8 @@ export interface GridLabels {
   busy: string;
   /** In place of the source's own words when its answer timed out (408, 504). */
   timedOut: string;
+  /** In place of the source's own words when it could not be reached at all (status 0, T-7063). */
+  unreachable?: string;
   /** What the footer calls the endpoint's own count of matching entities: a word after the number, or a
    *  text holding `{n}` where the number goes, for a language whose word agrees with it (sk "Vyhovuje: {n}"). */
   matching: string;
@@ -328,6 +334,8 @@ export const DEFAULT_LABELS: GridLabels = {
   unit: "Unit",
   datasetId: "Dataset",
   empty: "No rows.",
+  filtersMatchNothing: "None of the rows match your filters.",
+  notSaved: "not saved",
   loading: "Loading…",
   filtering: "Filtering…",
   previous: "Previous",
@@ -385,6 +393,7 @@ export const DEFAULT_LABELS: GridLabels = {
   retry: "Try again",
   busy: "the data source is busy right now",
   timedOut: "the data source took too long to answer",
+  unreachable: "the data source could not be reached; check your connection and try again",
   matching: "matching",
   noTotal: "the endpoint gives no total for this answer",
   rowsShown: "Rows {first}–{last}",
@@ -690,9 +699,14 @@ export function refusalOf(err: unknown): GridRefusal | null {
  * The line under a failed read: a busy or timed-out source is said in the grid's language, its own
  * sentence (often English) only under the "What the broker said" disclosure.
  */
-export function failureOf(err: unknown, labels: Pick<GridLabels, "busy" | "timedOut">): { error: string; detail: string | null } {
+export function failureOf(
+  err: unknown,
+  labels: Pick<GridLabels, "busy" | "timedOut"> & Partial<Pick<GridLabels, "unreachable">>,
+): { error: string; detail: string | null } {
   const said = err instanceof Error ? err.message : String(err);
   if (!(err instanceof SourceError)) return { error: said, detail: null };
+  // No answer at all (a dropped connection, a blocked request): the transport's own words go under the disclosure.
+  if (err.status === 0) return { error: labels.unreachable ?? DEFAULT_LABELS.unreachable ?? said, detail: said };
   if (err.status === 429 || err.status === 503) return { error: labels.busy, detail: said };
   if (err.status === 408 || err.status === 504) return { error: labels.timedOut, detail: said };
   return { error: said, detail: null };
@@ -921,6 +935,15 @@ function holdsLanguage(rows: RichRow[], attr: string): boolean {
  */
 const refusesOrder = new WeakSet<EntitySource>();
 
+/** What a page sort compares: an attribute's text, or the entity's own id, type and timestamps (T-7063). */
+function sortText(row: RichRow, attr: string): string {
+  if (attr === "id") return row.id;
+  if (attr === "entity:type") return row.type;
+  if (attr === "entity:createdAt") return row.createdAt ?? "";
+  if (attr === "entity:modifiedAt") return row.modifiedAt ?? "";
+  return cellText(row.cells[attr]);
+}
+
 /** A narrowed read still brings what the computed columns read, or they would stay empty. */
 function withReads(attrs: string[] | undefined, formulas: readonly { reads: string[] }[]): string[] | undefined {
   if (attrs === undefined) return undefined;
@@ -938,7 +961,7 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
   const hiddenKey = (hidden ?? []).join("\u0000");
   const labels = useMemo(() => mergeLabels(DEFAULT_LABELS, labelsPartial), [labelsPartial]);
   // The reads depend on these strings, not on `labels`: an inline labels prop is a new object each render.
-  const { queryRefused, busy, timedOut } = labels;
+  const { queryRefused, busy, timedOut, unreachable } = labels;
 
   // Internal state (uncontrolled)
   const [internalOffset, setInternalOffset] = useState(0);
@@ -1028,8 +1051,10 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
   const sortedRows = useMemo(() => {
     if (keys.length === 0 || serverOrder) return rows;
     const compare = (key: SortKey, a: RichRow, b: RichRow) => {
-      const x = cellText(a.cells[key.attr]);
-      const y = cellText(b.cells[key.attr]);
+      const x = sortText(a, key.attr);
+      const y = sortText(b, key.attr);
+      // A row without the value comes after every row with one, either way, as the broker orders it (T-7063).
+      if (x === "" || y === "") return x === y ? 0 : x === "" ? 1 : -1;
       const nx = Number(x);
       const ny = Number(y);
       const byNumber = x !== "" && y !== "" && !Number.isNaN(nx) && !Number.isNaN(ny);
@@ -1235,13 +1260,13 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
           setError(err.problem.title ? `${queryRefused}: ${err.problem.title}` : queryRefused);
           setErrorDetail(err.problem.detail ?? null);
         } else {
-          const failed = failureOf(err, { busy, timedOut });
+          const failed = failureOf(err, { busy, timedOut, unreachable });
           setError(failed.error);
           setErrorDetail(failed.detail);
         }
         setLoading(false);
       });
-  }, [source, config.pageSize, offset, gridQueryKey, virtual, paged, queryRefused, busy, timedOut]);
+  }, [source, config.pageSize, offset, gridQueryKey, virtual, paged, queryRefused, busy, timedOut, unreachable]);
 
   /**
    * The next page of a scrolling grid, appended to what is loaded. An answer to an older question
@@ -1281,7 +1306,7 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
           setRefusalDetail(refused === "noAccess" && err instanceof Error ? err.message : null);
           return;
         }
-        const failed = failureOf(err, { busy, timedOut });
+        const failed = failureOf(err, { busy, timedOut, unreachable });
         setError(failed.error);
         setErrorDetail(failed.detail);
       })
@@ -1289,7 +1314,7 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
         if (pageAskedRef.current === nonce) pageAskedRef.current = null;
         if (nonceRef.current === nonce) setLoadingMore(false);
       });
-  }, [virtual, paged, more, loadingMore, loading, rows.length, source, gridQueryKey, config.pageSize, busy, timedOut]);
+  }, [virtual, paged, more, loadingMore, loading, rows.length, source, gridQueryKey, config.pageSize, busy, timedOut, unreachable]);
 
   useEffect(() => {
     fetchData();
