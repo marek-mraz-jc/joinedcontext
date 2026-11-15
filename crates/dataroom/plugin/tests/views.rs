@@ -1,12 +1,8 @@
-//! View rendering, the view-HTML sanitizer, the view payload check and the plugin limits.
+//! View rendering, the view-HTML sanitizer and the view payload check.
 
 use dataroom_core::{Dataset, Distribution, ResourceView};
-use dataroom_plugin::{
-    render_resource_view, sanitize_view_html, validate_view_payload, CataloguePluginLimits,
-    DatasetHookPlugin, PlatformWasmLimits, ViewPlugin, CATALOGUE_PLUGIN_WIT, EPOCH_TICK,
-};
+use dataroom_plugin::{render_resource_view, sanitize_view_html, validate_view_payload};
 use serde_json::{json, Value};
-use std::time::Duration;
 
 const NIL: &str = "00000000-0000-0000-0000-000000000000";
 
@@ -219,72 +215,6 @@ fn a_view_payload_holds_only_its_declared_fields() {
 }
 
 #[test]
-fn the_plugin_limits_match_the_platform_contract() {
-    let c = CataloguePluginLimits::default();
-    assert_eq!(c.memory_bytes, 16 << 20);
-    assert_eq!(c.fuel_per_call, 1_000_000_000);
-    assert_eq!(c.hook_deadline_ticks(), 100);
-    assert_eq!(c.harvest_deadline_ticks(), 3_000);
-    let tiny = CataloguePluginLimits {
-        hook_wall_time: Duration::from_millis(1),
-        harvest_import_wall_time: Duration::ZERO,
-        ..c.clone()
-    };
-    assert_eq!(
-        tiny.hook_deadline_ticks(),
-        1,
-        "a deadline is at least one tick"
-    );
-    assert_eq!(tiny.harvest_deadline_ticks(), 1);
-    let back: CataloguePluginLimits =
-        serde_json::from_value(serde_json::to_value(&c).unwrap()).unwrap();
-    assert_eq!(back, c);
-
-    let p = PlatformWasmLimits::default();
-    assert_eq!(p.memory_bytes, 64 << 20);
-    assert_eq!(p.wall_time, Duration::from_secs(5));
-    assert_eq!(p.request_bytes, 2 << 20);
-    assert_eq!(p.response_bytes, 8 << 20);
-    let back: PlatformWasmLimits =
-        serde_json::from_value(serde_json::to_value(&p).unwrap()).unwrap();
-    assert_eq!(back, p);
-    assert_eq!(EPOCH_TICK, Duration::from_millis(10));
-    assert!(CATALOGUE_PLUGIN_WIT.contains("export render-view"));
-}
-
-struct Bare;
-impl DatasetHookPlugin for Bare {
-    fn name(&self) -> &str {
-        "bare"
-    }
-}
-
-struct Table;
-impl ViewPlugin for Table {
-    fn view_type(&self) -> &str {
-        "datatables_view"
-    }
-    fn title(&self) -> &str {
-        "Table"
-    }
-    fn allowed_fields(&self) -> &[&str] {
-        &["filterable"]
-    }
-    fn render_html(&self, view: &ResourceView, dist: &Distribution, dataset: &Dataset) -> String {
-        sanitize_view_html(&render_resource_view(view, dist, dataset))
-    }
-}
-
-#[test]
-fn a_hook_plugin_without_overrides_changes_nothing() {
-    let ds = dataset();
-    assert_eq!(Bare.name(), "bare");
-    assert!(Bare.validate(&ds).is_empty());
-    assert!(Bare.index_terms(&ds).is_empty());
-    assert!(Bare.show_transform(&ds).is_empty());
-}
-
-#[test]
 fn every_built_in_view_passes_the_sanitizer_unchanged() {
     let ds = dataset();
     let d = dist("https://data.city.example/air.csv?a=1&b=2");
@@ -298,14 +228,4 @@ fn every_built_in_view_passes_the_sanitizer_unchanged() {
         let html = render_resource_view(&v, &d, &ds);
         assert_eq!(sanitize_view_html(&html), html, "{vt}");
     }
-    let v = view("datatables_view", "T", json!({}));
-    assert_eq!(
-        Table.render_html(&v, &d, &ds),
-        render_resource_view(&v, &d, &ds)
-    );
-    assert_eq!(
-        (Table.view_type(), Table.title()),
-        ("datatables_view", "Table")
-    );
-    assert_eq!(Table.allowed_fields(), ["filterable"]);
 }

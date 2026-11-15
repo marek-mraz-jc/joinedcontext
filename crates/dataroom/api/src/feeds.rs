@@ -17,12 +17,64 @@ use dataroom_rdf::{
 };
 use dataroom_shacl::validate_graph_against_shapes;
 use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::hash::BuildHasher;
+use std::sync::Mutex;
 
 /// Datasets per DCAT feed page (`ours/deployment/README.md`: 100 datasets per page).
 pub const DCAT_PAGE_SIZE: usize = 100;
 /// Datasets per Atom feed page.
 pub const ATOM_PAGE_SIZE: usize = 20;
+
+/// Verdicts a feed keeps before it starts over (a few MB at most).
+const CONFORMANCE_CAP: usize = 100_000;
+
+/// Whether a dataset conformed to a profile's shapes, by a hash of the exact graph validated,
+/// the shapes and the report subject: a feed page validates only a dataset, catalogue,
+/// publisher or profile that changed since the last page (P-7-02). The hasher's keys are
+/// random per process, so nobody can craft a dataset that collides with another's verdict.
+#[derive(Debug, Default)]
+pub struct FeedConformance {
+    hasher: std::hash::RandomState,
+    verdicts: Mutex<HashMap<u64, bool>>,
+}
+
+impl FeedConformance {
+    fn conforms(
+        &self,
+        (sg, shapes_key): (&dataroom_shacl::ShapesGraph, u64),
+        graph: &dataroom_rdf::RdfGraph,
+        cat: &Catalogue,
+        ds_id: &str,
+        profile: DcatProfileKind,
+    ) -> bool {
+        let key = self.hasher.hash_one((
+            shapes_key,
+            &graph.triples,
+            cat.org_id,
+            cat.id,
+            ds_id,
+            profile.id(),
+        ));
+        let verdicts = || {
+            self.verdicts
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        };
+        if let Some(&conforms) = verdicts().get(&key) {
+            return conforms;
+        }
+        let conforms =
+            validate_graph_against_shapes(graph, sg, cat.org_id, cat.id, ds_id, profile.id(), "1")
+                .conforms;
+        let mut v = verdicts();
+        if v.len() >= CONFORMANCE_CAP {
+            v.clear();
+        }
+        v.insert(key, conforms);
+        conforms
+    }
+}
 
 #[derive(Debug, Deserialize, Default)]
 pub struct FeedQuery {
@@ -57,6 +109,9 @@ async fn public_feed_datasets(
         .stacked_shapes(profile.id(), None)
         .ok()
         .map(|(_, sg)| sg);
+    let shapes_key = stacked_shapes
+        .as_ref()
+        .map(|sg| state.feed_conformance.hasher.hash_one(format!("{sg:?}")));
 
     let mut visible = Vec::new();
     for ds in all_ds {
@@ -77,18 +132,12 @@ async fn public_feed_datasets(
                 continue;
             }
         }
-        if let Some(ref sg) = stacked_shapes {
+        if let (Some(sg), Some(shapes_key)) = (&stacked_shapes, shapes_key) {
             let ds_graph = dataroom_rdf::dataset_to_graph(&ds, cat, pub_rec, profile);
-            let rep = validate_graph_against_shapes(
-                &ds_graph,
-                sg,
-                cat.org_id,
-                cat.id,
-                &ds.id,
-                profile.id(),
-                "1",
-            );
-            if !rep.conforms {
+            if !state
+                .feed_conformance
+                .conforms((sg, shapes_key), &ds_graph, cat, &ds.id, profile)
+            {
                 // C17: Violations in a profile hide the record from that profile's feed.
                 continue;
             }
@@ -564,7 +613,42 @@ fn escape_xml(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::paging_first;
+    use super::{paging_first, FeedConformance};
+    use dataroom_core::Catalogue;
+    use dataroom_rdf::{DcatProfileKind, RdfLimits};
+    use std::hash::BuildHasher;
+
+    #[test]
+    fn a_kept_verdict_follows_the_graph_it_was_given_for() {
+        let sg = dataroom_shacl::parse_shapes_graph(
+            "@prefix sh: <http://www.w3.org/ns/shacl#> . @prefix ex: <http://example.org/> .
+             ex:S a sh:NodeShape ; sh:targetClass ex:R ; sh:property [ sh:path ex:v ; sh:minCount 1 ] .",
+            &RdfLimits::uploaded_shapes(),
+        )
+        .unwrap();
+        let graph =
+            |ttl: &str| dataroom_rdf::turtle::parse_turtle(ttl, &RdfLimits::default()).unwrap();
+        let full = graph("<urn:a> a <http://example.org/R> ; <http://example.org/v> 1 .");
+        let bare = graph("<urn:a> a <http://example.org/R> .");
+        let cat: Catalogue = serde_json::from_value(serde_json::json!({
+            "orgId": uuid::Uuid::now_v7(), "id": uuid::Uuid::now_v7(), "name": "city",
+            "host": "data.city.test", "title": {"sk": "Katalóg"}, "description": {},
+            "defaultLanguage": "sk", "languages": ["sk"], "mainProfile": "dcat-ap-3.0.1",
+            "activeProfiles": [], "modified": "2026-11-01T10:00:00Z"
+        }))
+        .unwrap();
+        let seen = FeedConformance::default();
+        let key = seen.hasher.hash_one(format!("{sg:?}"));
+        let profile = DcatProfileKind::Eu301;
+        // The same dataset id, edited between two pages: each edit gets its own verdict.
+        assert!(seen.conforms((&sg, key), &full, &cat, "pkg-a", profile));
+        assert!(!seen.conforms((&sg, key), &bare, &cat, "pkg-a", profile));
+        assert!(seen.conforms((&sg, key), &full, &cat, "pkg-a", profile));
+        assert_eq!(seen.verdicts.lock().unwrap().len(), 2);
+        // Other shapes (a profile change) validate again.
+        assert!(!seen.conforms((&sg, key ^ 1), &bare, &cat, "pkg-a", profile));
+        assert_eq!(seen.verdicts.lock().unwrap().len(), 3);
+    }
 
     #[test]
     fn the_paging_block_moves_under_the_prefixes() {
