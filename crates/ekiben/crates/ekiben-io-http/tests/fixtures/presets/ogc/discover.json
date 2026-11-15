@@ -1,0 +1,45 @@
+{
+ "collections": [
+  {
+   "id": "obs",
+   "title": "Observations",
+   "description": "Observations"
+  },
+  {
+   "id": "lakes",
+   "title": "Large Lakes",
+   "description": "lakes of the world, public domain"
+  },
+  {
+   "id": "dutch_windmills",
+   "title": "Windmills within The Netherlands",
+   "description": "Locations of windmills within the Netherlands from Rijksdienst voor het Cultureel Erfgoed (RCE) INSPIRE WFS. Uses GeoServer WFS v2 backend via OGRProvider."
+  },
+  {
+   "id": "dutch_castles",
+   "title": "Castles within The Netherlands",
+   "description": "Locations of castles within the Netherlands from Rijksdienst voor het Cultureel Erfgoed (RCE) INSPIRE WFS. Uses GeoServer WFS v2 backend via OGRProvider."
+  },
+  {
+   "id": "dutch_georef_stations",
+   "title": "Dutch Georef Stations via OGR WFS",
+   "description": "Locations of RD/GNSS-reference stations from Dutch Kadaster PDOK a.k.a RDInfo. Uses MapServer WFS v2 backend via OGRProvider."
+  },
+  {
+   "id": "utah_city_locations",
+   "title": "Cities in Utah via OGR WFS",
+   "description": "Data from the state of Utah. Standard demo dataset from the deegree WFS server that is used as backend WFS."
+  },
+  {
+   "id": "unesco_pois_italy",
+   "title": "Unesco POIs in Italy via OGR WFS",
+   "description": "Unesco Points of Interest in Italy. Using GeoSolutions GeoServer WFS demo-server as backend WFS."
+  },
+  {
+   "id": "ogr_gpkg_poi",
+   "title": "Portuguese Points of Interest via OGR GPKG",
+   "description": "Portuguese Points of Interest obtained from OpenStreetMap. Dataset includes Madeira and Azores islands. Uses GeoPackage backend via OGR provider."
+  }
+ ],
+ "links": []
+}

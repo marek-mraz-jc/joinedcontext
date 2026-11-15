@@ -376,6 +376,7 @@ use crate::tools::model_tools::{
         crate::tools::model_tools::infer_schema,
         crate::api::pipeline_test::test_pipeline,
         crate::api::datasource_test::test_datasource,
+        crate::api::datasource_test::discover_datasource,
         crate::api::assistant::propose_endpoint,
         crate::mcp::handle_mcp,
         crate::api::connectors::list_connectors,
