@@ -8,14 +8,16 @@
 
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
+use axum::http::HeaderMap;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use utoipa::{IntoParams, ToSchema};
 
-use crate::api::access_simulate::{ask_gateway, Resolved};
-use crate::auth::{CurrentUser, Identity};
+use crate::api::access_simulate::ask_gateway;
+use crate::api::catalogue_readable::subject_of;
+use crate::auth::CurrentUser;
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -77,20 +79,6 @@ fn named<'a>(what: &str, value: &'a str) -> Result<&'a str, ApiError> {
     Ok(value)
 }
 
-/// The caller as a token of theirs carries them: never a subject the request names.
-fn caller(identity: &Identity) -> Resolved {
-    Resolved {
-        user: Some(identity.username.clone()),
-        groups: identity
-            .groups
-            .iter()
-            .map(|group| group.trim_start_matches('/').to_owned())
-            .collect(),
-        roles: identity.roles.clone(),
-        service_account: None,
-    }
-}
-
 #[utoipa::path(
     get,
     path = "/api/v1/projects/{project}/endpoints/{name}/access/attributes",
@@ -115,6 +103,7 @@ pub(crate) async fn explain_attribute(
     user: CurrentUser,
     State(state): State<AppState>,
     Path((project, name)): Path<(String, String)>,
+    headers: HeaderMap,
     asked: Result<Query<Asked>, QueryRejection>,
 ) -> Result<Json<AttributeExplained>, ApiError> {
     let identity = &user.0.identity;
@@ -168,8 +157,10 @@ pub(crate) async fn explain_attribute(
         explained.policy_hidden = true;
         return Ok(Json(explained));
     }
+    // The caller as a token of theirs carries them (their Keycloak id, which a `user` grant
+    // names, and their Organization claims): never a subject the request names.
     let question = json!({
-        "subject": caller(identity),
+        "subject": subject_of(&state, &user.0, &headers),
         "action": { "name": operation },
         "resource": { "type": entity_type, "properties": { "attribute": attribute } },
     });
