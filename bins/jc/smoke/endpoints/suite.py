@@ -96,6 +96,14 @@ def instances(entity) -> int:
     return n
 
 
+def file_type(shown: dict, bundle: dict) -> str:
+    """The type whose files are read: a file holds the whole collection, so the smallest keeps the
+    run short. Smallest in the bundle, never live: a Pipeline writing between two runs (linked-events,
+    Event 2 -> 462 in smoke 43666862140) moved the pick to Vehicle, and the restore compare read the
+    moved rows as lost (T-6953)."""
+    return min(shown, key=lambda t: (bundle.get(t) is None, bundle.get(t) or 0, t))
+
+
 def base64_json(d: dict) -> str:
     """A JWT part (tests build tokens with it)."""
     import base64
@@ -293,6 +301,7 @@ class Suite:
 
     def reads(self, e, token, grants, want: dict, narrowed: str, tenant: dict, who: str):
         base = f"/api/endpoint/{e.slug}"
+        bundle = dict(want)  # grown() moves want to the live counts; the file type is picked on these
         if self.index.get("synthetic"):
             self.grown(e, token, who, want, tenant)
         h: dict = {}
@@ -320,7 +329,7 @@ class Suite:
             retrieve = any(g.operations & ex.RETRIEVE_OPS and (not g.selectors or any(
                 s.type in (t, "*") for s in g.selectors)) for g in grants)
             self.one_type(e, token, who, t, count, narrowed, tenant[t], temporal, retrieve)
-        self.surfaces(e, token, who, want, narrowed)
+        self.surfaces(e, token, who, want, narrowed, bundle)
 
     def one_type(self, e, token, who, t, count, narrowed, slot, temporal, retrieve=True):
         base = f"/api/endpoint/{e.slug}/ngsi-ld/v1"
@@ -423,7 +432,7 @@ class Suite:
                      f"no instance before now - 24 h - {self.a.sweep_minutes} min (200 empty or 404)",
                      f"{st} {n} instances", st == 404 or (st in whole and n == 0))
 
-    def surfaces(self, e, token, who, want: dict, narrowed: str):
+    def surfaces(self, e, token, who, want: dict, narrowed: str, bundle: dict | None = None):
         base = f"/api/endpoint/{e.slug}"
         reps = set(e.representations)
         if "ogc-features" in reps:
@@ -447,8 +456,7 @@ class Suite:
                                  f"200 FeatureCollection, numberMatched {count}", f"{st} numberMatched={matched} {short(raw, 80) if st != 200 else ''}", ok)
                 shown = {t: c for t, c in want.items() if t in ids}
                 if shown:
-                    # A file holds the whole collection: the smallest type keeps the run short.
-                    t = min(shown, key=lambda t: (shown[t] is None, shown[t] or 0, t))
+                    t = file_type(shown, bundle if bundle is not None else shown)
                     self.files(e, token, who, base, t, None if narrowed else shown[t])
         if "odata" in reps:
             st, h, raw = self.get(f"{base}/odata/v4/$metadata", token, "application/xml")
