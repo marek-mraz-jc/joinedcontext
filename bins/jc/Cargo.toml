@@ -44,17 +44,17 @@ daiya = [
   "dep:daiya-server",
   "dep:daiya-model",
 ]
-ekiben = ["dep:ekiben-server", "dep:ekiben-core", "dep:futures", "dep:jc-core"]
+ekiben = ["dep:ekiben-server", "dep:ekiben-core", "dep:futures"]
 # The platform's broker build (Antares image-jc FEATURES without parquet and tabular): Endpoint
 # views, the joinedcontext engine and every surface dev's broker serves.
 antares = ["dep:antares-broker"]
-gateway = ["dep:context-gateway", "dep:jc-core", "dep:jc-manifest", "dep:jcctl", "dep:zip"]
-portal = ["dep:joinedcontext-portal", "dep:jc-core"]
+gateway = ["dep:context-gateway", "dep:jc-manifest", "dep:jcctl", "dep:zip"]
+portal = ["dep:joinedcontext-portal"]
 # POST /generate for the reconciler: broker schema and @context of a LinkML model.
 model-tools = ["dep:linkml-model", "dep:serde_norway"]
 # The knowledge assistant's page, widget and chat (vendor/joinedcontext-platform/crates/assistant)
 # with its model proxy (agent-proxy) on loopback. ONNX Runtime is loaded from a file at start.
-assistant = ["dep:assistant", "dep:agent-proxy", "dep:jc-core", "dep:ort", "gateway"]
+assistant = ["dep:assistant", "dep:agent-proxy", "dep:ort", "gateway"]
 jemalloc = ["dep:tikv-jemallocator"]
 # The chart renderer and live-data explorer (vendor/viz), static files only.
 viz = ["dep:flate2"]
@@ -114,7 +114,8 @@ ekiben-core = { path = "../../crates/ekiben/crates/ekiben-core", optional = true
 antares-broker = { path = "../../crates/antares/crates/antares-broker", optional = true, features = ["full", "jc-policy", "linkml", "ical", "feed", "parquet", "tabular"] }
 
 context-gateway = { path = "../../vendor/joinedcontext-platform/crates/context-gateway", optional = true }
-jc-core = { path = "../../vendor/joinedcontext-platform/crates/jc-core", optional = true }
+# Every build: the Organization names the platform reserves (T-6974) are in jc-core.
+jc-core = { path = "../../vendor/joinedcontext-platform/crates/jc-core" }
 jc-manifest = { path = "../../vendor/joinedcontext-platform/crates/jc-manifest", optional = true }
 jcctl = { path = "../../vendor/joinedcontext-platform/crates/jcctl", optional = true, default-features = false }
 # The gateway reads shako's repositories as zip archives (the image has no git).

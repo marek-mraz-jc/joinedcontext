@@ -1276,7 +1276,7 @@ export interface paths {
         head?: never;
         /**
          * Edit Person
-         * @description Edits a person's name, e-mail or language.
+         * @description Edits a person's name, e-mail or language; an e-mail change needs a Portal session (PF-93).
          */
         patch: operations["edit_person"];
         trace?: never;
@@ -1372,7 +1372,7 @@ export interface paths {
         put?: never;
         /**
          * Remove Second Factor
-         * @description Removes every OTP and WebAuthn credential of the person. Needs `disable` on Person and every right the person holds.
+         * @description Removes every OTP and WebAuthn credential of the person. Needs `disable` on Person and every right the person holds through a RoleBinding. For a person holding a Policy, App or Endpoint grant the caller could not change, a caller who is no platform admin removes it only after the realm mailed the person to set an authenticator app (TOTP; a WebAuthn user moves to TOTP); without mail 403 and nothing is removed (PF-93).
          */
         post: operations["remove_second_factor"];
         delete?: never;
@@ -1412,7 +1412,7 @@ export interface paths {
         put?: never;
         /**
          * Reset Password
-         * @description Sends the realm's password reset; without SMTP answers a temporary password once. Needs `update` on Person and every right the person holds.
+         * @description Sends the realm's password reset; without SMTP answers a temporary password once. Needs `update` on Person and every right the person holds through a RoleBinding. For a person holding a Policy, App or Endpoint grant the caller could not change, a caller who is no platform admin resets by e-mail to the address on file only: without mail 403, never a temporary password (PF-93).
          */
         post: operations["reset_password"];
         delete?: never;
@@ -5081,7 +5081,7 @@ export interface paths {
         put?: never;
         /**
          * Edit Person
-         * @description Edits a person's name, e-mail or language
+         * @description Edits a person's name, e-mail or language; an e-mail change needs a Portal session (PF-93)
          */
         post: operations["jc_person_edit"];
         delete?: never;
@@ -17133,7 +17133,7 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description The caller lacks update on Person, or a right the person holds */
+            /** @description The caller lacks update on Person, or a right the person holds, or a token changes the e-mail */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -17526,7 +17526,7 @@ export interface operations {
                     "application/json": components["schemas"]["PasswordReset"];
                 };
             };
-            /** @description The caller lacks update on Person, or a right the person holds */
+            /** @description The caller lacks update on Person, or a right the person holds, or the person holds a grant the caller cannot change and the realm cannot send mail */
             403: {
                 headers: {
                     [name: string]: unknown;

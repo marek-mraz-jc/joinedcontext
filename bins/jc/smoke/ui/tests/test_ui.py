@@ -86,6 +86,75 @@ def test_a_signed_in_browser_on_a_127_origin_reads_the_api_with_its_session_cook
         page.context.clear_cookies()
 
 
+def forwarded_jc():
+    """A jc reached on a loopback forward that keeps its own public address: its issuer, every
+    redirect and the session cookie name `public` (jc-dev: base http://127.0.0.1:18081, jc at
+    https://jc.jcdev.dev.joinedcontext.com); here localhost against the forward's 127.0.0.1."""
+    import http.server
+    import threading
+
+    class Jc(http.server.BaseHTTPRequestHandler):
+        def answer(self, status, headers=(), body=b""):
+            self.send_response(status)
+            for k, v in headers:
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            public, cookie = self.server.public, self.headers.get("Cookie") or ""
+            if self.path == "/id/realms/dev/.well-known/openid-configuration":
+                return self.answer(200, [("Content-Type", "application/json")],
+                                   json.dumps({"issuer": f"{public}/id/realms/dev"}).encode())
+            if self.path == "/api/v1/auth/login":
+                return self.answer(303, [("Location", f"{public}/id/realms/dev/login")])
+            if self.path == "/id/realms/dev/login":
+                return self.answer(200, [("Content-Type", "text/html")], b'<form method="post">'
+                                   b'<input name="username"><input name="password" type="password"><button>Sign in</button></form>')
+            if self.path == "/api/v1/auth/callback":
+                # Only the public host's own page gets the session: a request to the forward has none.
+                ok = self.headers.get("Host") == public.split("//")[1]
+                return self.answer(303, [("Set-Cookie", "jc_session=s1; Path=/; HttpOnly; SameSite=Lax")] * ok
+                                   + [("Location", f"{public}/projects")])
+            if self.path == "/api/v1/auth/me":
+                return self.answer(200 if "jc_session=s1" in cookie else 401)
+            return self.answer(200, [("Content-Type", "text/html")], b"<main><h1>Projects</h1></main>")
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            self.answer(303, [("Location", f"{self.server.public}/api/v1/auth/callback")])
+
+        def log_message(self, *_):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Jc)
+    srv.public = f"http://localhost:{srv.server_port}"
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def test_a_sign_in_through_a_forward_walks_jcs_public_origin_and_reads_the_session(page, monkeypatch):
+    """jc-dev smoke 2026-11-15T050045Z: the walker waited for the forward's address while jc's
+    callback sends the browser to its public one, so each persona timed out after a good login
+    (T-6969). The walk now starts where jc's issuer says jc lives."""
+    srv = forwarded_jc()
+    base = f"http://127.0.0.1:{srv.server_port}"
+    public = suite.public_origin(suite.Http(base), "dev")
+    assert public == srv.public
+    monkeypatch.setattr(suite, "SECOND_FACTOR", type("NoOtp", (), {"browser": lambda *_: None})())
+    try:
+        for seen, ok in ((public, True), (None, False)):
+            a = suite.argparse.Namespace(base_url=base, public=seen, widths=[1440])
+            w = suite.Walker(a, page.context.browser, Results("ui", base), Path("."))
+            ctx, signing = w.context("admin")
+            signed, said = w.sign_in(signing, "admin", "smoke-ui-admin", "pw")
+            assert signed is ok, said
+            assert not ok or (signing.url == f"{public}/projects" and "auth/me 200" in said)
+            ctx.close()
+    finally:
+        srv.shutdown()
+
+
 def test_the_stripped_source_keeps_no_typescript():
     js = checks.script()
     assert not re.search(r"\bas HTML|: string\b|: Element\b|<string>", js)
@@ -286,7 +355,12 @@ def viz_server(held: dict, drawn: dict):
             headers, body = {"Content-Type": "text/html"}, ""
             if path == "/opendata/dataset/x":
                 # Another origin than the page, as an opaque sandboxed frame is: its location is not the page's to read.
-                body = f'<iframe class="jc-explorer-frame" src="http://localhost:{self.server.server_port}/viz/explore.html#slug1&inline&type=Alert"></iframe>'
+                body = f'<iframe class="jc-explorer-frame" src="http://localhost:{self.server.server_port}/embed/explore.html#slug1&inline&type=Alert"></iframe>'
+            elif self.path == suite.MOVED_PAGE[0]:
+                self.send_response(308)
+                self.send_header("Location", suite.MOVED_PAGE[1])
+                self.end_headers()
+                return
             elif path in suite.SANDBOX_PAGES:
                 headers["Content-Security-Policy"] = "sandbox allow-scripts"
                 body = EXPLORE.replace("DRAWN", json.dumps(drawn))
@@ -324,4 +398,19 @@ def test_an_explorer_opened_on_an_empty_type_still_owes_rows_of_a_type_the_endpo
         assert said in row["actual"], row["actual"]
     finally:
         ctx.close()
+        srv.shutdown()
+
+
+def test_the_embed_pages_are_sandboxed_and_the_old_viz_path_moves_with_its_query(page):
+    """T-6992: the explorer pages answer under /embed; /viz/... answers 308 to /embed/... with its query."""
+    srv = viz_server({"Alert": 1}, {"Alert": 1})
+    try:
+        w = object.__new__(suite.Walker)
+        w.res, w.base = Results("ui", "http://x"), f"http://127.0.0.1:{srv.server_port}"
+        suite.frame_csp_rows(w, page, True)
+        rows = {r["id"]: r for r in w.res.rows}
+        assert all(rows[f"viz.csp:{p}"]["result"] == "pass" for p in suite.SANDBOX_PAGES), rows
+        moved = rows[f"viz.moved:{suite.MOVED_PAGE[0]}"]
+        assert moved["result"] == "pass", moved["actual"]
+    finally:
         srv.shutdown()

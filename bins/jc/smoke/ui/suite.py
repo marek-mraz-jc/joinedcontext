@@ -26,9 +26,9 @@ judging it at every width by resizing the open page, as walker.spec.ts does. A p
   without a reason.
 
 Then, anonymously and as the admin: dataroom (/opendata: home, dataset list, the first dataset,
-the first organization; on the first dataset with a "live data" frame, `viz` rows: /viz/explore.html
-and /viz/embed.html answer a CSP sandbox without allow-same-origin when viz shares the Portal's
-origin, the framed explorer runs in an opaque origin that reads no cookie of the host, and its grid
+the first organization; on the first dataset with a "live data" frame, `viz` rows: /embed/explore.html
+and /embed/embed.html answer a CSP sandbox without allow-same-origin when viz shares the Portal's
+origin, /viz/explore.html answers 308 to /embed/ with its query (T-6992), the framed explorer runs in an opaque origin that reads no cookie of the host, and its grid
 draws rows), shako (/git: the repository list and the first repository, with
 --shako-token-file; a browser person without one is reported), and the daiya dashboards the
 Portal lists for the project (/projects/{p}/grafana and every dashboard link on it).
@@ -59,7 +59,8 @@ sys.path.insert(0, str(HERE.parent))
 import checks  # noqa: E402
 import personas as ps  # noqa: E402
 import walk  # noqa: E402
-from common import FAIL, SECOND_FACTOR, SKIP, Http, Results, browser_get, loopback_only, read_token, realm_of  # noqa: E402
+from common import (FAIL, SECOND_FACTOR, SKIP, Http, Results, browser_get, loopback_only, public_origin, read_token,  # noqa: E402
+                    realm_of)
 
 LOGIN = "/api/v1/auth/login"
 HEIGHT = {400: 860, 1440: 900}
@@ -98,7 +99,10 @@ def kept_component(finding: str) -> bool:
 class Walker:
     def __init__(self, a, browser, res: Results, out: Path):
         self.a, self.browser, self.res, self.out = a, browser, res, out
-        self.base = a.base_url.rstrip("/")
+        # The browser walks jc where jc says it lives: its public origin when the suite reaches jc
+        # through a forward (jc-dev), since its sign-in redirects, session cookie and
+        # frame-ancestors name that origin (T-6969); the base otherwise.
+        self.base = (getattr(a, "public", None) or a.base_url).rstrip("/")
         self.script = checks.script()
         self.namespaces = checks.namespaces()
         self.allow = checks.excused()
@@ -352,7 +356,9 @@ def dataroom(w: Walker):
         ctx.close()
 
 
-SANDBOX_PAGES = ("/viz/explore.html", "/viz/embed.html")
+SANDBOX_PAGES = ("/embed/explore.html", "/embed/embed.html")
+# T-6992: the old slug answers 308 to the same path and query under /embed.
+MOVED_PAGE = ("/viz/explore.html?lang=sk", "/embed/explore.html?lang=sk")
 
 
 def frame_csp_rows(w: Walker, page, shared: bool):
@@ -365,6 +371,11 @@ def frame_csp_rows(w: Walker, page, shared: bool):
         w.res.check(f"viz.csp:{path}", "viz", f"GET {path}",
                     "CSP sandbox without allow-same-origin" if shared else "CSP without a sandbox (own origin)",
                     f"{r.status} {csp[-120:]}", r.status == 200 and sandboxed == shared)
+    old, new = MOVED_PAGE
+    r = page.request.get(w.base + old, max_redirects=0)
+    location = r.headers.get("location", "")
+    w.res.check(f"viz.moved:{old}", "viz", f"GET {old}", f"308 to {new}", f"{r.status} {location}",
+                r.status == 308 and location.endswith(new) and not location.startswith("//"))
 
 
 def viz_sandbox(w: Walker, ctx, page, dataset: str):
@@ -560,6 +571,7 @@ def main(argv=None) -> int:
         res.skip("persona:viewer", "realm", "viewer persona", "a provider-group viewer RoleBinding",
                  "the export names no `role: viewer` RoleBinding with a provider group" if a.export else "no --export")
 
+    a.public = public_origin(h, realm)
     from playwright.sync_api import sync_playwright
 
     started = time.time()

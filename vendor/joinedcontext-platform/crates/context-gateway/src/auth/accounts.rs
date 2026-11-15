@@ -114,6 +114,16 @@ impl ServiceAccounts {
         self.by_client_id.get(azp)
     }
 
+    /// Whether the table holds the account `name` of `project` with a credential that has not
+    /// ended at `now` (PF-36): what an open session admitted under it rechecks (S-3-12).
+    pub fn holds(&self, project: &str, name: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
+        self.by_client_id.values().any(|account| {
+            account.project == project
+                && account.name == name
+                && account.credentials_end.is_none_or(|end| end > now)
+        })
+    }
+
     /// How many accounts the table holds.
     pub fn len(&self) -> usize {
         self.by_client_id.len()
@@ -408,4 +418,35 @@ fn apps_of(repo: &Repository) -> AppTables {
         }
     }
     (admitted, jobs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// S-3-12: an open session rechecks its account: held while the repository names it with a
+    /// live credential, not once it left or its last credential ended.
+    #[test]
+    fn an_account_is_held_while_named_and_its_credential_lives() {
+        let now = chrono::Utc::now();
+        let account = |end: Option<chrono::DateTime<chrono::Utc>>| Account {
+            name: "kpi".to_owned(),
+            project: "espoo".to_owned(),
+            roles: Vec::new(),
+            delegates: false,
+            credentials_end: end,
+        };
+        let table = |account: Account| ServiceAccounts {
+            by_client_id: HashMap::from([("espoo-kpi".to_owned(), account)]),
+            apps: HashMap::new(),
+        };
+        assert!(table(account(None)).holds("espoo", "kpi", now));
+        assert!(table(account(Some(now + chrono::Duration::hours(1)))).holds("espoo", "kpi", now));
+        assert!(!table(account(Some(now))).holds("espoo", "kpi", now));
+        assert!(
+            !table(account(None)).holds("vantaa", "kpi", now),
+            "another project's"
+        );
+        assert!(!ServiceAccounts::new().holds("espoo", "kpi", now), "gone");
+    }
 }

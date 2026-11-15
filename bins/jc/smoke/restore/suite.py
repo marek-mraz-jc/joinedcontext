@@ -15,7 +15,7 @@ gtfs-realtime.proto; `fresh` starts an empty PostgreSQL
 of the same image for <restore env>; `restore` loads roles and databases; `start` runs up.sh on the
 copy (no export: the realms come from the restored state dir) on the source jc's --role; `converge` waits for a reconciler
 pass; `settle` waits (--settle s) until the copy answers the before run's anonymous /types calls with
-200 and no 199 warning (its streams' first polls over); `after` reruns the suites on the copy.
+200 and no 199 warning and its anonymous count reads with a count (its streams' first polls over); `after` reruns the suites on the copy.
 
 Pass: every check id of the compared suites has the same pass/fail/skip on the copy as before the
 dump (not an absolute pass; a row absent before is no fault only when every entity of its type in
@@ -257,26 +257,37 @@ def compare(res: Results, suite: str, before: dict | None, after: dict | None, c
         res.check(f"{suite}/{id}", suite, call, exp, act, ok, why)
 
 
+# The before run's anonymous count reads the copy must answer before the after run: types.written
+# decides whether a listed type is extra, count the live rows of a granted type.
+COUNT_IDS = ("anon.types.written", "anon.count")
+
+
 def discovery_calls(before: dict | None) -> list[str]:
-    """The anonymous /types paths the before run answered whole (types.match passed, no 199 warning)."""
+    """The anonymous /types paths the before run answered whole (types.match passed, no 199 warning),
+    and its passed NGSI-LD count reads (COUNT_IDS, asked with limit=0)."""
     out = []
     for r in (before or {}).values():
         method, _, path = r.get("call", "").partition(" ")
-        if (r["id"] == "anon.types.match" and r["result"] == PASS and method == "GET"
-                and "warning" not in r.get("actual", "")):
+        if method != "GET" or r["result"] != PASS:
+            continue
+        if r["id"] == "anon.types.match" and "warning" not in r.get("actual", ""):
             out.append(path)
+        elif r["id"] in COUNT_IDS and "/ngsi-ld/v1/entities?" in path and "count=true" in path:
+            out.append(path if "limit=0" in path else f"{path}&limit=0")
     return sorted(set(out))
 
 
 def unsettled(http: Http, paths: list[str]) -> list[str]:
     """Of `paths`, those the copy answers other than 200 or with a 199 (a discovery cut at its
-    deadline or ceiling, CIM 009 6.3.17), each with what it answered."""
+    deadline or ceiling, CIM 009 6.3.17), or a count read without its count, each with what it
+    answered."""
     out = []
     for path in paths:
         status, h, _ = http.call("GET", path)
         warn = h.get("ngsild-warning") or h.get("warning") or ""
-        if status != 200 or "199" in warn:
-            out.append(f"{path}: {status}{' ' + warn[:120] if warn else ''}")
+        uncounted = "count=true" in path and not str(h.get("ngsild-results-count", "")).isdigit()
+        if status != 200 or "199" in warn or uncounted:
+            out.append(f"{path}: {status}{' ' + warn[:120] if warn else ''}{' no count' if uncounted and status == 200 else ''}")
     return out
 
 
@@ -712,11 +723,14 @@ def pipeline(a, res: Results, ops: Ops, out: Path) -> dict:
         # 6.2 s (the broker's discovery deadline, a 199 and a cut list) and entity reads 503 for a
         # minute while the source, steady, answered in 0.9 s (smoke 43675981256). The after run
         # starts once the copy answers the before run's whole discovery calls whole; a copy that
-        # never does is a red row, and the after run still shows what it answers.
+        # never does is a red row, and the after run still shows what it answers. Its count reads
+        # too: smoke 43698237064's copy answered /types whole at 10:02:38, then three
+        # AirQualityObserved counts (13723 rows) 503 after 10 s each while its streams wrote, so
+        # the type read as extra (anon.types.match) though the source had counted it.
         calls = discovery_calls(load_checks(before_dir / "endpoints"))
-        left = steps.run("settle", f"the copy answers {len(calls)} /types of the before run whole",
+        left = steps.run("settle", f"the copy answers {len(calls)} /types and counts of the before run whole",
                          ops.settle, rbase, calls, a.settle)
-        res.check("control.settled", "restore", f"GET of {len(calls)} /types on the copy, every 5 s",
+        res.check("control.settled", "restore", f"GET of {len(calls)} /types and counts on the copy, every 5 s",
                   f"200 without a 199 warning within {a.settle:g} s", f"{len(left)} not" if left else "all",
                   not left, "; ".join(left[:4])[:600])
 
