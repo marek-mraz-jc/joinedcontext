@@ -352,6 +352,26 @@ async fn an_approver_merges_a_writers_change() {
 }
 
 #[tokio::test]
+async fn a_writers_branch_carrying_an_invalid_spec_is_refused_at_approval_and_never_merged() {
+    // A writer's push never passed the propose door, so approval judges its spec (S-5-10).
+    let (server, state) = forge(&["read", "propose"]).await;
+    let invalid = format!("{SPACE}  retentionDayz: 30\n");
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@r", "'head-11'"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "Sha": "blob", "Content": STANDARD.encode(invalid) })),
+        )
+        .with_priority(1)
+        .mount(&server)
+        .await;
+
+    assert_eq!(approve(&state, APPROVER, 11).await, StatusCode::CONFLICT);
+    assert!(merged(&server).await.is_empty());
+}
+
+#[tokio::test]
 async fn the_author_cannot_approve_their_own_branch_whatever_its_commits_claim() {
     // Wera may approve ContextSpaces, so only the authorship stops her (CC-34, PF-58).
     let (server, state) = forge(&["read", "propose", "approve"]).await;
