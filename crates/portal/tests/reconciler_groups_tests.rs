@@ -259,6 +259,59 @@ async fn a_console_edit_is_overwritten_and_reported_and_an_unknown_address_is_on
     );
 }
 
+/// A realm listing more groups than one page holds: the managed group on the second page is
+/// found and filled, never created again.
+#[tokio::test]
+async fn a_managed_group_past_the_first_page_is_converged_not_created() {
+    let keycloak = realm().await;
+    let filler: Vec<Value> = (0..500)
+        .map(|n| json!({ "id": format!("other-{n}"), "name": format!("other-{n}") }))
+        .collect();
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/groups")))
+        .and(query_param("first", "0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(Value::Array(filler)))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/groups")))
+        .and(query_param("first", "500"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            { "id": "g-late", "name": "city-leads", "attributes": { MANAGED_BY: [MANAGED_VALUE] } }
+        ])))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/groups/g-late/members")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/users/{LEAD}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": LEAD })))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path_regex(format!("^{REALM}/users/.*/groups/.*$")))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&keycloak)
+        .await;
+
+    let mirror = mirror_with(vec![group("city-leads", &[LEAD])]);
+    let outcomes = sync(&keycloak).converge(&mirror).await;
+
+    assert_eq!(outcomes[0].error, None, "{outcomes:?}");
+    let wrote = wrote(&keycloak).await;
+    assert!(
+        !wrote.contains(&format!("POST {REALM}/groups")),
+        "{wrote:?}"
+    );
+    assert!(
+        wrote.contains(&format!("PUT {REALM}/users/{LEAD}/groups/g-late")),
+        "{wrote:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_manifest_naming_members_by_e_mail_leaves_the_group_as_the_realm_holds_it() {
     let keycloak = realm().await;

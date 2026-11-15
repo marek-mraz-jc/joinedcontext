@@ -579,6 +579,35 @@ impl Admin {
         serde_json::from_value(value).map_err(|err| format!("GET {}: {err}", shown(path)))
     }
 
+    /// Every item of a realm listing, read page by page (`first`, `max`) until a short page: one
+    /// page alone misses what a large realm lists past it.
+    pub(crate) async fn get_all<T: serde::de::DeserializeOwned>(
+        &self,
+        token: &str,
+        path: &str,
+    ) -> Result<Vec<T>, String> {
+        const PAGE: usize = 500;
+        const MOST: usize = 200_000;
+        let joiner = if path.contains('?') { '&' } else { '?' };
+        let mut all = Vec::new();
+        loop {
+            let page: Vec<T> = self
+                .get(
+                    token,
+                    &format!("{path}{joiner}first={}&max={PAGE}", all.len()),
+                )
+                .await?;
+            let short = page.len() < PAGE;
+            all.extend(page);
+            if short {
+                return Ok(all);
+            }
+            if all.len() >= MOST {
+                return Err(format!("GET {}: more than {MOST} items", shown(path)));
+            }
+        }
+    }
+
     /// Whether `path` names something the realm holds: a 404 is `false`, any other refusal an
     /// error naming the path.
     pub(crate) async fn exists(&self, token: &str, path: &str) -> Result<bool, String> {
@@ -796,7 +825,7 @@ impl AppClientSync {
         if index.groups.is_none() {
             let groups: Vec<KcNamed> = self
                 .members()
-                .get(token, "/groups?briefRepresentation=true&max=1000")
+                .get_all(token, "/groups?briefRepresentation=true")
                 .await?;
             index.groups = Some(groups.into_iter().map(|g| (g.name, g.id)).collect());
         }
@@ -909,19 +938,19 @@ impl AppClientSync {
 
             let groups: Vec<KcNamed> = self
                 .admin
-                .get(
+                .get_all(
                     token,
                     &format!(
-                        "{client}/roles/{}/groups?briefRepresentation=true&max=1000",
+                        "{client}/roles/{}/groups?briefRepresentation=true",
                         role_segment(name)?
                     ),
                 )
                 .await?;
             let users: Vec<KcUserRef> = self
                 .admin
-                .get(
+                .get_all(
                     token,
-                    &format!("{client}/roles/{}/users?max=1000", role_segment(name)?),
+                    &format!("{client}/roles/{}/users", role_segment(name)?),
                 )
                 .await?;
             for group in &groups {
@@ -1061,13 +1090,9 @@ impl AppClientSync {
         // A managed app client no published App names is this wave's to remove (AP-111).
         match self
             .admin
-            .send(
-                &token,
-                reqwest::Method::GET,
-                "/clients?search=true&clientId=app-&max=1000",
-                None,
-            )
+            .get_all::<Value>(&token, "/clients?search=true&clientId=app-")
             .await
+            .map(|listed| Some(Value::Array(listed)))
         {
             Ok(listed) => {
                 if let Some(foreign) = self.foreign.as_ref() {
