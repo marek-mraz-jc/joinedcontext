@@ -177,6 +177,78 @@ mod tests {
         }
     }
 
+    /// P-6-03: the scan skips only subtrees a parent holds unchanged, so a credential added beside
+    /// a clean file deep in a directory the parent already has, then removed, is still refused.
+    #[test]
+    fn a_secret_beside_an_inherited_file_in_a_held_directory_is_refused() {
+        let author = CommitAuthor {
+            name: "Alice".into(),
+            email: "alice@hel.fi".into(),
+        };
+        let token = format!("ghp_{}", "a1B2c3D4e5".repeat(4));
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = init_bare_repo(
+            tmp.path(),
+            InstanceId::from_u128(1),
+            RepoId::from_u128(200),
+            "main",
+            true,
+            "Source",
+        )
+        .expect("init source");
+        let change = |message: &str, operation, path: &str, content: Option<String>, sha| {
+            commit_file_changes(
+                &source,
+                "main",
+                message,
+                &author,
+                &author,
+                &[FileChangeOp {
+                    operation,
+                    path: path.into(),
+                    content: content.map(String::into_bytes),
+                    sha,
+                }],
+            )
+            .expect("commit")
+        };
+        change(
+            "clean",
+            FileOpKind::Create,
+            "app/src/a.ts",
+            Some("ok\n".into()),
+            None,
+        );
+        change(
+            "other",
+            FileOpKind::Create,
+            "docs/b.md",
+            Some("ok\n".into()),
+            None,
+        );
+        let path = "app/src/config.ts";
+        change(
+            "leak",
+            FileOpKind::Create,
+            path,
+            Some(format!("const k = \"{token}\";\n")),
+            None,
+        );
+        let (_, entries) = list_tree_entries(&source, "main", true).expect("tree");
+        let blob = entries
+            .into_iter()
+            .find(|e| e.path == path)
+            .expect("file")
+            .sha;
+        let tip = change("take it out", FileOpKind::Delete, path, None, Some(blob));
+        let said = push_main(tmp.path(), &source, &tip);
+        assert!(said.contains("ng refs/heads/main"), "{said}");
+        assert!(
+            said.contains("github-token in 'app/src/config.ts' line 1"),
+            "{said}"
+        );
+    }
+
     /// Contract S4: a push whose one ref carries a credential is refused whole, so the pack holding
     /// the credential is not kept beside the refs the push would have created.
     #[test]

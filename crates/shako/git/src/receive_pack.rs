@@ -7,7 +7,7 @@ use crate::pktline::{
     MAX_SIDEBAND_1K_DATA, MAX_SIDEBAND_64K_DATA, PktLine, read_pkt_line, write_flush,
     write_sideband_chunks, write_text_line,
 };
-use crate::repo::{collect_tree_blobs, is_ancestor, open_isolated};
+use crate::repo::{collect_changed_blobs, collect_tree_blobs, is_ancestor, open_isolated};
 use gix_hash::ObjectId;
 use gix_pack::data::input::{BytesToEntriesIter, EntryDataMode, Mode as InputMode};
 use gix_packetline::Channel;
@@ -740,24 +740,16 @@ fn scan_new_commits(repo: &gix::Repository, new_oid: ObjectId) -> Result<(), Str
     let mut scanned = BTreeSet::new();
     for info in walk {
         let commit = info.map_err(missing)?.object().map_err(missing)?;
-        let mut blobs = BTreeMap::new();
         let tree = commit.tree().map_err(missing)?;
-        collect_tree_blobs(repo, &tree, "", &mut blobs).map_err(|e| e.to_string())?;
-        let mut parents = Vec::new();
-        for parent in commit.parent_ids() {
-            let mut held = BTreeMap::new();
-            if let Ok(parent) = parent.object().map(gix::Object::into_commit)
-                && let Ok(tree) = parent.tree()
-            {
-                collect_tree_blobs(repo, &tree, "", &mut held).map_err(|e| e.to_string())?;
-            }
-            parents.push(held);
-        }
-        for (path, (_, blob_oid)) in &blobs {
-            let inherited = parents
-                .iter()
-                .any(|held| held.get(path).map(|(_, o)| o) == Some(blob_oid));
-            if inherited || !scanned.insert(*blob_oid) {
+        let parents: Vec<gix::Tree<'_>> = commit
+            .parent_ids()
+            .filter_map(|p| p.object().ok()?.into_commit().tree().ok())
+            .collect();
+        // A blob a parent holds at the same path was scanned when that parent came in.
+        let mut blobs = BTreeMap::new();
+        collect_changed_blobs(repo, &tree, &parents, &mut blobs).map_err(|e| e.to_string())?;
+        for (path, blob_oid) in &blobs {
+            if !scanned.insert(*blob_oid) {
                 continue;
             }
             let blob = repo.find_blob(*blob_oid).map_err(missing)?;

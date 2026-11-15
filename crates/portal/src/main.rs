@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::{server, telemetry};
 
