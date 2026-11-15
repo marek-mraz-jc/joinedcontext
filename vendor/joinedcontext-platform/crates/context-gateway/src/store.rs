@@ -1260,6 +1260,7 @@ fn policies_by_space(repo: &Repository) -> BTreeMap<(String, String), Vec<(Strin
                 let space = spec.context_space_ref.name().to_owned();
                 let rules = rules
                     .into_iter()
+                    .filter(|(name, rule)| without_public_write(name, rule))
                     .map(|(name, rule)| (name, of_own_project(rule, &project)))
                     .collect::<Vec<_>>();
                 policies.entry((project, space)).or_default().extend(rules);
@@ -1281,6 +1282,21 @@ fn policies_by_space(repo: &Repository) -> BTreeMap<(String, String), Vec<(Strin
         }
     }
     policies
+}
+
+/// Whether the rule `name` may be served: a stored grant to the role `public` that changes data
+/// predates the validation that refuses it (EP-187, T-6998) and is left out whole, its reads
+/// too, as validation refuses the whole Policy.
+fn without_public_write(name: &str, rule: &PolicySpec) -> bool {
+    let Some(op) = rule.public_write() else {
+        return true;
+    };
+    tracing::warn!(
+        rule = %name,
+        operation = %op,
+        "Policy rule left out of the endpoint table: a public grant only reads or creates (EP-187)"
+    );
+    false
 }
 
 /// `spec` with a bare `serviceAccount` assignee named `{project}/{name}`: a bare name means the
