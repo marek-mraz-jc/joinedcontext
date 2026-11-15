@@ -1402,16 +1402,21 @@ mod tests {
     /// Which module the planned router table sends `host` `path` to, and the path it hands over
     /// (a `308`'s `Location` instead).
     async fn routed(plans: &[MountPlan], host: &str, path: &str) -> (StatusCode, String) {
-        routed_with(plans, host, path, &[]).await
+        routed_with(plans, None, host, path, &[]).await
     }
 
+    /// [`routed`] with request headers and, from `cfg`, the host registry `start` builds.
     async fn routed_with(
         plans: &[MountPlan],
+        cfg: Option<&Config>,
         host: &str,
         path: &str,
         headers: &[(&str, &str)],
     ) -> (StatusCode, String) {
         let mut builder = JcRouterBuilder::new("https", "city.test");
+        if let Some(table) = cfg.and_then(|cfg| host_table(cfg, plans).unwrap()) {
+            builder = builder.hosts(table);
+        }
         for plan in plans {
             let name = plan.module.name();
             let router = Router::new().fallback(move |uri: axum::http::Uri| async move {
@@ -1547,8 +1552,10 @@ mod tests {
             "mode = \"slug\"\nbase_host = \"city.test\"\n{}",
             include_str!("../tests/fixtures/two-orgs.toml")
         );
-        let plans = plan_mounts(&dev_config("viz", &orgs)).unwrap();
-        let moved = routed(&plans, "city.test", "/alpha/viz/explore.html?x=1").await;
+        let cfg = dev_config("viz", &orgs);
+        let plans = plan_mounts(&cfg).unwrap();
+        let path = "/alpha/viz/explore.html?x=1";
+        let moved = routed_with(&plans, Some(&cfg), "city.test", path, &[]).await;
         let want = "/alpha/embed/explore.html?x=1";
         assert_eq!(moved, (StatusCode::PERMANENT_REDIRECT, want.into()));
     }
@@ -1573,7 +1580,8 @@ mod tests {
             ("/embed.html?lang=sk", &spoofed[..]),
             ("//evil.example/x", &[][..]),
         ] {
-            let (status, location) = routed_with(&plans, "viz.city.test", path, headers).await;
+            let (status, location) =
+                routed_with(&plans, None, "viz.city.test", path, headers).await;
             assert_eq!(status, StatusCode::PERMANENT_REDIRECT, "{path}");
             let want = format!("https://embed.city.test{}", path.split('#').next().unwrap());
             assert_eq!(location, want, "{path}");
