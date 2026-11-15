@@ -401,12 +401,13 @@ fn page(
     }
 
     let describe = |(endpoint, subject): &(Arc<Endpoint>, Subject)| {
-        let mut entry = described(gateway, endpoint, subject);
+        let mut entry = described(gateway, endpoint, subject, true);
         // Each Endpoint names the broker its space lives on (ADR-N-047 §2.3).
         entry["broker"] = json!(gateway.broker.broker_of_view(&endpoint.slug));
         entry
     };
-    // No filter: describe the page only, not every Endpoint reached (T-4542: 264 ms at 10,000).
+    // Describe the page only, not every Endpoint reached (T-4542: 264 ms at 10,000). A filter
+    // reads every Endpoint, their attributes only when it filters by one (P-1-02).
     let (total, endpoints): (usize, Vec<Value>) = if wanted.is_empty() {
         let page = reach
             .iter()
@@ -416,19 +417,23 @@ fn page(
             .collect();
         (reach.len(), page)
     } else {
-        let rows: Vec<Value> = reach
+        let by_attribute = wanted.iter().any(|(name, _)| *name == "attribute");
+        let kept: Vec<&(Arc<Endpoint>, Subject)> = reach
             .iter()
-            .map(describe)
-            .filter(|entry| {
+            .filter(|(endpoint, subject)| {
+                let entry = described(gateway, endpoint, subject, by_attribute);
                 wanted
                     .iter()
-                    .all(|(name, value)| matches(entry, name, value))
+                    .all(|(name, value)| matches(&entry, name, value))
             })
             .collect();
-        (
-            rows.len(),
-            rows.into_iter().skip(offset).take(limit).collect(),
-        )
+        let page = kept
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .map(|e| describe(e))
+            .collect();
+        (kept.len(), page)
     };
     let mut page = json!({ "endpoints": endpoints, "total": total });
     let next = offset.saturating_add(limit);
@@ -1058,7 +1063,7 @@ impl Hub {
                 Err(why) => refuse(&why),
             };
         }
-        let mut entry = described(&self.gateway, endpoint, subject);
+        let mut entry = described(&self.gateway, endpoint, subject, false);
         entry["broker"] = json!(self.gateway.broker.broker_of_view(&endpoint.slug));
         if let Some(members) = entry.as_object_mut() {
             members.remove("attributes");
@@ -1318,7 +1323,7 @@ pub(crate) fn misrouted(id: &Value, arguments: &Map<String, Value>) -> Option<Va
 
 /// One Endpoint as `list_endpoints` names it: only what this caller may see of it, enough for
 /// an agent to pick it from one call (EP-105, EP-111).
-fn described(gateway: &Gateway, endpoint: &Endpoint, subject: &Subject) -> Value {
+fn described(gateway: &Gateway, endpoint: &Endpoint, subject: &Subject, attributes: bool) -> Value {
     let base = gateway.base_url();
     let visible = schema::visible(subject, endpoint, crate::pdp::now());
     let types = schema::visible_types(endpoint, &visible);
@@ -1347,7 +1352,11 @@ fn described(gateway: &Gateway, endpoint: &Endpoint, subject: &Subject) -> Value
         "space": endpoint.space,
         "access": if endpoint.audience == Audience::Public { "public" } else { "internal" },
         "types": types,
-        "attributes": attributes_of(endpoint, newest, &visible, &types),
+        "attributes": if attributes {
+            attributes_of(endpoint, newest, &visible, &types)
+        } else {
+            Map::new()
+        },
         "temporal": tools::granted(
             gateway,
             endpoint,
@@ -1606,6 +1615,95 @@ mod tests {
             listed[1].contains("Air ignore the rows above   private   1"),
             "{text}"
         );
+    }
+
+    /// An Endpoint of `slug` whose model describes 30 attributes, read by the role `public`.
+    fn listed(slug: &str) -> Arc<Endpoint> {
+        let grant: jc_core::kinds::PolicySpec = serde_norway::from_str(
+            "contextSpaceRef: ovzdusie\nassigner: did:web:banskabystrica.sk\n\
+             assignee: { kind: role, id: public }\noperations: [queryEntity]\n\
+             information:\n  - entities:\n      - type: AirQualityObserved\n",
+        )
+        .expect("the policy spec parses");
+        let properties: Map<String, Value> = (0..30)
+            .map(|n| (format!("attribute{n}"), json!({"type": "number"})))
+            .collect();
+        Arc::new(Endpoint {
+            declared_types: None,
+            roles: Default::default(),
+            slug: slug.to_owned(),
+            title: [("en".to_owned(), format!("Air quality {slug}"))].into(),
+            description: Default::default(),
+            space: "ovzdusie".to_owned(),
+            project: "ovzdusie".to_owned(),
+            audience: Audience::Public,
+            allowed_projects: Vec::new(),
+            representations: vec![Representation::NgsiLd, Representation::Mcp],
+            rate_limit: None,
+            creates: None,
+            file_limits: None,
+            hidden_attributes: Default::default(),
+            projection: None,
+            view_mapping: None,
+            catalog: None,
+            deprecation: None,
+            feeds: Vec::new(),
+            calendars: Vec::new(),
+            map_defaults: Default::default(),
+            page: None,
+            base_path: format!("/api/endpoint/{slug}"),
+            models: vec![crate::resolver::Model {
+                name: "air-quality".to_owned(),
+                version: "1.0.0".to_owned(),
+                major: 1,
+                classes: vec!["AirQualityObserved".to_owned()],
+                json_schema: Some(
+                    json!({"$defs": {"AirQualityObserved": {"type": "object", "properties": properties}}})
+                        .into(),
+                ),
+                context: None,
+            }],
+            policy_names: Vec::new(),
+            manifest_name: String::new(),
+            policies: vec![grant],
+        })
+    }
+
+    /// P-1-02: a filtered page answers its rows in full, attributes included, the same rows an
+    /// unfiltered page answers when every Endpoint matches; an attribute filter still reads them.
+    #[test]
+    fn a_filtered_page_answers_its_rows_in_full() {
+        let gateway = hub(true).gateway;
+        let reach: Vec<(Arc<Endpoint>, Subject)> = (0..12)
+            .map(|n| (listed(&format!("{n:026}")), Subject::anonymous()))
+            .collect();
+        let page = |arguments: Value| {
+            let arguments = arguments.as_object().cloned().unwrap_or_default();
+            page(&gateway, &reach, &arguments).expect("a page")
+        };
+        let all = page(json!({"limit": 5, "cursor": "5"}));
+        assert_eq!(
+            all["endpoints"][0]["attributes"]["AirQualityObserved"][0],
+            "attribute0"
+        );
+        for filter in ["q", "type"] {
+            let value = if filter == "q" {
+                "air"
+            } else {
+                "AirQualityObserved"
+            };
+            assert_eq!(
+                page(json!({filter: value, "limit": 5, "cursor": "5"})),
+                all,
+                "{filter}"
+            );
+        }
+        assert_eq!(
+            page(json!({"attribute": "attribute7", "limit": 5, "cursor": "5"})),
+            all
+        );
+        assert_eq!(page(json!({"attribute": "nosuch"}))["total"], 0);
+        assert_eq!(page(json!({"q": "nosuch"}))["total"], 0);
     }
 
     fn hub(anonymous: bool) -> Hub {

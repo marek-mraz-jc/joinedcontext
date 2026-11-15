@@ -4,6 +4,8 @@
 // The release build lays out the editing agent's conversation future 130 queries deep, past the
 // default of 128 (ci-full readme, 534379bd).
 #![recursion_limit = "256"]
+// No unsafe block anywhere in the Portal; keep it so (A-1-04).
+#![forbid(unsafe_code)]
 
 pub mod access_requests;
 pub mod activity;
