@@ -385,9 +385,9 @@ class Suite:
 
         def get(path, token=None):
             return self.http.call("GET", path, token=token, headers={"Accept": "application/json"})
-        live = ex.live_created(get, e.slug, typ)
+        live, refused = ex.live_created(get, e.slug, typ)
         if live is None:
-            return False, f"no proof: a page of /api/endpoint/{e.slug}/ngsi-ld/v1/entities was refused"
+            return False, f"no proof: /api/endpoint/{e.slug}/ngsi-ld/v1/entities {refused}"
         live.update(ex.present(get, e.slug, typ, exported - set(live)))
         return ex.born(live, exported, at, expires, total)
 
