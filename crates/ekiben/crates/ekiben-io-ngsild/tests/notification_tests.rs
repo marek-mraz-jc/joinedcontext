@@ -418,6 +418,9 @@ async fn the_ingest_listener_serves_notifications_beside_http_server_inputs() {
     ] {
         let answer = request.send().await.expect("answered");
         assert_eq!(answer.status().as_u16(), 404);
-        assert_eq!(answer.text().await.expect("text").trim_end(), "404 page not found");
+        assert_eq!(
+            answer.text().await.expect("text").trim_end(),
+            "404 page not found"
+        );
     }
 }

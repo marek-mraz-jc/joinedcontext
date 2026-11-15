@@ -702,7 +702,7 @@ fn judge_write(
         }
     }
     match &write.view {
-        Ok(view) => findings.extend(judge_view_by(
+        Ok(view) => findings.extend(judge_view(
             view,
             target.operation,
             endpoint,
@@ -728,17 +728,6 @@ fn refused_field(refusal: &Refusal) -> &str {
     }
 }
 
-/// The broker's view (Antares `WriteGuard::judge_names`): the view's operations admit the
-/// upsert, and one rule of the type names every Attribute the record carries.
-pub(crate) fn judge_view(
-    view: &Value,
-    endpoint: &str,
-    entity_type: &str,
-    record: &Value,
-) -> Vec<Finding> {
-    judge_view_by(view, WRITE, endpoint, entity_type, record)
-}
-
 /// The write `operation` in words, for a finding.
 fn operation_words(operation: Operation) -> &'static str {
     match operation {
@@ -748,8 +737,10 @@ fn operation_words(operation: Operation) -> &'static str {
     }
 }
 
-/// [`judge_view`] for the write `operation` an output's mode makes.
-fn judge_view_by(
+/// The broker's view (Antares `WriteGuard::judge_names`) for the write `operation` an output's
+/// mode makes: the view's operations admit it, and one rule of the type names every Attribute
+/// the record carries.
+pub(crate) fn judge_view(
     view: &Value,
     operation: Operation,
     endpoint: &str,
