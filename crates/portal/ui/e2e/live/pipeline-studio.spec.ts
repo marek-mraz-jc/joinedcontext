@@ -25,7 +25,8 @@ import { APPROVER, STEWARD, VIEWER, approve, checkManifest, csrf, proposedChange
 
 const PROJECT = "helsinki";
 const SUFFIX = process.env.E2E_SUFFIX ?? new Date().toISOString().slice(11, 16).replace(":", "");
-const TARGET = "urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all";
+// The write door of the helsinki space: open data is read-only (EP-187).
+const TARGET = "urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all-write";
 const ALL = "helsinki-all";
 const CSV_SOURCE = `studio-csv-${SUFFIX}`;
 

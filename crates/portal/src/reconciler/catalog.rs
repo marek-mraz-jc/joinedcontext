@@ -33,6 +33,10 @@ use std::time::{Duration, Instant};
 
 /// The name of the catalogue's Endpoint and of its space.
 pub const CATALOG: &str = "catalog";
+/// The catalogue's write door: an organization Endpoint of the same space. The public `catalog`
+/// Endpoint is open data, and open data is read-only (EP-187), so the wave writes here when the
+/// project declares it.
+pub const CATALOG_WRITE: &str = "catalog-write";
 /// Entities per batch request.
 const BATCH: usize = 100;
 /// Datasets per page of CKAN's `package_search`, its own ceiling, and the pages read at most.
@@ -360,6 +364,8 @@ pub fn with_types(
 /// One catalogue Endpoint the wave writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Catalogue {
+    /// The Endpoint the wave writes through: the project's `catalog-write` door when it has one,
+    /// else the `catalog` Endpoint itself.
     pub slug: String,
     /// The project it is the slice of; `None` for the installation's, which holds every project.
     pub project: Option<String>,
@@ -368,22 +374,29 @@ pub struct Catalogue {
 /// The repository's catalogue Endpoints, the installation's first: each Endpoint named `catalog`
 /// on a space named `catalog`. The one whose space segment is `catalog` is the installation's
 /// (EP-140); one on `{project}-catalog` is its project's slice. Two installation catalogues are
-/// a repository that does not say where to write.
+/// a repository that does not say where to write. Each is written through its project's
+/// `catalog-write` door on the same space when one is declared (EP-187).
 pub fn catalogues(repo: &Repository) -> Result<Vec<Catalogue>, String> {
-    let mut found: Vec<Catalogue> = repo
-        .iter()
-        .filter(|(id, _)| id.kind == "Endpoint" && id.name == CATALOG)
-        .filter_map(|(id, resource)| {
-            let spec = &resource.manifest.spec;
-            if spec.get("contextSpaceRef").and_then(reference_name) != Some(CATALOG) {
-                return None;
-            }
-            let project = id.namespace.clone().unwrap_or_default();
-            let whole = repo.space_segment(&project, CATALOG) == CATALOG;
-            Some(Catalogue {
-                slug: spec.get("slug")?.as_str()?.to_owned(),
-                project: (!whole).then_some(project),
+    let on_catalog = |name: &'static str| {
+        repo.iter()
+            .filter(move |(id, _)| id.kind == "Endpoint" && id.name == name)
+            .filter_map(|(id, resource)| {
+                let spec = &resource.manifest.spec;
+                if spec.get("contextSpaceRef").and_then(reference_name) != Some(CATALOG) {
+                    return None;
+                }
+                let slug = spec.get("slug")?.as_str()?.to_owned();
+                Some((id.namespace.clone().unwrap_or_default(), slug))
             })
+    };
+    let doors: HashMap<String, String> = on_catalog(CATALOG_WRITE).collect();
+    let mut found: Vec<Catalogue> = on_catalog(CATALOG)
+        .map(|(project, slug)| {
+            let whole = repo.space_segment(&project, CATALOG) == CATALOG;
+            Catalogue {
+                slug: doors.get(&project).cloned().unwrap_or(slug),
+                project: (!whole).then_some(project),
+            }
         })
         .collect();
     let whole = found.iter().filter(|c| c.project.is_none()).count();
@@ -659,4 +672,58 @@ async fn post(
         return Err(format!("the catalogue refused the {operation}: {status}"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jcctl::loader::{RawManifest, RawMetadata};
+
+    fn endpoint(project: &str, name: &str, space: &str, slug: &str) -> RawManifest {
+        RawManifest {
+            api_version: "joinedcontext.com/v1alpha1".to_owned(),
+            kind: "Endpoint".to_owned(),
+            metadata: RawMetadata {
+                name: name.to_owned(),
+                namespace: Some(project.to_owned()),
+                rest: serde_json::Map::new(),
+            },
+            spec: json!({ "contextSpaceRef": space, "slug": slug }),
+            status: None,
+        }
+    }
+
+    /// EP-187, T-6980: the public `catalog` Endpoint is open data and refuses writes, so the wave
+    /// writes through the project's `catalog-write` door; a project without one keeps writing
+    /// through `catalog`, and a door on another space or of another project is not its door.
+    #[test]
+    fn a_catalogue_is_written_through_its_projects_write_door() {
+        let repo = Repository::from_manifests(
+            vec![
+                endpoint("city", CATALOG, CATALOG, "public"),
+                endpoint("city", CATALOG_WRITE, CATALOG, "door"),
+                endpoint("town", CATALOG, CATALOG, "town-public"),
+                endpoint("town", CATALOG_WRITE, "air", "not-the-door"),
+                endpoint("village", CATALOG, CATALOG, "village-public"),
+                endpoint("other", CATALOG_WRITE, CATALOG, "other-door"),
+            ],
+            None,
+        )
+        .expect("a repository");
+        let slugs: BTreeMap<_, _> = catalogues(&repo)
+            .expect("catalogues")
+            .into_iter()
+            .map(|c| (c.project.unwrap_or_default(), c.slug))
+            .collect();
+        assert_eq!(slugs.get("city").map(String::as_str), Some("door"));
+        assert_eq!(slugs.get("town").map(String::as_str), Some("town-public"));
+        assert_eq!(
+            slugs.get("village").map(String::as_str),
+            Some("village-public")
+        );
+        assert!(
+            !slugs.contains_key("other"),
+            "a door without a catalogue is none"
+        );
+    }
 }
