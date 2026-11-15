@@ -2,6 +2,7 @@
  * A model's LinkML source through the typed client (UI-07, DM-56, DM-57).
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../src/api/client";
 import { readModelSource, writeModelSource } from "../src/api/datamodelSource";
 
 const YAML = "id: https://example.org/air\nname: air\nclasses: {}\n";
@@ -29,9 +30,14 @@ describe("the model source (UI-07)", () => {
     expect(new URL(seen[0].url).pathname).toBe("/api/v1/projects/helsinki/datamodels/air/source");
   });
 
+  // T-6950: a refusal stays an ApiError with its status and words, so PageFailed tells a 403 from
+  // a lost connection instead of offering Retry on both.
   it("names the status when the source cannot be read", async () => {
-    answer(404, JSON.stringify({ title: "Not Found", status: 404 }));
-    await expect(readModelSource("helsinki", "air")).rejects.toThrow("HTTP 404");
+    answer(403, JSON.stringify({ title: "Forbidden", status: 403, detail: "Not yours to read." }));
+    const refused = await readModelSource("helsinki", "air").catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(ApiError);
+    expect((refused as ApiError).status).toBe(403);
+    expect((refused as ApiError).message).toBe("Not yours to read.");
   });
 
   // UI-07: the body is the YAML as typed, sent as text/yaml, with the csrf token the client adds.

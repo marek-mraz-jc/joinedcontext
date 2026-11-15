@@ -540,6 +540,50 @@ const INHERITING_LINKML = KPI_LINKML.replace(
   "  Indicator:\n    title: { en: Indicator }\n    slots: [name, location]\n  KeyPerformanceIndicator:\n    is_a: Indicator\n",
 ).replace("    slots: [name, currentValue, calculationPeriod, computedBy, location]", "    slots: [currentValue, calculationPeriod, computedBy]");
 
+// T-6950: a model whose source the server refuses or fails to read says which, on the model's
+// page and on its space's Data model tab: a refusal without Retry, a server failure with it.
+test.describe("a model source that cannot be read (T-6950)", () => {
+  for (const width of [1440, 400]) {
+    for (const status of [403, 500]) {
+      test(`says a ${status} on the model page and the space tab at ${width} px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: width > 600 ? 900 : 860 });
+        // A one-line linkml is a reference, not inline YAML: the page reads the source route. With
+        // propose granted, Edit model is closed only by the unread source.
+        await stubKpi(page, ["read", "propose"], "helsinki-kpi");
+        await page.route("**/datamodels/helsinki-kpi/source", (route) =>
+          route.fulfill({
+            status,
+            contentType: "application/problem+json",
+            headers: { "X-Request-Id": `req-${status}` },
+            body: JSON.stringify({ type: "about:blank", title: "x", status, detail: status === 403 ? "You may not read this model's source." : "The model store did not answer." }),
+          }),
+        );
+        await page.route("**/api/v1/projects/helsinki/spaces/helsinki-kpi", (route) =>
+          route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ apiVersion: "joinedcontext.com/v1alpha1", kind: "ContextSpace", metadata: { name: "helsinki-kpi", namespace: "helsinki", title: "Helsinki indicators" }, spec: {} }),
+          }),
+        );
+        const words = status === 403 ? "You may not read this model's source." : "The model store did not answer.";
+        for (const [where, address] of [["page", "/projects/helsinki/models/helsinki-kpi?lang=en"], ["space", "/projects/helsinki/spaces/helsinki-kpi?tab=model&lang=en"]]) {
+          await page.goto(address);
+          // The client asks a 5xx again a few times before the page says it (T-6940 Learned).
+          await expect(page.getByText(words)).toBeVisible({ timeout: 20_000 });
+          await expect(page.getByText("The Portal did not answer")).toHaveCount(0);
+          await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(status === 403 ? 0 : 1);
+          if (where === "page") {
+            // The record still names the model, and Edit model says why it cannot open (UI judge, T-6950).
+            await expect(page.getByRole("region", { name: "From the model's record" })).toBeVisible();
+            await expect(page.getByRole("button", { name: "Edit model" })).toHaveAccessibleDescription("Edit model opens once the model's source can be read.");
+          }
+          await shot(page, `source-${status}-${where}-${width}`);
+        }
+      });
+    }
+  }
+});
+
 test.describe("the model editor's import dialog, inherited fields and read-only source (T-6106)", () => {
   for (const width of [1440, 400]) {
     test(`a new model is named, Add type brings the import, and an open one reads its source first at ${width} px`, async ({ page }) => {

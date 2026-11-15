@@ -39,7 +39,7 @@ import { MappingsEditor } from "./MappingsEditor";
 import type { MappingModel } from "./MappingsEditor";
 import { ModelFields } from "./ModelFields";
 import { ModelForm, ModelYaml, useImportSources } from "./ModelViews";
-import { ProposeLink, useProjectList, useProjectManifests } from "./ModelsList";
+import { lastChangeOf, ProposeLink, useProjectList, useProjectManifests } from "./ModelsList";
 import { classSlots, isAnyClass, parseModel, valueClasses } from "./linkml";
 import { fieldWord, useFieldWords } from "../../components/entities/fieldTypes";
 import { AddFieldDialog } from "../../components/entities/AddFieldDialog";
@@ -296,6 +296,7 @@ export function ModelPage({
   const space = spaceOfModel(model, all.spaces);
   const version = typeof model.spec.version === "string" ? model.spec.version : undefined;
   const lifecycle = typeof model.spec.lifecycle === "string" ? model.spec.lifecycle : undefined;
+  const changed = lastChangeOf(model);
 
   return (
     <div className="flex flex-col gap-4">
@@ -315,7 +316,7 @@ export function ModelPage({
         }
         actions={
           <>
-            <ProposeLink project={project} search={{ edit: name }} variant="primary">
+            <ProposeLink project={project} search={{ edit: name }} variant="primary" unavailable={source.isError ? t("models.page.editUnread") : undefined}>
               {t("models.page.edit")}
             </ProposeLink>
             <ShareWithOrganization project={project} name={name} version={version} lifecycle={lifecycle} />
@@ -338,7 +339,44 @@ export function ModelPage({
       />
       <div {...tabPanelProps("model-page", view)}>
         {source.isError && (view === "overview" || view === "fields" || view === "form" || view === "yaml" || view === "mappings") ? (
-          <PageFailed error={source.error} onRetry={() => void source.refetch()} />
+          <div className="flex flex-col gap-4">
+            <PageFailed error={source.error} onRetry={() => void source.refetch()} />
+            {/* The record still names the model when its source cannot be read (UI judge, T-6950). */}
+            {view === "overview" ? (
+              <section aria-labelledby="model-known" className="flex flex-col gap-2">
+                <h2 id="model-known" className="text-sm font-semibold">
+                  {t("models.page.known")}
+                </h2>
+                <dl className="grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-4 gap-y-2 text-body sm:grid-cols-[12rem_1fr] sm:gap-x-6">
+                  {[
+                    [t("models.field.name"), <span className="font-mono">{name}</span>],
+                    [t("models.field.version"), version ?? "—"],
+                    [t("models.field.lifecycle"), lifecycle ? t(`models.lifecycleOption.${lifecycle}`, { defaultValue: lifecycle }) : "—"],
+                    [
+                      t("models.field.space"),
+                      space ? <RecordLink project={project} plural="spaces" name={space} className="font-mono" /> : "—",
+                    ],
+                    [t("models.page.lastChange"), changed ? new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeStyle: "short" }).format(new Date(changed)) : "—"],
+                    [
+                      t("models.page.usedBy"),
+                      uses.length === 0
+                        ? t("models.page.unused")
+                        : USING_KINDS.filter(({ kind }) => uses.some((use) => use.kind === kind))
+                            .map(({ kind }) => `${t(`models.page.usedKind.${kind}`)} (${uses.filter((use) => use.kind === kind).length})`)
+                            .join(", "),
+                    ],
+                  ].map(([term, value], index) => (
+                    <div key={index} className="contents">
+                      <dt className="font-medium">{term}</dt>
+                      <dd className="min-w-0 break-words">{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+                {/* Said on the page too: a touch screen shows no tooltip of the disabled Edit model. */}
+                <p className="text-body text-fg-muted">{t("models.page.editUnread")}</p>
+              </section>
+            ) : null}
+          </div>
         ) : source.data === undefined && view !== "used" && view !== "history" ? (
           <p role="status" className="text-body text-fg-muted">
             {t("models.source.loading")}

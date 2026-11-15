@@ -4,11 +4,11 @@
  * at "0 of 5 done", "no create form here", a bare "Internal Server Error" without the page's
  * heading, or a page without its navigation.
  */
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import en from "../src/locales/en.json";
 import { queryKeys } from "../src/api/client";
-import { renderRoute } from "./pageHarness";
+import { jsonResponse, list, renderRoute } from "./pageHarness";
 
 const failure = () => new Response(null, { status: 500, statusText: "Internal Server Error" });
 
@@ -70,6 +70,73 @@ describe("a failed read", () => {
     await renderRoute({ path: page, answer: (path) => (failing(path) ? problem(403) : undefined) });
     expect(await screen.findByText("answered 403")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: en.app.error.retry })).not.toBeInTheDocument();
+  });
+
+  // T-6950: both hosts of a model's source (its page and the space's Data model tab) say a refused
+  // source read as a refusal: the server's words, no Retry, never "the Portal did not answer".
+  it.each([["/projects/helsinki/models/air"], ["/projects/helsinki/spaces/ilma?tab=model"], ["/projects/helsinki/spaces/ilma?tab=data"]])(
+    "says a refused model source on %s as a refusal",
+    async (page) => {
+      const model = {
+        apiVersion: "joinedcontext.com/v1alpha1",
+        kind: "DataModel",
+        metadata: { name: "air", namespace: "helsinki" },
+        spec: { contextSpaceRef: "ilma", version: "1.0.0" },
+      };
+      await renderRoute({
+        path: page,
+        answer: (path) =>
+          path.endsWith("/datamodels/air/source")
+            ? new Response(JSON.stringify({ type: "about:blank", title: "Forbidden", status: 403, detail: "answered 403" }), {
+                status: 403,
+                headers: { "Content-Type": "application/problem+json", "X-Request-Id": "req-403" },
+              })
+            : path.endsWith("/datamodels/air")
+              ? jsonResponse(model)
+              : path.endsWith("/datamodels")
+                ? jsonResponse(list([model]))
+                : path.endsWith("/spaces/ilma")
+                  ? jsonResponse({ ...model, kind: "ContextSpace", metadata: { name: "ilma", namespace: "helsinki" }, spec: {} })
+                  : undefined,
+      });
+      expect(await screen.findByText("answered 403")).toBeInTheDocument();
+      expect(screen.queryByText(en.app.error.generic)).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: en.app.error.retry })).not.toBeInTheDocument();
+      // An unread source says nothing about the model's types (UI judge, T-6950).
+      expect(screen.queryByText(en.spaces.inside.noTypes.replace("{model}", "air"))).not.toBeInTheDocument();
+      expect(screen.queryByText(en.spaces.inside.dataNoTypes)).not.toBeInTheDocument();
+    },
+  );
+
+  // T-6950 (integrator UI judge): the model page keeps what the record knows beside an unread
+  // source, and Edit model says why it cannot open instead of a faded primary that does nothing.
+  it("keeps the model's record and explains Edit model when the source is refused", async () => {
+    const model = {
+      apiVersion: "joinedcontext.com/v1alpha1",
+      kind: "DataModel",
+      metadata: { name: "air", namespace: "helsinki" },
+      spec: { contextSpaceRef: "ilma", version: "1.2.0", lifecycle: "published" },
+    };
+    await renderRoute({
+      path: "/projects/helsinki/models/air",
+      answer: (path) =>
+        path.endsWith("/datamodels/air/source")
+          ? new Response(JSON.stringify({ type: "about:blank", title: "Forbidden", status: 403, detail: "answered 403" }), {
+              status: 403,
+              headers: { "Content-Type": "application/problem+json" },
+            })
+          : path.endsWith("/datamodels")
+            ? jsonResponse(list([model]))
+            : undefined,
+    });
+    expect(await screen.findByText("answered 403")).toBeInTheDocument();
+    const known = screen.getByRole("region", { name: en.models.page.known });
+    expect(within(known).getByText("1.2.0")).toBeInTheDocument();
+    expect(within(known).getByText(en.models.lifecycleOption.published)).toBeInTheDocument();
+    expect(within(known).getByRole("link", { name: "ilma" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: en.models.page.edit })).toHaveAccessibleDescription(en.models.page.editUnread);
+    // A touch screen has no tooltip: the reason is on the page as well.
+    expect(within(known).getByText(en.models.page.editUnread)).toBeInTheDocument();
   });
 
   it("is not told as a missing create form", async () => {
