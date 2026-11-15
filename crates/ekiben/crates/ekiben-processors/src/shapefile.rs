@@ -802,7 +802,7 @@ mod tests {
             dbf[29] = 0x57;
             // "Kamppi–Etu-Töölö" in UTF-8 has an en dash (3 bytes) and three 2-byte umlauts;
             // Windows-1252 spells it in 16 bytes, padded back to the field.
-            let utf8 = "Kamppi–Etu-Töölö".as_bytes().len();
+            let utf8 = "Kamppi–Etu-Töölö".len();
             let cp1252 = b"Kamppi\x96Etu-T\xf6\xf6l\xf6";
             let mut field = cp1252.to_vec();
             field.resize(utf8, b' ');
