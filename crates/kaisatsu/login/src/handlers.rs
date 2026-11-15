@@ -1355,7 +1355,7 @@ async fn authenticate_page_post(
             .await?
             .filter(|u| u.enabled)
         else {
-            kaisatsu_crypto::password::dummy_verify_password(password);
+            kaisatsu_oidc::dummy_verify_off_runtime(password).await?;
             let _ = bf.record_failure(&realm, None, client_ip.as_deref()).await;
             return render_state_page(
                 &state,
@@ -1373,7 +1373,7 @@ async fn authenticate_page_post(
             .is_locked(&realm, Some(&user.id), client_ip.as_deref())
             .await?
         {
-            kaisatsu_crypto::password::dummy_verify_password(password);
+            kaisatsu_oidc::dummy_verify_off_runtime(password).await?;
             return render_state_page(
                 &state,
                 &mount,
@@ -1388,7 +1388,7 @@ async fn authenticate_page_post(
 
         let creds = state.store.list_credentials(&realm.id, &user.id).await?;
         let Some(pw_cred) = creds.iter().find(|c| c.credential_type == "password") else {
-            kaisatsu_crypto::password::dummy_verify_password(password);
+            kaisatsu_oidc::dummy_verify_off_runtime(password).await?;
             let _ = bf
                 .record_failure(&realm, Some(&user.id), client_ip.as_deref())
                 .await;
@@ -1404,7 +1404,11 @@ async fn authenticate_page_post(
             .await;
         };
 
-        let outcome = verify_and_maybe_rehash(password, pw_cred)?;
+        let outcome = {
+            let (password, pw_cred) = (password.to_owned(), pw_cred.clone());
+            kaisatsu_oidc::password_work(move || verify_and_maybe_rehash(&password, &pw_cred))
+                .await??
+        };
         if !outcome.valid {
             let _ = bf
                 .record_failure(&realm, Some(&user.id), client_ip.as_deref())
@@ -1718,7 +1722,10 @@ async fn authenticate_page_post(
                 credential_type: "password".into(),
                 user_label: Some("Password".into()),
                 created_date: Utc::now().timestamp_millis(),
-                secret_data: hash_password(new_password)?,
+                secret_data: {
+                    let new_password = new_password.to_owned();
+                    kaisatsu_oidc::password_work(move || hash_password(&new_password)).await??
+                },
                 credential_data: String::new(),
                 temporary: false,
             })
@@ -2822,7 +2829,10 @@ async fn action_token_post(
                 credential_type: "password".into(),
                 user_label: Some("Password".into()),
                 created_date: Utc::now().timestamp_millis(),
-                secret_data: hash_password(new_password)?,
+                secret_data: {
+                    let new_password = new_password.to_owned();
+                    kaisatsu_oidc::password_work(move || hash_password(&new_password)).await??
+                },
                 credential_data: String::new(),
                 temporary: false,
             })

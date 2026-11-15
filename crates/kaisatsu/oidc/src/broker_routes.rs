@@ -494,7 +494,12 @@ async fn broker_endpoint_confirm_post(
         let bf = crate::brute_force::BruteForceProtector::new(state.store.clone());
         let ip = client_ip.as_deref();
         let locked = bf.is_locked(&realm, Some(&existing.id), ip).await?;
-        let valid = verify_and_maybe_rehash(submitted, pw_cred)?.valid && !locked;
+        let outcome = {
+            let (submitted, pw_cred) = (submitted.to_owned(), pw_cred.clone());
+            crate::handlers::password_work(move || verify_and_maybe_rehash(&submitted, &pw_cred))
+                .await??
+        };
+        let valid = outcome.valid && !locked;
         if !valid {
             if !locked {
                 bf.record_failure(&realm, Some(&existing.id), ip).await?;
