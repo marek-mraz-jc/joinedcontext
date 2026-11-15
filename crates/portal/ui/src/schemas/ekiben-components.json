@@ -1,5 +1,6 @@
 {
   "inputs": [
+    "aws_s3",
     "batched",
     "broker",
     "csv",

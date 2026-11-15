@@ -503,6 +503,25 @@ fn expand_paths(
     Ok(out)
 }
 
+/// A configured scanner for an input that fetches whole objects itself (aws_s3, sftp): the
+/// `scanner` field of `obj` as the file input reads it, `to_the_end` when absent (Bento's default
+/// for those inputs).
+#[derive(Clone, Debug)]
+pub struct Scanner(FileScannerKind);
+
+impl Scanner {
+    pub fn from_config(obj: &serde_json::Map<String, JsonValue>) -> Result<Self, CoreError> {
+        match obj.get("scanner").and_then(JsonValue::as_object) {
+            Some(s) => parse_scanner(s).map(Self),
+            None => Ok(Self(FileScannerKind::ToTheEnd)),
+        }
+    }
+
+    pub fn scan(&self, raw: Vec<u8>) -> Result<Vec<Part>, CoreError> {
+        scan_parts(raw, self.0.clone())
+    }
+}
+
 fn parse_scanner_config(
     obj: &serde_json::Map<String, JsonValue>,
 ) -> Result<FileScannerKind, CoreError> {

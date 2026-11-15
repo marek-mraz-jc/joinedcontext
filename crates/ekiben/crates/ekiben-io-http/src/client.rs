@@ -901,6 +901,45 @@ pub fn validate_resolved_url(url_str: &str, org: &OrgContext) -> Result<Url, Cor
     Ok(parsed)
 }
 
+/// The three outbound clients of [`HttpClient`] for a component that builds its own requests
+/// (the S3 client): [`Self::for_url`] validates the URL as every `http_client` request is and
+/// hands the client whose resolver enforces the organization's outbound rule for that host.
+pub struct GuardedHttp {
+    public: reqwest::Client,
+    private_host: reqwest::Client,
+    open: reqwest::Client,
+}
+
+impl GuardedHttp {
+    pub fn new(timeout: Duration) -> Result<Self, CoreError> {
+        Ok(Self {
+            public: build_http(timeout, Reach::Public)?,
+            private_host: build_http(timeout, Reach::PrivateHost)?,
+            open: build_http(timeout, Reach::Open)?,
+        })
+    }
+
+    /// The checked URL and the client to send it with; a refused host is an error before any
+    /// connection is made.
+    pub fn for_url(
+        &self,
+        org: &OrgContext,
+        url: &str,
+    ) -> Result<(Url, &reqwest::Client), CoreError> {
+        let url = validate_resolved_url(url, org)?;
+        let client = if org.get_quotas().allow_private_ips {
+            &self.open
+        } else if url.host_str().is_some_and(|h| {
+            org.is_private_host_port_allowed(h, url.port_or_known_default().unwrap_or(0))
+        }) {
+            &self.private_host
+        } else {
+            &self.public
+        };
+        Ok((url, client))
+    }
+}
+
 /// What a client built by [`build_http`] may connect to.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Reach {

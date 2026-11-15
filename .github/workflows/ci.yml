@@ -578,10 +578,19 @@ jobs:
       MY_DSN: root:testpass@tcp(127.0.0.1:33069)/testdb
       PG_RESET: PGPASSWORD=testpass psql -h 127.0.0.1 -p 54329 -U testuser -d testdb -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public'
       MY_RESET: mysql -h 127.0.0.1 -P 33069 -uroot -ptestpass -e 'DROP DATABASE testdb; CREATE DATABASE testdb'
+      # aws_s3 input/output (T-7080/T-7081) against versitygw, which checks SigV4; the bucket is a directory.
+      S3_TEST_ENDPOINT: http://127.0.0.1:7070
+      S3_TEST_ID: ekibentest
+      S3_TEST_SECRET: ekibentestsecret
+      S3_TEST_BUCKET: raw
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/rust
         with: { workspace: crates/ekiben, key: ekiben, components: "clippy, rustfmt" }
+      - run: >-
+          docker run -d --name versitygw -p 7070:7070 -e ROOT_ACCESS_KEY=$S3_TEST_ID -e ROOT_SECRET_KEY=$S3_TEST_SECRET
+          versity/versitygw@sha256:605de57c0cdc297fc5bc905ece592965d542d8df70d6eedf755734c80f2eb797 --port :7070 posix /tmp
+          && sleep 2 && docker exec versitygw mkdir -p /tmp/$S3_TEST_BUCKET
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked --no-fail-fast
