@@ -1163,16 +1163,15 @@ async fn every_role_reads_every_set_as_rest_and_mcp_answer_it() {
 #[tokio::test]
 async fn a_manifests_spec_status_and_metadata_answer_as_the_rest_door() {
     let state = state();
-    let space: joinedcontext_portal::resource::ResourceEnvelope =
-        serde_json::from_value(json!({
-            "apiVersion": "joinedcontext.com/v1alpha1",
-            "kind": "ContextSpace",
-            "metadata": { "name": "air", "namespace": "helsinki", "title": "Air quality",
-                          "labels": { "team": "air" } },
-            "spec": { "isSandbox": true, "description": "Air sensors" },
-            "status": { "phase": "Live" }
-        }))
-        .expect("envelope");
+    let space: joinedcontext_portal::resource::ResourceEnvelope = serde_json::from_value(json!({
+        "apiVersion": "joinedcontext.com/v1alpha1",
+        "kind": "ContextSpace",
+        "metadata": { "name": "air", "namespace": "helsinki", "title": "Air quality",
+                      "labels": { "team": "air" } },
+        "spec": { "isSandbox": true, "description": "Air sensors" },
+        "status": { "phase": "Live" }
+    }))
+    .expect("envelope");
     state.mirror.upsert(space);
     let mode = Mode::Host("hel");
     let sets: Vec<String> = joinedcontext_portal::resource::kinds()
@@ -1188,16 +1187,18 @@ async fn a_manifests_spec_status_and_metadata_answer_as_the_rest_door() {
                 &state,
                 mode,
                 &cookie,
-                &format!(
-                    "/api/v1/projects('helsinki')/{plural}?$select=name,spec,status,metadata"
-                ),
+                &format!("/api/v1/projects('helsinki')/{plural}?$select=name,spec,status,metadata"),
                 &[],
             )
             .await;
             if !odata.status.is_success() {
                 continue;
             }
-            for row in odata.json()["value"].as_array().cloned().unwrap_or_default() {
+            for row in odata.json()["value"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+            {
                 let name = row["name"].as_str().unwrap_or_default();
                 let rest = send(
                     &state,
@@ -1337,9 +1338,10 @@ async fn a_changes_detail_answers_as_the_rest_door() {
     let file = "projects/helsinki/spaces/mobility/space.yaml";
     Mock::given(method("GET"))
         .and(path(format!("{repo}/PullRequests(1)/Files")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(
-            json!({ "value": [{ "Filename": file, "Status": "added" }] }),
-        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "value": [{ "Filename": file, "Status": "added" }] })),
+        )
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
@@ -1362,15 +1364,31 @@ async fn a_changes_detail_answers_as_the_rest_door() {
     .expect("client");
     let state = state().with_shako(Arc::new(client));
     let mode = Mode::Host("hel");
-    let rest = get(&state, mode, "hel-only", "/api/v1/projects/helsinki/changes").await;
+    let rest = get(
+        &state,
+        mode,
+        "hel-only",
+        "/api/v1/projects/helsinki/changes",
+    )
+    .await;
     assert_eq!(rest.status, StatusCode::OK, "{}", rest.text);
     let id = rest.json()["items"][0]["metadata"]["name"]
         .as_str()
         .expect("one change")
         .to_owned();
-    let thin = get(&state, mode, "hel-only", "/api/v1/projects('helsinki')/changes").await;
+    let thin = get(
+        &state,
+        mode,
+        "hel-only",
+        "/api/v1/projects('helsinki')/changes",
+    )
+    .await;
     assert_eq!(thin.status, StatusCode::OK, "{}", thin.text);
-    assert!(thin.json()["value"][0].get("summary").is_none(), "{}", thin.text);
+    assert!(
+        thin.json()["value"][0].get("summary").is_none(),
+        "{}",
+        thin.text
+    );
     let members = [
         "metadata",
         "status",
@@ -1402,7 +1420,10 @@ async fn a_changes_detail_answers_as_the_rest_door() {
     .await;
     assert_eq!(rest.status, StatusCode::OK, "{}", rest.text);
     let (odata, rest) = (detail.json(), rest.json());
-    assert!(rest["summary"].is_object() && rest["files"].is_array(), "{rest}");
+    assert!(
+        rest["summary"].is_object() && rest["files"].is_array(),
+        "{rest}"
+    );
     for member in members {
         assert_eq!(
             odata[member],
@@ -1471,9 +1492,21 @@ async fn people_operations_are_the_organizations_and_answer_as_their_rest_doors(
         ))
     };
     let admin = get(&state, mode, "ppl", "/api/v1/$metadata").await;
-    assert!(bound(&admin.text, "jc_person_list", "Organization"), "{}", admin.text);
-    assert!(bound(&admin.text, "jc_person_get", "Organization"), "{}", admin.text);
-    assert!(!bound(&admin.text, "jc_person_list", "Project"), "{}", admin.text);
+    assert!(
+        bound(&admin.text, "jc_person_list", "Organization"),
+        "{}",
+        admin.text
+    );
+    assert!(
+        bound(&admin.text, "jc_person_get", "Organization"),
+        "{}",
+        admin.text
+    );
+    assert!(
+        !bound(&admin.text, "jc_person_list", "Project"),
+        "{}",
+        admin.text
+    );
     // A reader of Person writes nobody: no person action in their model.
     assert!(!admin.text.contains("jc_person_create"), "{}", admin.text);
     let viewer = get(&state, mode, "hel-only", "/api/v1/$metadata").await;
@@ -1492,7 +1525,11 @@ async fn people_operations_are_the_organizations_and_answer_as_their_rest_doors(
         for who in ["ppl", "hel-only"] {
             let odata = get(&state, mode, who, odata_uri).await;
             let rest = get(&state, mode, who, rest_uri).await;
-            assert_eq!(odata.status, rest.status, "{who} {odata_uri}: {} / {}", odata.text, rest.text);
+            assert_eq!(
+                odata.status, rest.status,
+                "{who} {odata_uri}: {} / {}",
+                odata.text, rest.text
+            );
             if who == "ppl" {
                 assert_eq!(odata.status, StatusCode::OK, "{odata_uri}: {}", odata.text);
                 assert_eq!(odata.json()["value"], rest.json(), "{odata_uri}");
@@ -1515,7 +1552,12 @@ async fn people_operations_are_the_organizations_and_answer_as_their_rest_doors(
         "/api/v1/projects('helsinki')/JoinedContext.Portal.jc_person_list()",
     )
     .await;
-    assert_eq!(on_project.status, StatusCode::NOT_FOUND, "{}", on_project.text);
+    assert_eq!(
+        on_project.status,
+        StatusCode::NOT_FOUND,
+        "{}",
+        on_project.text
+    );
     // ba is no installation Organization: its singleton holds no people, as no name it lacks.
     let foreign = get(
         &state,
