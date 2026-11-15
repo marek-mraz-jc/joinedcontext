@@ -630,7 +630,8 @@ pub async fn build_router(
         builder = builder.hosts(table);
     }
     if let Some(spec) = old_sign_in_spec(cfg) {
-        builder = builder.mount(spec, access::layer(Module::Kaisatsu.name(), old_sign_in()));
+        let old = old_sign_in(cfg.scheme.clone(), cfg.base_host.clone());
+        builder = builder.mount(spec, access::layer(Module::Kaisatsu.name(), old));
     }
     let mut portal = None;
     // Filled when the Portal's plan comes; the forge's public mount hands it the read door before.
@@ -807,28 +808,24 @@ fn old_sign_in_spec(cfg: &Config) -> Option<MountSpec> {
 }
 
 /// T-7006: `/id/{rest}?{query}` answers `308` to `/login/{rest}?{query}`, method and body kept.
-/// The Location is absolute on the scheme and host the router vouched for (the request's
-/// `Mount`: the base host unless a trusted edge named another), so a forged `Host` or
-/// `X-Forwarded-Host` never becomes the target and the Location is never `//...`.
-fn old_sign_in() -> Router {
+/// The Location is absolute on the configured scheme and base host, where slug mode's default
+/// kaisatsu mount and its issuer live: no request header, a trusted edge's `X-Forwarded-Host`
+/// included, ever becomes the target, and the Location is never `//...`. Only the
+/// Organization's path segment comes from the matched mount.
+fn old_sign_in(scheme: String, host: String) -> Router {
     Router::new().fallback(
-        |axum::Extension(mount): axum::Extension<Mount>, uri: axum::http::Uri| async move {
+        move |axum::Extension(mount): axum::Extension<Mount>, uri: axum::http::Uri| {
             let old = format!("/{}", Module::KAISATSU_OLD_SLUG);
             let base = mount
                 .path_prefix
                 .strip_suffix(old.as_str())
                 .unwrap_or(&mount.path_prefix);
             let rest = uri.path_and_query().map_or("/", |pq| pq.as_str());
-            let location = format!(
-                "{}://{}{base}/{}{rest}",
-                mount.scheme,
-                mount.host,
-                Module::Kaisatsu.slug()
-            );
-            (
+            let location = format!("{scheme}://{host}{base}/{}{rest}", Module::Kaisatsu.slug());
+            std::future::ready((
                 StatusCode::PERMANENT_REDIRECT,
                 [(header::LOCATION, location)],
-            )
+            ))
         },
     )
 }
@@ -1722,7 +1719,10 @@ mod tests {
                 .fallback(move |uri: axum::http::Uri| async move { format!("{name} {uri}") });
             builder = mount_all(builder, plan, &router);
         }
-        builder = builder.mount(old_sign_in_spec(&cfg).unwrap(), old_sign_in());
+        let old = old_sign_in(cfg.scheme.clone(), cfg.base_host.clone());
+        builder = builder
+            .trust_proxy("10.0.0.0/8".parse().unwrap())
+            .mount(old_sign_in_spec(&cfg).unwrap(), old);
         let router = builder.build().unwrap();
         let send = |method: &str, path: &str| {
             Request::builder()
@@ -1748,9 +1748,20 @@ mod tests {
                 "https://city.test/login//evil.example/x",
             ),
         ] {
-            let resp = router.dispatch(send(method, path), None).await;
-            assert_eq!(resp.status(), StatusCode::PERMANENT_REDIRECT, "{path}");
-            assert_eq!(resp.headers()[header::LOCATION], location, "{path}");
+            // A direct caller and a trusted edge forwarding a spoofed X-Forwarded-Host alike.
+            for peer in [None, Some("10.1.2.3".parse().unwrap())] {
+                let resp = router.dispatch(send(method, path), peer).await;
+                assert_eq!(
+                    resp.status(),
+                    StatusCode::PERMANENT_REDIRECT,
+                    "{path} {peer:?}"
+                );
+                assert_eq!(
+                    resp.headers()[header::LOCATION],
+                    location,
+                    "{path} {peer:?}"
+                );
+            }
         }
         // The new slug is kaisatsu's; a segment that only starts with `id` is not the old slug.
         let resp = router.dispatch(send("GET", "/login/realms/jc"), None).await;
