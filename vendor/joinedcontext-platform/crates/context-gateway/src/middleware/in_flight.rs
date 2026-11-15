@@ -470,7 +470,8 @@ fn anonymous_share_taken() -> Response<Body> {
     answer
 }
 
-fn unavailable(detail: String, retry: u32) -> Response<Body> {
+/// A 503 whose `Retry-After` names `retry` seconds: nothing of the request was forwarded.
+pub(crate) fn unavailable(detail: String, retry: u32) -> Response<Body> {
     let mut answer = ProblemDetails::new(503, "service-unavailable", "Service Unavailable")
         .with_detail(detail)
         .into_response();

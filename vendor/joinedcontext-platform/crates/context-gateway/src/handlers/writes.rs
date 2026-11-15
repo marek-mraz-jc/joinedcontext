@@ -1133,16 +1133,12 @@ pub(crate) async fn write_share(
 /// The 503 of a write over the gateway's write budget (T-4077): nothing of it was read, so
 /// sending it again after `Retry-After` is safe.
 pub(crate) fn busy() -> Response<Body> {
-    let mut answer = ProblemDetails::new(503, "service-unavailable", "Service Unavailable")
-        .with_detail(
-            "the gateway holds as many writes as it may at once; send this one again after the \
-             seconds Retry-After names",
-        )
-        .into_response();
-    answer
-        .headers_mut()
-        .insert("retry-after", HeaderValue::from(WRITE_RETRY_SECONDS));
-    answer
+    crate::middleware::in_flight::unavailable(
+        "the gateway holds as many writes as it may at once; send this one again after the \
+         seconds Retry-After names"
+            .into(),
+        WRITE_RETRY_SECONDS,
+    )
 }
 
 /// GW1 and R20: a refused read of one entity is indistinguishable from a miss; everything
