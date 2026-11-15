@@ -356,8 +356,10 @@ impl Path {
 }
 
 /// The steps offered on their path and on no free turn: the pipeline workbench's, and the run
-/// log and rejected records find-data reads (T-6489).
-const PATH_STEPS: [&str; 5] = [
+/// log and rejected records find-data reads (T-6489). The preset listing is on no turn at all:
+/// the form and MCP clients call it, and the 4k budget (AG-72) has no room for it (T-7076).
+const PATH_STEPS: [&str; 6] = [
+    "jc_datasource_discover",
     "jc_pipeline_sample_source",
     "jc_pipeline_try_mapping",
     "jc_pipeline_validate",

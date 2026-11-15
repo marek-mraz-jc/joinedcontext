@@ -11084,6 +11084,99 @@
         }
       }
     },
+    "/api/v1/projects/{project}/datasource-discovery": {
+      "post": {
+        "tags": [
+          "datasources"
+        ],
+        "summary": "Data Source Discovery",
+        "description": "Lists what a public service offers an http preset: organizations, layers, entity sets, feature types, collections or Things.",
+        "operationId": "discover_datasource",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The choices, or `skipped` with the reason in plain words",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Discovery"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The URL does not name a service of the kind, or names one the runner may not reach",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No grant proposes a DataSource in this project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A test of this project is already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No pipeline runner is configured, or it did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project}/datasources/{name}/test": {
       "post": {
         "tags": [
@@ -22960,6 +23053,138 @@
           "checkedBy": "project",
           "kind": "DataSource",
           "verb": "read"
+        }
+      }
+    },
+    "/api/v1/projects/{project}/ops/jc_datasource_discover": {
+      "post": {
+        "description": "Lists what a public service offers an http preset: organizations, layers, entity sets, feature types, collections or Things",
+        "operationId": "jc_datasource_discover",
+        "parameters": [
+          {
+            "description": "Project slug",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "kind": "ckan",
+                "url": "example"
+              },
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "description": "The preset kind",
+                    "enum": [
+                      "ckan",
+                      "arcgisFeature",
+                      "odata",
+                      "wfs",
+                      "ogcFeatures",
+                      "sensorThings"
+                    ],
+                    "type": "string"
+                  },
+                  "url": {
+                    "description": "The service or any address under it",
+                    "maxLength": 2048,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "url"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "required": [
+                    "field",
+                    "url",
+                    "choices",
+                    "truncated"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The operation's answer"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The change the operation opened, waiting for a person's approval"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden: the caller lacks what x-jc-requires names"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The project or an object the input names is not there"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The input does not match the schema; the problem names the path"
+          }
+        },
+        "summary": "Data Source Discovery",
+        "tags": [
+          "ops"
+        ],
+        "x-jc-requires": {
+          "checkedBy": "registry",
+          "kind": "DataSource",
+          "verb": "propose"
         }
       }
     },
@@ -49877,6 +50102,24 @@
           "unreadable"
         ]
       },
+      "Choice": {
+        "type": "object",
+        "description": "One thing the person can pick.",
+        "required": [
+          "value",
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "What the person reads."
+          },
+          "value": {
+            "type": "string",
+            "description": "What the form writes: an organization name, a layer id, an entity set, a feature type\nname, a collection id or a Thing id."
+          }
+        }
+      },
       "CkanStatus": {
         "type": "object",
         "description": "The CKAN picture of one project.",
@@ -51621,6 +51864,69 @@
           }
         },
         "additionalProperties": false
+      },
+      "DiscoverRequest": {
+        "type": "object",
+        "description": "What to list: the preset kind and the service's URL as the person typed it.",
+        "required": [
+          "kind",
+          "url"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "`ckan`, `arcgisFeature`, `odata`, `wfs`, `ogcFeatures` or `sensorThings`.",
+            "example": "arcgisFeature"
+          },
+          "url": {
+            "type": "string",
+            "description": "The service or any address under it, `https://geodata.example/rest/services/X/FeatureServer/0/query`.",
+            "example": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs"
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "kind": "wfs",
+          "url": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs"
+        }
+      },
+      "Discovery": {
+        "type": "object",
+        "description": "The listing of one service, or why there is none.",
+        "required": [
+          "field",
+          "url",
+          "choices",
+          "truncated"
+        ],
+        "properties": {
+          "choices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Choice"
+            },
+            "description": "What the service lists, in its order, at most `MAX_CHOICES`."
+          },
+          "field": {
+            "type": "string",
+            "description": "The form field a choice fills: `organization`, `layer`, `entitySet`, `typeNames`,\n`collection` or `thing`."
+          },
+          "skipped": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why nothing is listed: the service did not answer, or answered something else."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "The answer was longer than the Portal reads, or listed more than `MAX_CHOICES`."
+          },
+          "url": {
+            "type": "string",
+            "description": "The listing's address the runner read."
+          }
+        }
       },
       "DisplayMode": {
         "type": "string",
@@ -58080,6 +58386,14 @@
               "integer",
               "null"
             ],
+            "minimum": 0
+          },
+          "pages": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "The pages a paged source's read walked (`spec.http.paging` or a preset); absent unpaged.",
             "minimum": 0
           },
           "records": {

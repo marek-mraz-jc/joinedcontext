@@ -1305,6 +1305,7 @@
       },
       "tests": [
         "context_sources_ui.test.tsx",
+        "datasource_presets.test.tsx",
         "datasource_webhook_ui.test.tsx"
       ]
     },
@@ -1327,6 +1328,14 @@
         "page_data_sources_page.test.tsx",
         "raw_values_on_pages.test.tsx",
         "runner_input_schema.test.ts"
+      ]
+    },
+    "src/pages/datasources/PresetDiscovery.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "datasource_presets.test.tsx"
       ]
     },
     "src/pages/datasources/TemplateGallery.tsx": {

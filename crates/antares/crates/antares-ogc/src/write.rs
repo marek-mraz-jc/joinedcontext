@@ -146,7 +146,7 @@ pub(crate) async fn run(
     };
     let status = answer.status();
     if status == StatusCode::BAD_REQUEST {
-        return match model_refusal(view, answer).await {
+        return match model_refusal(view, c, answer).await {
             Some(d) => Ok(crate::problem(status, &d)),
             None => Err(refused(status)),
         };
@@ -168,14 +168,27 @@ pub(crate) async fn run(
 /// The data model's refusal in a 400 (T-5912): it names the attribute and
 /// the rule, never the value or anything the view hides, so it is passed
 /// on as it is and a client fixes the same field whatever surface it wrote
-/// with. `None` for any other 400, whose detail stays the broker's.
-async fn model_refusal(view: &ViewOps, answer: Response) -> Option<String> {
+/// with. `None` for any other 400, whose detail stays the broker's, and for a
+/// refusal naming an attribute the collection does not show.
+async fn model_refusal(view: &ViewOps, c: &Collection, answer: Response) -> Option<String> {
     let body = view.read_answer(answer.into_body(), "ogc").await.ok()?;
     let problem = serde_json::from_slice::<Value>(&body).ok()?;
     let detail = problem.get("detail")?.as_str()?;
+    shown_refusal(c, detail).then(|| detail.to_owned())
+}
+
+/// Whether `detail` is the data model's refusal of an attribute the collection shows:
+/// `the attribute <name> breaks the data model of ...`.
+fn shown_refusal(c: &Collection, detail: &str) -> bool {
     detail
-        .contains(linkml_model::check::MARK)
-        .then(|| detail.to_owned())
+        .split_once(linkml_model::check::MARK)
+        .and_then(|(before, _)| before.trim_end().rsplit(' ').next())
+        .is_some_and(|name| {
+            c.properties.iter().any(|p| p.name == name)
+                || c.geometry
+                    .as_deref()
+                    .is_some_and(|g| antares_ops::core_name(g) == name)
+        })
 }
 
 /// The body of a write: its media type checked (415), its size bounded (413), its JSON read

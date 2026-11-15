@@ -573,18 +573,36 @@ jobs:
         ports: ["33069:3306"]
         options: >-
           --health-cmd "mysqladmin ping -h 127.0.0.1 -ptestpass" --health-interval 5s --health-timeout 5s --health-retries 30
+      redis:
+        image: redis@sha256:a9cc41d6d01da2aa26c219e4f99ecbeead955a7b656c1c499cce8922311b2514 # 7.4.6
+        ports: ["63790:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 20
     env:
       PG_DSN: postgres://testuser:testpass@127.0.0.1:54329/testdb?sslmode=disable
       MY_DSN: root:testpass@tcp(127.0.0.1:33069)/testdb
       PG_RESET: PGPASSWORD=testpass psql -h 127.0.0.1 -p 54329 -U testuser -d testdb -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public'
       MY_RESET: mysql -h 127.0.0.1 -P 33069 -uroot -ptestpass -e 'DROP DATABASE testdb; CREATE DATABASE testdb'
+      # aws_s3 input/output (T-7080/T-7081) against versitygw, which checks SigV4; the bucket is a directory.
+      S3_TEST_ENDPOINT: http://127.0.0.1:7070
+      S3_TEST_ID: ekibentest
+      S3_TEST_SECRET: ekibentestsecret
+      S3_TEST_BUCKET: raw
+      REDIS_TEST_URL: redis://127.0.0.1:63790/0
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/rust
         with: { workspace: crates/ekiben, key: ekiben, components: "clippy, rustfmt" }
+      - run: >-
+          docker run -d --name versitygw -p 7070:7070 -e "ROOT_ACCESS_KEY=$S3_TEST_ID" -e "ROOT_SECRET_KEY=$S3_TEST_SECRET"
+          versity/versitygw@sha256:605de57c0cdc297fc5bc905ece592965d542d8df70d6eedf755734c80f2eb797 --port :7070 posix /tmp
+          && sleep 2 && docker exec versitygw mkdir -p "/tmp/$S3_TEST_BUCKET"
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked --no-fail-fast
+      # The inventory gate (T-7054 G-01): every Bento 1.22 name is in ekiben, refused with a
+      # reason, or listed missing in tests/parity/missing.json; an ekiben-only name has a reason.
+      - run: cargo build --locked --bin ekiben && python3 scripts/parity-inventory.py --ekiben target/debug/ekiben --check
   portal-clippy:
     needs: changes
     if: needs.changes.outputs.portal == 'true'

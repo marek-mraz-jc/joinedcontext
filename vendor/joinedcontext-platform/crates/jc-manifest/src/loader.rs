@@ -1064,6 +1064,35 @@ impl Repository {
         self.org_domain.as_deref()
     }
 
+    /// The domains each Project publishes under, by project: its own `spec.domain` and its
+    /// Organization's (PF-122). A Policy URN binds in a project only under one of them; a project
+    /// with neither binds under [`Self::org_domain`], the installation's (T-6502). Several
+    /// Organizations make that domain another Organization's, so a check that renders every
+    /// project's URN with it disagrees with the gateway.
+    pub fn policy_ref_domains(&self) -> BTreeMap<String, std::collections::BTreeSet<String>> {
+        fn spec<T: serde::de::DeserializeOwned>(resource: &LoadedResource) -> Option<T> {
+            serde_json::from_value(resource.manifest.spec.clone()).ok()
+        }
+        let organizations: BTreeMap<&str, jc_core::kinds::OrganizationSpec> = self
+            .iter()
+            .filter(|(id, _)| id.kind == "Organization")
+            .filter_map(|(id, resource)| Some((id.name.as_str(), spec(resource)?)))
+            .collect();
+        self.iter()
+            .filter(|(id, _)| id.kind == "Project")
+            .filter_map(|(id, resource)| {
+                let project = spec::<jc_core::kinds::ProjectSpec>(resource)?;
+                let organization = organizations.get(project.organization_ref.name());
+                let domains: std::collections::BTreeSet<String> = project
+                    .domain
+                    .into_iter()
+                    .chain(organization.map(|organization| organization.domain.clone()))
+                    .collect();
+                (!domains.is_empty()).then(|| (id.name.clone(), domains))
+            })
+            .collect()
+    }
+
     /// The hosts of the environment, by component; empty without an overlay.
     pub fn hosts(&self) -> &BTreeMap<String, String> {
         &self.hosts

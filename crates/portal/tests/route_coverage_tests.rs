@@ -265,6 +265,7 @@ const ROUTE_COVERAGE: &[(&str, &str, &str)] = &[
 ("POST", "/projects/{project}/ops/{name}", "the registry's own door"),
 ("GET", "/projects/{project}/permissions/me", "what this caller may do, for the Portal UI; jc_permissions_me answers the same rules (JC2-29)"),
 ("POST", "/projects/{project}/pipelines/test", "jc_pipeline_test"),
+("POST", "/projects/{project}/datasource-discovery", "jc_datasource_discover"),
 ("POST", "/projects/{project}/datasources/{name}/test", "a steward tests a saved data source's connection from its page (T-4819); an agent checks a draft source with jc_resource_propose and dryRun, whose probe fetches an http source"),
 ("GET", "/projects/{project}/datasources/{name}/webhook", "a steward reads where a webhook source's senders post on its page (PL-122, T-7088)"),
 ("POST", "/projects/{project}/datasources/{name}/test-event", "a steward sends a signed test event from a webhook source's page (PL-122, T-7088)"),

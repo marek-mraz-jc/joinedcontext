@@ -183,8 +183,8 @@ pub struct HttpConnection {
     /// The members of a zip archive to read, by HTTP `Range`, instead of the whole body (PL-72).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub archive: Option<HttpArchive>,
-    /// How the body becomes messages: `csv` hands each row to the steps as one message keyed by
-    /// the header's column names; absent, the whole body is one message (PL-114).
+    /// How the body becomes messages: `csv` or `xlsx` hands each row to the steps as one message
+    /// keyed by the header's column names; absent, the whole body is one message (PL-114).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<HttpBodyFormat>,
     /// Where the records sit in a JSON body: a dotted path to an array, `data.stations` for a
@@ -264,6 +264,10 @@ pub fn records_mapping(path: &str) -> std::result::Result<String, &'static str> 
 pub enum HttpBodyFormat {
     /// A CSV file with a header row: one message per row, the shape Bento's `csv` input sends.
     Csv,
+    /// A spreadsheet (xlsx, xlsm, xlsb, xls or ods): one message per row of its first sheet,
+    /// keyed by the header row, each value as text the way the sheet's CSV export writes it,
+    /// dates in RFC 3339 (the runner's `unarchive` format `xlsx`, T-7058).
+    Xlsx,
 }
 
 /// The named members of the archive an `http` connection serves (PL-72, Architecture/08 §6).
@@ -1503,11 +1507,11 @@ impl DataSourceSpec {
                         value: records.clone(),
                         reason,
                     })?;
-                    if http.format == Some(HttpBodyFormat::Csv) {
+                    if http.format.is_some() {
                         return Err(Error::Name {
                             field: "spec.http.records",
                             value: records.clone(),
-                            reason: "records splits a JSON body; a body of format csv is split by its rows already",
+                            reason: "records splits a JSON body; a body of format csv or xlsx is split by its rows already",
                         });
                     }
                 }

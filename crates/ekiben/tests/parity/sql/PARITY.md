@@ -15,6 +15,8 @@ against the same fresh databases (postgres and mysql images, sqlite file).
 | sql_insert-output/mysql | identical |
 | sql_insert-output/postgres | identical |
 | sql_insert-output/sqlite | identical |
+| sql_processors/mysql-insert-select-raw | identical |
+| sql_processors/postgres-insert-select-raw | identical |
 | sql_raw-input/mysql-binary-protocol | identical |
 | sql_raw-input/mysql-parse-time | identical |
 | sql_raw-input/mysql-text-protocol | identical |

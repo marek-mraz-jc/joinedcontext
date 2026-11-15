@@ -1249,6 +1249,11 @@ routes:
     expect: [403, 403, allow, allow, 403, allow, 404, 403]
     body: {"pipeline": "existing", "body": "{}"}
     note: "a test event signed server-side and posted to the in-process runner's ingest route (PL-122, T-7088); the fixture's source is no webhook, so an allowed caller gets 422"
+  - route: POST /projects/{project}/datasource-discovery
+    rule: "project-verb:propose:DataSource"
+    expect: [403, 403, allow, allow, 403, allow, 403, 403]
+    body: {"kind": "ckan", "url": "https://feeds.example/"}
+    note: "a public service's listing read once on the runner for a preset's choices (T-7076); the fixture runs no runner, so an allowed caller gets its 503"
   - route: GET /projects/{project}/mqttbrokers/{name}/measured
     rule: "project-verb:read:MqttBroker"
     expect: [401, allow, allow, allow, allow, allow, 404, allow]

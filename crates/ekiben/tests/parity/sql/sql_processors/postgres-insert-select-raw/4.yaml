@@ -1,0 +1,22 @@
+logger: {level: OFF}
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {"min": 2, "name": "doc-9"}'
+pipeline:
+  threads: 1
+  processors:
+    - sql_raw:
+        driver: postgres
+        dsn: ${PG_DSN}
+        query: "UPDATE footable SET foo = $1 WHERE bar = $2"
+        args_mapping: 'root = [ this.name, this.min ]'
+        exec_only: true
+    - sql_raw:
+        driver: postgres
+        dsn: ${PG_DSN}
+        query: "SELECT foo, bar, baz FROM footable WHERE bar >= $1 ORDER BY bar"
+        args_mapping: 'root = [ 2 ]'
+output:
+  stdout: {}
