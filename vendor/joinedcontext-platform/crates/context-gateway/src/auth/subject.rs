@@ -425,6 +425,13 @@ pub(crate) fn subject_of(
     if let Some(azp) = claims.azp.as_deref() {
         let accounts = gateway.accounts.load();
         let account = accounts.resolve(azp);
+        // PF-36: an account whose last credential has ended admits nothing, as its MQTT
+        // CONNECT and its open sessions are refused; a token minted before the end is no
+        // credential after it.
+        if account.is_some_and(|account| account.ended(crate::pdp::now())) {
+            tracing::warn!(azp, "a token from an account whose credentials have ended");
+            return Err(Box::new(ProblemDetails::unauthorized()));
+        }
         // A person's token the account's client exchanged (ADR-N-038, AG-95): the subject is
         // a person, not the client's own service-account user. Decided as that person when the
         // account declares delegation, and refused when it does not, so no client can carry a

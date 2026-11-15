@@ -51,6 +51,12 @@ pub struct ScopedRole {
 }
 
 impl Account {
+    /// Whether the account's last credential has ended at `now` (PF-36): a token its client
+    /// still holds is refused on every surface, MQTT included.
+    pub fn ended(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
+        self.credentials_end.is_some_and(|end| end <= now)
+    }
+
     /// The roles that reach one space of one project: the called Endpoint's.
     ///
     /// A role scoped to another space is not a role here: that is the whole point of
@@ -120,7 +126,7 @@ impl ServiceAccounts {
         self.by_client_id.values().any(|account| {
             account.project == project
                 && account.name == name
-                && account.credentials_end.is_none_or(|end| end > now)
+                && !account.ended(now)
         })
     }
 

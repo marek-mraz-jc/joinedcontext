@@ -540,8 +540,7 @@ fn refused(
         ));
     }
     account
-        .credentials_end
-        .is_some_and(|end| end <= now)
+        .ended(now)
         .then_some(("the account's credentials have expired", Reason::Expired))
 }
 
