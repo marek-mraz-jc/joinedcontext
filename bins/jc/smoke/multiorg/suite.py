@@ -703,9 +703,10 @@ class Suite:
 
     def check_names(self):
         """Project names are unique in the installation: an Organization's admin opening a project
-        named like another Organization's gets 409 "not available" (or 403, may open none) naming
-        nothing of the other Organization; the own name answers 409 "already exists" (PF-67). The
-        request is refused before anything is written; a live run asks with the fixtures' names only."""
+        named like another Organization's gets 409 "not available" naming nothing of the other
+        Organization; the own name answers 409 "already exists" (PF-67). A 403 (the admin may open
+        no project there) never reaches the name check: a skip, not a pass. The request is refused
+        before anything is written; a live run asks with the fixtures' names only."""
         orgs = [o for o in self.exp if not self.live or o in FIXTURES]
         for a in orgs:
             for b in orgs:
@@ -715,19 +716,21 @@ class Suite:
                 st, _, raw = self.session(f"{a}-admin").call("POST", "/api/v1/projects",
                                                               body={"name": project, "organization": a})
                 text = raw.decode(errors="replace")
+                unreached = f"mo-{a}-admin may open no project in {a}: the name check is not reached"
                 if a == b:
                     self.row(f"names.{a}-admin.own", a, f"POST /api/v1/projects {{name: {project}}} as mo-{a}-admin",
-                             "409 already exists, or 403", f"{st} {text[:160]}",
-                             (st == 409 and "already exists" in text) or st == 403)
+                             "409 already exists", f"{st} {text[:160]}",
+                             None if st == 403 else st == 409 and "already exists" in text, unreached if st == 403 else "")
                     continue
                 others = {b, *self.exp[b]["projects"]} - {project}
                 named = sorted(m for m in others if re.search(rf"(?<![\w-]){re.escape(m)}(?![\w-])", text))
                 self.row(f"names.{a}-admin.project-of-{b}", f"{a}->{b}",
                          f"POST /api/v1/projects {{name: {project}}} as mo-{a}-admin",
-                         f"409 project name '{project}' is not available (PF-67), or 403; naming nothing of {b}",
+                         f"409 project name '{project}' is not available (PF-67), naming nothing of {b}",
                          f"{st} {text[:160]}" + (f", names {named[:3]}" if named else ""),
-                         not named and "already exists" not in text and (
-                             (st == 409 and f"project name '{project}' is not available" in text) or st == 403))
+                         None if st == 403 and not named else not named and "already exists" not in text and
+                         st == 409 and f"project name '{project}' is not available" in text,
+                         unreached if st == 403 and not named else "")
 
     def check_project_reads(self):
         """Every project read both ways: A's admin and member get 403/404 on B, B's admin 200."""
