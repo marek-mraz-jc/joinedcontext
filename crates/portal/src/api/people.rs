@@ -638,7 +638,8 @@ fn holds_uncovered(user: &KcUser, grant: &str) -> ApiError {
 /// The refusal when one of those two needs mail and the realm cannot send it.
 fn needs_mail(user: &KcUser, grant: &str) -> ApiError {
     ApiError::Denied(format!(
-        "{} holds {grant}; the realm cannot send mail, so only a platform admin can reset them          (PF-93)",
+        "{} holds {grant}; the realm cannot send mail, so only a platform admin can reset them \
+         (PF-93)",
         email_of(user)
     ))
 }
