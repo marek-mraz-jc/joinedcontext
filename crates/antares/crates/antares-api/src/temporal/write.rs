@@ -59,17 +59,16 @@ pub async fn upsert_temporal(
         ))?;
         let expanded = expand_entity(obj, &parsed.ctx, TEMPORAL_OPTS)?;
         let id = antares_jsonld::expanded_id(&expanded)?.to_owned();
-        // the engine is asked with what 5.6.1 gives it (T-4855): types, Attributes, body
-        let types: Vec<String> = expanded
-            .get("type")
-            .and_then(Value::as_array)
-            .map(|a| {
-                a.iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default();
+        // the engine is asked with what 5.6.1 gives it (T-4855): types, Attributes, body;
+        // and, as Batch Upsert asks, the stored evolution and its types, since the
+        // upsert adds to it
+        let pre = crate::policy::temporal_pre_image(&st, &tenant, &id).await?;
+        let mut types = pre.types;
+        for t in crate::policy::entity_types(&expanded) {
+            if !types.iter().any(|o| o == t) {
+                types.push(t.to_owned());
+            }
+        }
         let attrs: Vec<String> = expanded
             .as_object()
             .map(|o| o.keys().filter(|k| !is_meta(k)).cloned().collect())
@@ -80,6 +79,7 @@ pub async fn upsert_temporal(
             types: &types,
             attrs: &attrs,
             body: Some(&expanded),
+            stored: pre.stored.as_ref(),
         )
         .await?;
         #[cfg(feature = "views")]
