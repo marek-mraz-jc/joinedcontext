@@ -85,8 +85,8 @@ pub use data_model::{
 };
 pub use data_source::{
     check_class, ArchiveFormat, Authorization, DataSourceSpec, DataSourceType, GtfsFeed,
-    GtfsRtConnection, HttpArchive, HttpBodyFormat, HttpConnection, MqttConnection, TlsSettings,
-    WebSocketConnection,
+    GtfsRtConnection, HttpArchive, HttpBodyFormat, HttpConnection, HttpPaging, HttpPagingMode,
+    HttpPagingOrder, MqttConnection, TlsSettings, WebSocketConnection,
 };
 pub use dataspace::{
     AgreementConstraints, AgreementRole, AgreementState, ConnectorEngine, DataAgreementSpec,
