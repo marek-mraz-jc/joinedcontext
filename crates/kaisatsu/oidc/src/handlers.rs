@@ -600,6 +600,37 @@ pub fn redirect_with_params(
         .into_response()
 }
 
+/// Runs password hashing or verification (Argon2id: tens of ms of CPU and 7 MiB each) on the
+/// blocking pool, at most one per core at a time, so a burst of anonymous login POSTs queues here
+/// instead of holding the async workers every other request needs (P-4-01).
+pub async fn password_work<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T> {
+    static SLOTS: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> =
+        std::sync::LazyLock::new(|| {
+            let cores = std::thread::available_parallelism().map_or(4, std::num::NonZeroUsize::get);
+            Arc::new(tokio::sync::Semaphore::new(cores))
+        });
+    let slot = SLOTS
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| KaisatsuError::Crypto("password work pool closed".into()))?;
+    // The slot moves into the task: a dropped request still holds it until the hash ends.
+    tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        work()
+    })
+    .await
+    .map_err(|_| KaisatsuError::Crypto("password work failed".into()))
+}
+
+/// [`kaisatsu_crypto::password::dummy_verify_password`] through [`password_work`].
+pub async fn dummy_verify_off_runtime(password: &str) -> Result<()> {
+    let password = password.to_owned();
+    password_work(move || kaisatsu_crypto::password::dummy_verify_password(&password)).await
+}
+
 pub(crate) fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -608,21 +639,20 @@ pub(crate) fn html_escape(s: &str) -> String {
         .replace('\'', "&#x27;")
 }
 
+/// The first non-empty value of cookie `target` across every `Cookie` header.
+pub fn read_cookie(headers: &HeaderMap, target: &str) -> Option<String> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|s| s.split(';').map(str::trim))
+        .filter_map(|part| part.split_once('='))
+        .find(|(name, v)| *name == target && !v.is_empty())
+        .map(|(_, v)| v.to_owned())
+}
+
 pub(crate) fn read_sso_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
-    let target = mount.cookie_name("sso");
-    for val in headers.get_all(header::COOKIE) {
-        if let Ok(s) = val.to_str() {
-            for part in s.split(';').map(str::trim) {
-                if let Some((name, v)) = part.split_once('=')
-                    && name == target
-                    && !v.is_empty()
-                {
-                    return Some(v.to_owned());
-                }
-            }
-        }
-    }
-    None
+    read_cookie(headers, &mount.cookie_name("sso"))
 }
 
 /// Keycloak's maximum authentication age for `UPDATE_PASSWORD` and `CONFIGURE_TOTP` (5 min):
@@ -3006,25 +3036,28 @@ async fn handle_password_grant(
         .await?
         .filter(|u| u.enabled && u.service_account_client_id.is_none())
     else {
-        kaisatsu_crypto::password::dummy_verify_password(password);
+        dummy_verify_off_runtime(password).await?;
         let _ = bf.record_failure(realm, None, ip).await;
         return Err(KaisatsuError::invalid_grant("Invalid user credentials"));
     };
     // Same brute-force protector as the login pages (RI `bruteForceProtected`): a locked person
     // gets the same answer as a wrong password, after the same hashing work.
     if bf.is_locked(realm, Some(&user.id), ip).await? {
-        kaisatsu_crypto::password::dummy_verify_password(password);
+        dummy_verify_off_runtime(password).await?;
         return Err(KaisatsuError::invalid_grant("Invalid user credentials"));
     }
 
     let creds = state.store.list_credentials(&realm.id, &user.id).await?;
     let Some(pw_cred) = creds.iter().find(|c| c.credential_type == "password") else {
-        kaisatsu_crypto::password::dummy_verify_password(password);
+        dummy_verify_off_runtime(password).await?;
         let _ = bf.record_failure(realm, Some(&user.id), ip).await;
         return Err(KaisatsuError::invalid_grant("Invalid user credentials"));
     };
 
-    let outcome = verify_and_maybe_rehash(password, pw_cred)?;
+    let outcome = {
+        let (password, pw_cred) = (password.to_owned(), pw_cred.clone());
+        password_work(move || verify_and_maybe_rehash(&password, &pw_cred)).await??
+    };
     if !outcome.valid {
         let _ = bf.record_failure(realm, Some(&user.id), ip).await;
         return Err(KaisatsuError::invalid_grant("Invalid user credentials"));

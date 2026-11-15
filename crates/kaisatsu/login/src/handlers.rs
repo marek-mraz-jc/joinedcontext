@@ -16,7 +16,7 @@ use jc_router::Mount;
 use kaisatsu_core::page::{self, Page};
 use kaisatsu_core::*;
 use kaisatsu_crypto::*;
-use kaisatsu_oidc::{ClientIp, OidcState, second_factor_required};
+use kaisatsu_oidc::{ClientIp, OidcState, read_cookie, second_factor_required};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 
@@ -917,32 +917,8 @@ async fn sign_out_other_sessions(
     Ok(())
 }
 
-pub(crate) fn read_cookie(headers: &HeaderMap, target: &str) -> Option<String> {
-    headers
-        .get_all(header::COOKIE)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .flat_map(|s| s.split(';').map(str::trim))
-        .filter_map(|part| part.split_once('='))
-        .find(|(name, v)| *name == target && !v.is_empty())
-        .map(|(_, v)| v.to_owned())
-}
-
 pub(crate) fn read_auth_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
-    let target = mount.cookie_name("auth");
-    for val in headers.get_all(header::COOKIE) {
-        if let Ok(s) = val.to_str() {
-            for part in s.split(';').map(str::trim) {
-                if let Some((name, v)) = part.split_once('=')
-                    && name == target
-                    && !v.is_empty()
-                {
-                    return Some(v.to_owned());
-                }
-            }
-        }
-    }
-    None
+    read_cookie(headers, &mount.cookie_name("auth"))
 }
 
 /// K1: Verifies that the browser's auth session cookie matches `auth_session.handle_hash` in
@@ -1379,7 +1355,7 @@ async fn authenticate_page_post(
             .await?
             .filter(|u| u.enabled)
         else {
-            kaisatsu_crypto::password::dummy_verify_password(password);
+            kaisatsu_oidc::dummy_verify_off_runtime(password).await?;
             let _ = bf.record_failure(&realm, None, client_ip.as_deref()).await;
             return render_state_page(
                 &state,
@@ -1397,7 +1373,7 @@ async fn authenticate_page_post(
             .is_locked(&realm, Some(&user.id), client_ip.as_deref())
             .await?
         {
-            kaisatsu_crypto::password::dummy_verify_password(password);
+            kaisatsu_oidc::dummy_verify_off_runtime(password).await?;
             return render_state_page(
                 &state,
                 &mount,
@@ -1412,7 +1388,7 @@ async fn authenticate_page_post(
 
         let creds = state.store.list_credentials(&realm.id, &user.id).await?;
         let Some(pw_cred) = creds.iter().find(|c| c.credential_type == "password") else {
-            kaisatsu_crypto::password::dummy_verify_password(password);
+            kaisatsu_oidc::dummy_verify_off_runtime(password).await?;
             let _ = bf
                 .record_failure(&realm, Some(&user.id), client_ip.as_deref())
                 .await;
@@ -1428,7 +1404,11 @@ async fn authenticate_page_post(
             .await;
         };
 
-        let outcome = verify_and_maybe_rehash(password, pw_cred)?;
+        let outcome = {
+            let (password, pw_cred) = (password.to_owned(), pw_cred.clone());
+            kaisatsu_oidc::password_work(move || verify_and_maybe_rehash(&password, &pw_cred))
+                .await??
+        };
         if !outcome.valid {
             let _ = bf
                 .record_failure(&realm, Some(&user.id), client_ip.as_deref())
@@ -1742,7 +1722,10 @@ async fn authenticate_page_post(
                 credential_type: "password".into(),
                 user_label: Some("Password".into()),
                 created_date: Utc::now().timestamp_millis(),
-                secret_data: hash_password(new_password)?,
+                secret_data: {
+                    let new_password = new_password.to_owned();
+                    kaisatsu_oidc::password_work(move || hash_password(&new_password)).await??
+                },
                 credential_data: String::new(),
                 temporary: false,
             })
@@ -2846,7 +2829,10 @@ async fn action_token_post(
                 credential_type: "password".into(),
                 user_label: Some("Password".into()),
                 created_date: Utc::now().timestamp_millis(),
-                secret_data: hash_password(new_password)?,
+                secret_data: {
+                    let new_password = new_password.to_owned();
+                    kaisatsu_oidc::password_work(move || hash_password(&new_password)).await??
+                },
                 credential_data: String::new(),
                 temporary: false,
             })

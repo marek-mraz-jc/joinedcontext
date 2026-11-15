@@ -888,33 +888,20 @@ async fn compat_list_users(
     };
     // Keycloak's `search` leaves service accounts out (UsersResource includeServiceAccounts
     // false), so the Portal's People page never lists `service-account-*`; `first`/`max` count
-    // people only, so the store is paged until `max` of them are found.
+    // people only, so the matches are read once (each store page is a
+    // full read, P-4-03) and paged here.
     if q.search.is_none() || max == 0 {
         return Ok(Json(page(first, max).await?));
     }
-    let batch = max.max(100);
-    let (mut users, mut skip, mut offset) = (Vec::new(), first, 0);
-    loop {
-        let read = page(offset, batch).await?;
-        let full = read.len() == batch;
-        offset += batch;
-        for user in read {
-            if user.service_account_client_id.is_some() {
-                continue;
-            }
-            if skip > 0 {
-                skip -= 1;
-                continue;
-            }
-            users.push(user);
-            if users.len() == max {
-                return Ok(Json(users));
-            }
-        }
-        if !full {
-            return Ok(Json(users));
-        }
-    }
+    let users = page(0, usize::MAX).await?;
+    Ok(Json(
+        users
+            .into_iter()
+            .filter(|u| u.service_account_client_id.is_none())
+            .skip(first)
+            .take(max)
+            .collect(),
+    ))
 }
 
 async fn compat_create_user(
