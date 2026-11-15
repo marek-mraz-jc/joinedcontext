@@ -1107,10 +1107,13 @@ async fn authenticate_page_get(
     let current_state: LoginState =
         serde_json::from_str(&auth_session.step_state_json).unwrap_or(LoginState::IdentityFirst);
 
-    // Only the broker stores this state, once the upstream assertion verified (S-4-01): the
-    // sign-in goes on through the machine like a password one, so the second factor, required
+    // Only the broker marks this state verified, once the upstream assertion verified (S-4-01);
+    // an IdP hint alone never signs anyone on here. The sign-in goes on through the machine like a password one, so the second factor, required
     // actions, the organization choice and consent run before any code is issued.
-    if let LoginState::UpstreamIdp { .. } = current_state
+    if let LoginState::UpstreamIdp {
+        assertion_verified: true,
+        ..
+    } = current_state
         && let Some(user_id) = auth_session.user_id.clone()
     {
         let user = state

@@ -504,6 +504,46 @@ async fn a_brokered_sign_in_under_the_floor_goes_on_to_the_second_factor() {
     assert!(html.contains("kc-totp-settings-form"), "{html}");
 }
 
+/// Only the broker's hand-off signs a person on from the UpstreamIdp state: the same state
+/// with a person on the auth session but without the broker's verified mark (an IdP hint, no
+/// upstream assertion) issues no code and sets no SSO cookie.
+#[tokio::test]
+async fn an_upstream_state_without_the_brokers_mark_signs_nobody_on() {
+    let (app, store, up_issuer, up_state) = broker_world(false).await;
+    let (next, cookie) = upstream_sign_in(
+        &app,
+        &up_issuer,
+        &up_state,
+        "entra-sub-h",
+        "hint.only@hel.fi",
+    )
+    .await;
+    let parsed = url::Url::parse(&format!("https://idm.dev.example.test{next}")).unwrap();
+    let session_code = parsed
+        .query_pairs()
+        .find(|(k, _)| k == "session_code")
+        .unwrap()
+        .1
+        .into_owned();
+    let mut auth_session = store
+        .get_auth_session_by_id("dev", &session_code)
+        .await
+        .unwrap()
+        .expect("the auth session the broker handed over");
+    assert!(auth_session.user_id.is_some());
+    auth_session.step_state_json =
+        json!({ "step": "UpstreamIdp", "idp_alias": "entra" }).to_string();
+    store.put_auth_session(auth_session).await.unwrap();
+
+    let (_, h, _) = get_with_ck(&app, &next, &cookie).await;
+    let code = h
+        .get(header::LOCATION)
+        .and_then(|l| url::Url::parse(l.to_str().ok()?).ok())
+        .is_some_and(|u| u.query_pairs().any(|(k, _)| k == "code"));
+    assert!(!code, "{h:?}");
+    assert!(h.get(header::SET_COOKIE).is_none(), "{h:?}");
+}
+
 /// A brokered sign-in runs the login machine after the upstream assertion (S-4-01): the
 /// client's consent and the person's required actions come before any code, as for a password.
 #[tokio::test]

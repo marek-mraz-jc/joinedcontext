@@ -631,7 +631,8 @@ async fn hand_to_login(
     alias: &str,
 ) -> Result<Response> {
     auth_session.step_state_json =
-        serde_json::json!({ "step": "UpstreamIdp", "idp_alias": alias }).to_string();
+        serde_json::json!({ "step": "UpstreamIdp", "idp_alias": alias, "assertion_verified": true })
+            .to_string();
     auth_session.user_id = Some(user.id.clone());
     auth_session.amr = vec!["fed".into()];
     auth_session.acr_achieved = "pwd".into();
