@@ -531,7 +531,7 @@ mod tests {
                 "JC_ASSISTANT_VIZ_URL",
                 "https://charts.city.test",
                 "the chart renderer's address is not usable",
-                "JC_ASSISTANT_VIZ_URL is https://viz.{domain}",
+                "JC_ASSISTANT_VIZ_URL is https://embed.{domain} (or viz.)",
             ),
             (
                 "JC_ASSISTANT_PORTAL_URL",
