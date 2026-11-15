@@ -1413,7 +1413,7 @@
     },
     "src/pages/grafana/GrafanaPage.tsx": {
       "controls": {
-        "Button": 4
+        "Button": 2
       },
       "tests": [
         "dashboard_page.test.tsx",
@@ -1642,7 +1642,7 @@
     },
     "src/pages/mcp/AiConnectorsPage.tsx": {
       "controls": {
-        "Button": 12,
+        "Button": 10,
         "Checkbox": 6
       },
       "tests": [
@@ -1774,7 +1774,7 @@
     },
     "src/pages/models/ModelPage.tsx": {
       "controls": {
-        "Button": 2
+        "Button": 1
       },
       "tests": [
         "models_list_page.test.tsx"
@@ -2355,7 +2355,7 @@
     },
     "src/routes/AllEndpointsPage.tsx": {
       "controls": {
-        "Button": 2
+        "Button": 1
       },
       "tests": [
         "page_all_endpoints_page.test.tsx"
@@ -2388,7 +2388,7 @@
     },
     "src/routes/DashboardsPage.tsx": {
       "controls": {
-        "Button": 4,
+        "Button": 3,
         "Checkbox": 1
       },
       "tests": [

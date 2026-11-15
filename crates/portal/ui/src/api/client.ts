@@ -104,6 +104,11 @@ export class ApiError extends Error {
   }
 }
 
+/** A refusal's words for a page that shows them inline: the problem's detail, `fallback` else. */
+export function problemOf(error: unknown, fallback: string): string {
+  return error instanceof ApiError ? (error.problem?.detail ?? error.message) : fallback;
+}
+
 /**
  * The sentence a failed request leaves a person: the server's problem detail when it sent one,
  * else the error's own words, else the page's fallback; never an object a person cannot read.

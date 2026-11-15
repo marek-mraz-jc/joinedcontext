@@ -7,7 +7,7 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap, whilePending } from "../api/client";
+import { api, problemOf, queryKeys, unwrap, whilePending } from "../api/client";
 import { asManifests, isChange, localized } from "../api/manifest";
 import type { Change, Manifest } from "../api/manifest";
 import { LifecycleBadge } from "../components/status/LifecycleBadge";
@@ -259,11 +259,7 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
       void queryClient.invalidateQueries({ queryKey: queryKeys.list(project, "pipelines") });
     },
     onError: (err) => {
-      setError(
-        err instanceof ApiError
-          ? (err.problem?.detail ?? err.message)
-          : t("app.error.generic"),
-      );
+      setError(problemOf(err, t("app.error.generic")));
     },
   });
 
@@ -313,11 +309,7 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
       void queryClient.invalidateQueries({ queryKey: queryKeys.list(project, "pipelines") });
     },
     onError: (err) => {
-      setFormError(
-        err instanceof ApiError
-          ? (err.problem?.detail ?? err.message)
-          : t("app.error.generic"),
-      );
+      setFormError(problemOf(err, t("app.error.generic")));
     },
   });
 
@@ -598,9 +590,10 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
             id: "class",
             label: t("pipelines.field.class"),
             field: "class",
-            text: (pipeline) => t(`pipelines.class.${rowParts(pipeline).klass}`),
+            // Sort and search call text per comparison: the class alone, not the row's badges (P-8-05).
+            text: (pipeline) => t(`pipelines.class.${executionClass(pipeline.spec as PipelineSpec)}`),
             cell: (pipeline) => {
-              const { klass } = rowParts(pipeline);
+              const klass = executionClass(pipeline.spec as PipelineSpec);
               return (
                 <Badge tone={klass === "resident" ? "info" : "neutral"} title={t(`pipelines.class.${klass}Help`)}>
                   {t(`pipelines.class.${klass}`)}

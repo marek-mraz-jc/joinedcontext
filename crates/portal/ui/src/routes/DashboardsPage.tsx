@@ -34,6 +34,7 @@ import {
   Checkbox,
   EmptyState,
   Icon,
+  PageFailed,
   PageHeader,
   Select,
   Skeleton,
@@ -375,30 +376,10 @@ export function DashboardsPage({ project }: { project: string }): JSX.Element {
   }
 
   if (dashboards.isError) {
-    const message =
-      dashboards.error instanceof ApiError
-        ? (dashboards.error.problem?.detail ?? dashboards.error.message)
-        : t("app.error.generic");
     return (
       <div className="flex flex-col gap-section">
         <PageHeader title={t("dashboards.title")} description={t("dashboards.lead")} />
-        <Alert
-          role="alert"
-          tone="danger"
-          actions={
-            <Button
-              size="sm"
-              icon={<Icon name="refresh" className="size-4" />}
-              onClick={() => {
-                void dashboards.refetch();
-              }}
-            >
-              {t("app.error.retry")}
-            </Button>
-          }
-        >
-          {message}
-        </Alert>
+        <PageFailed error={dashboards.error} onRetry={() => void dashboards.refetch()} />
       </div>
     );
   }

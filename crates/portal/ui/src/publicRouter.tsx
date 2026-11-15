@@ -14,13 +14,16 @@ import { NotFoundState } from "./components/NotFoundState";
  * words a person who works in a project needs. main.tsx boots this router for a path
  * {@link isPublicPath} accepts; a signed-in person gets the full router there (PublicApp.tsx).
  */
-const PUBLIC_PATH = /^\/(catalogue(\/[^/]+)?|glossary|accessibility|v\/[^/]+|d\/[^/]+|f\/[^/]+|connect\/[^/]+\/[^/]+)\/?$/;
+const PUBLIC_PATH = /^\/(catalogue(\/endpoint\/[^/]+|\/[^/]+)?|glossary|accessibility|v\/[^/]+|d\/[^/]+|f\/[^/]+|connect\/[^/]+\/[^/]+)\/?$/;
 
 export function isPublicPath(path: string): boolean {
   return PUBLIC_PATH.test(path);
 }
 
 const CataloguePage = lazy(() => import("./pages/catalogue/CataloguePage").then((module) => ({ default: module.CataloguePage })));
+const EndpointDatasetPage = lazy(() =>
+  import("./pages/catalogue/EndpointDatasetPage").then((module) => ({ default: module.EndpointDatasetPage })),
+);
 const DatasetPage = lazy(() => import("./pages/catalogue/DatasetPage").then((module) => ({ default: module.DatasetPage })));
 const GlossaryPage = lazy(() => import("./pages/glossary/GlossaryPage").then((module) => ({ default: module.GlossaryPage })));
 const AccessibilityPage = lazy(() =>
@@ -92,6 +95,20 @@ const catalogueDatasetRoute = createRoute({
     return (
       <PublicFrame>
         <DatasetPage name={name} />
+      </PublicFrame>
+    );
+  },
+});
+
+/** An Endpoint a project put in the catalogue: a visitor reads it without the signed-in Portal (P-8-04). */
+const catalogueEndpointRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/catalogue/endpoint/$slug",
+  component: function PublicCatalogueEndpointRoute() {
+    const { slug } = catalogueEndpointRoute.useParams();
+    return (
+      <PublicFrame>
+        <EndpointDatasetPage slug={slug} />
       </PublicFrame>
     );
   },
@@ -177,6 +194,7 @@ export function createPublicRouter(queryClient: QueryClient, history?: RouterHis
     routeTree: rootRoute.addChildren([
       catalogueRoute,
       catalogueDatasetRoute,
+      catalogueEndpointRoute,
       glossaryRoute,
       accessibilityRoute,
       connectRoute,

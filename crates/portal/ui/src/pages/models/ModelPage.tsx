@@ -18,7 +18,6 @@ import { ResourceHistory } from "../../components/ResourceHistory";
 import { ChangeNotice } from "../../components/ChangeNotice";
 import { DeleteResourceAction } from "../../components/DeleteResourceDialog";
 import {
-  Alert,
   Badge,
   Button,
   buttonClass,
@@ -34,7 +33,7 @@ import {
   Tabs,
   tabPanelProps,
 } from "../../components/ui";
-import { ResourcePageFailed } from "../../components/ui/PageState";
+import { PageFailed, ResourcePageFailed } from "../../components/ui/PageState";
 import { LinkmlGraphView } from "./LinkmlGraphView";
 import { MappingsEditor } from "./MappingsEditor";
 import type { MappingModel } from "./MappingsEditor";
@@ -339,12 +338,7 @@ export function ModelPage({
       />
       <div {...tabPanelProps("model-page", view)}>
         {source.isError && (view === "overview" || view === "fields" || view === "form" || view === "yaml" || view === "mappings") ? (
-          <Alert tone="danger" role="alert">
-            <p>{t("models.page.sourceFailed", { reason: source.error instanceof Error ? source.error.message : "" })}</p>
-            <Button size="sm" className="mt-2" onClick={() => void source.refetch()}>
-              {t("app.error.retry")}
-            </Button>
-          </Alert>
+          <PageFailed error={source.error} onRetry={() => void source.refetch()} />
         ) : source.data === undefined && view !== "used" && view !== "history" ? (
           <p role="status" className="text-body text-fg-muted">
             {t("models.source.loading")}

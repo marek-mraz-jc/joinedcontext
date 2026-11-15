@@ -257,7 +257,7 @@ describe("the AI connectors page (T-5951)", () => {
     expect(await screen.findByRole("button", { name: /Retry/ })).toBeInTheDocument();
   });
 
-  it("creates from the ticks, shows the setup lines and no token, then revokes after an inline confirm", async () => {
+  it("creates from the ticks, shows the setup lines and no token, then revokes after the shared confirm dialog", async () => {
     const user = userEvent.setup();
     const { requests } = renderAt("/ai-connectors", {}, <AiConnectorsPage />);
     await user.click((await screen.findAllByRole("button", { name: "New AI connector" }))[0]);
@@ -275,8 +275,10 @@ describe("the AI connectors page (T-5951)", () => {
     expect(document.body.textContent).not.toMatch(/eyJ|Bearer|token=/);
 
     await user.click(screen.getByRole("button", { name: "Revoke AI connector doprava-in-claude" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("The next call through it is refused");
-    await user.click(screen.getByRole("button", { name: "Revoke now" }));
+    const confirm = await screen.findByRole("alertdialog", { name: "Revoke AI connector doprava-in-claude" });
+    expect(confirm).toHaveTextContent("The next call through it is refused");
+    await waitFor(() => expect(within(confirm).getByRole("button", { name: "Cancel" })).toHaveFocus());
+    await user.click(within(confirm).getByRole("button", { name: "Revoke now" }));
     await waitFor(() => expect(requests.some((one) => one.method === "DELETE")).toBe(true));
     expect(await screen.findByText("Revoked")).toBeInTheDocument();
   });

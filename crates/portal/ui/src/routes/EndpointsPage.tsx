@@ -6,7 +6,7 @@ import type { JSX } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap, whilePending } from "../api/client";
+import { api, problemOf, queryKeys, unwrap, whilePending } from "../api/client";
 import { importManifests, proposeChecked } from "../api/proposal";
 import { asManifests, isChange, localized, overlay, plainTitle, refName } from "../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../api/manifest";
@@ -1119,13 +1119,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
       }
     },
     onError: (err) => {
-      setFormError(
-        err instanceof ApiError
-          ? (err.problem?.detail ?? err.message)
-          : err instanceof Error
-            ? err.message
-            : t("app.error.generic"),
-      );
+      setFormError(problemOf(err, err instanceof Error ? err.message : t("app.error.generic")));
     },
   });
 
@@ -1178,13 +1172,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
       void queryClient.invalidateQueries({ queryKey: queryKeys.list(project, "projections") });
     },
     onError: (err) => {
-      setFormError(
-        err instanceof ApiError
-          ? (err.problem?.detail ?? err.message)
-          : err instanceof Error
-            ? err.message
-            : t("app.error.generic"),
-      );
+      setFormError(problemOf(err, err instanceof Error ? err.message : t("app.error.generic")));
     },
   });
 
@@ -1682,9 +1670,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
       />
       {reference.isError ? (
         <Alert role="alert" tone="danger">
-          {reference.error instanceof ApiError
-            ? (reference.error.problem?.detail ?? reference.error.message)
-            : t("app.error.generic")}
+          {problemOf(reference.error, t("app.error.generic"))}
         </Alert>
       ) : null}
 

@@ -6988,7 +6988,7 @@
       "open": "Otvoriť {title} v Grafane",
       "remove": "Odstrániť {title}",
       "confirm": "Odstrániť z Grafany",
-      "keep": "Ponechať",
+      "removeLead": "Zmizne z priečinka projektu v Grafane a jej odkaz prestane fungovať. Dáta Endpointu zostanú.",
       "emptyTitle": "Zatiaľ nič uložené",
       "empty": "Vyplňte formulár vyššie a uložte prvú vizualizáciu.",
       "emptyReader": "Keď niekto v projekte uloží vizualizáciu, zobrazí sa tu."
@@ -10439,7 +10439,6 @@
     "openChange": "Otvoriť zmenu",
     "showDiff": "Ukázať, čo mení",
     "hideDiff": "Skryť, čo mení",
-    "diffFailed": "Zmenu nebolo možné prečítať; otvorte ju a skúste znova.",
     "reasonFirst": "Najprv uveďte dôvod: autor si ho prečíta.",
     "decided": {
       "approved": "Schválené: nasadzuje sa.",
@@ -11562,7 +11561,6 @@
     "revokeOf": "Zrušiť AI konektor {name}",
     "revokeConfirm": "Zrušiť {name}? Ďalšie volanie cez neho bude odmietnuté a znova ho zapnúť nemožno.",
     "revokeNow": "Zrušiť teraz",
-    "keep": "Ponechať",
     "scopeOf": "Na čo siaha {name}",
     "every": "každý, ktorý smiete čítať",
     "anyClient": "ktorýkoľvek AI klient",

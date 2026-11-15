@@ -12,7 +12,7 @@ import { handPrefill, takeEditRequest, takePrefill } from "../../assistant/state
 import { PermissionGuard } from "../../components/ui/PermissionGuard";
 import { EditResourceDialog } from "../../components/EditResourceDialog";
 import { usePermissions, useReadableList } from "../../api/permissions";
-import { api, ApiError, queryKeys, unwrap, whilePending } from "../../api/client";
+import { api, problemOf, queryKeys, unwrap, whilePending } from "../../api/client";
 import { asManifests, isChange, knownSecretNames, localized, plainTitle, prune } from "../../api/manifest";
 import type { Change, Manifest } from "../../api/manifest";
 import type { Verdict } from "../../api/drafts";
@@ -390,13 +390,7 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
   };
 
   const reportError = (err: unknown) => {
-    setFormError(
-      err instanceof ApiError
-        ? (err.problem?.detail ?? err.message)
-        : err instanceof Error
-          ? err.message
-          : t("app.error.generic"),
-    );
+    setFormError(problemOf(err, err instanceof Error ? err.message : t("app.error.generic")));
   };
 
   /** MF-13: the plan is read before the change is proposed, not after it is open. */

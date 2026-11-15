@@ -3,7 +3,7 @@ import type { JSX } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../api/client";
+import { api, queryKeys, unwrap } from "../api/client";
 import { asManifests, localized } from "../api/manifest";
 import type { Manifest } from "../api/manifest";
 import { RepresentationSummary, servedRepresentations } from "../components/endpoints/links";
@@ -14,12 +14,7 @@ import type { RowAction } from "../components/ui/RowActions";
 import { usePermissions } from "../api/permissions";
 import { CkanAccessPanel } from "../pages/ckan/CkanAccessPanel";
 import { SharedWithBadge, sharingOf, spaceOf } from "../components/endpoints/sharing";
-import {
-  Alert,
-  Button,
-  EmptyState,
-  Icon,
-} from "../components/ui";
+import { Button, EmptyState, PageFailed } from "../components/ui";
 import { ManifestGrid } from "../components/grid/ManifestGrid";
 
 /**
@@ -55,30 +50,10 @@ export function AllEndpointsPage(): JSX.Element {
 
   const failed = endpoints.isError ? endpoints : null;
   if (failed) {
-    const message =
-      failed.error instanceof ApiError
-        ? (failed.error.problem?.detail ?? failed.error.message)
-        : t("app.error.generic");
     return (
       <div className="flex flex-col gap-section">
         {header}
-        <Alert
-          role="alert"
-          tone="danger"
-          actions={
-            <Button
-              size="sm"
-              icon={<Icon name="refresh" className="size-4" />}
-              onClick={() => {
-                void failed.refetch();
-              }}
-            >
-              {t("app.error.retry")}
-            </Button>
-          }
-        >
-          {message}
-        </Alert>
+        <PageFailed error={failed.error} onRetry={() => void failed.refetch()} />
       </div>
     );
   }
@@ -286,13 +261,7 @@ function CkanInstancesList(): JSX.Element {
   const instances = [...byProject].flatMap(([project, names]) => names.map((name) => ({ project, name })));
   const failed = projects.isError ? projects : lists.find((query) => query.isError);
   if (failed) {
-    return (
-      <Alert role="alert" tone="danger">
-        {failed.error instanceof ApiError
-          ? (failed.error.problem?.detail ?? failed.error.message)
-          : t("app.error.generic")}
-      </Alert>
-    );
+    return <PageFailed error={failed.error} onRetry={() => void failed.refetch()} />;
   }
   if (projects.isPending || lists.some((query) => query.isPending)) {
     return (

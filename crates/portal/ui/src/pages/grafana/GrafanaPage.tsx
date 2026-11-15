@@ -13,6 +13,7 @@ import {
   buttonClass,
   Card,
   CardHeader,
+  ConfirmDialog,
   EmptyState,
   Field,
   Icon,
@@ -70,7 +71,10 @@ export function SavedVisualization({
           params: { path: { project, id: item.id } },
         }),
       ),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: pageKey(project) }),
+    onSuccess: () => {
+      setAsking(false);
+      return queryClient.invalidateQueries({ queryKey: pageKey(project) });
+    },
   });
   const safe = safeHref(item.openUrl);
   return (
@@ -94,7 +98,7 @@ export function SavedVisualization({
             <span className="sr-only">{t("grafana.saved.open", { title: item.title })}</span>
           </a>
         ) : null}
-        {mayRemove && !asking ? (
+        {mayRemove ? (
           <Button
             variant="ghost"
             size="sm"
@@ -104,22 +108,17 @@ export function SavedVisualization({
             {t("grafana.saved.removeShort")}
           </Button>
         ) : null}
-        {asking ? (
-          <span className="flex items-center gap-2">
-            <Button
-              variant="danger"
-              size="sm"
-              disabled={remove.isPending}
-              disabledReason={t("grafana.saved.removing")}
-              onClick={() => remove.mutate()}
-            >
-              {t("grafana.saved.confirm")}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => setAsking(false)}>
-              {t("grafana.saved.keep")}
-            </Button>
-          </span>
-        ) : null}
+        <ConfirmDialog
+          open={asking}
+          onOpenChange={setAsking}
+          title={t("grafana.saved.remove", { title: item.title })}
+          description={t("grafana.saved.removeLead")}
+          confirmLabel={t("grafana.saved.confirm")}
+          pending={remove.isPending}
+          onConfirm={() => remove.mutate()}
+        >
+          {remove.isError ? <Alert tone="danger">{reasonOf(remove.error)}</Alert> : null}
+        </ConfirmDialog>
       </div>
       {remove.isError ? (
         <Alert tone="danger" className="basis-full">

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -192,10 +192,14 @@ describe("a saved visualization", () => {
     );
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Remove PM2.5" }));
-    await user.click(screen.getByRole("button", { name: "Keep" }));
+    const asked = await screen.findByRole("alertdialog", { name: "Remove PM2.5" });
+    await waitFor(() => expect(within(asked).getByRole("button", { name: "Cancel" })).toHaveFocus());
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(screen.getByRole("button", { name: "Remove PM2.5" })).toHaveFocus();
     expect(sent.some((call) => call.method === "DELETE")).toBe(false);
     await user.click(screen.getByRole("button", { name: "Remove PM2.5" }));
-    await user.click(screen.getByRole("button", { name: "Remove from Grafana" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove from Grafana" }));
     await waitFor(() => expect(sent.some((call) => call.method === "DELETE")).toBe(true));
   });
 });

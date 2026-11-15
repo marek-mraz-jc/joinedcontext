@@ -6988,7 +6988,7 @@
       "open": "{title} in Grafana öffnen",
       "remove": "{title} entfernen",
       "confirm": "Aus Grafana entfernen",
-      "keep": "Behalten",
+      "removeLead": "Sie verschwindet aus dem Grafana-Ordner des Projekts und ihr Link funktioniert nicht mehr. Die Daten des Endpoints bleiben.",
       "emptyTitle": "Noch nichts gespeichert",
       "empty": "Füllen Sie das Formular oben aus und speichern Sie Ihre erste Visualisierung.",
       "emptyReader": "Sobald jemand im Projekt eine Visualisierung speichert, erscheint sie hier."
@@ -10439,7 +10439,6 @@
     "openChange": "Änderung öffnen",
     "showDiff": "Zeigen, was sie ändert",
     "hideDiff": "Ausblenden, was sie ändert",
-    "diffFailed": "Die Änderung ließ sich nicht lesen; öffnen Sie sie, um es erneut zu versuchen.",
     "reasonFirst": "Nennen Sie zuerst den Grund: der Autor liest ihn.",
     "decided": {
       "approved": "Genehmigt: wird bereitgestellt.",
@@ -11562,7 +11561,6 @@
     "revokeOf": "KI-Konnektor {name} widerrufen",
     "revokeConfirm": "{name} widerrufen? Der nächste Aufruf darüber wird abgelehnt, und er lässt sich nicht wieder einschalten.",
     "revokeNow": "Jetzt widerrufen",
-    "keep": "Behalten",
     "scopeOf": "Was {name} erreicht",
     "every": "jeder, den Sie lesen dürfen",
     "anyClient": "jeder KI-Client",
