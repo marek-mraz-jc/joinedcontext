@@ -252,14 +252,6 @@ pub fn drop_types_that_may_not_be_filtered(
         .collect();
     if kept.len() < constraints.attrs_by_type.len() {
         constraints.restricted = true;
-        // Named, so the caller reads why a row is missing instead of narrowing the filter until
-        // the empty answer tells them (T-1862, rule 4). Each of these is a type they may read.
-        constraints.dropped = constraints
-            .attrs_by_type
-            .keys()
-            .filter(|class| !kept.contains(*class))
-            .cloned()
-            .collect();
     }
     if kept.is_empty() {
         constraints.empty = true;

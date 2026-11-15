@@ -40,9 +40,6 @@ use tower_http::compression::{CompressionLayer, CompressionLevel};
 // task, and a limit is a better answer than an out-of-memory kill either way.
 pub(crate) const MAX_BODY: usize = 8 * 1024 * 1024;
 
-// The header that tells a caller their answer was narrowed by policy, and the layer that
-// removes it again when they did not ask (R22).
-
 /// How many entities a file representation asks the broker for at a time (EP-44).
 ///
 /// Large enough that a normal download is one or two round trips, small enough that one

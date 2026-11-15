@@ -516,6 +516,10 @@ pub(crate) enum Unlinking {
     },
 }
 
+/// The most ids one batch delete names: the broker's own batch ceiling (Antares
+/// `ANTARES_MAX_BATCH_ITEMS`, 1000 unless raised).
+const MAX_DELETE_IDS: usize = 1_000;
+
 /// One delete held against the relationships of the space's model (DM-71, T-2858).
 ///
 /// The broker keeps no relationship rules (the owner's decision of 2026-09-25), so the rules run
@@ -524,10 +528,6 @@ pub(crate) enum Unlinking {
 /// required end, or an entity the caller may not change), and otherwise the entities are changed
 /// or deleted first and the entity itself last. Nothing is changed until every rule has passed;
 /// a reference written after the read is the race window Architecture/11 §1.2 names.
-/// The most ids one batch delete names: the broker's own batch ceiling (Antares
-/// `ANTARES_MAX_BATCH_ITEMS`, 1000 unless raised).
-const MAX_DELETE_IDS: usize = 1_000;
-
 pub(crate) struct HeldDelete<'a> {
     pub(crate) gateway: &'a Gateway,
     pub(crate) subject: &'a Subject,
@@ -1252,16 +1252,12 @@ pub(crate) async fn write_share(
 /// The 503 of a write over the gateway's write budget (T-4077): nothing of it was read, so
 /// sending it again after `Retry-After` is safe.
 pub(crate) fn busy() -> Response<Body> {
-    let mut answer = ProblemDetails::new(503, "service-unavailable", "Service Unavailable")
-        .with_detail(
-            "the gateway holds as many writes as it may at once; send this one again after the \
-             seconds Retry-After names",
-        )
-        .into_response();
-    answer
-        .headers_mut()
-        .insert("retry-after", HeaderValue::from(WRITE_RETRY_SECONDS));
-    answer
+    crate::middleware::in_flight::unavailable(
+        "the gateway holds as many writes as it may at once; send this one again after the \
+         seconds Retry-After names"
+            .into(),
+        WRITE_RETRY_SECONDS,
+    )
 }
 
 /// GW1 and R20: a refused read of one entity is indistinguishable from a miss; everything
