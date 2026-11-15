@@ -266,6 +266,8 @@ const ROUTE_COVERAGE: &[(&str, &str, &str)] = &[
 ("GET", "/projects/{project}/permissions/me", "what this caller may do, for the Portal UI; jc_permissions_me answers the same rules (JC2-29)"),
 ("POST", "/projects/{project}/pipelines/test", "jc_pipeline_test"),
 ("POST", "/projects/{project}/datasources/{name}/test", "a steward tests a saved data source's connection from its page (T-4819); an agent checks a draft source with jc_resource_propose and dryRun, whose probe fetches an http source"),
+("GET", "/projects/{project}/datasources/{name}/webhook", "a steward reads where a webhook source's senders post on its page (PL-118, T-7088)"),
+("POST", "/projects/{project}/datasources/{name}/test-event", "a steward sends a signed test event from a webhook source's page (PL-118, T-7088)"),
 ("GET", "/projects/{project}/pipelines/{name}/metrics", "jc_pipeline_metrics"),
 ("GET", "/projects/{project}/pipelines/{name}/samples", "a person opens a node of a running pipeline in the studio (T-3974); jc_pipeline_inspect view samples answers the same (JC2-32)"),
 ("GET", "/projects/{project}/pipelines/{name}/bento", "the editor shows the bento.yaml a pipeline runs when it has no compute step (T-4818); an agent reads the same file through the forge, and a proposal writes it as a file beside the manifest"),

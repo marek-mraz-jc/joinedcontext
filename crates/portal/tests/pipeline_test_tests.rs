@@ -1291,6 +1291,84 @@ async fn a_failed_read_is_said_in_plain_words() {
     );
 }
 
+/// PL-118 (T-7088): a webhook source's addresses need a session and a grant that reads the
+/// DataSource; its test event needs one that proposes it. Anonymous is 401 on both, a project
+/// member who reads only pipelines is 403 on the addresses, and a reader is 403 on the test event.
+#[tokio::test]
+async fn a_webhook_source_answers_only_a_session_with_the_grant_each_route_names() {
+    let mirror = with_saved_source("vantaa");
+    mirror.upsert(org(
+        "Role",
+        "pipeline-reader",
+        json!({ "rules": [{ "kinds": ["Pipeline"], "verbs": ["read"] }] }),
+    ));
+    mirror.upsert(org(
+        "RoleBinding",
+        "pipeline-readers",
+        json!({
+            "subjects": [{ "user": "pipes@hel.fi" }],
+            "role": "pipeline-reader",
+            "scope": { "project": "vantaa" }
+        }),
+    ));
+    mirror.upsert(ResourceEnvelope {
+        api_version: API_VERSION.to_owned(),
+        kind: "DataSource".to_owned(),
+        metadata: ObjectMeta::new("ttn", "vantaa"),
+        spec: json!({
+            "type": "webhook",
+            "webhook": { "auth": { "bearer": { "tokenRef": { "name": "ttn", "key": "token" } } } }
+        }),
+        status: None,
+    });
+    let state = AppState::new(config(None), None).with_mirror(mirror);
+    let info = "/api/v1/projects/vantaa/datasources/ttn/webhook";
+    let event = "/api/v1/projects/vantaa/datasources/ttn/test-event";
+    let anonymous = |method: &str, uri: &str| {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(header::COOKIE, format!("{CSRF_COOKIE}={CSRF}"))
+            .header(CSRF_HEADER, CSRF)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"pipeline":"p","body":"{}"}"#))
+            .expect("request")
+    };
+    for (method, uri) in [("GET", info), ("POST", event)] {
+        let response = server::app(state.clone())
+            .oneshot(anonymous(method, uri))
+            .await
+            .expect("response");
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "{method} {uri}"
+        );
+    }
+    let read = |who: &str| {
+        Request::builder()
+            .uri(info)
+            .header(header::COOKIE, cookies(&state.config, identity(who)))
+            .body(Body::empty())
+            .expect("request")
+    };
+    let pipes = server::app(state.clone())
+        .oneshot(read("pipes@hel.fi"))
+        .await
+        .expect("response");
+    assert_eq!(pipes.status(), StatusCode::FORBIDDEN);
+    let reader = server::app(state.clone())
+        .oneshot(read("reader@hel.fi"))
+        .await
+        .expect("response");
+    assert_eq!(reader.status(), StatusCode::OK);
+    let body = json!({ "pipeline": "p", "body": "{}" });
+    let (status, answer) = send(&state, "reader@hel.fi", event, &body).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    let (status, answer) = send(&state, "stranger@hel.fi", event, &body).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{answer}");
+}
+
 /// T-4819: anonymous is 401, a reader is 403, an unknown source is 404, and none reaches the runner.
 #[tokio::test]
 async fn testing_a_source_needs_a_session_and_a_grant_that_proposes_it() {
