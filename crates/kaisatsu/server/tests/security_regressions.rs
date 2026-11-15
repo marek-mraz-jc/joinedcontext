@@ -664,7 +664,10 @@ async fn password_only_sso(store: &dyn Store) -> String {
         })
         .await
         .unwrap();
-    format!("{}=sso-before-floor-handle", kaisatsu_oidc::sign_in_cookie_name("sso"))
+    format!(
+        "{}=sso-before-floor-handle",
+        kaisatsu_oidc::sign_in_cookie_name("sso")
+    )
 }
 
 async fn authorize_with(app: &axum::Router, cookie: &str, extra: &str) -> (StatusCode, String) {
