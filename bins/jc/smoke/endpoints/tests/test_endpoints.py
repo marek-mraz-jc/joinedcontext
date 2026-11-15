@@ -98,6 +98,23 @@ def test_the_export_names_tenant_bindings_and_datasets(tmp_path):
     assert eps["closed"].closed and not eps["open"].closed
 
 
+@pytest.mark.parametrize("spec,want", [
+    # omitted: every representation but sta, ical and feed (jc-core served_representations, EP-104)
+    ({}, ["ngsi-ld", "mcp", "csv", "ogc-features", "odata", "websocket"]),
+    ({"disabledRepresentations": ["websocket", "csv"], "mcp": False}, ["ngsi-ld", "ogc-features", "odata"]),
+    # listed: the list, plus ngsi-ld and mcp, which every Endpoint serves (EP-10, EP-24)
+    ({"enabledRepresentations": ["odata"]}, ["odata", "ngsi-ld", "mcp"]),
+    # feed is its outputs, listed or not
+    ({"enabledRepresentations": ["feed", "csv"]}, ["csv", "ngsi-ld", "mcp"]),
+    ({"enabledRepresentations": ["csv"], "representations": {"feed": [{"name": "news"}]}},
+     ["csv", "ngsi-ld", "mcp", "feed"]),
+])
+def test_an_endpoint_serves_what_the_gateway_serves(spec, want):
+    """An Endpoint without enabledRepresentations serves websocket and mcp on the gateway (the
+    t6025-full Endpoints' /ws answered 426 where the smoke expected 404, T-6969)."""
+    assert ex.served(spec) == want
+
+
 def test_expected_counts_follow_the_policy_patterns(tmp_path):
     b = bundle(tmp_path)
     eps = {e.name: e for e in ex.load_endpoints(b / "gitea" / "files")}
