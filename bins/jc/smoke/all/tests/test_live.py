@@ -237,7 +237,7 @@ def main(argv):
 def test_run_all_live_runs_the_cleared_suites_and_skips_the_rest_by_name(tmp_path, monkeypatch):
     root = tmp_path / "smoke"
     root.mkdir()
-    for f in ("run", "common.py", "live.py"):
+    for f in ("run", "common.py", "live.py", "second_factor.py"):
         shutil.copy(all_suite.SMOKE / f, root / f)
     for name, text in (("names", NAMES), ("ui", "def main(argv):\n    raise SystemExit('ran')\n")):
         (root / name).mkdir()

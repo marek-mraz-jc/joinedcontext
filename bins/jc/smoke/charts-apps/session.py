@@ -11,6 +11,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from common import SECOND_FACTOR
+
 # The realm of the rehearsal (common.realm_of): callers pass `realm`, default jc's own.
 REALM = "jc"
 ADMIN_CLIENT = "portal-reconciler"
@@ -135,6 +137,7 @@ def make_person(s: Session, token: str, groups=("/platform-admins",), realm: str
                       body={"type": "password", "value": password, "temporary": False})
     if st not in (200, 204):
         raise RuntimeError(f"password of {PERSON}: {st}")
+    SECOND_FACTOR.fresh(lambda m, p: s.json(m, f"/id/admin/realms/{realm}{p}", headers=auth), PERSON, uid)
     st, tree = s.json("GET", f"/id/admin/realms/{realm}/groups?briefRepresentation=false", headers=auth)
     by_path, todo = {}, list(tree or [])
     while todo:
@@ -157,7 +160,11 @@ def sign_in(s: Session, password: str) -> tuple[bool, str]:
     text = page.decode(errors="replace")
     form = {"csrf_token": _hidden(text, "csrf_token"), "session_code": _hidden(text, "session_code"),
             "username": PERSON, "password": password}
-    st, hdrs, _ = s.call("POST", login_url, form=form)
+    st, hdrs, body = s.call("POST", login_url, form=form)
+    try:
+        st, hdrs, _ = SECOND_FACTOR.answer(s.call, login_url, st, hdrs, body, PERSON)
+    except RuntimeError as e:
+        return False, str(e)
     loc = hdrs.get("location") or ""
     if st not in (302, 303) or "code=" not in loc:
         return False, f"POST login -> {st}"
@@ -227,9 +234,10 @@ def app_token(base: str, realm: Realm, client_id: str, username: str, timeout: f
     if st != 200:
         raise RuntimeError(f"authorize {client_id}: {st}")
     text = page.decode(errors="replace")
-    st, hdrs, _ = s.call("POST", login_url, form={"csrf_token": _hidden(text, "csrf_token"),
+    st, hdrs, body = s.call("POST", login_url, form={"csrf_token": _hidden(text, "csrf_token"),
                                                   "session_code": _hidden(text, "session_code"),
                                                   "username": username, "password": password})
+    st, hdrs, _ = SECOND_FACTOR.answer(s.call, login_url, st, hdrs, body, username)
     loc = hdrs.get("location") or ""
     code = urllib.parse.parse_qs(urllib.parse.urlparse(loc).query).get("code", [None])[0]
     if st not in (302, 303) or not code or not loc.startswith(redirect):

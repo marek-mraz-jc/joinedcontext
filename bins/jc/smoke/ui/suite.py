@@ -59,7 +59,7 @@ sys.path.insert(0, str(HERE.parent))
 import checks  # noqa: E402
 import personas as ps  # noqa: E402
 import walk  # noqa: E402
-from common import FAIL, SKIP, Http, Results, browser_get, loopback_only, read_token, realm_of  # noqa: E402
+from common import FAIL, SECOND_FACTOR, SKIP, Http, Results, browser_get, loopback_only, read_token, realm_of  # noqa: E402
 
 LOGIN = "/api/v1/auth/login"
 HEIGHT = {400: 860, 1440: 900}
@@ -136,6 +136,7 @@ class Walker:
             page.fill("input[name=username]", username, timeout=20000)
             page.fill("input[name=password]", password)
             page.locator("input[name=password]").press("Enter")
+            SECOND_FACTOR.browser(page, username)
             page.wait_for_url(re.compile(re.escape(self.base) + r"/(?!id/).*"), timeout=30000)
         except Exception as e:  # noqa: BLE001 - the row says what the page did
             return False, f"{type(e).__name__}: {str(e)[:160]} at {self.rel(page.url)}"

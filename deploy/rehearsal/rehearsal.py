@@ -38,6 +38,10 @@ import urllib.request
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
+# The smoke suites' second-factor helper (T-6894); appended, it shadows none of the kit's modules.
+sys.path.append(str(Path(__file__).resolve().parents[2] / "bins" / "jc" / "smoke"))
+from second_factor import SECOND_FACTOR  # noqa: E402
+
 # Owner 2026-11-08: only the last day of Antares history is copied, and the rehearsal keeps only
 # the last day (`retain`, hourly beside jc). Everything else is copied whole.
 WINDOW = dt.timedelta(hours=24)
@@ -2310,6 +2314,10 @@ def sign_in(h: Http, username: str, password: str):
     form = {"csrf_token": _hidden(text, "csrf_token"), "session_code": _hidden(text, "session_code"),
             "username": username, "password": password}
     st, hdrs, body = h.call("POST", login_url, form=form)
+    try:
+        st, hdrs, body = SECOND_FACTOR.answer(h.call, login_url, st, hdrs, body, username)
+    except RuntimeError as e:
+        return False, str(e)
     loc = hdrs.get("Location") or hdrs.get("location") or ""
     if st not in (302, 303) or "code=" not in loc:
         return False, f"POST {urllib.parse.urlparse(login_url).path} -> {st} {body[:200]!r}"
@@ -2342,6 +2350,7 @@ def make_person(h: Http, token: str, realm: str, username: str, groups=()):
                       body={"type": "password", "value": password, "temporary": False})
     if st not in (200, 204):
         raise RuntimeError(f"password of {username}: {st} {body}")
+    SECOND_FACTOR.fresh(lambda m, p: h.json(m, f"/id/admin/realms/{realm}{p}", headers=auth), username, uid)
     # Group membership is set explicitly: a create body's `groups` is not honoured everywhere.
     st, tree = h.json("GET", f"/id/admin/realms/{realm}/groups?briefRepresentation=false", headers=auth)
     by_path, todo = {}, list(tree or [])
@@ -2375,6 +2384,10 @@ def code_flow(h: Http, realm: str, client: dict, password: str):
     except RuntimeError as e:
         return False, str(e)
     st, hdrs, body = h.call("POST", login_url, form=form)
+    try:
+        st, hdrs, body = SECOND_FACTOR.answer(h.call, login_url, st, hdrs, body, TESTER)
+    except RuntimeError as e:
+        return False, str(e)
     loc = hdrs.get("Location") or hdrs.get("location") or ""
     if "code=" not in loc:
         return False, f"login -> {st} {loc or body[:300]!r}"

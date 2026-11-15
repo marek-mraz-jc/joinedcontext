@@ -20,7 +20,7 @@ import urllib.parse
 from pathlib import Path
 
 import yaml
-from common import Http, as_json
+from common import SECOND_FACTOR, Http, as_json
 
 REALM = "jc"
 
@@ -90,6 +90,7 @@ class Admin:
                           {"type": "password", "value": password, "temporary": False})
         if st not in (200, 204):
             raise RuntimeError(f"password of {username}: {st}")
+        SECOND_FACTOR.fresh(self.call, username, uid)
         st, held = self.call("GET", f"/users/{uid}/groups")
         for g in held if isinstance(held, list) else []:
             if g.get("path") not in groups:

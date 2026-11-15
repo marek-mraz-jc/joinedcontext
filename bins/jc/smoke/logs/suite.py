@@ -48,7 +48,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
 
 import logscan as ls  # noqa: E402
-from common import PASS, FAIL, Results, as_json, loopback_only, read_token, realm_of, short  # noqa: E402
+from common import PASS, FAIL, SECOND_FACTOR, Results, as_json, loopback_only, read_token, realm_of, short  # noqa: E402
 
 PORTAL_ADMIN_CLIENT = "portal-reconciler"
 PERSON = "smoke-logs-reader"
@@ -199,6 +199,11 @@ class Person:
                             cookies=False, body={"type": "password", "value": password, "temporary": False})
         if st not in (200, 204):
             raise RuntimeError(f"password of {PERSON}: {st}")
+
+        def admin_api(method, path):
+            st, _, raw = s.call(method, f"/id/admin/realms/{self.realm}{path}", headers=auth, cookies=False)
+            return st, as_json(raw)
+        SECOND_FACTOR.fresh(admin_api, PERSON, self.uid)
         st, _, raw = s.call("GET", f"/id/admin/realms/{self.realm}/groups?briefRepresentation=false", headers=auth,
                             cookies=False)
         todo, gid = list(as_json(raw) or []), None
@@ -219,6 +224,7 @@ class Person:
         st, h, raw = self.session.call("POST", login_url, form={
             "csrf_token": hidden(text, "csrf_token"), "session_code": hidden(text, "session_code"),
             "username": PERSON, "password": password})
+        st, h, raw = SECOND_FACTOR.answer(self.session.call, login_url, st, h, raw, PERSON)
         loc = h.get("location", "")
         if st not in (302, 303) or "code=" not in loc:
             raise RuntimeError(f"login form -> {st}")
