@@ -713,7 +713,8 @@ def test_a_member_of_one_project_reads_nothing_of_another_project_of_its_organiz
 
 @pytest.mark.parametrize("answer,ok", [
     ((409, "project name 'iso-b' is not available (PF-67)"), True),
-    ((403, "the organization does not let you open a project"), True),
+    # a 403 never reaches the name check: the row is not measured, a skip and never a pass
+    ((403, "the organization does not let you open a project"), None),
     ((409, "project 'iso-b' already exists (PF-67)"), False),  # tells a foreign name from a free one apart from the own
     ((409, "project name 'iso-b' is not available (PF-67); ctl-b holds iso-b2"), False),
     ((202, "{}"), False),
@@ -737,7 +738,7 @@ def test_opening_a_project_named_like_another_organizations_is_not_available_and
     s.check_names()
     got = {r["id"]: (r["result"], r["target"]) for r in s.rows}
     assert got["names.ctl-a-admin.own"] == ("pass", "ctl-a") and got["names.ctl-b-admin.own"] == ("pass", "ctl-b")
-    want = "pass" if ok else "fail"
+    want = "skip" if ok is None else "pass" if ok else "fail"
     assert got["names.ctl-a-admin.project-of-ctl-b"] == (want, "ctl-a->ctl-b")
     assert all(m == "POST" and p == "/api/v1/projects" for _, m, p, _ in asked)
 
