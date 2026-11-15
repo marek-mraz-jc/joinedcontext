@@ -63,6 +63,7 @@ fn endpoint(
             .into_iter()
             .collect(),
         space: "mesto".to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment("mesto").ok(),
         project: "mesto".to_owned(),
         audience,
         allowed_projects: Vec::new(),

@@ -155,8 +155,8 @@ fn view_hop(
     subject: &Subject,
     request: &mut Request,
 ) -> Result<(), Box<Response<Body>>> {
-    tenancy::pin_caller(request, &endpoint.space, subject)
-        .map_err(|_| Box::new(ProblemDetails::internal().into_response()))
+    tenancy::pin_caller(request, endpoint.tenant.as_ref(), subject)
+        .map_err(|unpinned| Box::new(unpinned.problem().into_response()))
 }
 
 /// The types a view read names when the caller named no selector: every type the space holds,

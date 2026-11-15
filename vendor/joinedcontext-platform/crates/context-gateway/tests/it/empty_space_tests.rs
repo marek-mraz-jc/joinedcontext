@@ -41,6 +41,7 @@ fn endpoint(slug: &str, audience: Audience) -> Endpoint {
         title: Default::default(),
         description: Default::default(),
         space: "zilina-kpi".to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment("zilina-kpi").ok(),
         project: "zilina".to_owned(),
         audience,
         allowed_projects: Vec::new(),

@@ -188,7 +188,7 @@ impl Broker {
                 name => self.template.as_ref().map(|t| t.replace("{broker}", name)),
             }
         };
-        let off_main = |table: &std::collections::BTreeMap<String, String>| {
+        let off_main = |table: &std::collections::BTreeMap<String, String>| -> std::collections::HashMap<String, Option<String>> {
             table
                 .iter()
                 .filter(|(_, broker)| broker.as_str() != jc_core::kinds::IMPLICIT_BROKER)
@@ -196,7 +196,10 @@ impl Broker {
                 .collect()
         };
         let routes = Routes {
-            by_tenant: off_main(&brokers.by_space),
+            by_tenant: off_main(&brokers.by_space)
+                .into_iter()
+                .chain(off_main(&brokers.tenants))
+                .collect(),
             by_view: off_main(&brokers.by_view),
             named: brokers.by_view.clone().into_iter().collect(),
             moving: brokers.moving.iter().cloned().collect(),
@@ -237,9 +240,7 @@ impl Broker {
         if routes.moving.is_empty() {
             return false;
         }
-        let tenant = headers
-            .get(crate::middleware::tenancy::TENANT)
-            .and_then(|tenant| tenant.to_str().ok());
+        let tenant = crate::middleware::tenancy::pinned_tenant(headers);
         let view = route
             .strip_prefix("/x/views/")
             .and_then(|rest| rest.split('/').next());
@@ -251,9 +252,7 @@ impl Broker {
     /// Only the gateway sets the tenant header; a client's is stripped before routing (GW20).
     pub fn base_for(&self, path: &str, headers: &HeaderMap) -> Result<String, ProxyError> {
         let routes = self.routes.load();
-        let routed = headers
-            .get(crate::middleware::tenancy::TENANT)
-            .and_then(|tenant| tenant.to_str().ok())
+        let routed = crate::middleware::tenancy::pinned_tenant(headers)
             .and_then(|tenant| routes.by_tenant.get(tenant))
             .or_else(|| {
                 let view = path.strip_prefix("/x/views/")?.split(['/', '?']).next()?;

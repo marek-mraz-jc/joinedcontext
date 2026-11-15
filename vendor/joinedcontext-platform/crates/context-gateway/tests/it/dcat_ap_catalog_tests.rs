@@ -65,6 +65,7 @@ fn endpoint(audience: Audience, catalog: Option<Catalog>) -> Endpoint {
         title: [("en".to_owned(), "City events".to_owned())].into(),
         description: [("en".to_owned(), "Every event the city lists".to_owned())].into(),
         space: "events".to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment("events").ok(),
         project: "city".to_owned(),
         audience,
         allowed_projects: if audience == Audience::ProjectList {

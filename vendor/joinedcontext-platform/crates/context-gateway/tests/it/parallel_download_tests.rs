@@ -143,6 +143,7 @@ fn endpoint(max_file_rows: Option<u32>) -> Endpoint {
         title: std::collections::BTreeMap::new(),
         description: std::collections::BTreeMap::new(),
         space: "praha-mesto".to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment("praha-mesto").ok(),
         project: "praha".to_owned(),
         audience: Audience::Public,
         allowed_projects: Vec::new(),

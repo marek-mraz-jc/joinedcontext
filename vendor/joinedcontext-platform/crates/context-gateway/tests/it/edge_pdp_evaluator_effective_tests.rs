@@ -68,6 +68,7 @@ fn jana() -> Subject {
         organization: None,
         read_only: false,
         member_of_organization: false,
+        organization_ids: BTreeSet::new(),
         organization_groups: None,
     }
 }
@@ -105,6 +106,7 @@ fn a_principal_kind_matches_only_its_own_field() {
         organization: None,
         read_only: false,
         member_of_organization: false,
+        organization_ids: BTreeSet::new(),
         organization_groups: None,
     };
 

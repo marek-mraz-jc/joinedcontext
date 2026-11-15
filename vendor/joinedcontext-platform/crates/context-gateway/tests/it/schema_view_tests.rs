@@ -99,6 +99,7 @@ fn endpoint() -> Endpoint {
         description: Default::default(),
         base_path: format!("/api/endpoint/{SLUG}"),
         space: SPACE.to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment(SPACE).ok(),
         project: SPACE.to_owned(),
         audience: Audience::Public,
         allowed_projects: Vec::new(),
@@ -390,6 +391,7 @@ async fn a_space_or_slug_named_schema_keeps_its_path() {
         endpoint: Arc::new(Endpoint {
             slug: "schema".to_owned(),
             space: "schema".to_owned(),
+            tenant: context_gateway::middleware::tenancy::Tenant::segment("schema").ok(),
             base_path: "/cs/schema".to_owned(),
             ..endpoint()
         }),
