@@ -787,11 +787,13 @@ async fn a_write_by_id_answers_alike_for_absent_hidden_and_ungranted_entities() 
         ] {
             let (code, answer) = send(&st, method, &path, &ANA, body).await?;
             assert_eq!(code, StatusCode::NOT_FOUND, "{method} {id}: {answer}");
-            answers.push(answer["type"].clone());
+            answers.push(answer.get("type").cloned());
         }
     }
     assert!(
-        answers.windows(2).all(|w| w[0] == w[1]),
+        answers
+            .iter()
+            .all(|a| a.is_some() && *a == answers.first().cloned().flatten()),
         "one problem type: {answers:?}"
     );
     let (code, body) = send(

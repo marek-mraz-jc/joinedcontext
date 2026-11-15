@@ -335,7 +335,7 @@ fn named_members(parameter: &str, text: &str) -> Vec<(String, &'static str)> {
 /// A term split on its dots, an absolute IRI's address kept whole on its first segment
 /// (`https://uri.etsi.org/ngsi-ld/default-context/NO2.observedAt`).
 fn dotted(term: &str) -> Vec<String> {
-    let cut = term.rfind(['/', '#']).map_or(0, |at| at + 1);
+    let cut = term.rfind(['/', '#']).map_or(0, |at| at.saturating_add(1));
     let (address, local) = term.split_at(cut);
     let mut segments: Vec<String> = local.split('.').map(str::to_owned).collect();
     if let Some(first) = segments.first_mut() {
@@ -348,7 +348,7 @@ fn dotted(term: &str) -> Vec<String> {
 /// sub-Attributes or a version's own provenance members.
 fn member_of(segments: &[&str]) -> Option<&'static str> {
     for (at, segment) in segments.iter().enumerate() {
-        let next = segments.get(at + 1).copied();
+        let next = segments.get(at.saturating_add(1)).copied();
         let member = match (*segment, next) {
             ("observedAt", _) => "observedAt",
             ("unitCode", _) => "unitCode",

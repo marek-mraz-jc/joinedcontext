@@ -377,7 +377,7 @@ fn named_members(parameter: &str, text: &str) -> Vec<(String, MetadataMember, &'
 /// sub-attributes or a version's own provenance members.
 fn member_of(segments: &[&str]) -> Option<(MetadataMember, &'static str)> {
     for (at, segment) in segments.iter().enumerate() {
-        let next = segments.get(at + 1).copied();
+        let next = segments.get(at.saturating_add(1)).copied();
         let member = match (*segment, next) {
             ("observedAt", _) => (ObservedAt, "observedAt"),
             ("unitCode", _) => (UnitCode, "unitCode"),
