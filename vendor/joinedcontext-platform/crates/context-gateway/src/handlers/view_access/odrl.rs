@@ -36,6 +36,19 @@ pub fn published(
             rule.insert("duty".to_owned(), Value::Array(duties.clone()));
         }
     }
+    // EP-187: the gateway refuses every write on open data whatever a grant says, so the
+    // document prohibits them for everyone, beside the grants the broker's view still lists.
+    if endpoint.open_data {
+        let writes: Vec<Value> = jc_core::kinds::Operation::ALL
+            .iter()
+            .filter(|op| jc_core::kinds::OperationRef::Single(**op).writes_entities())
+            .map(|op| json!(format!("ngsi-ld:{}", op.as_str())))
+            .collect();
+        let prohibitions = document.entry("prohibition").or_insert_with(|| json!([]));
+        if let Value::Array(rules) = prohibitions {
+            rules.push(json!({ "action": writes }));
+        }
+    }
     // A prohibition wins over any permission (GW4, ADR-N-057): ODRL's default is `invalid`.
     document.insert("conflict".to_owned(), json!("prohibit"));
     let rules = |name: &str| document.get(name).cloned().unwrap_or_else(|| json!([]));

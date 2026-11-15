@@ -466,6 +466,53 @@ fn the_access_policy_carries_the_licence_duties_on_every_permission() {
     }
 }
 
+/// EP-187 (T-6993): an open-data Endpoint's ODRL `Set` prohibits every write for everyone, even
+/// where a grant of the broker's view still lists one; an internal Endpoint's grants stand alone.
+#[test]
+fn an_open_data_access_policy_prohibits_every_write() {
+    let engine = json!({
+        "@context": ["http://www.w3.org/ns/odrl.jsonld"], "@type": "Set",
+        "permission": [
+            { "action": ["ngsi-ld:queryEntity", "ngsi-ld:updateAttrs"],
+              "target": { "@type": "AirQualityObserved" } }
+        ]
+    });
+    let mut endpoint = endpoint(Audience::Public, None);
+    let internal =
+        odrl::published(engine.clone(), &endpoint, BASE, |_| "d".to_owned()).expect("a Set");
+    assert_eq!(internal.get("prohibition"), None, "{internal:#}");
+    endpoint.open_data = true;
+    let open = odrl::published(engine, &endpoint, BASE, |_| "d".to_owned()).expect("a Set");
+    assert_eq!(open["conflict"], "prohibit");
+    let prohibited: Vec<&str> = open["prohibition"][0]["action"]
+        .as_array()
+        .expect("prohibited actions")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    for write in [
+        "ngsi-ld:updateAttrs",
+        "ngsi-ld:createEntity",
+        "ngsi-ld:upsertBatch",
+        "ngsi-ld:deleteTemporal",
+    ] {
+        assert!(prohibited.contains(&write), "{write}: {prohibited:?}");
+    }
+    assert!(
+        !prohibited.contains(&"ngsi-ld:queryEntity"),
+        "{prohibited:?}"
+    );
+    assert!(
+        !prohibited.contains(&"ngsi-ld:createSubscription"),
+        "{prohibited:?}"
+    );
+    assert!(
+        odrl::turtle(&open).contains("odrl:prohibition [ odrl:action ngsi-ld:createEntity"),
+        "{}",
+        odrl::turtle(&open)
+    );
+}
+
 #[test]
 fn every_licence_of_the_table_parses_by_its_code() {
     for licence in Licence::ALL {
