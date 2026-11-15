@@ -12,6 +12,7 @@ import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import unquote
 
 import pytest
 
@@ -19,8 +20,10 @@ VIZ = Path(__file__).resolve().parents[5] / "vendor" / "viz"
 SLUG = "a1b2c3d4e5f6a7b8"
 EVENTS = [
     {"type": "Feature", "id": f"urn:ngsi-ld:Event:{n}", "geometry": {"type": "Point", "coordinates": at},
-     "properties": {"type": "Event", "name": f"Event {n}"}}
-    for n, at in ((1, [17.107, 48.144]), (2, [17.112, 48.148]))
+     "properties": {"type": "Event", "name": name}}
+    # The second name is as long as the owner's record (T-6956): it squeezed the card's Close button.
+    for n, at, name in ((1, [17.107, 48.144], "Event 1"),
+                        (2, [17.112, 48.148], "Zmena priemerného veku v mestských častiach Bratislavy medzi rokom 2000 a 2021, Ružinov"))
 ]
 NO_WEBGL = ["--disable-gpu", "--disable-webgl", "--disable-3d-apis"]
 SHOTS = os.environ.get("SHOTS_DIR")
@@ -70,12 +73,24 @@ def serve(style_ok):
                     {"attributeName": "location", "attributeTypes": ["GeoProperty"]},
                     {"attributeName": "name", "attributeTypes": ["Property"]}]}
                 return self.send(200, "application/json", json.dumps(info).encode())
+            # The table's widget: no publisher defaults and no model, so it reads the types alone.
+            if path == f"/api/endpoint/{SLUG}/widget.json":
+                return self.send(200, "application/json", b"{}")
+            if path == f"/api/endpoint/{SLUG}/schema/index.json":
+                return self.send(200, "application/json", json.dumps({"endpoint": SLUG, "models": [{"name": "events", "version": 1, "types": ["Event"]}]}).encode())
+            if path == f"/api/endpoint/{SLUG}/schema/v1/json-schema":
+                props = {"name": {"type": "string", "x-ngsi-ld-kind": "Property"}, "location": {"type": "object", "x-ngsi-ld-kind": "GeoProperty"}}
+                return self.send(200, "application/json", json.dumps({"definitions": {"Event": {"type": "object", "properties": props}}}).encode())
+            if path.startswith(api + "entities/"):
+                id = unquote(path[len(api + "entities/"):])
+                row = [{"id": e["id"], "type": "Event", **e["properties"], "location": e["geometry"]} for e in EVENTS if e["id"] == id]
+                return self.send(200, "application/json", json.dumps(row[0]).encode()) if row else self.send(404, "application/json", b"{}")
             if path == api + "entities":
                 count = {"NGSILD-Results-Count": str(len(EVENTS))}
                 if "application/geo+json" in (self.headers.get("Accept") or ""):
                     fc = {"type": "FeatureCollection", "features": EVENTS[: 0 if "limit=0" in query else None]}
                     return self.send(200, "application/geo+json", json.dumps(fc).encode(), count)
-                rows = [] if "limit=0" in query else [{"id": e["id"], "type": "Event", "name": e["properties"]["name"], "location": e["geometry"]} for e in EVENTS]
+                rows = [] if "limit=0" in query else [{"id": e["id"], "type": "Event", **e["properties"], "location": e["geometry"]} for e in EVENTS]
                 return self.send(200, "application/json", json.dumps(rows).encode(), count)
             return self.send(404, "application/json", b"{}")
 
@@ -107,6 +122,53 @@ def shot(page, name):
     if SHOTS:
         Path(SHOTS).mkdir(parents=True, exist_ok=True)
         page.screenshot(path=f"{SHOTS}/{name}.png", full_page=True)
+
+
+# 300 is the frame on the owner's 360 px phone (the catalogue page's margins), where Close was cut.
+@pytest.mark.parametrize("width, lang", [(300, "sk"), (360, "sk"), (400, "sk"), (1440, "en")])
+def test_the_row_card_keeps_its_close_button_inside_and_fits_a_phone(pw, width, lang):
+    """T-6956: on a phone the long title squeezed Close past the card's edge; the card is a sheet there."""
+    browser = pw.chromium.launch(args=["--disable-dev-shm-usage", *NO_WEBGL])
+    srv = serve(lambda: True)
+    try:
+        page, errors = open_explorer(browser, srv, width, lang)
+        page.mouse.wheel(0, -4000)
+        cell = page.locator('tbody tr[aria-rowindex="3"] .jc-grid-open').first  # the second event, the long name
+        cell.click()
+        card = page.locator("#detail")
+        card.wait_for(state="visible", timeout=20_000)
+        # The owner's record's type label: its longest word ("PERFORMANCE") set the header's least
+        # width, and Close gave way to it.
+        page.evaluate("() => { document.getElementById('detail-type').textContent = 'Key performance indicator'; }")
+        page.wait_for_timeout(300)
+        box = page.evaluate("""() => {
+          const d = document.getElementById("detail"), c = document.getElementById("detail-close");
+          const r = (e) => { const b = e.getBoundingClientRect(); return {l: b.left, t: b.top, r: b.right, b: b.bottom, w: b.width, h: b.height}; };
+          return {card: r(d), close: r(c), pad: parseFloat(getComputedStyle(d).paddingRight), vw: innerWidth, vh: innerHeight,
+                  cardSw: d.scrollWidth, cardCw: d.clientWidth, closeSw: c.scrollWidth, closeCw: c.clientWidth};
+        }""")
+        k, c = box["card"], box["close"]
+        assert c["w"] >= 44 and c["h"] >= 44, box
+        assert box["closeSw"] <= box["closeCw"], box  # the word "Zavrieť" whole, not cut by the card
+        assert c["l"] >= k["l"] and c["t"] >= k["t"] and c["r"] <= k["r"] - box["pad"] + 0.5, box
+        assert 0 <= c["l"] and c["r"] <= box["vw"] and c["t"] >= 0, box
+        assert box["cardSw"] <= box["cardCw"], box  # no sideways scroll inside the card
+        assert k["l"] >= 0 and k["r"] <= box["vw"] + 0.5 and k["t"] >= 0 and k["b"] <= box["vh"] + 0.5, box
+        if width <= 640:
+            # A sheet on the bottom of the screen, as wide as it.
+            assert abs(k["w"] - box["vw"]) <= 1 and abs(k["b"] - box["vh"]) <= 1, box
+        shot(page, f"row-card-{width}")
+        page.keyboard.press("Escape")
+        card.wait_for(state="hidden", timeout=5_000)
+        assert page.evaluate("() => !!document.activeElement.closest('table')")
+        cell.click()
+        card.wait_for(state="visible", timeout=20_000)
+        page.mouse.click(box["vw"] / 2, 4)  # the backdrop above the sheet or around the card
+        card.wait_for(state="hidden", timeout=5_000)
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
 
 
 @pytest.mark.parametrize("width, lang", [(1440, "en"), (400, "sk")])
