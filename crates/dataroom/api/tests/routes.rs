@@ -2910,8 +2910,8 @@ async fn pages_draw_the_brand_marks_the_footer_logo_and_each_configured_badge() 
         a.body
             .matches("<svg class=\"jc-ai-logo\" width=\"32\"")
             .count(),
-        3,
-        "a mark per assistant in the menu"
+        6,
+        "a mark per assistant in the menu and on its section's heading"
     );
 
     // A logo SVG the logo upload would refuse is never served on the catalogue's origin.

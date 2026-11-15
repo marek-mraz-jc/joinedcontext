@@ -1443,7 +1443,7 @@ fn d6_static_assistant_and_guide_pages_and_their_error_states() {
     // for everyone; the other pages hold no guide.
     for id in ["claude", "chatgpt", "grok", "other"] {
         assert!(
-            connector.contains(&format!("<section class=\"jc-guide\" id=\"{id}\"")),
+            connector.contains(&format!("<details class=\"jc-guide\" id=\"{id}\"")),
             "{id}"
         );
         assert!(
@@ -1455,7 +1455,7 @@ fn d6_static_assistant_and_guide_pages_and_their_error_states() {
             "{id} address"
         );
     }
-    assert_eq!(connector.matches("<section class=\"jc-guide\"").count(), 4);
+    assert_eq!(connector.matches("<details class=\"jc-guide\"").count(), 4);
     assert!(connector.contains("<li><code>list_endpoints</code>: finds the datasets.</li>"));
     assert!(connector.contains("refuse every write, for every caller"));
     assert!(!connector.contains("without a sign-in"));

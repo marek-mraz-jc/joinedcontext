@@ -132,9 +132,21 @@ test.describe("footer", () => {
     test(`the old ${id} guide address opens its section of /connector`, async ({ page }) => {
       await page.goto(`/en/assistants/${id}?utm_source=x`);
       await expect(page).toHaveURL(new RegExp(`/en/connector#${id}$`));
-      await expect(page.locator(`section#${id} h3`)).toBeVisible();
+      await expect(page.locator(`details#${id}`)).toHaveAttribute("open", "");
+      await expect(page.locator(`details#${id} .jc-guide-steps`)).toBeVisible();
     });
   }
+
+  test("a menu button opens its closed guide and is marked current", async ({ page }) => {
+    await page.goto("/en/connector");
+    await expect(page.locator("details.jc-guide[open]")).toHaveCount(0);
+    await page.locator('.jc-guide-menu a[href="#grok"]').click();
+    await expect(page.locator("details#grok")).toHaveAttribute("open", "");
+    await expect(page.locator('.jc-guide-menu a[href="#grok"]')).toHaveAttribute("aria-current", "location");
+    await expect(page.locator('.jc-guide-menu a[href="#claude"]')).not.toHaveAttribute("aria-current", /.*/);
+    await page.locator("details#claude > summary").press("Enter");
+    await expect(page.locator("details#claude")).toHaveAttribute("open", "");
+  });
 
   test("the language Go button shows and works without script", async ({ browser }) => {
     const context = await browser.newContext({ javaScriptEnabled: false });

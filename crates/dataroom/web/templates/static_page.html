@@ -81,8 +81,8 @@
           <section class="jc-guides" id="assistants" aria-labelledby="jc-guides-title">
             <h2 id="jc-guides-title">{{ labels.assistants }}</h2>
             {% for g in guides %}
-            <section class="jc-guide" id="{{ g.id }}" aria-labelledby="jc-guide-{{ g.id }}">
-              <h3 id="jc-guide-{{ g.id }}">{% if g.id == "claude" %}{% include "jc/card-claude.svg" %}{% else if g.id == "chatgpt" %}{% include "jc/card-chatgpt.svg" %}{% else if g.id == "grok" %}{% include "jc/card-grok.svg" %}{% endif %}{{ g.title }}</h3>
+            <details class="jc-guide" id="{{ g.id }}">
+              <summary><h3 id="jc-guide-{{ g.id }}">{% if g.id == "claude" %}{% include "jc/card-claude.svg" %}{% else if g.id == "chatgpt" %}{% include "jc/card-chatgpt.svg" %}{% else if g.id == "grok" %}{% include "jc/card-grok.svg" %}{% endif %}{{ g.title }}</h3></summary>
               <h4>{{ labels.guide_who }}</h4>
               {% for line in g.who %}<p>{{ line }}</p>{% endfor %}
               <h4>{{ labels.guide_steps }}</h4>
@@ -118,7 +118,7 @@
               </dl>
               <p class="jc-guide-checked">{{ g.checked }} <a href="{{ g.help }}" target="_blank" rel="noopener noreferrer">{{ g.help }}</a></p>
               <p class="jc-guide-up"><a href="#jc-mcp-title">{{ labels.guide_up }}</a></p>
-            </section>
+            </details>
             {% endfor %}
             <div class="jc-connector-note" role="note">
               <svg class="jc-note-icon" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 9v5M10 6v.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>

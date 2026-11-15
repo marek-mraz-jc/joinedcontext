@@ -75,3 +75,23 @@ window.jcCornerAside = (function () {
   document.addEventListener("DOMContentLoaded", soon);
   return soon;
 })();
+
+// T-7030: a connector guide is a closed <details> until its anchor is the location; the menu
+// button of the open one is marked current.
+(function () {
+  function show(id) {
+    var el = id && document.getElementById(id);
+    if (el && el.tagName === "DETAILS") { el.open = true; }
+    document.querySelectorAll(".jc-guide-menu a").forEach(function (a) {
+      if (a.getAttribute("href") === "#" + id) { a.setAttribute("aria-current", "location"); }
+      else { a.removeAttribute("aria-current"); }
+    });
+  }
+  function fromHash() { show(decodeURIComponent(location.hash.slice(1))); }
+  window.addEventListener("hashchange", fromHash);
+  document.addEventListener("DOMContentLoaded", fromHash);
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest && e.target.closest(".jc-guide-menu a");
+    if (a) { show(a.getAttribute("href").slice(1)); }
+  });
+})();
