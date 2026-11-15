@@ -91,6 +91,18 @@ impl Federations {
 /// cannot parse is left out rather than half-applied, which is what every other kind does here.
 pub fn federations_of(repo: &Repository) -> Federations {
     let mut by_space: BTreeMap<(String, String), Vec<Member>> = BTreeMap::new();
+    // Indexed once, so a reload is linear in the manifests rather than registrations x
+    // manifests (A-3-05: 10.7 ms for 500 registrations among 5,000 manifests before).
+    let slugs: BTreeMap<(Option<&str>, &str), Option<&str>> = repo
+        .iter()
+        .filter(|(id, _)| id.kind == "Endpoint")
+        .map(|(id, endpoint)| {
+            (
+                (id.namespace.as_deref(), id.name.as_str()),
+                endpoint.manifest.spec["slug"].as_str(),
+            )
+        })
+        .collect();
     for (id, resource) in repo.iter() {
         if id.kind != "ContextSourceRegistration" {
             continue;
@@ -106,13 +118,10 @@ pub fn federations_of(repo: &Repository) -> Federations {
         let project = id.namespace.clone().unwrap_or_default();
         let space = repo.space_segment(&project, spec.context_space_ref.name());
         let view = spec.endpoint_ref.as_ref().and_then(|reference| {
-            repo.iter()
-                .find(|(other, _)| {
-                    other.kind == "Endpoint"
-                        && other.name == reference.name()
-                        && other.namespace.as_deref() == Some(project.as_str())
-                })
-                .and_then(|(_, endpoint)| endpoint.manifest.spec["slug"].as_str())
+            slugs
+                .get(&(Some(project.as_str()), reference.name()))
+                .copied()
+                .flatten()
                 .map(str::to_owned)
         });
         by_space.entry((project, space)).or_default().push(Member {

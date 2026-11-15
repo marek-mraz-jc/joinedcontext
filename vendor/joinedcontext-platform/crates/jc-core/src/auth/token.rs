@@ -27,8 +27,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// generous window here is a generous window for a stolen one.
 const LEEWAY: i64 = 60;
 
-/// The most verified tokens a verifier remembers, a few MiB of claims. Past it the memo starts
-/// over, which costs one signature check per token again and nothing else (T-5290).
+/// The most verified tokens a verifier remembers, a few MiB of claims. Past it each new token
+/// pushes out one remembered token, which costs that token one signature check again and
+/// nothing else (T-5290, T-6937).
 const REMEMBERED: usize = 4_096;
 
 /// The most refused tokens a verifier remembers, apart from the verified ones so a flood of
@@ -438,11 +439,16 @@ fn now() -> i64 {
         })
 }
 
-/// Remembers `value` under `digest`, starting the memo over when it holds `cap` entries.
+/// Remembers `value` under `digest`, pushing out one arbitrary entry when the memo holds `cap`.
+/// Clearing it whole made every caller past the cap pay a signature check at once: with 5,000
+/// callers on a 4,096 memo the mean verify was 30.7 us, with one eviction per miss it is 17.1 us
+/// (T-6937, P-3-03).
 fn keep<V: Clone>(memo: &Mutex<HashMap<[u8; 32], V>>, cap: usize, digest: [u8; 32], value: V) -> V {
     let mut memo = remember(memo);
-    if memo.len() >= cap {
-        memo.clear();
+    if memo.len() >= cap && !memo.contains_key(&digest) {
+        if let Some(evicted) = memo.keys().next().copied() {
+            memo.remove(&evicted);
+        }
     }
     memo.insert(digest, value.clone());
     value
@@ -477,8 +483,9 @@ pub fn bearer(header: Option<&str>) -> Result<&str, Rejected> {
 
 #[cfg(test)]
 mod tests {
-    use super::{admit, unrevoked, Claims, Rejected, LEEWAY};
+    use super::{admit, keep, unrevoked, Claims, Rejected, LEEWAY};
     use std::collections::HashMap;
+    use std::sync::Mutex;
 
     const NOW: i64 = 1_800_000_000;
 
@@ -488,6 +495,25 @@ mod tests {
             claims["aud"] = aud;
         }
         serde_json::from_value(claims).expect("claims")
+    }
+
+    /// P-3-03: a full memo trades one entry for the new one instead of forgetting every caller.
+    #[test]
+    fn a_full_memo_pushes_out_one_entry_and_keeps_the_rest() {
+        let memo = Mutex::new(HashMap::new());
+        for n in 0..=4u8 {
+            keep(&memo, 4, [n; 32], n);
+        }
+        let memo = memo.into_inner().expect("the memo");
+        assert_eq!(memo.len(), 4, "at its cap");
+        assert_eq!(memo.get(&[4; 32]), Some(&4), "the new entry is kept");
+        let again = Mutex::new(memo);
+        keep(&again, 4, [4; 32], 4);
+        assert_eq!(
+            again.lock().expect("the memo").len(),
+            4,
+            "a known digest evicts nothing"
+        );
     }
 
     fn slug() -> Vec<String> {

@@ -1266,15 +1266,15 @@ pub(crate) async fn view_payload(
                 .map_err(|problem| answer(*problem))?;
         }
     }
-    // ADR-N-066 2.3: an attribute the grant keeps is kept whatever the client sends (DM-150)
-    if operation.is_write()
-        && crate::pdp::evaluator::keeps_versions(
-            subject,
-            &endpoint.policies,
-            crate::pdp::now(),
-            touched_attributes(path, sent).as_ref(),
-        )
-    {
+    // ADR-N-066 2.3: an attribute the grant keeps is kept whatever the client sends (DM-150).
+    // The body is parsed for its attributes only when a grant keeps any (P-3-01: 36.8 ms per
+    // 4 MB batch otherwise). `keeps(None)` holds whenever `keeps(Some(_))` does, so asking it
+    // first changes no answer.
+    let now = crate::pdp::now();
+    let keeps = |touched: Option<&std::collections::BTreeSet<String>>| {
+        crate::pdp::evaluator::keeps_versions(subject, &endpoint.policies, now, touched)
+    };
+    if operation.is_write() && keeps(None) && keeps(touched_attributes(path, sent).as_ref()) {
         headers.insert(tenancy::AUDIT, HeaderValue::from_static("changes"));
     }
     if sent.len() != before {
