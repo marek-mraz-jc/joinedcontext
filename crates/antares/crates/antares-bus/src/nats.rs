@@ -58,7 +58,11 @@ impl NatsBus {
     pub async fn connect(url: &str) -> Result<Self, BusError> {
         let reconnects = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
         let counter = reconnects.clone();
-        let client = async_nats::ConnectOptions::new()
+        let mut options = async_nats::ConnectOptions::new();
+        if let Some((user, pass)) = url_credentials(url)? {
+            options = options.user_and_password(user, pass);
+        }
+        let client = options
             .event_callback(move |ev| {
                 let counter = counter.clone();
                 async move {
@@ -444,11 +448,81 @@ pub async fn next_delta(
     }
 }
 
+/// The user and password of `nats://user:pass@host` (percent-decoded), from the first address
+/// of the list that names a user. async-nats reads neither from the URL itself, so a server that
+/// requires them refused the bus (T-7014). The error names no part of the URL.
+fn url_credentials(url: &str) -> Result<Option<(String, String)>, BusError> {
+    let decode = |s: &str| {
+        percent_encoding::percent_decode_str(s)
+            .decode_utf8()
+            .map(|c| c.into_owned())
+            .map_err(|_| BusError("ANTARES_NATS_URL: the user or password is not UTF-8".into()))
+    };
+    for one in url.split(',') {
+        let addr: async_nats::ServerAddr = one
+            .trim()
+            .parse()
+            .map_err(|_| BusError("ANTARES_NATS_URL is not a NATS URL".into()))?;
+        if let Some(user) = addr.username() {
+            return Ok(Some((
+                decode(user)?,
+                decode(addr.password().unwrap_or(""))?,
+            )));
+        }
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ChangeOp;
     use antares_model::{EntityId, TenantId};
+
+    /// A NATS server that requires a password: the CONNECT the bus sends carries the URL's user
+    /// and password, percent-decoded (a stand-in server reads the one line and answers nothing).
+    #[tokio::test]
+    async fn the_urls_user_and_password_reach_the_server() {
+        use std::io::{BufRead, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("test setup");
+        let port = listener.local_addr().expect("test setup").port();
+        let server = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().expect("test setup");
+            sock.write_all(
+                b"INFO {\"server_id\":\"t\",\"version\":\"2.10.0\",\"proto\":1,\"max_payload\":1048576,\"auth_required\":true}\r\n",
+            )
+            .expect("test setup");
+            let mut line = String::new();
+            std::io::BufReader::new(sock)
+                .read_line(&mut line)
+                .expect("test setup");
+            line
+        });
+        let url = format!("nats://jc:p%40ss@127.0.0.1:{port}");
+        let _ =
+            tokio::time::timeout(std::time::Duration::from_secs(5), NatsBus::connect(&url)).await;
+        let connect = server.join().expect("test setup");
+        assert!(
+            connect.contains(r#""user":"jc""#) && connect.contains(r#""pass":"p@ss""#),
+            "{connect}"
+        );
+    }
+
+    #[test]
+    fn a_url_without_a_user_names_none_and_a_list_takes_the_one_with_a_user() {
+        assert!(url_credentials("nats://127.0.0.1:4222")
+            .expect("test setup")
+            .is_none());
+        assert_eq!(
+            url_credentials("nats://a:4222, nats://u:pw@b:4222").expect("test setup"),
+            Some(("u".into(), "pw".into()))
+        );
+        let e = url_credentials("::not a url").expect_err("refused").0;
+        assert!(
+            !e.contains("not a url"),
+            "the error names no part of the URL: {e}"
+        );
+    }
 
     /// Config fatality: a typo'd replica count must never silently run a
     /// 3-node deployment at replicas=1 — that is a durability downgrade

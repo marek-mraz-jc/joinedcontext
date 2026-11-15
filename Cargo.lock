@@ -368,6 +368,7 @@ dependencies = [
  "async-nats 0.50.0",
  "futures-util",
  "ngsild-model",
+ "percent-encoding",
  "serde",
  "serde_json",
  "tokio",
