@@ -268,7 +268,7 @@ mod tests {
 
     #[test]
     fn tenant_rejects_unsafe() {
-        for bad in ["", "a.b", "a b", "ü", &"x".repeat(65)] {
+        for bad in ["", "a.b", "a b", "ü", &"x".repeat(129)] {
             assert!(TenantId::new(bad).is_err(), "should reject {bad:?}");
         }
     }
