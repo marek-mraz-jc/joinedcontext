@@ -1,0 +1,488 @@
+{
+ "features": [
+  {
+   "id": 1,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha 1",
+    "objectid": 1
+   }
+  },
+  {
+   "id": 2,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha 2",
+    "objectid": 2
+   }
+  },
+  {
+   "id": 3,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha 3",
+    "objectid": 3
+   }
+  },
+  {
+   "id": 4,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha 4",
+    "objectid": 4
+   }
+  },
+  {
+   "id": 5,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha 5",
+    "objectid": 5
+   }
+  },
+  {
+   "id": 6,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha 6",
+    "objectid": 6
+   }
+  },
+  {
+   "id": 7,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha 7",
+    "objectid": 7
+   }
+  },
+  {
+   "id": 8,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha 8",
+    "objectid": 8
+   }
+  },
+  {
+   "id": 9,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha 9",
+    "objectid": 9
+   }
+  },
+  {
+   "id": 10,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha 10",
+    "objectid": 10
+   }
+  },
+  {
+   "id": 11,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Ústí nad Labem-Severní Terasa",
+    "objectid": 11
+   }
+  },
+  {
+   "id": 12,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Ústí nad Labem-Neštěmice",
+    "objectid": 12
+   }
+  },
+  {
+   "id": 13,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Ústí nad Labem-Střekov",
+    "objectid": 13
+   }
+  },
+  {
+   "id": 14,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Běchovice",
+    "objectid": 14
+   }
+  },
+  {
+   "id": 15,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Benice",
+    "objectid": 15
+   }
+  },
+  {
+   "id": 16,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Březiněves",
+    "objectid": 16
+   }
+  },
+  {
+   "id": 17,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Dolní Počernice",
+    "objectid": 17
+   }
+  },
+  {
+   "id": 18,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Dubeč",
+    "objectid": 18
+   }
+  },
+  {
+   "id": 19,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha 20",
+    "objectid": 19
+   }
+  },
+  {
+   "id": 20,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Klánovice",
+    "objectid": 20
+   }
+  },
+  {
+   "id": 21,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Koloděje",
+    "objectid": 21
+   }
+  },
+  {
+   "id": 22,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Kolovraty",
+    "objectid": 22
+   }
+  },
+  {
+   "id": 23,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Královice",
+    "objectid": 23
+   }
+  },
+  {
+   "id": 24,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Křeslice",
+    "objectid": 24
+   }
+  },
+  {
+   "id": 25,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Nedvězí",
+    "objectid": 25
+   }
+  },
+  {
+   "id": 26,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Satalice",
+    "objectid": 26
+   }
+  },
+  {
+   "id": 27,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha 22",
+    "objectid": 27
+   }
+  },
+  {
+   "id": 28,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha 21",
+    "objectid": 28
+   }
+  },
+  {
+   "id": 29,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Vinoř",
+    "objectid": 29
+   }
+  },
+  {
+   "id": 30,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Lipence",
+    "objectid": 30
+   }
+  },
+  {
+   "id": 31,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Lochkov",
+    "objectid": 31
+   }
+  },
+  {
+   "id": 32,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Přední Kopanina",
+    "objectid": 32
+   }
+  },
+  {
+   "id": 33,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha 16",
+    "objectid": 33
+   }
+  },
+  {
+   "id": 34,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Řeporyje",
+    "objectid": 34
+   }
+  },
+  {
+   "id": 35,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Slivenec",
+    "objectid": 35
+   }
+  },
+  {
+   "id": 36,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha 13",
+    "objectid": 36
+   }
+  },
+  {
+   "id": 37,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Šeberov",
+    "objectid": 37
+   }
+  },
+  {
+   "id": 38,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Újezd",
+    "objectid": 38
+   }
+  },
+  {
+   "id": 39,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Zbraslav",
+    "objectid": 39
+   }
+  },
+  {
+   "id": 40,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Zličín",
+    "objectid": 40
+   }
+  },
+  {
+   "id": 41,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Moravská Ostrava a Přívoz",
+    "objectid": 41
+   }
+  },
+  {
+   "id": 42,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Plzeň 1",
+    "objectid": 42
+   }
+  },
+  {
+   "id": 43,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Plzeň 2-Slovany",
+    "objectid": 43
+   }
+  },
+  {
+   "id": 44,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Plzeň 3",
+    "objectid": 44
+   }
+  },
+  {
+   "id": 45,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Slezská Ostrava",
+    "objectid": 45
+   }
+  },
+  {
+   "id": 46,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Ostrava-Jih",
+    "objectid": 46
+   }
+  },
+  {
+   "id": 47,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Plzeň 4",
+    "objectid": 47
+   }
+  },
+  {
+   "id": 48,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Poruba",
+    "objectid": 48
+   }
+  },
+  {
+   "id": 49,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha 11",
+    "objectid": 49
+   }
+  },
+  {
+   "id": 50,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Kunratice",
+    "objectid": 50
+   }
+  },
+  {
+   "id": 51,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Libuš",
+    "objectid": 51
+   }
+  },
+  {
+   "id": 52,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha 12",
+    "objectid": 52
+   }
+  },
+  {
+   "id": 53,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Velká Chuchle",
+    "objectid": 53
+   }
+  },
+  {
+   "id": 54,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Lysolaje",
+    "objectid": 54
+   }
+  },
+  {
+   "id": 55,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Nebušice",
+    "objectid": 55
+   }
+  },
+  {
+   "id": 56,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha 17",
+    "objectid": 56
+   }
+  },
+  {
+   "id": 57,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Suchdol",
+    "objectid": 57
+   }
+  },
+  {
+   "id": 58,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Ďáblice",
+    "objectid": 58
+   }
+  },
+  {
+   "id": 59,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Dolní Chabry",
+    "objectid": 59
+   }
+  },
+  {
+   "id": 60,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Praha-Čakovice",
+    "objectid": 60
+   }
+  }
+ ],
+ "type": "FeatureCollection",
+ "properties": {
+  "exceededTransferLimit": true
+ }
+}

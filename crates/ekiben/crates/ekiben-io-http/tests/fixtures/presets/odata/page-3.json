@@ -1,0 +1,106 @@
+{
+ "@odata.context": "https://services.odata.org/V4/Northwind/Northwind.svc/$metadata#Customers(CustomerID,CompanyName,City)",
+ "value": [
+  {
+   "CustomerID": "LAMAI",
+   "CompanyName": "La maison d'Asie",
+   "City": "Toulouse"
+  },
+  {
+   "CustomerID": "LAUGB",
+   "CompanyName": "Laughing Bacchus Wine Cellars",
+   "City": "Vancouver"
+  },
+  {
+   "CustomerID": "LAZYK",
+   "CompanyName": "Lazy K Kountry Store",
+   "City": "Walla Walla"
+  },
+  {
+   "CustomerID": "LEHMS",
+   "CompanyName": "Lehmanns Marktstand",
+   "City": "Frankfurt a.M."
+  },
+  {
+   "CustomerID": "LETSS",
+   "CompanyName": "Let's Stop N Shop",
+   "City": "San Francisco"
+  },
+  {
+   "CustomerID": "LILAS",
+   "CompanyName": "LILA-Supermercado",
+   "City": "Barquisimeto"
+  },
+  {
+   "CustomerID": "LINOD",
+   "CompanyName": "LINO-Delicateses",
+   "City": "I. de Margarita"
+  },
+  {
+   "CustomerID": "LONEP",
+   "CompanyName": "Lonesome Pine Restaurant",
+   "City": "Portland"
+  },
+  {
+   "CustomerID": "MAGAA",
+   "CompanyName": "Magazzini Alimentari Riuniti",
+   "City": "Bergamo"
+  },
+  {
+   "CustomerID": "MAISD",
+   "CompanyName": "Maison Dewey",
+   "City": "Bruxelles"
+  },
+  {
+   "CustomerID": "MEREP",
+   "CompanyName": "Mère Paillarde",
+   "City": "Montréal"
+  },
+  {
+   "CustomerID": "MORGK",
+   "CompanyName": "Morgenstern Gesundkost",
+   "City": "Leipzig"
+  },
+  {
+   "CustomerID": "NORTS",
+   "CompanyName": "North/South",
+   "City": "London"
+  },
+  {
+   "CustomerID": "OCEAN",
+   "CompanyName": "Océano Atlántico Ltda.",
+   "City": "Buenos Aires"
+  },
+  {
+   "CustomerID": "OLDWO",
+   "CompanyName": "Old World Delicatessen",
+   "City": "Anchorage"
+  },
+  {
+   "CustomerID": "OTTIK",
+   "CompanyName": "Ottilies Käseladen",
+   "City": "Köln"
+  },
+  {
+   "CustomerID": "PARIS",
+   "CompanyName": "Paris spécialités",
+   "City": "Paris"
+  },
+  {
+   "CustomerID": "PERIC",
+   "CompanyName": "Pericles Comidas clásicas",
+   "City": "México D.F."
+  },
+  {
+   "CustomerID": "PICCO",
+   "CompanyName": "Piccolo und mehr",
+   "City": "Salzburg"
+  },
+  {
+   "CustomerID": "PRINI",
+   "CompanyName": "Princesa Isabel Vinhos",
+   "City": "Lisboa"
+  }
+ ],
+ "@odata.nextLink": "Customers?$select=CustomerID,CompanyName,City&$skiptoken='PRINI'"
+}

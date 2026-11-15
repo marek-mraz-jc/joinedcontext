@@ -587,6 +587,67 @@ async fn http_processor_branch_oauth2_extract_headers_and_retries() {
 
 /// Bento sends `Content-Type: application/octet-stream` with every one-message request whose
 /// headers name no type, an empty GET included (T-6624: 14 seed pipelines differed by it alone).
+/// `http_client` with `paginate` (T-7056): one page per read, then the end of input; a page the
+/// output nacked fails the next read, so the run is not reported complete.
+#[tokio::test]
+async fn the_paged_input_reads_each_page_once_and_a_nacked_page_fails_the_run() {
+    let app = Router::new().route(
+        "/pages",
+        get(
+            |axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>| async move {
+                let page: usize = q.get("page").and_then(|p| p.parse().ok()).unwrap_or(0);
+                let items: Vec<usize> = if page < 3 { vec![page; 2] } else { vec![] };
+                Json(serde_json::json!({ "items": items }))
+            },
+        ),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let (reg, _, sctx) = setup_contexts(true);
+    let build = || {
+        let conf = ComponentConfig::from_json_value(
+            &serde_json::json!({ "http_client": {
+                "url": format!("{base}/pages"),
+                "verb": "GET",
+                "paginate": {"mode": "page", "records": "items", "size_param": "size", "size": 2}
+            }}),
+            "noop",
+            None,
+        )
+        .unwrap();
+        reg.build_input(&conf, &sctx).unwrap()
+    };
+
+    let mut input = build();
+    input.connect(&sctx).await.unwrap();
+    let mut pages = Vec::new();
+    let end = loop {
+        match input.read_batch(&sctx).await {
+            Ok((batch, ack)) => {
+                pages.push(batch[0].meta_get_str("http_page"));
+                ack.ack();
+            }
+            Err(e) => break e,
+        }
+    };
+    assert!(matches!(end, ekiben_core::CoreError::EndOfInput), "{end}");
+    // Pages 1 and 2 are full, page 3 is empty: the stop rule holds there.
+    assert_eq!(pages, ["1", "2", "3"]);
+
+    let mut input = build();
+    input.connect(&sctx).await.unwrap();
+    let (batch, ack) = input.read_batch(&sctx).await.unwrap();
+    ack.nack(ekiben_core::BatchError::new(batch, "broker refused"));
+    let err = match input.read_batch(&sctx).await {
+        Ok(_) => panic!("a read after a nacked page must fail"),
+        Err(e) => e,
+    };
+    assert!(err.to_string().contains("broker refused"), "{err}");
+}
+
 #[tokio::test]
 async fn an_empty_get_names_the_octet_stream_type_as_bento_does() {
     let (base_url, _) = start_mock_server().await;
