@@ -855,6 +855,7 @@ export const STEWARD_FIELDS: Readonly<Record<string, readonly string[]>> = {
   http_client: ["url", "verb", "headers", "basic_auth", "oauth2", "timeout"],
   amqp_0_9: ["urls", "queue"],
   kafka: ["addresses", "topics", "consumer_group", "sasl"],
+  kafka_franz: ["seed_brokers", "topics", "consumer_group", "tls", "sasl"],
   websocket: ["url", "basic_auth", "oauth"],
   sql_select: ["driver", "dsn", "table", "columns", "where"],
 };
@@ -957,6 +958,8 @@ export function runnerInputSchema(input: CatalogInput): { schema: JsonSchema; ui
     } else if (f.kind === "array" && scalarType) {
       propSchema.type = "array";
       propSchema.items = { type: scalarType };
+      // A required list needs an item: an empty one passed the form and failed the runner's lint.
+      if (runnerRequires(f)) propSchema.minItems = 1;
     } else if (f.kind === "scalar" && scalarType) {
       propSchema.type = scalarType;
     } else {

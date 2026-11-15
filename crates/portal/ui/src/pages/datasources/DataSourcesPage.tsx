@@ -44,6 +44,7 @@ import {
   YamlFieldError,
 } from "../../schemas/kinds";
 import type { CatalogInput, DataSourceType, TypedDataSourceType } from "../../schemas/kinds";
+import { runnerFieldHelp } from "../../schemas/kinds";
 import { ConnectionTest } from "./ConnectionTest";
 import { useBentoInputs } from "./RunnerInputForm";
 import { TemplateGallery } from "./TemplateGallery";
@@ -233,6 +234,8 @@ const ACRONYMS = new Set([
  * than translated.
  */
 export function inputLabel(name: string): string {
+  // Bento's older kafka input is not offered, so its franz-go successor is plainly "Kafka" (T-7093).
+  if (name === "kafka_franz") return "Kafka";
   return name
     .split("_")
     .filter(Boolean)
@@ -329,7 +332,8 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
   const brokers = useMemo(() => brokerOptions(asManifests(brokerList.data?.items ?? [])), [brokerList.data]);
 
   const runnerCatalogInput = catalog?.inputs.find((i) => i.name === type);
-  const selectedSummary = runnerCatalogInput?.summary;
+  // Bento's summaries link their client libraries in markdown; the form shows the words (T-7093).
+  const selectedSummary = runnerCatalogInput ? runnerFieldHelp(runnerCatalogInput.summary) : undefined;
 
   const handleSecretRef = (envVar: string, ref: SecretRefValue) => {
     setCollectedSecrets((prev) => ({ ...prev, [envVar]: ref }));
@@ -739,7 +743,7 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
           description={
             isTypedDataSource(type)
               ? t(`datasources.dialog.${type}`)
-              : runnerCatalogInput?.summary ?? t("datasources.dialog.create")
+              : selectedSummary ?? t("datasources.dialog.create")
           }
           schema={
             isTypedDataSource(type)
