@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import bentoInputs from "../src/schemas/bento-inputs.json";
 import { PROCESSOR_GROUPS } from "../src/pages/pipelines/PipelineFlow";
-import { REFUSED_INPUTS, RUNNER_INPUTS, RUNNER_PROCESSORS, offeredInput } from "../src/schemas/runner";
+import { REFUSED_INPUTS, REFUSED_PROCESSORS, RUNNER_INPUTS, RUNNER_PROCESSORS, offeredInput } from "../src/schemas/runner";
 
 const KINDS = join(__dirname, "../../../../vendor/joinedcontext-platform/crates/jc-core/src/kinds");
 
@@ -20,6 +20,7 @@ describe("runner lists (T-6825)", () => {
     expect([...RUNNER_INPUTS]).toEqual(rustList("ekiben_components.rs", "INPUTS"));
     expect([...RUNNER_PROCESSORS]).toEqual(rustList("ekiben_components.rs", "PROCESSORS"));
     expect([...REFUSED_INPUTS]).toEqual(rustList("data_source.rs", "REFUSED_INPUTS"));
+    expect([...REFUSED_PROCESSORS]).toEqual(rustList("pipeline.rs", "REFUSED_PROCESSORS"));
   });
 
   it("offer only the inputs the runner builds and the platform accepts", () => {
@@ -32,12 +33,15 @@ describe("runner lists (T-6825)", () => {
     }
   });
 
-  it("offer only the processors the runner builds", () => {
+  it("offer only the processors the runner builds and the platform accepts", () => {
     const offered = PROCESSOR_GROUPS.flatMap(({ processors }) => processors.map(({ name }) => name));
     expect(offered).toContain("mapping");
     expect(offered).toContain("jq");
-    expect(offered.every((name) => RUNNER_PROCESSORS.has(name))).toBe(true);
-    for (const name of ["couchbase", "sql_select", "javascript", "python"]) {
+    expect(offered).toContain("sql_select");
+    expect(offered.every((name) => RUNNER_PROCESSORS.has(name) && !REFUSED_PROCESSORS.has(name))).toBe(true);
+    // javascript is built by the runner (T-7061) and still refused as a step.
+    expect(RUNNER_PROCESSORS.has("javascript")).toBe(true);
+    for (const name of ["couchbase", "javascript", "python"]) {
       expect(offered).not.toContain(name);
     }
   });
