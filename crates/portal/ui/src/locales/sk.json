@@ -6682,6 +6682,7 @@
       "failed": "Verzia {version} sa nezverejní, kým zlyháva {failed} jej testov: {names}. Požiadajte asistenta o opravu."
     },
     "publishOver": "Tento beh sa skončil, takže nemá čo zverejniť.",
+    "publishNotReady": "Zatiaľ nie je pripravená žiadna verzia na zverejnenie: Zverejniť sa sprístupní, keď bude zostavený jej náhľad a prejdú jej testy.",
     "failedNext": "Nič sa nezverejnilo. Na stránke Asistent aplikáciu zostavte znova.",
     "failedOpen": "Zostaviť znova"
   },

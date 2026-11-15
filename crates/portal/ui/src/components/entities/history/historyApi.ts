@@ -122,7 +122,9 @@ export async function readHistory(
   options?: { before?: string },
 ): Promise<{ measurements: Measurement[]; versions: boolean }> {
   const before = options?.before ? `&timerel=before&timeAt=${encodeURIComponent(options.before)}` : "";
-  const query = `${encodeURIComponent(entityId)}?attrs=${encodeURIComponent(attribute)}&lastN=9${before}`;
+  // The default instance only, which is all this panel shows and writes: lastN counts what it
+  // returns, so instances of other datasetIds would fill the page and end the paging early.
+  const query = `${encodeURIComponent(entityId)}?attrs=${encodeURIComponent(attribute)}&datasetId=%40none&lastN=9${before}`;
   const all = await readTemporal(slug, `${query}&versions=all`);
   const versions = all.status !== 403;
   const answer = versions ? all : await readTemporal(slug, query);
