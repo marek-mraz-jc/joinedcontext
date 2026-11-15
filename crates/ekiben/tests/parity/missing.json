@@ -2,6 +2,22 @@
  "bento": "Version: 1.22.0",
  "extension": [
   {
+   "name": "bloblang-functions/ngsild_language_map",
+   "reason": "declared by `ekiben list` (ekiben-extensions)"
+  },
+  {
+   "name": "bloblang-functions/ngsild_multi",
+   "reason": "declared by `ekiben list` (ekiben-extensions)"
+  },
+  {
+   "name": "bloblang-functions/ngsild_point",
+   "reason": "declared by `ekiben list` (ekiben-extensions)"
+  },
+  {
+   "name": "bloblang-functions/ngsild_ref",
+   "reason": "declared by `ekiben list` (ekiben-extensions)"
+  },
+  {
    "name": "bloblang-functions/ngsild_urn",
    "reason": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs)"
   },

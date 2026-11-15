@@ -63,10 +63,15 @@ def main():
     with open(a.recorded) as f:
         recorded = json.load(f)
     bento = names(recorded, a.recorded)
-    ekiben = names(listing(a.ekiben), f"{a.ekiben} list --format json")
+    ekiben_listing = listing(a.ekiben)
+    ekiben = names(ekiben_listing, f"{a.ekiben} list --format json")
     with open(a.policy) as f:
         policy = json.load(f)
-    refused, ext = policy.get("refused", {}), policy.get("extension", {})
+    refused, ext = policy.get("refused", {}), dict(policy.get("extension", {}))
+    # What ekiben itself declares as its own (`ekiben-extensions`: the NGSI-LD components and
+    # helpers) needs no second entry here.
+    declared = {n: "declared by `ekiben list` (ekiben-extensions)"
+                for n in ekiben_listing.get("ekiben-extensions", [])}
     deprecated = policy.get("deprecated", {})
     errors = []
     for section, entries in (("refused", refused), ("extension", ext), ("deprecated", deprecated)):
@@ -80,6 +85,8 @@ def main():
     errors += [f"deprecated {n}: listed by Bento or absent from ekiben (stale policy entry)"
                for n in deprecated if n in bento or n not in ekiben]
 
+    for n, why in declared.items():
+        ext.setdefault(n, why)
     missing = sorted(bento - ekiben - refused.keys())
     extension = sorted(ekiben - bento - deprecated.keys())
     errors += [f"{n}: ekiben has it and Bento does not; list it under extension with a reason"
