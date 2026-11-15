@@ -18,11 +18,14 @@ export function useGridMap(options: UseEntityGridOptions, grid: EntityGridApi, r
   const mapPosition = mapConfig?.position ?? "right";
   // Past a count the map also draws the whole type from the Endpoint's tiles (T-5195). A tile takes
   // no query, so a narrowed answer stays on the page's shapes, and only `location` is tiled.
+  const tilesPossible = Boolean(options.source.tilesAt) && mapAttr === "location" && !grid.narrowed;
   const tileTemplate = useTileTemplate(
     options.source.tilesAt ?? null,
     options.config.type,
-    mapAttr === "location" && !grid.narrowed && (grid.total ?? 0) > TILE_THRESHOLD,
+    tilesPossible && (grid.total ?? 0) > TILE_THRESHOLD,
   );
+  // Until the first count and the tileset answered, a points read may be one the tiles replace.
+  const tilesUndecided = tilesPossible && ((grid.loading && grid.total === undefined) || tileTemplate === undefined);
   // Every entity of the question as a point, read lean while the map is open and no tiles draw the
   // type (T-6345). The question is the grid's own without the area, so a person drawing one sees
   // what it will catch, and without the order, which a map does not need.
@@ -31,9 +34,9 @@ export function useGridMap(options: UseEntityGridOptions, grid: EntityGridApi, r
     const asked = grid.valuesQuery("");
     return JSON.stringify({ ...asked, area: undefined, attrs: undefined });
   }, [grid.valuesQuery]);
-  const pointsState = useMapPoints(options.source, pointsKey, mapAttr, mapOpen && !tileTemplate);
+  const pointsState = useMapPoints(options.source, pointsKey, mapAttr, mapOpen && !tileTemplate && !tilesUndecided);
   const mapPoints = useMemo(() => featuresOfPoints(pointsState?.points ?? []), [pointsState]);
-  return { mapConfig, areaMap, setAreaMap, mapAttr, mapPosition, tileTemplate, pointsState, mapPoints };
+  return { mapConfig, areaMap, setAreaMap, mapAttr, mapPosition, tileTemplate: tileTemplate ?? null, pointsState, mapPoints };
 }
 
 /** The map beside the rows (UI-72): shapes, area drawing, and edits where the grid edits. */
