@@ -14,10 +14,6 @@
     "outputs/sql": "Bento 1.22 still runs it but leaves it out of `bento list` (deprecated)"
   },
   "extension": {
-    "bloblang-functions/ngsild_language_map": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs, T-7059 G-16)",
-    "bloblang-functions/ngsild_multi": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs, T-7059 G-16)",
-    "bloblang-functions/ngsild_point": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs, T-7059 G-16)",
-    "bloblang-functions/ngsild_ref": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs, T-7059 G-16)",
     "bloblang-functions/ngsild_urn": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs)",
     "bloblang-functions/uuid_v7": "RFC 9562 time-ordered UUID for event, complaint and incident ids (T-7054 G-03)",
     "bloblang-methods/ngsild_geoproperty": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs)",

@@ -3,19 +3,19 @@
  "extension": [
   {
    "name": "bloblang-functions/ngsild_language_map",
-   "reason": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs, T-7059 G-16)"
+   "reason": "declared by `ekiben list` (ekiben-extensions)"
   },
   {
    "name": "bloblang-functions/ngsild_multi",
-   "reason": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs, T-7059 G-16)"
+   "reason": "declared by `ekiben list` (ekiben-extensions)"
   },
   {
    "name": "bloblang-functions/ngsild_point",
-   "reason": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs, T-7059 G-16)"
+   "reason": "declared by `ekiben list` (ekiben-extensions)"
   },
   {
    "name": "bloblang-functions/ngsild_ref",
-   "reason": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs, T-7059 G-16)"
+   "reason": "declared by `ekiben list` (ekiben-extensions)"
   },
   {
    "name": "bloblang-functions/ngsild_urn",
