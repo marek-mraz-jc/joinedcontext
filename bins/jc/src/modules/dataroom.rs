@@ -915,6 +915,7 @@ mod tests {
             .enumerate()
             .map(|(n, name)| OrganizationSection {
                 name: (*name).into(),
+                id: None,
                 hosts: crate::config::OrganizationHosts {
                     portal: format!("portal.{name}.test"),
                     opendata: format!("data.{name}.test"),

@@ -369,7 +369,10 @@ fn host_table(cfg: &Config, plans: &[MountPlan]) -> Result<Option<HostTable>, Ro
     let mut table = HostTable::new().reserving(jc_core::names::RESERVED_LABELS);
     let mut bound = std::collections::BTreeSet::new();
     for org in &cfg.organizations {
-        table = table.organization(&org.name)?;
+        table = match &org.id {
+            Some(id) => table.organization_id(&org.name, id.as_str())?,
+            None => table.organization(&org.name)?,
+        };
         for (_, host) in org.hosts.by_module() {
             table = table.bound(host, &org.name, "/")?;
             bound.insert(host.split(':').next().unwrap_or(host).to_owned());
@@ -1978,6 +1981,72 @@ mod tests {
                 .unwrap();
             let got = format!("{status} {}", String::from_utf8_lossy(&body));
             assert_eq!(got, want, "{host}{path}");
+        }
+        // T-7007 (EP-186): with an id, the shared host's segment is the id; the old name moves
+        // a page there and answers an API call in place.
+        let file = format!(
+            "mode = \"slug\"\nbase_host = \"city.test\"\n{}",
+            TWO_ORGS.replacen(
+                "name = \"alpha\"\n",
+                "name = \"alpha\"\nid = \"test_alpha\"\n",
+                1
+            )
+        );
+        let cfg = dev_config("kaisatsu,portal,dataroom,gateway", &file);
+        let plans = plan_mounts(&cfg).unwrap();
+        let mut builder = JcRouterBuilder::new("https", "city.test")
+            .hosts(host_table(&cfg, &plans).unwrap().expect("a registry"));
+        for plan in &plans {
+            let name = plan.module.name();
+            let router = Router::new().fallback(
+                move |org: Option<axum::Extension<jc_router::Organization>>,
+                      axum::Extension(mount): axum::Extension<Mount>| async move {
+                    let org = org.map_or_else(|| "-".to_owned(), |o| o.0.0);
+                    format!("{name} {org} {}", mount.public_base())
+                },
+            );
+            builder = mount_all(builder, plan, &router);
+        }
+        let ids = builder.build().unwrap();
+        for (path, accept, want) in [
+            (
+                "/test_alpha/opendata/dataset/x",
+                "application/json",
+                "200 dataroom alpha https://city.test/test_alpha/opendata",
+            ),
+            (
+                "/alpha/opendata/dataset/x?q=1",
+                "text/html",
+                "308 /test_alpha/opendata/dataset/x?q=1",
+            ),
+            (
+                "/alpha/opendata/dataset/x",
+                "application/json",
+                "200 dataroom alpha https://city.test/alpha/opendata",
+            ),
+            (
+                "/test_gamma/opendata/x",
+                "application/json",
+                "404 unmounted path",
+            ),
+        ] {
+            let req = Request::builder()
+                .uri(path)
+                .header(header::HOST, "city.test")
+                .header(header::ACCEPT, accept)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let resp = ids.dispatch(req, None).await;
+            let status = resp.status().as_u16();
+            let location = resp.headers().get(header::LOCATION).cloned();
+            let body = axum::body::to_bytes(resp.into_body(), 1 << 16)
+                .await
+                .unwrap();
+            let got = match location {
+                Some(l) => format!("{status} {}", l.to_str().unwrap()),
+                None => format!("{status} {}", String::from_utf8_lossy(&body)),
+            };
+            assert_eq!(got, want, "{path}");
         }
         // Without Organizations there is no registry: every host answers as before.
         let one = dev_config(

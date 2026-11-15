@@ -536,6 +536,11 @@ impl Default for DataroomSection {
 pub struct OrganizationSection {
     /// The JC Organization's `metadata.name`; also the CKAN organisation of its catalogue.
     pub name: String,
+    /// The Organization id, its verified domain reversed (`sk_bbsk`, EP-186): its first path
+    /// segment on a shared host, where `/{name}/` then moves to `/{id}/`. Unset, the segment
+    /// stays the name.
+    #[serde(default)]
+    pub id: Option<jc_core::names::OrganizationId>,
     pub hosts: OrganizationHosts,
     /// The dataroom catalogue (a UUID) holding the Organization's datasets.
     pub catalogue_id: String,
@@ -575,8 +580,6 @@ impl OrganizationHosts {
     }
 }
 
-/// `[[organizations]]` checked: plain lowercase names and hosts, a catalogue UUID each, and no
-/// name, catalogue or host twice (a host compared without its port).
 /// `[kaisatsu] outbound_private_hosts`, each entry an exact host name (normalised to lowercase,
 /// without a trailing dot).
 fn check_private_hosts(hosts: Vec<String>) -> Result<Vec<String>, ConfigError> {
@@ -614,9 +617,12 @@ fn check_private_hosts(hosts: Vec<String>) -> Result<Vec<String>, ConfigError> {
         .collect()
 }
 
+/// `[[organizations]]` checked: plain lowercase names and hosts, a catalogue UUID each, and no
+/// name, id, catalogue or host twice (a host compared without its port).
 fn check_organizations(orgs: &mut [OrganizationSection]) -> Result<(), ConfigError> {
     let bad = |m: String| Err(ConfigError::Organization(m));
     let mut names = std::collections::BTreeSet::new();
+    let mut ids = std::collections::BTreeSet::new();
     let mut catalogues = std::collections::BTreeSet::new();
     let mut hosts = BTreeMap::new();
     for org in orgs.iter_mut() {
@@ -640,6 +646,11 @@ fn check_organizations(orgs: &mut [OrganizationSection]) -> Result<(), ConfigErr
         }
         if !names.insert(org.name.clone()) {
             return bad(format!("Organization '{name}' is named twice"));
+        }
+        if let Some(id) = &org.id
+            && !ids.insert(id.clone())
+        {
+            return bad(format!("{name}: id '{id}' is another Organization's id"));
         }
         org.catalogue_id = org.catalogue_id.trim().to_ascii_lowercase();
         if !is_uuid(&org.catalogue_id) {
@@ -2347,6 +2358,37 @@ path_prefix = "/api/endpoint"
     fn orgs(text: &str) -> Result<Config, ConfigError> {
         let file = Config::parse_file(Path::new("jc.toml"), text)?;
         Config::merge(cli(&["--role", "dataroom"]), file)
+    }
+
+    /// T-7007 (EP-186): an Organization id is the reversed domain, once per deployment.
+    #[test]
+    fn an_organization_id_is_read_and_a_bad_or_shared_one_refused() {
+        let with = |alpha: &str, beta: &str| {
+            TWO_ORGS
+                .replacen(
+                    "name = \"alpha\"\n",
+                    &format!("name = \"alpha\"\nid = \"{alpha}\"\n"),
+                    1,
+                )
+                .replacen(
+                    "name = \"beta\"\n",
+                    &format!("name = \"beta\"\nid = \"{beta}\"\n"),
+                    1,
+                )
+        };
+        let cfg = orgs(&with("test_alpha", "test_beta")).unwrap();
+        assert_eq!(
+            cfg.organizations[0].id.as_ref().map(|i| i.as_str()),
+            Some("test_alpha")
+        );
+        let err = orgs(&with("test_alpha", "test_alpha"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("another Organization's id"), "{err}");
+        for bad in ["beta", "test-beta", "Test_beta"] {
+            let err = orgs(&with("test_alpha", bad)).expect_err(bad).to_string();
+            assert!(err.contains("organizationId"), "{bad}: {err}");
+        }
     }
 
     #[test]
