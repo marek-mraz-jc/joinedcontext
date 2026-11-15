@@ -436,6 +436,12 @@ async fn share_pull(shako: &MockServer) {
             "version": "1.2.0",
             "lifecycle": "published",
             "classes": ["AirQualityObserved"],
+            "artifacts": {
+                "jsonSchema": "./schema.json",
+                "context": "./context.jsonld",
+                "docs": "./README.md",
+                "example": "./example.json"
+            },
             "origin": { "project": "helsinki", "space": "ilma", "name": "air", "version": "1.2.0", "commit": COMMIT }
         }
     });

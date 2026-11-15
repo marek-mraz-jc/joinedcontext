@@ -45,6 +45,10 @@ pub fn login_router(state: OidcState) -> Router {
         )
         .merge(kaisatsu_oidc::broker_router())
         .merge(crate::account::account_router())
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            kaisatsu_oidc::handlers::active_realm,
+        ))
         .with_state(state)
 }
 
@@ -1066,6 +1070,7 @@ async fn authenticate_page_get(
     Query(query): Query<AuthPageQuery>,
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
+    client_ip: ClientIp,
 ) -> Result<Response> {
     let realm = state
         .store
@@ -1101,6 +1106,40 @@ async fn authenticate_page_get(
 
     let current_state: LoginState =
         serde_json::from_str(&auth_session.step_state_json).unwrap_or(LoginState::IdentityFirst);
+
+    // Only the broker marks this state verified, once the upstream assertion verified (S-4-01);
+    // an IdP hint alone never signs anyone on here. The sign-in goes on through the machine like a password one, so the second factor, required
+    // actions, the organization choice and consent run before any code is issued.
+    if let LoginState::UpstreamIdp {
+        assertion_verified: true,
+        ..
+    } = current_state
+        && let Some(user_id) = auth_session.user_id.clone()
+    {
+        let user = state
+            .store
+            .get_user_by_id(&realm.id, None, &user_id)
+            .await?
+            .filter(|u| u.enabled)
+            .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+        let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
+        let next = transition(
+            current_state,
+            LoginInput::UpstreamAssertionVerified { user_id },
+            &ctx,
+        )
+        .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        return advance_or_render(
+            &state,
+            &mount,
+            &realm,
+            auth_session,
+            next,
+            &headers,
+            &client_ip,
+        )
+        .await;
+    }
 
     render_state_page(
         &state,
@@ -2136,6 +2175,15 @@ async fn advance_or_render(
         chosen_org,
     } = next_state
     {
+        // A brokered sign-in's first factor was the upstream one, never a local password.
+        let brokered = auth_session.amr == ["fed"];
+        let amr: Vec<String> = if brokered {
+            amr.into_iter()
+                .map(|m| if m == "pwd" { "fed".to_owned() } else { m })
+                .collect()
+        } else {
+            amr
+        };
         let user = state
             .store
             .get_user_by_id(&realm.id, None, &user_id)
@@ -2212,7 +2260,11 @@ async fn advance_or_render(
                 session_id: Some(sso_id),
                 ip_address: client_ip.for_audit(),
                 error: None,
-                details: BTreeMap::new(),
+                details: if brokered {
+                    BTreeMap::from([("identity_provider".into(), "oidc".into())])
+                } else {
+                    BTreeMap::new()
+                },
             })
             .await?;
 

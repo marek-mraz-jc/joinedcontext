@@ -1567,12 +1567,21 @@ def import_shako(h: Http, token: str, export: Path, report: dict, catalogue: byt
                 size += len(op.get("content", ""))
                 continue
             if batch:
-                st, body = h.json("POST", f"/git/api/v1/projects/{owner}/repositories/{name}/contents",
-                                  headers=auth, body={"branch": branch, "files": batch,
-                                                      "message": "rehearsal import: current files"})
+                call = f"POST /git/api/v1/projects/{owner}/repositories/{name}/contents"
+                st, body = h.json("POST", call[5:], headers=auth, body={
+                    "branch": branch, "files": batch, "message": "rehearsal import: current files"})
+                if st == 403 and branch == "main" and "protected" in str(body):
+                    # A main the Portal protected before the import reached it (an earlier import
+                    # that wrote the organization first, T-6764) takes the files as a merged
+                    # Change, the way every later write reaches it (jc-dev helsinki-mobility, T-6969).
+                    try:
+                        merge_change(lambda m, path, b: h.json(m, f"/git/api/v1{path}", headers=auth, body=b),
+                                     owner, name, batch, "rehearsal import: current files")
+                        st = 201
+                    except RuntimeError as e:
+                        st, body = 403, str(e)
                 if st not in (200, 201):
-                    failed = {"call": f"POST /git/api/v1/projects/{owner}/repositories/{name}/contents",
-                              "status": st, "detail": body}
+                    failed = {"call": call, "status": st, "detail": body}
                     break
                 commits += 1
             batch, size = ([op], len(op.get("content", ""))) if op else ([], 0)
