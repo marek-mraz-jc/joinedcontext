@@ -660,6 +660,48 @@ fn an_xlsx_http_body_reaches_the_steps_one_row_per_message() {
     );
 }
 
+/// T-7086: `sheet` picks the sheet of an xlsx body by its tab name; it needs `format: xlsx` and a
+/// name a workbook can hold, and an xlsx body is not paged.
+#[test]
+fn an_xlsx_sheet_renders_by_name_and_is_refused_where_it_cannot_apply() {
+    let spec = source(&CSV_HTTP.replace("format: csv", "format: xlsx\n    sheet: Stations 2026"));
+    let out = render(
+        "pipeline:\n  processors: []\n",
+        &spec,
+        &context("stations-csv"),
+    )
+    .expect("renders");
+    let doc: serde_norway::Value = serde_norway::from_str(&out).expect("yaml");
+    assert_eq!(
+        doc["pipeline"]["processors"][2]["unarchive"]["format"].as_str(),
+        Some("xlsx:Stations 2026"),
+        "{out}"
+    );
+    for (field, yaml) in [
+        ("spec.http.sheet", "format: csv\n    sheet: Stations"),
+        ("spec.http.sheet", "sheet: Stations"),
+        ("spec.http.sheet", "format: xlsx\n    sheet: \"a:b\""),
+        ("spec.http.sheet", "format: xlsx\n    sheet: \"\""),
+        ("spec.http.sheet", "format: xlsx\n    sheet: \"'quoted'\""),
+        (
+            "spec.http.sheet",
+            "format: xlsx\n    sheet: abcdefghijklmnopqrstuvwxyz0123456",
+        ),
+        (
+            "spec.http.paging",
+            "format: xlsx\n    paging: { mode: link }",
+        ),
+    ] {
+        let err =
+            ResourceEnvelope::<DataSourceSpec>::from_yaml(&CSV_HTTP.replace("format: csv", yaml))
+                .expect("parses")
+                .validate()
+                .expect_err(yaml)
+                .to_string();
+        assert!(err.contains(field), "{yaml}: {err}");
+    }
+}
+
 /// PL-114, T-6572: a JSON body with `records` reaches the author's steps one element of that
 /// array per message, after the body bound (PL-113), so a GBFS feed of 460 stations is 460
 /// messages and none of them carries the whole 100 KB page.
