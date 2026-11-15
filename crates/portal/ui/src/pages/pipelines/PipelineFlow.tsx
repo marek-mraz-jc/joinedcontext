@@ -12,7 +12,7 @@ import { Alert, CodeBlock, Button, Field, Input, Select, Tabs, tabPanelProps, Te
 import processorCatalogue from "../../schemas/bento-processors.json";
 import processorTiers from "../../schemas/processor-tiers.json";
 import { COMPUTE_KINDS, OUTPUT_MODES, YamlFieldError } from "../../schemas/kinds";
-import { RUNNER_PROCESSORS } from "../../schemas/runner";
+import { offeredProcessor } from "../../schemas/runner";
 import type { OutputForm, PipelineForm, RouteForm, SourceForm, StepForm } from "./PipelineEditor";
 import { spaceOf } from "../spaces/spaceFacts";
 import { sourceKindOf } from "./PipelineStudio";
@@ -31,7 +31,7 @@ export interface Processor {
 
 /** The palette: the Bento catalogue kept to the processors the runner builds (T-6825). A step
  * already written with another one still draws, and the server refuses it on save. */
-const paletteProcessors = (processorCatalogue as Processor[]).filter(({ name }) => RUNNER_PROCESSORS.has(name));
+const paletteProcessors = (processorCatalogue as Processor[]).filter(({ name }) => offeredProcessor(name));
 
 /** The runner's processors by category, in the catalogue's order (PL-56). */
 export const PROCESSOR_GROUPS: { category: string; processors: Processor[] }[] = (() => {
@@ -1955,7 +1955,11 @@ export function OutputBlock({ project, output, targets, locale, onChange, onRemo
               ))}
           </Select>
         </Field>
-        <Field id="flow-output-mode" label={t("pipelines.field.outputMode")}>
+        <Field
+          id="flow-output-mode"
+          label={t("pipelines.field.outputMode")}
+          help={t(`pipelines.field.modeHint.${output.mode ?? "upsert"}`)}
+        >
           <Select
             id="flow-output-mode"
             value={output.mode ?? "upsert"}

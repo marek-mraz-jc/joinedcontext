@@ -358,11 +358,18 @@ async fn mapping_steps(
         }
         Err(error) => return unchecked_both(why(&error)),
     };
-    let trace =
-        match pipeline_test::run_messages(state, project, &spec, &[message_of(payload)]).await {
-            Ok(trace) => trace,
-            Err(error) => return unchecked_both(why(&error)),
-        };
+    let trace = match pipeline_test::run_messages(
+        state,
+        project,
+        &spec,
+        &pipeline_test::manifest_name(&manifest),
+        &[message_of(payload)],
+    )
+    .await
+    {
+        Ok(trace) => trace,
+        Err(error) => return unchecked_both(why(&error)),
+    };
     if let Some(error) = trace.errors.first() {
         return vec![
             Step::new(

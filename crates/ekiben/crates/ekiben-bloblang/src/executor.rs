@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
 use crate::ast::{
@@ -12,6 +11,9 @@ use crate::error::BloblangError;
 use crate::functions::eval_function;
 use crate::methods::eval_method;
 use crate::value::Value;
+
+/// The generator of each `random_int` call site, seeded at its first call.
+pub type RngStates = Arc<Mutex<HashMap<usize, crate::gorand::GoRand>>>;
 
 /// Information about a processor error attached to a message part.
 #[derive(Debug, Clone, Default)]
@@ -161,7 +163,7 @@ pub struct Executor {
     env: Environment,
     named_counters: Arc<Mutex<HashMap<String, i64>>>,
     stateful_counters: Arc<Mutex<HashMap<usize, i64>>>,
-    rng_counter: Arc<AtomicU64>,
+    rng_states: RngStates,
     reads_other_parts: bool,
 }
 
@@ -185,7 +187,7 @@ impl Executor {
             env,
             named_counters: Arc::new(Mutex::new(HashMap::new())),
             stateful_counters: Arc::new(Mutex::new(HashMap::new())),
-            rng_counter: Arc::new(AtomicU64::new(1)),
+            rng_states: RngStates::default(),
         }
     }
 
@@ -321,7 +323,7 @@ impl Executor {
             max_stacks: self.env.max_map_recursion,
             named_counters: &self.named_counters,
             stateful_counters: &self.stateful_counters,
-            rng_counter: &self.rng_counter,
+            rng_states: &self.rng_states,
             meta_in_place,
         };
 
@@ -352,7 +354,7 @@ pub(crate) struct EvalContext<'a, 'm> {
     pub max_stacks: usize,
     pub named_counters: &'a Arc<Mutex<HashMap<String, i64>>>,
     pub stateful_counters: &'a Arc<Mutex<HashMap<usize, i64>>>,
-    pub rng_counter: &'a Arc<AtomicU64>,
+    pub rng_states: &'a RngStates,
     /// `metadata()`/`meta()` read `new_meta` instead of the input part (`mutate_part`).
     pub meta_in_place: bool,
 }
@@ -434,7 +436,7 @@ impl<'a, 'm> EvalContext<'a, 'm> {
                 max_stacks: self.max_stacks,
                 named_counters: self.named_counters,
                 stateful_counters: self.stateful_counters,
-                rng_counter: self.rng_counter,
+                rng_states: self.rng_states,
                 meta_in_place: false,
             };
             for stmt in &map_def.statements {
@@ -1185,7 +1187,7 @@ pub struct FieldExpression {
     env: Environment,
     named_counters: Arc<Mutex<HashMap<String, i64>>>,
     stateful_counters: Arc<Mutex<HashMap<usize, i64>>>,
-    rng_counter: Arc<AtomicU64>,
+    rng_states: RngStates,
 }
 
 impl std::fmt::Debug for FieldExpression {
@@ -1203,7 +1205,7 @@ impl FieldExpression {
             env,
             named_counters: Arc::new(Mutex::new(HashMap::new())),
             stateful_counters: Arc::new(Mutex::new(HashMap::new())),
-            rng_counter: Arc::new(AtomicU64::new(1)),
+            rng_states: RngStates::default(),
         }
     }
 
@@ -1270,7 +1272,7 @@ impl FieldExpression {
             max_stacks: self.env.max_map_recursion,
             named_counters: &self.named_counters,
             stateful_counters: &self.stateful_counters,
-            rng_counter: &self.rng_counter,
+            rng_states: &self.rng_states,
             meta_in_place: false,
         };
         ctx.eval_expr(q).map_err(BloblangError::Runtime)
