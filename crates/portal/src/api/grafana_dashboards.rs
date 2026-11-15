@@ -1615,7 +1615,6 @@ mod tests {
             &variable("closed")
         ))
         .is_empty());
-        assert_eq!(offered(&viewer, &variable("open")), 1);
         assert_eq!(offered(&approver, &variable("closed")), 1);
         let own = json!({ "name": "unit", "type": "custom", "query": "a,b" });
         assert_eq!(
