@@ -618,7 +618,15 @@ class LiveJc:
         if path.endswith("/endpoints"):
             project = path.split("/")[4]
             return 200, {"items": [{"metadata": {"name": f"{project}-air"},
-                                    "spec": {"slug": "abcd", "audience": "organization"}}]}
+                                    "spec": {"slug": "abcd", "audience": "organization", "contextSpaceRef": f"{project}-space"}}]}
+        if path.endswith("/policies"):  # iso-b's space grants a read in a rule; iso-a1's only prohibits one
+            project = path.split("/")[4]
+            space = {"kind": "ContextSpace", "name": f"{project}-space"}
+            return 200, {"items": {
+                "iso-b": [{"spec": {"contextSpaceRef": space, "rules": [{"assignee": {"kind": "organization"},
+                                                                         "operations": ["retrieveOps"]}]}}],
+                "iso-a1": [{"spec": {"contextSpaceRef": space, "effect": "prohibition", "operations": ["retrieveOps"]}}],
+            }.get(project, [])}
         return 200, {"items": []}
 
 
@@ -640,6 +648,8 @@ def test_a_live_run_without_a_composed_bundle_reads_the_deployments_organization
     assert sorted(exp["ctl-a"]["projects"]) == ["iso-a1", "iso-a2"] and exp["bbsk"]["projects"] == {}
     assert exp["ctl-b"]["projects"]["iso-b"]["Endpoint"] == ["iso-b-air"]
     assert exp["ctl-b"]["projects"]["iso-b"]["closed"] == {"abcd": ("iso-b-air", "organization")}
+    # readable as the bundle counts it: a space with a Policy granting retrieveOps, no prohibition
+    assert exp["ctl-b"]["projects"]["iso-b"]["readable"] == ["abcd"] and exp["ctl-a"]["projects"]["iso-a1"]["readable"] == []
     assert s.cross_project() == {"ctl-a": ("iso-a1", "iso-a2")}
     s.personas_from(creds)  # the file names exactly the keys of these expectations
     creds.write_text(json.dumps({k: {"username": k, "id": k, "password": "x"} for k in keys[:-1]}))
@@ -732,6 +742,9 @@ def test_opening_a_project_named_like_another_organizations_is_not_available_and
     assert all(m == "POST" and p == "/api/v1/projects" for _, m, p, _ in asked)
 
 
+SAME_PROJECTS = {"ctl-a": ["ctl-a-iso", "ctl-a-iso2"], "ctl-b": ["ctl-b-iso", "ctl-b-iso2"]}
+
+
 class SameNameJc:
     """ctl-a and ctl-b, two fixture projects each, Endpoint iso of slug s-<project>. An isolated jc
     binds an exchanged token to the Endpoint it names and grants it to its Organization only;
@@ -739,7 +752,7 @@ class SameNameJc:
     entity per URN for every Endpoint, "catalogue" lists another's Endpoint, "connector" answers
     another project's value, "search" names another's project."""
 
-    PROJECTS = {"ctl-a": ["ctl-a-iso", "ctl-a-iso2"], "ctl-b": ["ctl-b-iso", "ctl-b-iso2"]}
+    PROJECTS = SAME_PROJECTS
 
     def __init__(self, leak=None):
         self.leak, self.store, self.sent = leak, {}, []
@@ -776,6 +789,8 @@ class SameNameJc:
                 jc.sent.append((method, path))
                 if headers["Authorization"] != f"Bearer tok|{slug}":
                     return 401, {}, b""
+                if body[0]["id"] != suite.iso_urn(f"{jc.owner(slug)}.example") and jc.leak != "owner":
+                    return 422, {}, b'{"type": "https://joinedcontext.com/errors/urn-owner"}'
                 jc.store[jc.key_of(slug)] = body[0]
                 return 204, {}, b""
 
@@ -791,6 +806,8 @@ class SameNameJc:
                     return 200, {"datasets": [{"slug": x} for x in mine]}
                 if path == "/api/v1/connectors":
                     return 201, {"id": f"c-{self.org}"}
+                if path.startswith("/api/v1/projects/org/organizations/"):
+                    return 200, {"spec": {"domain": f"{path.rsplit('/', 1)[1]}.example"}}
                 plural = path.rsplit("/", 1)[1]
                 return 200, {"items": [{"metadata": {"name": suite.ISO[plural]}}, {"metadata": {"name": "other"}}]}
 
@@ -821,6 +838,7 @@ class SameNameJc:
     ("catalogue", {"same.ctl-a-admin.catalogue", "same.ctl-b-member.catalogue"}),
     ("connector", {"same.ctl-a-connector.read"}),
     ("search", {"same.ctl-a-admin.mcp-search"}),
+    ("owner", {"same.ctl-a-admin.ctl-a-iso.foreign-id"}),
 ])
 def test_same_names_in_two_organizations_read_and_write_only_their_own(tmp_path, leak, failing):
     s = suite.Suite(args(tmp_path))
@@ -837,9 +855,24 @@ def test_same_names_in_two_organizations_read_and_write_only_their_own(tmp_path,
             "s-ctl-b-iso2": "ctl-b-iso2"}
         # every row kind ran: lists of each kind, reads, foreign tokens, exchanges, connectors
         ids = {r["id"].split(".")[-1] for r in s.rows}
-        assert {"spaces", "endpoints", "policies", "datamodels", "read", "write", "rewrite", "catalogue",
-                "mcp-search"} <= ids
+        assert {"spaces", "endpoints", "policies", "datamodels", "read", "write", "rewrite", "foreign-id",
+                "catalogue", "mcp-search"} <= ids
+        assert {v["id"] for v in jc.store.values()} == {"urn:ngsi-ld:IsoCheck:example_ctl-a:1",
+                                                       "urn:ngsi-ld:IsoCheck:example_ctl-b:1"}
         assert [p for m, p in jc.sent if m == "DELETE"] == ["/api/v1/connectors/c-ctl-a", "/api/v1/connectors/c-ctl-b"]
+
+
+def test_a_live_run_reads_the_fixtures_and_their_refusals_and_writes_no_entity(tmp_path):
+    s = suite.Suite(args(tmp_path))
+    jc = SameNameJc()
+    jc.install(s)
+    s.live = True
+    s.check_same_names()
+    assert not [m for m, _ in jc.sent if m == "POST"] and not jc.store
+    assert not [r for r in s.rows if r["result"] != "pass"]
+    ids = {r["id"] for r in s.rows}
+    assert "same.ctl-a-member.ctl-a-iso.read" in ids and "same.ctl-a-member.ctl-a-iso.exchange-for.ctl-b-iso" in ids
+    assert not [i for i in ids if i.endswith((".write", ".rewrite", ".foreign-id")) or ".after-" in i]
 
 
 def test_without_fixtures_or_a_local_state_the_same_name_rows_are_named_skips(tmp_path):
@@ -868,9 +901,10 @@ def test_a_local_run_plans_two_fixture_projects_per_fixture_organization_with_th
     assert s.exp["ctl-a"]["projects"]["ctl-a-iso"]["readable"] == [s.iso["ctl-a"]["ctl-a-iso"]]
     a, conf_a = s.fixture_files("ctl-a", "ctl-a-iso", "s1", "uid-a")
     b, _ = s.fixture_files("ctl-b", "ctl-b-iso", "s2", "uid-b")
-    docs = {path: yaml.safe_load(text) for path, text in a}
+    assert dict(a)[".jc/layout"] == "2\n"  # without it the Portal loads none of the project
+    docs = {path: yaml.safe_load(text) for path, text in a if path.endswith(".yaml")}
     names = sorted((d["kind"], d["metadata"]["name"]) for d in docs.values() if d.get("kind", "Project") != "Project")
-    assert names == sorted((d["kind"], d["metadata"]["name"]) for path, t in b if (d := yaml.safe_load(t)).get("kind", "Project") != "Project")
+    assert names == sorted((d["kind"], d["metadata"]["name"]) for path, t in b if path.endswith(".yaml") and (d := yaml.safe_load(t)).get("kind", "Project") != "Project")
     assert len(names) == 4
     policy = docs["spaces/iso-space/policies/iso-access.yaml"]["spec"]
     assert [(r["assignee"], r["operations"]) for r in policy["rules"]] == [
