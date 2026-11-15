@@ -891,3 +891,110 @@ async fn a_client_write_pinning_an_algorithm_the_realm_cannot_sign_is_refused() 
         .unwrap();
     assert_eq!(kept.attributes["access.token.signed.response.alg"], "EdDSA");
 }
+
+/// A sign-out address the outbound guard refuses is refused on save (422 naming the field), on
+/// create, update and partialImport; an unchanged stored one does not block an edit.
+#[tokio::test]
+async fn a_client_sign_out_address_the_outbound_guard_refuses_is_refused_on_save() {
+    let (app, store, admin_token, _) = setup_app().await;
+    let field = "backchannel.logout.url";
+    let bad = json!({
+        "clientId": "app-bc",
+        "attributes": { field: "http://portal.portal.svc.cluster.local:8080/logout" }
+    });
+    let (st, _, body) = send_req(
+        &app,
+        Method::POST,
+        "/admin/realms/dev/clients",
+        &admin_token,
+        Some(bad.clone()),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(body.to_string().contains(field), "{body}");
+    assert!(
+        store
+            .get_client_by_client_id("dev", "app-bc")
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let (st, _, body) = send_req(
+        &app,
+        Method::POST,
+        "/admin/realms/dev/partialImport",
+        &admin_token,
+        Some(json!({
+            "ifResourceExists": "SKIP",
+            "users": [{ "username": "bc.person", "enabled": true }],
+            "clients": [bad]
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(
+        store
+            .get_user_by_username_or_email("dev", None, "bc.person")
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let (st, headers, _) = send_req(
+        &app,
+        Method::POST,
+        "/admin/realms/dev/clients",
+        &admin_token,
+        Some(json!({
+            "clientId": "app-bc",
+            "attributes": { field: "https://app.example.org/logout" }
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let uuid = headers["location"]
+        .to_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_owned();
+    for refused in ["https://10.0.0.7/logout", "http://app.example.org/logout"] {
+        let (st, _, body) = send_req(
+            &app,
+            Method::PUT,
+            &format!("/admin/realms/dev/clients/{uuid}"),
+            &admin_token,
+            Some(json!({ "clientId": "app-bc", "attributes": { field: refused } })),
+        )
+        .await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{refused}: {body}");
+    }
+    let mut kept = store
+        .get_client_by_client_id("dev", "app-bc")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.attributes[field], "https://app.example.org/logout");
+
+    // A value stored before the rule (an import) stays editable while the edit keeps it.
+    kept.attributes.insert(
+        field.into(),
+        "http://portal.portal.svc.cluster.local:8080/logout".into(),
+    );
+    store.upsert_client(kept).await.unwrap();
+    let (st, _, body) = send_req(
+        &app,
+        Method::PUT,
+        &format!("/admin/realms/dev/clients/{uuid}"),
+        &admin_token,
+        Some(json!({
+            "clientId": "app-bc",
+            "name": "renamed",
+            "attributes": { field: "http://portal.portal.svc.cluster.local:8080/logout" }
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT, "{body}");
+}

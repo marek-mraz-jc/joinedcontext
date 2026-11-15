@@ -762,7 +762,7 @@
       "attributes": {
         "post.logout.redirect.uris": "+",
         "pkce.code.challenge.method": "S256",
-        "backchannel.logout.url": "http://portal.portal.svc.cluster.local:8080/api/v1/auth/backchannel-logout",
+        "backchannel.logout.url": "https://portal.dev.example.test/api/v1/auth/backchannel-logout",
         "backchannel.logout.session.required": "true",
         "jwt.credential.issuer": "kubernetes",
         "jwt.credential.sub": "system:serviceaccount:portal:portal",
@@ -1000,7 +1000,7 @@
         "pkce.code.challenge.method": "S256",
         "access.token.signed.response.alg": "RS256",
         "id.token.signed.response.alg": "RS256",
-        "backchannel.logout.url": "http://portal.portal.svc.cluster.local:8080/api/v1/auth/backchannel-logout",
+        "backchannel.logout.url": "https://portal.dev.example.test/api/v1/auth/backchannel-logout",
         "backchannel.logout.session.required": "true"
       },
       "protocolMappers": [

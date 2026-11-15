@@ -154,7 +154,7 @@ async fn cluster(ca: bool, jwks_url: Option<&str>, min_refetch: Duration) -> Clu
         .insert("jwksUrl".into(), jwks_url.unwrap_or(&url).to_owned());
     store.upsert_idp(idp).await.unwrap();
     let guard = OutboundGuard::new(OutboundPolicy {
-        in_cluster_hosts: vec!["127.0.0.1".into()],
+        test_loopback: true,
         cluster: ClusterCredentials {
             token: dir.join("token"),
             ca: dir.join("ca.crt"),

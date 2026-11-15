@@ -2918,7 +2918,9 @@ every right the person holds. Revoking an invitation is `DELETE` on a person who
 it: a person no manifest names yet is deleted at once, and the link stops working with them.
 
 `PATCH` takes any of `firstName`, `lastName`, `email` and `locale`. A changed e-mail is set
-unverified and `VERIFY_EMAIL` is required again.
+unverified and `VERIFY_EMAIL` is required again. The e-mail is where a reset goes, so a `PATCH`
+carrying `email` needs a person in a Portal session: a service account's or an agent's token is
+`403`, while it may still change the names and the language (PF-93).
 
 `DELETE` proposes one Change, in the organization repository, that takes the person's e-mail out
 of every `Group` member list and every `RoleBinding` subject list naming it, and removes a binding
@@ -2946,6 +2948,18 @@ description name the ids, never the e-mails. Each person gets their own `person.
   `people-admin`) is refused every write above with `403` naming that right, so a reset's temporary
   password never opens a stronger account; disabling or deleting yourself, or the last Organization
   Administrator, is `409` (PF-93, PF-03).
+- A person who holds a grant the caller could not change (a `Policy` naming them as user, through
+  one of their groups or realm roles, an App's `spec.access` entry or an Endpoint role, in a project
+  where the caller may not `approve` that manifest) leaves a caller who is no platform administrator
+  two actions only, and every other write is `403` naming the first such grant, such as
+  `Policy helsinki/air-read` (PF-93). `reset-password` goes by the realm's e-mail to the address on
+  file alone (`202`, never a temporary password); `remove-second-factor` first mails the person
+  `CONFIGURE_TOTP` and removes the credentials only once that e-mail went, so the person learns of it
+  and sets an authenticator app again (a WebAuthn user moves to TOTP). When the realm cannot send
+  mail, both are `403` ("only a platform admin can reset them") and nothing changes. The person's
+  `person.changed` event names the rule that allowed the action. A platform administrator (the
+  bootstrap group, or `org-admin` bound with no Organization scope) covers every grant; the
+  RoleBinding rule above still applies to them.
 - An e-mail another person already has is `409` naming it. A malformed e-mail, a name longer than
   255 characters, a locale outside the Portal's languages or an unknown field is `400`.
 - An `{id}` the realm does not know is `404`.

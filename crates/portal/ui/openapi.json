@@ -4199,7 +4199,7 @@
           "people"
         ],
         "summary": "Edit Person",
-        "description": "Edits a person's name, e-mail or language.",
+        "description": "Edits a person's name, e-mail or language. An e-mail change needs a person in a Portal session (a service account's or an agent's token: 403); names and language stay open to tokens (PF-93).",
         "operationId": "edit_person",
         "parameters": [
           {
@@ -4247,7 +4247,7 @@
             }
           },
           "403": {
-            "description": "The caller lacks update on Person, or a right the person holds",
+            "description": "The caller lacks update on Person, or a right the person holds, or a token changes the e-mail",
             "content": {
               "application/json": {
                 "schema": {
@@ -4559,7 +4559,7 @@
           "people"
         ],
         "summary": "Remove Second Factor",
-        "description": "Removes every OTP and WebAuthn credential of the person. Needs `disable` on Person and every right the person holds.",
+        "description": "Removes every OTP and WebAuthn credential of the person. Needs `disable` on Person and every right the person holds through a RoleBinding. For a person holding a Policy, App or Endpoint grant the caller could not change, a caller who is no platform admin removes it only after the realm mailed the person to set an authenticator app (TOTP; a WebAuthn user moves to TOTP); without mail 403 and nothing is removed (PF-93).",
         "operationId": "remove_second_factor",
         "parameters": [
           {
@@ -4698,7 +4698,7 @@
           "people"
         ],
         "summary": "Reset Password",
-        "description": "Sends the realm's password reset; without SMTP answers a temporary password once. Needs `update` on Person and every right the person holds.",
+        "description": "Sends the realm's password reset; without SMTP answers a temporary password once. Needs `update` on Person and every right the person holds through a RoleBinding. For a person holding a Policy, App or Endpoint grant the caller could not change, a caller who is no platform admin resets by e-mail to the address on file only: without mail 403, never a temporary password (PF-93).",
         "operationId": "reset_password",
         "parameters": [
           {
@@ -4733,7 +4733,7 @@
             }
           },
           "403": {
-            "description": "The caller lacks update on Person, or a right the person holds",
+            "description": "The caller lacks update on Person, or a right the person holds, or the person holds a grant the caller cannot change and the realm cannot send mail",
             "content": {
               "application/json": {
                 "schema": {
@@ -26794,7 +26794,7 @@
     },
     "/api/v1/projects/{project}/ops/jc_person_edit": {
       "post": {
-        "description": "Edits a person's name, e-mail or language",
+        "description": "Edits a person's name, e-mail or language; an e-mail change needs a Portal session (PF-93)",
         "operationId": "jc_person_edit",
         "parameters": [
           {

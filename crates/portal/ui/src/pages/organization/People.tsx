@@ -1013,6 +1013,8 @@ export function PersonPage({ id, anchor }: { id: string; anchor?: string }): JSX
     gcTime: 0,
     mutationFn: (action: Action) => perform(id, action),
     onMutate: () => setDone(null),
+    // A refusal closes the dialog, so its reason shows on the page instead of behind the modal.
+    onError: () => setAsking(null),
     onSuccess: (outcome) => {
       setAsking(null);
       void queryClient.invalidateQueries({ queryKey: queryKeys.people() });

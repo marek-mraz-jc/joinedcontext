@@ -6,6 +6,9 @@ use chrono::Utc;
 use kaisatsu_core::claims::is_known_mapper_kind;
 use kaisatsu_core::*;
 use kaisatsu_crypto::hash_password;
+use kaisatsu_oidc::guard::{
+    CLIENT_OUTBOUND_ATTRIBUTES, IDP_OUTBOUND_CONFIG, OutboundGuard, OutboundPolicy, PrivateHost,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -44,6 +47,10 @@ pub struct ApplyOptions {
     pub allow_literal_secrets: bool,
     pub secrets_dir: Option<PathBuf>,
     pub env_vars: BTreeMap<String, String>,
+    /// `[kaisatsu] outbound_private_hosts`: a stored sign-out or identity-provider address the
+    /// outbound guard would refuse is kept and named in [`ApplyReport::warnings`].
+    #[serde(default)]
+    pub outbound_private_hosts: Vec<String>,
 }
 
 impl ApplyOptions {
@@ -68,6 +75,7 @@ impl Default for ApplyOptions {
             allow_literal_secrets: false,
             secrets_dir: None,
             env_vars: BTreeMap::new(),
+            outbound_private_hosts: Vec::new(),
         }
     }
 }
@@ -847,7 +855,58 @@ pub fn check_realm_value(doc: &Value, opts: &ApplyOptions) -> Result<Vec<String>
         }
     }
 
+    warnings.extend(outbound_warnings(obj, opts));
     Ok(warnings)
+}
+
+/// A client's sign-out address or an identity provider's key or token address the outbound guard
+/// refuses: the import keeps it (the send is refused anyway, and an import that failed here would
+/// stop a start that re-applies an older export) and names it here, so the operator fixes it or
+/// lists the host in `[kaisatsu] outbound_private_hosts`.
+fn outbound_warnings(obj: &Map<String, Value>, opts: &ApplyOptions) -> Vec<String> {
+    let guard = OutboundGuard::new(OutboundPolicy {
+        private_hosts: opts
+            .outbound_private_hosts
+            .iter()
+            .filter_map(|h| PrivateHost::parse(h).ok())
+            .collect(),
+        ..OutboundPolicy::default()
+    });
+    let mut out = Vec::new();
+    let mut check = |path: String, field: &str, url: Option<&str>| {
+        if let Some(url) = url.filter(|u| !u.is_empty())
+            && let Err(e) = guard.validate_url(url, None)
+        {
+            out.push(format!(
+                "{path}.{field}: kept, but every send to it is refused ({e}); fix it or list its host in [kaisatsu] outbound_private_hosts"
+            ));
+        }
+    };
+    let list = |key: &str| {
+        obj.get(key)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    for (i, c) in list("clients").iter().enumerate() {
+        for field in CLIENT_OUTBOUND_ATTRIBUTES {
+            check(
+                format!("$.clients[{i}].attributes"),
+                field,
+                c["attributes"][field].as_str(),
+            );
+        }
+    }
+    for (i, idp) in list("identityProviders").iter().enumerate() {
+        for field in IDP_OUTBOUND_CONFIG {
+            check(
+                format!("$.identityProviders[{i}].config"),
+                field,
+                idp["config"][field].as_str(),
+            );
+        }
+    }
+    out
 }
 
 /// Computes a deterministic checksum of the current realm state in `store` for `plan` / `diff` (W1b).
