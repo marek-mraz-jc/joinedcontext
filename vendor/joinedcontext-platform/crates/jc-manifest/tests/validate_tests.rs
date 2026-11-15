@@ -2206,6 +2206,45 @@ fn a_write_policy_an_endpoint_binds_passes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// EP-187, T-6972: open data is read-only. An Endpoint that serves a public grant and also
+/// binds a write Policy is refused on the Endpoint, naming the Policy; with reads alone it passes.
+#[test]
+fn an_open_data_endpoint_binding_a_write_policy_is_refused() {
+    let dir = valid_repo("ep187-open-data-write");
+    space_policy(
+        &dir,
+        "public-read",
+        "{ kind: role, id: public }",
+        "[queryEntity, retrieveEntity]",
+    );
+    let report = validate::run(&dir);
+    assert_eq!(citing(&report, "EP-187"), Vec::<&str>::new());
+
+    space_policy(
+        &dir,
+        "sensors-write",
+        "{ kind: serviceAccount, id: sensors }",
+        "[updateAttrs]",
+    );
+    let report = validate::run(&dir);
+    let found = citing(&report, "EP-187");
+    assert_eq!(found.len(), 1, "{:?}", report.findings);
+    assert!(
+        found[0].contains("Endpoint public-air: an open-data Endpoint is read-only")
+            && found[0].contains("Policy sensors-write grants updateAttrs"),
+        "{}",
+        found[0]
+    );
+    let finding = report
+        .findings
+        .iter()
+        .find(|f| f.message.contains("EP-187"))
+        .expect("finding");
+    assert_eq!(finding.path, PathBuf::from(ENDPOINT_PATH));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_write_policy_named_by_the_policy_ref_passes() {
     let dir = valid_repo("adr57-named-write");

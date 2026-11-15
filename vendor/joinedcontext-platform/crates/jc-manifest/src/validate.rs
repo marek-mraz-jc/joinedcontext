@@ -1230,6 +1230,7 @@ pub fn unmade_writes(repo: &Repository) -> Vec<UnmadeWrite> {
     let bindings = WriteBindings::new(repo);
     let mut found = bindings.unbound_write_policies();
     found.extend(bindings.unreachable_pipeline_targets());
+    found.extend(bindings.open_data_writes());
     found
 }
 
@@ -1379,6 +1380,53 @@ impl<'a> WriteBindings<'a> {
         found
     }
 
+    /// An open-data Endpoint that binds a Policy granting a write (EP-187): it publishes to a
+    /// catalogue or serves a public grant, so it is read-only. The finding is on the Endpoint and
+    /// names the Policy and its operation.
+    fn open_data_writes(&self) -> Vec<UnmadeWrite> {
+        use jc_core::kinds::PolicySpec;
+        let mut rules: Vec<(String, String, PolicySpec)> = Vec::new();
+        for (id, resource) in self.repo.iter().filter(|(id, _)| id.kind == "Policy") {
+            let Ok(spec) = serde_json::from_value::<PolicySpec>(resource.manifest.spec.clone())
+            else {
+                continue;
+            };
+            let project = id.namespace.clone().unwrap_or_default();
+            for (_, rule) in spec.expand(&id.name).unwrap_or_default() {
+                rules.push((project.clone(), id.name.clone(), rule));
+            }
+        }
+        let mut found = Vec::new();
+        for (key, spec) in &self.endpoints {
+            let served: Vec<(&str, &PolicySpec)> = rules
+                .iter()
+                .filter(|(project, name, policy)| {
+                    *project == key.0 && self.refusal(key, spec, name, policy, false).is_none()
+                })
+                .map(|(_, name, policy)| (name.as_str(), policy))
+                .collect();
+            let Some(message) = spec.open_data_write(&served) else {
+                continue;
+            };
+            let field = match (&spec.policy_ref, &spec.policy_refs) {
+                (Some(_), _) => "spec.policyRef",
+                (None, Some(_)) => "spec.policyRefs",
+                (None, None) => "spec.contextSpaceRef",
+            };
+            found.push(UnmadeWrite {
+                id: ResourceId::new(
+                    "joinedcontext.com",
+                    "Endpoint",
+                    Some(key.0.clone()),
+                    &key.1,
+                ),
+                field: Some(field.to_owned()),
+                message: format!("Endpoint {}: {message}", key.1),
+            });
+        }
+        found
+    }
+
     /// A Pipeline output whose `targetEndpoint` is not declared in the Pipeline's project or does
     /// not bind that output's derived write Policy (PL-20).
     fn unreachable_pipeline_targets(&self) -> Vec<UnmadeWrite> {
@@ -1447,15 +1495,10 @@ impl<'a> WriteBindings<'a> {
 /// Whether `policy` grants a write of context data. A subscription is the caller's own state, so
 /// a read Policy that lets its reader subscribe grants no write here.
 fn writes_entities(policy: &jc_core::kinds::PolicySpec) -> bool {
-    use jc_core::kinds::{Operation, OperationRef};
-    policy.operations.iter().any(|op| match op {
-        OperationRef::Single(
-            Operation::CreateSubscription
-            | Operation::UpdateSubscription
-            | Operation::DeleteSubscription,
-        ) => false,
-        op => op.is_write(),
-    })
+    policy
+        .operations
+        .iter()
+        .any(jc_core::kinds::OperationRef::writes_entities)
 }
 
 /// The knowledge assistant's references, each resolved inside its own project (MF-51, MF-52): a
