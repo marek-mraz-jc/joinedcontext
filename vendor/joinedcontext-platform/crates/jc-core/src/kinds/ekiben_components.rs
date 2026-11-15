@@ -4,6 +4,7 @@
 
 /// Every input name the runner builds.
 pub const INPUTS: &[&str] = &[
+    "aws_s3",
     "batched",
     "broker",
     "csv",
@@ -19,6 +20,7 @@ pub const INPUTS: &[&str] = &[
     "read_until",
     "resource",
     "sequence",
+    "socket",
     "sql_raw",
     "sql_select",
     "stdin",

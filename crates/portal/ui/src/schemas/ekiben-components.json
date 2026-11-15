@@ -1,5 +1,6 @@
 {
   "inputs": [
+    "aws_s3",
     "batched",
     "broker",
     "csv",
@@ -15,6 +16,7 @@
     "read_until",
     "resource",
     "sequence",
+    "socket",
     "sql_raw",
     "sql_select",
     "stdin",
