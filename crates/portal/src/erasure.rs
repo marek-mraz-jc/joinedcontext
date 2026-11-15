@@ -859,32 +859,70 @@ pub(crate) fn spawn_periodic(state: AppState) {
         let mut tick: u64 = 0;
         loop {
             interval.tick().await;
-            if tick.is_multiple_of(60) {
-                match reapply(&state, &pool).await {
-                    Ok((resent, logged)) => {
-                        tracing::info!(resent, logged, "erasure log re-applied")
-                    }
-                    Err(reason) => {
-                        tracing::warn!(%reason, "the erasure log was not re-applied; again in an hour")
-                    }
-                }
-            }
-            tick = tick.wrapping_add(1);
-            match open(&pool).await {
-                Ok(open) => {
-                    for erasure in &open {
-                        attempt(&state, &pool, erasure, None).await;
-                    }
-                }
-                Err(err) => tracing::warn!(error = %err, "the open erasures could not be read"),
+            if pass(&state, &pool, tick).await {
+                tick = tick.wrapping_add(1);
             }
         }
     });
 }
 
+/// One minute of [`spawn_periodic`], on the leader alone (T-7008): a second replica asking
+/// the same stores at once would count each failure twice and give an erasure up after half
+/// its attempts. Whether it ran.
+async fn pass(state: &AppState, pool: &PgPool, tick: u64) -> bool {
+    if !state.leads() {
+        return false;
+    }
+    if tick.is_multiple_of(60) {
+        match reapply(state, pool).await {
+            Ok((resent, logged)) => {
+                tracing::info!(resent, logged, "erasure log re-applied")
+            }
+            Err(reason) => {
+                tracing::warn!(%reason, "the erasure log was not re-applied; again in an hour")
+            }
+        }
+    }
+    match open(pool).await {
+        Ok(open) => {
+            for erasure in &open {
+                attempt(state, pool, erasure, None).await;
+            }
+        }
+        Err(err) => tracing::warn!(error = %err, "the open erasures could not be read"),
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-7008: with two Portal replicas only the leader asks the stores; a follower's minute
+    /// touches no database at all (its lazy pool names a server that is not there).
+    #[tokio::test]
+    async fn a_follower_replica_asks_no_store() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://follower@127.0.0.1:1/none")
+            .expect("a lazy pool");
+        let shako = std::sync::Arc::new(
+            crate::forge::ShakoClient::new(
+                "http://localhost:3000".parse().expect("a url"),
+                "test-owner",
+                "test-repo",
+                "token",
+            )
+            .expect("a client"),
+        );
+        let follower =
+            crate::reconciler::Syncer::new(shako, std::sync::Arc::new(crate::store::Mirror::new()))
+                .with_leadership(std::sync::Arc::new(
+                    crate::reconciler::Leadership::reconciler(pool.clone()),
+                ));
+        let state = AppState::new(crate::config::Config::for_tests(), None)
+            .with_syncer(std::sync::Arc::new(follower));
+        assert!(!pass(&state, &pool, 0).await);
+    }
 
     #[test]
     fn a_store_is_done_with_its_count_or_asked_again_until_it_fails() {
