@@ -316,10 +316,17 @@ pub(super) fn routes(state: AppState) -> Router {
         // F-01: a view surface hands the request's subject to an in-process
         // call, which believes it; so the subject is vouched here, at the
         // door, as the API nest vouches its own (T-5032, F-ANT2-001).
-        let shared = shared.layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            crate::admin_auth::subject_or_admin,
-        ));
+        let shared = shared
+            // EP-188: the view's Tenant is checked against the caller's
+            // Organization where the view is looked up.
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                crate::admin_auth::view_organization_layer,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                crate::admin_auth::subject_or_admin,
+            ));
         surfaces = surfaces.nest(surface::VIEW_ROOT, shared);
     }
     let surfaces = surfaces
@@ -370,6 +377,13 @@ pub(super) fn routes(state: AppState) -> Router {
                 .layer(axum::middleware::from_fn_with_state(
                     state.clone(),
                     tenant_exists_layer,
+                ))
+                // EP-188: the Organization the gateway vouched is the
+                // Tenant's, checked before the existence lookup and any
+                // implicit creation, so a refusal reads as an unknown Tenant.
+                .layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::admin_auth::organization_layer,
                 ))
                 // T-5032: a request without a subject needs the admin
                 // bearer, before the tenant lookup so a 404 tells such a
@@ -537,16 +551,7 @@ pub(super) async fn tenant_exists_layer(
                 st.store.tenant_exists(&t).await
             };
             match exists {
-                Ok(false) => {
-                    let mut resp = crate::negotiate::ApiError::from(NgsiError::NonexistentTenant(
-                        format!("tenant {} does not exist", t.as_str()),
-                    ))
-                    .into_response();
-                    // 6.3.14: a request-supplied NGSILD-Tenant SHALL be
-                    // present in the response — error responses included.
-                    crate::negotiate::echo_tenant(&t, &mut resp);
-                    return resp;
-                }
+                Ok(false) => return nonexistent_tenant(&t),
                 Err(e) => return crate::negotiate::ApiError::from(e).into_response(),
                 Ok(true) if !known => st.known_tenants.remember(&t),
                 Ok(true) => {}
@@ -554,6 +559,20 @@ pub(super) async fn tenant_exists_layer(
         }
     }
     next.run(req).await
+}
+
+/// 5.5.10 NonexistentTenant for `t`, the one answer an unknown Tenant gets
+/// and the Organization check repeats byte for byte (EP-188).
+pub(crate) fn nonexistent_tenant(t: &TenantId) -> Response {
+    let mut resp = crate::negotiate::ApiError::from(NgsiError::NonexistentTenant(format!(
+        "tenant {} does not exist",
+        t.as_str()
+    )))
+    .into_response();
+    // 6.3.14: a request-supplied NGSILD-Tenant SHALL be present in the
+    // response — error responses included.
+    crate::negotiate::echo_tenant(t, &mut resp);
+    resp
 }
 
 /// 6.3.14: "If the HTTP header `NGSILD-Tenant` is present in the HTTP

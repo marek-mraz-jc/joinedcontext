@@ -570,7 +570,7 @@ async fn purging_the_default_tenant_empties_it_but_it_keeps_existing() {
 async fn tenant_names_outside_the_grammar_are_refused_before_any_lookup() {
     let st = state().await;
     for raw in [
-        "a".repeat(65),
+        "a".repeat(129),
         "..%2F..".into(),
         "x%00y".into(),
         "%C3%A9".into(),

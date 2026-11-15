@@ -83,7 +83,7 @@ Row-level security covers every Tenant-bearing table (`tests/rls_covers_every_ta
 | file (redb) | `…::the_file_store_keeps_tenants_apart` | the same |
 | Postgres | `antares-sql/tests/pg.rs::the_postgres_store_keeps_tenants_apart` | the same shapes with a run suffix |
 
-`_` is the one character of the Tenant grammar (`[A-Za-z0-9_-]{1,64}`) that is also a LIKE wildcard, so `iso_b` beside `isoxb` catches a `LIKE` where `=` belongs; `iso` beside `isox` catches a prefix match. Names with `'`, `%`, `;`, a space, a backslash or a quote never reach a store: `TenantId::new` refuses them (`…::a_tenant_name_with_sql_metacharacters_never_reaches_a_store`). A purge that matched by prefix turns the memory and file runs red (checked by hand on this branch: "temporal purge as iso changed isox's history").
+`_` is the one character of the Tenant grammar (`[A-Za-z0-9_-]{1,128}`) that is also a LIKE wildcard, so `iso_b` beside `isoxb` catches a `LIKE` where `=` belongs; `iso` beside `isox` catches a prefix match. Names with `'`, `%`, `;`, a space, a backslash or a quote never reach a store: `TenantId::new` refuses them (`…::a_tenant_name_with_sql_metacharacters_never_reaches_a_store`). A purge that matched by prefix turns the memory and file runs red (checked by hand on this branch: "temporal purge as iso changed isox's history").
 
 ## Related
 
