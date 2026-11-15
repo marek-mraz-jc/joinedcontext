@@ -751,14 +751,19 @@ row of logo buttons that wraps, and the sections stack at every width, each a ca
 .jc-guide { scroll-margin-top: 1rem; margin: 0 0 1.25rem; padding: 1.25rem 1.5rem; background: var(--jc-surface); border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg); box-shadow: var(--jc-shadow-1); }
 .jc-guide:target { border-color: var(--jc-primary); }
 .jc-guide h3 { display: flex; align-items: center; gap: .625rem; margin: 0 0 .25rem; font-size: 1.375rem; padding-bottom: .75rem; border-bottom: 1px solid var(--jc-border); }
-.jc-guide .jc-mcp-links { display: flex; flex-wrap: wrap; gap: .5rem; }
+.jc-guide .jc-mcp-links { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: .5rem; }
+.jc-guide .jc-mcp-links .btn { min-block-size: 2.75rem; display: inline-flex; align-items: center; justify-content: center; }
+.jc-guide-up { margin: 1rem 0 0; }
+.jc-guide-up a { display: inline-flex; align-items: center; min-block-size: 2.75rem; }
 .jc-guide h4 { font-size: 1rem; margin: 1.25rem 0 .5rem; }
 .jc-guide-steps { padding-inline-start: 1.25rem; }
-.jc-guide-steps li { margin-block-end: .75rem; }
+.jc-guide-steps li { margin-block-end: .5rem; }
 .jc-guide .jc-code { --jc-code-pad: .875rem; }
 .jc-guide .jc-code pre { white-space: pre; overflow-x: auto; }
 @media (max-width: 40rem) {
-.jc-guide { padding: 1rem; margin-inline: -.5rem; }
+.jc-guide-menu ul { display: grid; grid-template-columns: 1fr 1fr; }
+.jc-guide-menu a { justify-content: center; text-align: center; }
+.jc-guide { padding: 1rem; }
 .jc-guide-steps { padding-inline-start: 1.125rem; }
 .jc-guide-steps .jc-code { margin-inline-start: -1.125rem; }
 }

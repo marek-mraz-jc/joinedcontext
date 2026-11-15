@@ -1075,6 +1075,14 @@ fn build_string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'stati
         "Adja hozzá ezt a címet az asszisztenshez egyéni csatlakozóként; a katalógus MCP-csatlakozó oldala mutatja, hol kell kattintani az egyes asszisztensekben.",
     );
     add(
+        "guide_up",
+        "Back to the list of assistants",
+        "Späť na zoznam asistentov",
+        "Zpět na seznam asistentů",
+        "Zurück zur Liste der Assistenten",
+        "Vissza az asszisztensek listájához",
+    );
+    add(
         "guide_checked_spec",
         "Checked on {date} against the MCP specification:",
         "Overené dňa {date} podľa špecifikácie MCP:",

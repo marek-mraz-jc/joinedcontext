@@ -117,6 +117,7 @@
                 {% for (problem, fix) in g.trouble %}<dt>{{ problem }}</dt><dd>{{ fix }}</dd>{% endfor %}
               </dl>
               <p class="jc-guide-checked">{{ g.checked }} <a href="{{ g.help }}" target="_blank" rel="noopener noreferrer">{{ g.help }}</a></p>
+              <p class="jc-guide-up"><a href="#jc-mcp-title">{{ labels.guide_up }}</a></p>
             </section>
             {% endfor %}
             <div class="jc-connector-note" role="note">
