@@ -128,8 +128,8 @@ pub(crate) async fn endpoint_ws(
     // is its address.
     let principal = principal_of(&subject);
     // An anonymous socket has no token to expire (T-4132), so only a day bounds it.
-    let lifetime = if principal == "anonymous" {
-        ANONYMOUS_LIFETIME
+    let (lifetime, issued) = if principal == "anonymous" {
+        (ANONYMOUS_LIFETIME, None)
     } else {
         token_lifetime(&gateway, request.headers())
     };
@@ -167,7 +167,12 @@ pub(crate) async fn endpoint_ws(
     );
     // Held until the upgrade runs: a failed upgrade drops it, and the connection leaves the hub.
     let joined = match joined {
-        Ok(joined) => joined,
+        Ok(joined) => {
+            if let Some(issued) = issued {
+                joined.issued(issued);
+            }
+            joined
+        }
         Err(crate::fanout::socket::Refused::SpaceFull) => {
             metrics::counter!("jc_gateway_ws_refused_total", "reason" => "space-full").increment(1);
             return ProblemDetails::new(503, "space-full", "Service Unavailable")
@@ -221,8 +226,9 @@ pub(crate) async fn endpoint_ws(
 /// the gateway's cap, so reconnecting needs a fresh token. [`admit`] decided the token's
 /// audience already, whichever it named (an Endpoint's, the CLI's or the hub's), so only its
 /// signature and `exp` are read here (S-3-12). A token the realm does not verify here (a data
-/// space caller's) keeps the cap.
-fn token_lifetime(gateway: &Gateway, headers: &HeaderMap) -> std::time::Duration {
+/// space caller's) keeps the cap. Beside it the second the token was issued, which a later
+/// revocation is compared with ([`crate::fanout::hub::Joined::issued`]).
+fn token_lifetime(gateway: &Gateway, headers: &HeaderMap) -> (std::time::Duration, Option<i64>) {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_secs());
@@ -234,12 +240,16 @@ fn token_lifetime(gateway: &Gateway, headers: &HeaderMap) -> std::time::Duration
         .zip(gateway.verifier.as_deref())
         .and_then(|(raw, verifier)| verifier.identify(raw).ok())
         .map(|claims| {
-            std::time::Duration::from_secs(
-                u64::try_from(claims.exp).unwrap_or(0).saturating_sub(now),
+            (
+                std::time::Duration::from_secs(
+                    u64::try_from(claims.exp).unwrap_or(0).saturating_sub(now),
+                ),
+                // a token without `iat` counts as issued before any mark, as the verifier reads it
+                claims.iat.unwrap_or(i64::MIN),
             )
         });
-    left.map_or(gateway.ws_token_lifetime, |left| {
-        left.min(gateway.ws_token_lifetime)
+    left.map_or((gateway.ws_token_lifetime, None), |(left, issued)| {
+        (left.min(gateway.ws_token_lifetime), Some(issued))
     })
 }
 
