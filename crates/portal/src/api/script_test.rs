@@ -228,8 +228,18 @@ pub async fn test_script(
         Verb::Propose,
         None,
     )?;
-    checked(&request)?;
-    let spec = spec_of(&request)?;
+    run(&state, &project, &request).await.map(Json)
+}
+
+/// Each test of `request` on the project's runner, one harness run per test: the route's and
+/// jc_script_test's one body, after the caller's Script propose was checked.
+pub async fn run(
+    state: &AppState,
+    project: &str,
+    request: &ScriptTestRequest,
+) -> Result<ScriptTestAnswer, ApiError> {
+    checked(request)?;
+    let spec = spec_of(request)?;
     let mut results = Vec::with_capacity(request.tests.len());
     for test in &request.tests {
         let sample = Sample {
@@ -239,12 +249,11 @@ pub async fn test_script(
             records: None,
         };
         let started = Instant::now();
-        let trace =
-            crate::api::pipeline_test::run_harness(&state, &project, &spec, &sample).await?;
+        let trace = crate::api::pipeline_test::run_harness(state, project, &spec, &sample).await?;
         let millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         results.push(result_of(test, &trace, millis));
     }
-    Ok(Json(ScriptTestAnswer { results }))
+    Ok(ScriptTestAnswer { results })
 }
 
 pub fn router() -> Router<AppState> {

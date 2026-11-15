@@ -1144,6 +1144,7 @@ mod tests {
             "jc_kpi_compute",
             "jc_manifest_dry_run",
             "jc_pipeline_test",
+            "jc_script_test",
             "jc_change_list",
             "jc_change_approve",
             "jc_datasource_check",
