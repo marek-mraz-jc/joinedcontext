@@ -1,0 +1,157 @@
+# The mapping of the od-zoznam-zdravotnickych-zariadeni-v-bbk pipeline, generated from the T-4254 mapping: one PointOfInterest per row of
+# "Zoznam zdravotníckych zariadení v BBK" (https://opendata.dev.joinedcontext.com/dataset/bbsk-zoznam-zdravotnickych-zariadeni-v-bbk-701db2). Do not edit: change the mapping and run scripts/open-data/generate.py.
+
+pipeline:
+  processors:
+    # A layer that answers an error or no feature list is the service failing, so the run fails
+    # where it can be seen rather than writing nothing.
+    - mapping: |
+        root = if this.error.or(null) != null || this.features.or(null) == null { throw("the layer answered no features: %v".format(this.error.message.or(""))) } else { this }
+    # Page 0 as it came. When the layer says there is more, it is asked how many rows it holds and
+    # every further page of them is read (T-5288), one page at a time: the runner fetches, maps and
+    # writes a page before the next, so a layer of any size runs in a page's memory (jc-ekiben-paging).
+    - branch:
+        request_map: |
+          root = if this.properties.exceededTransferLimit.or(false) { "" } else { deleted() }
+        processors:
+          - http:
+              url: "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Zoznam_zdravotn%C3%ADckych_zariaden%C3%AD_v_BBK_public_2025/FeatureServer/0/query?where=1%3D1&returnCountOnly=true&f=json"
+              verb: GET
+              headers:
+                Accept: application/json
+              timeout: 60s
+              retries: 2
+              rate_limit: pipeline_egress
+        result_map: |
+          root.rowCount = this.count.or(this.error.message.or("no count"))
+    - mapping: |
+        let rows = this.rowCount.or(null)
+        root = if !this.properties.exceededTransferLimit.or(false) { [this] } else if errored() || $rows.type() != "number" { [{ "problem": "the layer did not say how many rows it holds: %v".format(error().or($rows)) }] } else if this.features.length() < [1000, $rows].min() { [{ "problem": "the layer answered %v rows where 1000 were asked, so its pages would skip rows".format(this.features.length()) }] } else if $rows <= 1000 { [this] } else { [this].concat(range(1, (($rows + 999) / 1000).floor()).map_each(p -> { "offset": p * 1000, "rowCount": $rows })) }
+    - unarchive:
+        format: json_array
+    # Each page its own batch: fetched, mapped and written before the next is read.
+    - split:
+        size: 1
+    - switch:
+        - check: this.offset.or(null) != null
+          processors:
+            - mapping: |
+                meta offset = this.offset
+                meta rows = this.rowCount
+                root = ""
+            - http:
+                url: "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Zoznam_zdravotn%C3%ADckych_zariaden%C3%AD_v_BBK_public_2025/FeatureServer/0/query?where=1%3D1&outFields=I%C4%8CO,N%C3%A1zov_poskytovate%C4%BEa,S%C3%ADdlo_poskytovate%C4%BEa,IdZZ,Vlastn%C3%BD_n%C3%A1zov_zariadenia,Druh_zariadenia,Odborn%C3%A9_zameranie,Ulica_poskytovania,Mesto_poskytovania,PS%C4%8C_poskytovania,Okres_poskytovania,Telef%C3%B3n_zariadenia_verejn%C3%BD,E_mail_zariadenia,Pondelok,Utorok,Streda,%C5%A0tvrtok,Piatok,Sobota,Nede%C4%BEa,D%C3%A1tum_schv%C3%A1lenia_OH&returnGeometry=true&outSR=4326&geometryPrecision=6&f=geojson&resultOffset=${! @offset }&resultRecordCount=1000&orderByFields=FID"
+                verb: GET
+                headers:
+                  Accept: application/geo+json
+                timeout: 60s
+                retries: 2
+                rate_limit: pipeline_egress
+            - mapping: |
+                root = if errored() { throw("the page at %v did not come: %v".format(@offset, error())) } else if this.features.or(null) == null { { "problem": "the page at %v answered no features: %v".format(@offset, this.error.message.or("")) } } else if this.features.length() < [1000, @rows - @offset].min() { { "problem": "the page at %v answered %v rows where %v were due".format(@offset, this.features.length(), [1000, @rows - @offset].min()) } } else { this }
+    # A refusal above fails the run and writes none of its page's rows; earlier pages stay written
+    # and the failed run deletes nothing (sourceDeletes waits for a finished run).
+    - mapping: |
+        root = if this.problem.or(null) != null { throw(this.problem) } else { this }
+    - mapping: |
+        root = this.features.or([])
+    - unarchive:
+        format: json_array
+    - mapping: |
+        # Slovak notation: a space (or a no-break one) between thousands, a comma before the decimals, so
+        # "10 700,01" is 10700.01 (T-4324); a text without a comma keeps its dot, "1.5" is one and a half.
+        map number {
+          let s = this.string().re_replace_all("[ 	  ]", "")
+          let t = if $s.contains(",") { $s.replace_all(".", "").replace_all(",", ".") } else { $s }
+          root = $t.number().catch(null)
+        }
+        map integer {
+          let v = if this == null { null } else { this.apply("number") }
+          root = if $v == null { null } else { { "type": "Property", "value": $v.round().int64() } }
+        }
+        map float {
+          let v = if this == null { null } else { this.apply("number") }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        map string {
+          let v = if this == null { "" } else { this.string().trim() }
+          root = if $v == "" { null } else { { "type": "Property", "value": $v } }
+        }
+        map string_list {
+          let v = if this == null { "" } else { this.string().trim() }
+          root = if $v == "" { null } else { { "type": "Property", "value": [$v] } }
+        }
+        map uri {
+          root = this.apply("string")
+        }
+        # An Esri date is milliseconds since the epoch; a WordPress one is text.
+        # `match` rebinds `this` to what it matches, so the value is named first.
+        map datetime {
+          let x = this
+          let v = match $x.type() {
+            "number" => ($x / 1000).ts_format("2006-01-02T15:04:05Z", "UTC").catch(null),
+            "string" => $x.ts_parse("2006-01-02T15:04:05").ts_format("2006-01-02T15:04:05Z", "UTC").catch($x.ts_format("2006-01-02T15:04:05Z", "UTC").catch(null)),
+            _ => null,
+          }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        # The instant a row was observed, from its `observedAt` column: a bare year is its first instant,
+        # anything else reads as a datetime (T-4288).
+        map observed {
+          let x = this
+          root = if $x == null { null } else if $x.string().re_match("^[0-9]{4}$") { $x.string() + "-01-01T00:00:00Z" } else {
+            $x.apply("datetime").value.catch(null)
+          }
+        }
+        # A measured Property with the instant it holds, so SensorThings charts it (T-4288).
+        map stamped {
+          root = if this.p == null || this.at == null { this.p } else { this.p.merge({ "observedAt": this.at }) }
+        }
+        map date {
+          let x = this
+          let v = match $x.type() {
+            "number" => ($x / 1000).ts_format("2006-01-02", "UTC").catch(null),
+            # ISO, or the Slovak "29.08.2026" and "1. 3. 2024".
+            "string" => if $x.re_match("^[0-9]{4}-[0-9]{2}-[0-9]{2}") { $x.slice(0, 10) } else {
+              $x.re_replace_all("[.] +", ".").trim().ts_parse("2.1.2006").ts_format("2006-01-02", "UTC").catch(null)
+            },
+            _ => null,
+          }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        let local = "zoznam-zdravotnickych-zariadeni-v-bbk-" + {"IČO": this.properties."IČO", "Názov_poskytovateľa": this.properties."Názov_poskytovateľa", "Sídlo_poskytovateľa": this.properties."Sídlo_poskytovateľa", "IdZZ": this.properties."IdZZ", "Vlastný_názov_zariadenia": this.properties."Vlastný_názov_zariadenia", "Druh_zariadenia": this.properties."Druh_zariadenia", "Odborné_zameranie": this.properties."Odborné_zameranie", "Ulica_poskytovania": this.properties."Ulica_poskytovania", "Mesto_poskytovania": this.properties."Mesto_poskytovania", "PSČ_poskytovania": this.properties."PSČ_poskytovania", "Okres_poskytovania": this.properties."Okres_poskytovania", "Telefón_zariadenia_verejný": this.properties."Telefón_zariadenia_verejný", "E_mail_zariadenia": this.properties."E_mail_zariadenia", "Pondelok": this.properties."Pondelok", "Utorok": this.properties."Utorok", "Streda": this.properties."Streda", "Štvrtok": this.properties."Štvrtok", "Piatok": this.properties."Piatok", "Sobota": this.properties."Sobota", "Nedeľa": this.properties."Nedeľa", "Dátum_schválenia_OH": this.properties."Dátum_schválenia_OH"}.format_json(no_indent: true).hash("sha256").encode("hex").slice(0, 24).re_replace_all("[^A-Za-z0-9._~-]", "-").slice(0, 80)
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("PointOfInterest", "bbsk.sk", env("JC_SPACE"), $local),
+          "type": "PointOfInterest",
+          "iCO": this.properties."IČO".apply("string"),
+          "nazovPoskytovatela": this.properties."Názov_poskytovateľa".apply("string"),
+          "sidloPoskytovatela": this.properties."Sídlo_poskytovateľa".apply("string"),
+          "idZZ": this.properties."IdZZ".apply("string"),
+          "name": this.properties."Vlastný_názov_zariadenia".apply("string").or(this.properties."Názov_poskytovateľa".apply("string")),
+          "druhZariadenia": this.properties."Druh_zariadenia".apply("string"),
+          "odborneZameranie": this.properties."Odborné_zameranie".apply("string"),
+          "ulicaPoskytovania": this.properties."Ulica_poskytovania".apply("string"),
+          "mestoPoskytovania": this.properties."Mesto_poskytovania".apply("string"),
+          "pSCPoskytovania": this.properties."PSČ_poskytovania".apply("string"),
+          "okresPoskytovania": this.properties."Okres_poskytovania".apply("string"),
+          "telefonZariadeniaVerejny": this.properties."Telefón_zariadenia_verejný".apply("string"),
+          "eMailZariadenia": this.properties."E_mail_zariadenia".apply("string"),
+          "pondelok": this.properties."Pondelok".apply("string"),
+          "utorok": this.properties."Utorok".apply("string"),
+          "streda": this.properties."Streda".apply("string"),
+          "stvrtok": this.properties."Štvrtok".apply("string"),
+          "piatok": this.properties."Piatok".apply("string"),
+          "sobota": this.properties."Sobota".apply("string"),
+          "nedela": this.properties."Nedeľa".apply("string"),
+          "datumSchvaleniaOH": this.properties."Dátum_schválenia_OH".apply("string"),
+          "location": if this.geometry.or(null) == null { null } else { { "type": "GeoProperty", "value": this.geometry } },
+          "dataProvider": { "type": "Property", "value": "Banskobystrický samosprávny kraj (CC BY-SA 4.0)" },
+          "source": { "type": "Property", "value": "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Zoznam_zdravotn%C3%ADckych_zariaden%C3%AD_v_BBK_public_2025/FeatureServer/0/query?where=1%3D1&outFields=I%C4%8CO,N%C3%A1zov_poskytovate%C4%BEa,S%C3%ADdlo_poskytovate%C4%BEa,IdZZ,Vlastn%C3%BD_n%C3%A1zov_zariadenia,Druh_zariadenia,Odborn%C3%A9_zameranie,Ulica_poskytovania,Mesto_poskytovania,PS%C4%8C_poskytovania,Okres_poskytovania,Telef%C3%B3n_zariadenia_verejn%C3%BD,E_mail_zariadenia,Pondelok,Utorok,Streda,%C5%A0tvrtok,Piatok,Sobota,Nede%C4%BEa,D%C3%A1tum_schv%C3%A1lenia_OH&returnGeometry=true&outSR=4326&geometryPrecision=6&f=geojson&resultOffset=0&resultRecordCount=1000&orderByFields=FID" },
+          "isPartOf": { "type": "Property", "value": "https://opendata.dev.joinedcontext.com/dataset/bbsk-zoznam-zdravotnickych-zariadeni-v-bbk-701db2" }
+        }.filter(entry -> entry.value != null)
+    # One request per run's batch rather than one per row.
+    - split:
+        size: 1000
+        byte_size: 2097152
+    - archive:
+        format: json_array

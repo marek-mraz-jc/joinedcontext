@@ -1,0 +1,4 @@
+---
+viz:
+  renderer:
+    chart: charts/renderer

@@ -1,0 +1,137 @@
+# The mapping of the rpss-social-services pipeline (T-5691, PL-03): one PointOfInterest of category
+# socialService per social service and facility address in Prague of the register of social service
+# providers (Registr poskytovatelů sociálních služeb, MPSV; neither a copyrighted work nor a database
+# under the maker's right): 830 on 2026-10-25, at 553 addresses.
+#
+# The DataSource asks MPSV's SPARQL endpoint for the services still provided whose facility (zařízení)
+# lies in Prague (Obec/554782), is still in use (no poskytujeDo) and has no secret address
+# (utajenaAdresa 0, a shelter's address the register hides): the service's portalId, its kind, the
+# facility's name, street, house numbers, RÚIAN address point code and the service's web page.
+# The register holds no coordinates, so the run geocodes each address point code at ČÚZK's RÚIAN
+# service (AdresniMisto, CC BY 4.0) in one POST, finds a retired code again by its address text in a
+# second, and records which way it went in each entity's dataProvider.
+#
+# Ids: urn:ngsi-ld:PointOfInterest:{org}:{space}:rpss-{portalId}-{address point code}; the Policy
+# public-zdravotni-a-socialni-sluzby names them.
+#
+# Personal data (T-5691 Security): the facility head (vedouci), the statutory bodies, phones and
+# e-mails are never asked for, and a facility with a secret address is never read. The provider's
+# name stays out; the facility's name is the one the register publishes.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a row without an id, a name or an address point code, an
+# address ČÚZK does not know (a retired code), a point outside Prague's box (the city plus about
+# 1 km) and a second row of one id (the register lists one row per web page and per renamed
+# facility) are dropped; the log line counts each reason. An answer over 16 MiB or 5,000 rows, one
+# that is no SPARQL result, an empty one, a failed geocoding call, or one where fewer than half the
+# rows survive fails the run, so the places already written stay.
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            let digits = "^[0-9]{1,12}$"
+            let bindings = if content().length() > 16777216 { throw("MPSV answered %v bytes; more than 16 MiB is not the Prague register".format(content().length())) } else { this.results.bindings.catch(null) }
+            let rows = if $bindings.type() != "array" {
+              throw("MPSV's SPARQL endpoint did not answer a result list")
+            } else if $bindings.length() == 0 {
+              throw("MPSV listed no social service in Prague; the register is never empty there, so the query failed")
+            } else if $bindings.length() > 5000 {
+              throw("MPSV listed %v rows, more than the 5,000 read".format($bindings.length()))
+            } else {
+              $bindings.map_each(b -> {
+                "service": b.sluzba.value.or("").string().trim(),
+                "point": b.kod.value.or("").string().trim(),
+                "kind": b.druh.value.or("").string().trim().re_replace_all("\\s+", " "),
+                "name": b.nazev.value.or("").string().trim().re_replace_all("\\s+", " "),
+                "street": [b.ulice.value.or("").string().trim(), [b.cp.value.or("").string().trim(), b.co.value.or("").string().trim()].filter(n -> n != "").join("/")].filter(s -> s != "").join(" "),
+                "web": b.web.value.or("").string().trim()
+              })
+            }
+            let usable = $rows.filter(r -> r.service.re_match($digits) && r.point.re_match($digits) && r.name != "")
+            # One row per service and address: the first of its rows by name and web page.
+            let unique = $usable.sort_by(r -> "%v|%v|%v|%v".format(r.service, r.point, r.name, r.web)).unique(r -> r.service + "-" + r.point)
+            root = { "read": $rows.length(), "unusable": $rows.length() - $usable.length(), "duplicate": $usable.length() - $unique.length(), "rows": $unique }
+        - branch:
+            request_map: |
+              root = "where=%v&outFields=kod&returnGeometry=true&outSR=4326&f=json".format(("kod IN (" + this.rows.map_each(r -> r.point).unique().join(",") + ")").escape_url_query())
+            processors:
+              - http:
+                  url: https://ags.cuzk.cz/arcgis/rest/services/RUIAN/Prohlizeci_sluzba_nad_daty_RUIAN/MapServer/1/query
+                  verb: POST
+                  headers:
+                    Accept: application/json
+                    Content-Type: application/x-www-form-urlencoded
+                    User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public open data)
+                  timeout: 60s
+                  retries: 2
+            result_map: |
+              let features = if content().length() > 16777216 { throw("ČÚZK answered %v bytes; more than 16 MiB is no answer to one query".format(content().length())) } else { this.features.catch(null) }
+              root.points = if $features.type() != "array" {
+                throw("ČÚZK's RÚIAN service did not answer a feature list: %v".format(this.error.message.catch("no error given")))
+              } else {
+                $features.filter(f -> f.attributes.kod.type() == "number" && f.geometry.x.type() == "number" && f.geometry.y.type() == "number").fold({}, item -> item.tally.assign({ item.value.attributes.kod.int64().string(): [item.value.geometry.x, item.value.geometry.y] }))
+              }
+        - mapping: |
+            let points = this.points
+            root = this.without("points").assign({ "rows": this.rows.map_each(r -> if $points.get(r.point) != null { r.assign({ "c": $points.get(r.point), "how": "adresního místa RÚIAN %v".format(r.point) }) } else { r }) })
+        # A code RÚIAN retired (the address got a new one) is found again by its address text in
+        # Prague: only a street with house numbers and no quote or LIKE wildcard is asked, and only
+        # an address ČÚZK answers once is taken.
+        - branch:
+            request_map: |
+              let asked = this.rows.filter(r -> r.c == null && r.street.re_match("^[^'%_]+ [0-9]+(/[0-9]+[a-z]?)?$")).map_each(r -> r.street).unique()
+              root = if $asked.length() == 0 { deleted() } else {
+                "where=%v&outFields=kod,adresa&returnGeometry=true&outSR=4326&f=json".format($asked.map_each(a -> "(adresa LIKE '%v,%%Praha%%')".format(a)).join(" OR ").escape_url_query())
+              }
+            processors:
+              - http:
+                  url: https://ags.cuzk.cz/arcgis/rest/services/RUIAN/Prohlizeci_sluzba_nad_daty_RUIAN/MapServer/1/query
+                  verb: POST
+                  headers:
+                    Accept: application/json
+                    Content-Type: application/x-www-form-urlencoded
+                    User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public open data)
+                  timeout: 60s
+                  retries: 2
+            result_map: |
+              let features = if content().length() > 16777216 { throw("ČÚZK answered %v bytes; more than 16 MiB is no answer to one query".format(content().length())) } else { this.features.catch(null) }
+              root.addresses = if $features.type() != "array" {
+                throw("ČÚZK's RÚIAN service did not answer a feature list: %v".format(this.error.message.catch("no error given")))
+              } else {
+                $features.filter(f -> f.attributes.adresa.type() == "string" && f.attributes.adresa.contains("Praha") && f.attributes.kod.type() == "number" && f.geometry.x.type() == "number" && f.geometry.y.type() == "number").map_each(f -> { "key": f.attributes.adresa.split(",").index(0).trim(), "kod": f.attributes.kod.int64(), "c": [f.geometry.x, f.geometry.y] })
+              }
+        - mapping: |
+            let addresses = this.addresses.or([])
+            let rows = this.rows.map_each(r -> if r.c != null { r } else {
+              match $addresses.filter(a -> a.key == r.street) {
+                this.length() == 1 => r.assign({ "c": this.index(0).c, "how": "adresy %v (adresní místo RÚIAN %v)".format(r.street, this.index(0).kod) }),
+                _ => r,
+              }
+            })
+            let located = $rows.filter(r -> r.c != null)
+            let inside = $located.filter(r -> r.c.index(0) >= 14.2 && r.c.index(0) <= 14.75 && r.c.index(1) >= 49.9 && r.c.index(1) <= 50.2)
+            meta read = this.read
+            meta unusable = this.unusable
+            meta duplicate = this.duplicate
+            meta unknown = $rows.length() - $located.length()
+            meta outside = $located.length() - $inside.length()
+            root = if $inside.length() * 2 < $rows.length() {
+              throw("RPSS: only %v of %v social services in Prague have an address ČÚZK places in Prague".format($inside.length(), $rows.length()))
+            } else { $inside }
+        - log:
+            level: INFO
+            message: 'rpss-social-services: read ${! meta("read") } rows; dropped ${! meta("unusable") } without id, name or address point, ${! meta("duplicate") } duplicates, ${! meta("unknown") } at an address ČÚZK does not know, ${! meta("outside") } outside Prague'
+        - unarchive: { format: json_array }
+        - mapping: |
+            let web = [this.web].filter(w -> w != "").map_each(w -> if w.re_match("^https?://") { w } else { "https://" + w }).filter(w -> w.re_match("^https?://[^\\s/]+\\.[\\x21-\\x7e]+$"))
+            root = {
+              "id": "urn:ngsi-ld:%v:%v:%v:rpss-%v-%v".format("PointOfInterest", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.service, this.point),
+              "type": "PointOfInterest",
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": this.name } },
+              "serviceCategory": { "type": "Property", "value": "socialService" },
+              "facilityType": if this.kind != "" { { "type": "Property", "value": this.kind } } else { null },
+              "address": if this.street != "" { { "type": "Property", "value": { "streetAddress": this.street, "addressLocality": "Praha", "addressCountry": "CZ" } } } else { null },
+              "url": if $web.length() > 0 { { "type": "Property", "value": $web.index(0) } } else { null },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": this.c } },
+              "dataProvider": { "type": "Property", "value": "Registr poskytovatelů sociálních služeb, MPSV; poloha geokódovaná z %v, © ČÚZK (CC BY 4.0)".format(this.how) },
+              "source": { "type": "Property", "value": "https://data.mpsv.cz/od/soubory/rpss/rpss.json" }
+            }.filter(kv -> kv.value != null)

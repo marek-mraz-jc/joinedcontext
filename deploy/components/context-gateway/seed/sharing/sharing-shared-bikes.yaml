@@ -1,0 +1,9 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: SharedSpaceReference
+metadata:
+  name: city-bikes
+  namespace: sharing
+  title: { en: City-bike stations shared by the helsinki project }
+spec:
+  endpointRef: { project: helsinki, name: helsinki-bikes }
+  alias: city-bikes

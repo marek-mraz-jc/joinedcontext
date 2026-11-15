@@ -1,0 +1,65 @@
+# file in this folder -> its path in the configuration repository (jc-core PATH_TEMPLATEs).
+# Stage only (T-6545): an environment lists this folder in extraSeeds, and stage alone does. Each
+# file registers one public prod Endpoint as a read-only source of the types stage held no rows of
+# in the T-6502 sweep (evidence/T-6502/sweep-*.tsv, 2026-11-03), so a read on stage that prod can
+# answer returns prod's entities. Dev keeps its own data and lists no such folder.
+# mode auxiliary with retrieveOps: the broker forwards reads only and stage's own rows win (CIM 009
+# 5.9.2.4; Antares tests/federation_loop.rs auxiliary_source_never_receives_unsafe_methods).
+# federation.identity caller: for an address outside the platform jcctl writes no credential into
+# the registration (jcctl csr_reconcile_tests no_identity_and_no_credential_reaches_the_broker), so
+# prod answers stage as it answers any anonymous reader of its public Endpoints. A space of the
+# list held none of the type on stage on any of its Endpoints, so prod's rows mix with nothing.
+banskabystrica-prod-banskabystrica-kataster.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/registrations/prod-banskabystrica-kataster.yaml
+banskabystrica-prod-banskabystrica-verejne.yaml: projects/banskabystrica/spaces/banskabystrica-verejne/registrations/prod-banskabystrica-verejne.yaml
+barcelona-prod-barcelona.yaml: projects/barcelona/spaces/barcelona/registrations/prod-barcelona.yaml
+bbsk-prod-bbsk-kpi.yaml: projects/bbsk/spaces/bbsk-kpi/registrations/prod-bbsk-kpi.yaml
+bbsk-prod-bbsk-otvorene-data.yaml: projects/bbsk/spaces/bbsk-otvorene-data/registrations/prod-bbsk-otvorene-data.yaml
+bbsk-prod-bbsk-registre.yaml: projects/bbsk/spaces/bbsk-registre/registrations/prod-bbsk-registre.yaml
+helsinki-prod-helsinki-transport.yaml: projects/helsinki/spaces/helsinki/registrations/prod-helsinki-transport.yaml
+slovensko-prod-slovensko-participacia.yaml: projects/slovensko/spaces/slovensko-participacia/registrations/prod-slovensko-participacia.yaml
+slovensko-prod-susr-as.yaml: projects/slovensko/spaces/susr-as/registrations/prod-susr-as.yaml
+slovensko-prod-susr-cr-navstevnici.yaml: projects/slovensko/spaces/susr-cr-navstevnici/registrations/prod-susr-cr-navstevnici.yaml
+slovensko-prod-susr-cr.yaml: projects/slovensko/spaces/susr-cr/registrations/prod-susr-cr.yaml
+slovensko-prod-susr-do-preprava.yaml: projects/slovensko/spaces/susr-do-preprava/registrations/prod-susr-do-preprava.yaml
+slovensko-prod-susr-do.yaml: projects/slovensko/spaces/susr-do/registrations/prod-susr-do.yaml
+slovensko-prod-susr-en.yaml: projects/slovensko/spaces/susr-en/registrations/prod-susr-en.yaml
+slovensko-prod-susr-ik.yaml: projects/slovensko/spaces/susr-ik/registrations/prod-susr-ik.yaml
+slovensko-prod-susr-kp-priemysel.yaml: projects/slovensko/spaces/susr-kp-priemysel/registrations/prod-susr-kp-priemysel.yaml
+slovensko-prod-susr-kp.yaml: projects/slovensko/spaces/susr-kp/registrations/prod-susr-kp.yaml
+slovensko-prod-susr-ku.yaml: projects/slovensko/spaces/susr-ku/registrations/prod-susr-ku.yaml
+slovensko-prod-susr-kz-zdravie.yaml: projects/slovensko/spaces/susr-kz-zdravie/registrations/prod-susr-kz-zdravie.yaml
+slovensko-prod-susr-kz.yaml: projects/slovensko/spaces/susr-kz/registrations/prod-susr-kz.yaml
+slovensko-prod-susr-np.yaml: projects/slovensko/spaces/susr-np/registrations/prod-susr-np.yaml
+slovensko-prod-susr-nu-odvetvia.yaml: projects/slovensko/spaces/susr-nu-odvetvia/registrations/prod-susr-nu-odvetvia.yaml
+slovensko-prod-susr-nu.yaml: projects/slovensko/spaces/susr-nu/registrations/prod-susr-nu.yaml
+slovensko-prod-susr-ob.yaml: projects/slovensko/spaces/susr-ob/registrations/prod-susr-ob.yaml
+slovensko-prod-susr-od.yaml: projects/slovensko/spaces/susr-od/registrations/prod-susr-od.yaml
+slovensko-prod-susr-og.yaml: projects/slovensko/spaces/susr-og/registrations/prod-susr-og.yaml
+slovensko-prod-susr-om-pohyb.yaml: projects/slovensko/spaces/susr-om-pohyb/registrations/prod-susr-om-pohyb.yaml
+slovensko-prod-susr-om.yaml: projects/slovensko/spaces/susr-om/registrations/prod-susr-om.yaml
+slovensko-prod-susr-pl.yaml: projects/slovensko/spaces/susr-pl/registrations/prod-susr-pl.yaml
+slovensko-prod-susr-pm-ceny.yaml: projects/slovensko/spaces/susr-pm-ceny/registrations/prod-susr-pm-ceny.yaml
+slovensko-prod-susr-pm.yaml: projects/slovensko/spaces/susr-pm/registrations/prod-susr-pm.yaml
+slovensko-prod-susr-pr-mzdy.yaml: projects/slovensko/spaces/susr-pr-mzdy/registrations/prod-susr-pr-mzdy.yaml
+slovensko-prod-susr-pr.yaml: projects/slovensko/spaces/susr-pr/registrations/prod-susr-pr.yaml
+slovensko-prod-susr-ps-vydavky.yaml: projects/slovensko/spaces/susr-ps-vydavky/registrations/prod-susr-ps-vydavky.yaml
+slovensko-prod-susr-ps.yaml: projects/slovensko/spaces/susr-ps/registrations/prod-susr-ps.yaml
+slovensko-prod-susr-ra.yaml: projects/slovensko/spaces/susr-ra/registrations/prod-susr-ra.yaml
+slovensko-prod-susr-sk.yaml: projects/slovensko/spaces/susr-sk/registrations/prod-susr-sk.yaml
+slovensko-prod-susr-so.yaml: projects/slovensko/spaces/susr-so/registrations/prod-susr-so.yaml
+slovensko-prod-susr-sp-jadrova.yaml: projects/slovensko/spaces/susr-sp-jadrova/registrations/prod-susr-sp-jadrova.yaml
+slovensko-prod-susr-sp.yaml: projects/slovensko/spaces/susr-sp/registrations/prod-susr-sp.yaml
+slovensko-prod-susr-st-povolenia.yaml: projects/slovensko/spaces/susr-st-povolenia/registrations/prod-susr-st-povolenia.yaml
+slovensko-prod-susr-st.yaml: projects/slovensko/spaces/susr-st/registrations/prod-susr-st.yaml
+slovensko-prod-susr-sv.yaml: projects/slovensko/spaces/susr-sv/registrations/prod-susr-sv.yaml
+slovensko-prod-susr-ts.yaml: projects/slovensko/spaces/susr-ts/registrations/prod-susr-ts.yaml
+slovensko-prod-susr-vh.yaml: projects/slovensko/spaces/susr-vh/registrations/prod-susr-vh.yaml
+slovensko-prod-susr-vt-pracovnici.yaml: projects/slovensko/spaces/susr-vt-pracovnici/registrations/prod-susr-vt-pracovnici.yaml
+slovensko-prod-susr-vt.yaml: projects/slovensko/spaces/susr-vt/registrations/prod-susr-vt.yaml
+slovensko-prod-susr-zd.yaml: projects/slovensko/spaces/susr-zd/registrations/prod-susr-zd.yaml
+slovensko-prod-susr-zo-kapitoly.yaml: projects/slovensko/spaces/susr-zo-kapitoly/registrations/prod-susr-zo-kapitoly.yaml
+slovensko-prod-susr-zo-krajiny.yaml: projects/slovensko/spaces/susr-zo-krajiny/registrations/prod-susr-zo-krajiny.yaml
+slovensko-prod-susr-zo.yaml: projects/slovensko/spaces/susr-zo/registrations/prod-susr-zo.yaml
+slovensko-prod-susr-zp-emisie.yaml: projects/slovensko/spaces/susr-zp-emisie/registrations/prod-susr-zp-emisie.yaml
+slovensko-prod-susr-zp.yaml: projects/slovensko/spaces/susr-zp/registrations/prod-susr-zp.yaml
+zilina-prod-zilina-kpi.yaml: projects/zilina/spaces/zilina-kpi/registrations/prod-zilina-kpi.yaml

@@ -1,0 +1,12 @@
+# The open-data catalogue the Prague endpoint republishes to (EP-62, EP-67), its own
+# organization of the one catalogue. The API token is a reference, as for hel-fi.
+apiVersion: joinedcontext.com/v1alpha1
+kind: CkanInstance
+metadata:
+  name: praha
+  namespace: praha
+  title: { cs: Hlavní město Praha, en: City of Prague }
+spec:
+  url: https://opendata.dev.joinedcontext.com
+  organizationDefault: praha
+  apiTokenRef: { name: ckan-api-token, key: token, envVar: CKAN_API_TOKEN }

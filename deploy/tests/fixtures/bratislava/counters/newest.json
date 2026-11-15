@@ -1,0 +1,168 @@
+{
+ "objectIdFieldName": "ObjectId",
+ "uniqueIdField": {
+  "name": "ObjectId",
+  "isSystemMaintained": true
+ },
+ "globalIdFieldName": "",
+ "fields": [
+  {
+   "name": "newest",
+   "type": "esriFieldTypeString",
+   "alias": "newest",
+   "sqlType": "sqlTypeNVarchar",
+   "length": 4000,
+   "domain": null,
+   "defaultValue": null
+  },
+  {
+   "name": "NAZOV",
+   "type": "esriFieldTypeString",
+   "alias": "NAZOV",
+   "sqlType": "sqlTypeNVarchar",
+   "length": 4000,
+   "domain": null,
+   "defaultValue": null
+  }
+ ],
+ "features": [
+  {
+   "attributes": {
+    "newest": "2026-10-21T23:00:00+00:00",
+    "NAZOV": "#1 - Starý Most"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T23:00:00+00:00",
+    "NAZOV": "#10 - Dunajská"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T23:00:00+00:00",
+    "NAZOV": "#11 - Most Apollo"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T23:00:00+00:00",
+    "NAZOV": "#12 - Železná studnička"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T23:00:00+00:00",
+    "NAZOV": "#13 - Vajanského 1"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T23:00:00+00:00",
+    "NAZOV": "#14 - Vajanského 2"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T23:00:00+00:00",
+    "NAZOV": "#15 - Incheba Einsteinova"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T23:00:00+00:00",
+    "NAZOV": "#16 - Trenčianska"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T23:00:00+00:00",
+    "NAZOV": "#17 - Dunajská/Lazaretská"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T23:00:00+00:00",
+    "NAZOV": "#18 - Južné mesto / Centrum"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T23:00:00+00:00",
+    "NAZOV": "#19 - R48 Starohájska / Rusovská cesta"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T23:00:00+00:00",
+    "NAZOV": "#2 - Starý most 2"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T23:00:00+00:00",
+    "NAZOV": "#3 - River Park"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T23:00:00+00:00",
+    "NAZOV": "#4 - Dolnozemská"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T23:00:00+00:00",
+    "NAZOV": "#5 - Devínska cesta"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T23:00:00+00:00",
+    "NAZOV": "#6 - Vajnorská"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T23:00:00+00:00",
+    "NAZOV": "#7 - Vajnorská > NTC"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T23:00:00+00:00",
+    "NAZOV": "#8 - Most SNP"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T23:00:00+00:00",
+    "NAZOV": "#9 - Páričkova"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T21:00:00+00:00",
+    "NAZOV": "Cyklomost Slobody"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T21:00:00+00:00",
+    "NAZOV": "Devinska Nova Ves"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T21:00:00+00:00",
+    "NAZOV": "Hradza Berg"
+   }
+  },
+  {
+   "attributes": {
+    "newest": "2026-10-21T21:00:00+00:00",
+    "NAZOV": "Viedenska"
+   }
+  }
+ ]
+}

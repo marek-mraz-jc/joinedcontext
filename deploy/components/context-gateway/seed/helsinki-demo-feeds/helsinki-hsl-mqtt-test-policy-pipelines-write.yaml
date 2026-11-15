@@ -1,0 +1,16 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: hsl-mqtt-test-pipelines-write
+  namespace: helsinki
+  title: { en: The pipelines write the HSL MQTT test space }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: hsl-mqtt-test }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: serviceAccount, id: pipelines }
+  # What the hfp stream needs (pipelines-write of the space helsinki); a Vehicle ends by its
+  # own expiresAt, so no delete.
+  operations: [upsertBatch, createBatch, queryBatch]
+  information:
+    - entities:
+        - type: Vehicle

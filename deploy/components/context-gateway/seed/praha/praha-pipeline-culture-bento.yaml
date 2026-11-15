@@ -1,0 +1,23 @@
+# The mapping of the culture pipeline (PL-03): one PointOfInterest per cultural venue of the city
+# geoportal (IPR Praha), 523 on 2026-09-25: theatres, museums, galleries, cinemas. `bezbar` is
+# the register's barrier-free flag (1 yes, 0 no); any other value says nothing and is not read.
+# `web` becomes `url` only as one address: two of them, or a space inside one, are no IRI, and
+# the gateway refused the whole place for it (T-4011); the place is written without its url.
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this.features.or([]).filter(f -> f.properties.globalid.or("").string().re_replace_all("[{}]", "").lowercase().re_match("^[0-9a-f-]{36}$") && f.geometry.or(null) != null && f.properties.nazev_zar.or("").trim() != "").map_each(f -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:ipr-%v".format("PointOfInterest", env("JC_ORG_DOMAIN"), env("JC_SPACE"), f.properties.globalid.or("").string().re_replace_all("[{}]", "").lowercase()),
+          "type": "PointOfInterest",
+          "name": { "type": "LanguageProperty", "languageMap": { "cs": f.properties.nazev_zar.trim() } },
+          "serviceCategory": { "type": "Property", "value": "culture" },
+          "address": if f.properties.adresa_zar.or("").trim() == "" { null } else { { "type": "Property", "value": { "streetAddress": f.properties.adresa_zar.trim(), "addressLocality": "Praha", "addressCountry": "CZ" } } },
+          "url": if !f.properties.web.or("").string().trim().re_match("^\\S+$") { null } else {
+            { "type": "Property", "value": if f.properties.web.trim().has_prefix("http") { f.properties.web.trim() } else { "https://" + f.properties.web.trim() } }
+          },
+          "wheelchairAccessible": match f.properties.bezbar.or(null) { 1 => { "type": "Property", "value": true }, 0 => { "type": "Property", "value": false }, _ => null },
+          "location": { "type": "GeoProperty", "value": f.geometry },
+          "dataProvider": { "type": "Property", "value": "datový podklad © IPR Praha (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://opendata.geoportalpraha.cz/" }
+        }.filter(entry -> entry.value != null))

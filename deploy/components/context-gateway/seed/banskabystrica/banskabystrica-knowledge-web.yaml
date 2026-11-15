@@ -1,0 +1,44 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: KnowledgeSource
+metadata:
+  name: web
+  namespace: banskabystrica
+spec:
+  # Banská Bystrica's website (T-3067, user decision 2026-10-07): the city's own
+  # website, crawled once on arrival and then weekly, so the knowledge assistant's answer-quality
+  # evals are written from what it really indexes. Bounded for the one dev node: three links
+  # deep, 500 pages, PDFs of at most 20 MB and 200 pages.
+  source: website
+  startUrls:
+    - https://www.banskabystrica.sk/
+  sitemap: true
+  # The site's own content list (T-4154): most of its types keep their text in custom fields,
+  # so the REST API gives the links and each page is crawled. Read before the sitemap (which
+  # lists only taxonomy pages), most useful types first; events last, so 6,000 pages keep every
+  # other type (5,155 items on 2026-10-15) and the newest events. Media files stay out.
+  wordpressTypes:
+    - life_situations
+    - office_sections
+    - pages
+    - regulations
+    - agendas
+    - city_documents
+    - emergency_contacts
+    - subsidies
+    - procurements
+    - projects
+    - urban_plans
+    - documents
+    - office_announcements
+    - newses
+    - events
+  maxDepth: 3
+  maxPages: 6000
+  pdf: { policy: include, maxBytes: 20971520, maxPages: 200 }
+  # The city keeps its documents on its own Azure storage (mestobbweb01storage.blob.core.windows.net),
+  # not on www.banskabystrica.sk, so a same-host rule left all 4,163 linked PDFs out (T-4749). A
+  # document on another host is read only when its own robots.txt allows it.
+  offDomainDocuments: true
+  schedule: '0 3 * * 0'
+  languages: [sk]
+  visibility: public

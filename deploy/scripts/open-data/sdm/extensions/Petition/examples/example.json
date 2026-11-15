@@ -1,0 +1,27 @@
+{
+  "dataProvider": "dataProvider",
+  "datumDorucenia": "2026-01-01",
+  "datumVybavenia": "2026-01-01",
+  "id": "urn:ngsi-ld:Petition:joinedcontext.com:example:1",
+  "identifier": "identifier",
+  "isPartOf": "https://example.org/isPartOf",
+  "jeKvorova": "jeKvorova",
+  "link": "link",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "name": "name",
+  "observedAt": "2026-01-01T00:00:00Z",
+  "pocetOsobPodporujucichPetici": 0,
+  "poznamka": "poznamka",
+  "source": "https://example.org/source",
+  "sposobVybavenia": "sposobVybavenia",
+  "text": "text",
+  "type": "Petition",
+  "vybavovatelPeticie": "vybavovatelPeticie",
+  "zverejnenieVysledkuVybavenia": "2026-01-01"
+}

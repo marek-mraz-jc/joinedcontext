@@ -1,0 +1,9 @@
+# gitleaks config for the RENDERED manifests (scripts/check-rendered-secrets.py output).
+# The repository itself is scanned with the default config by the `gitleaks` job.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Helm rolls pods on a config change through a sha256 annotation over public config; a digest is not a credential. Gitea numbers one per authentication source (checksum/oauth_0), hence the underscore."
+regexTarget = "line"
+regexes = ['''checksum/[a-z0-9_-]+: "?[0-9a-f]{64}"?''']

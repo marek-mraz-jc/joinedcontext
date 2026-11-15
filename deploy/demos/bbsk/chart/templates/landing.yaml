@@ -1,0 +1,100 @@
+{{- /*
+  The demo's landing page (T-4740, owner 2026-10-19: "not CKAN… a landing page with the AI
+  assistant"): static files from files/landing/ and the catalogue theme's two dock scripts
+  (values `landing.scripts`, read from charts/ckan so the dock behaves as on the catalogue),
+  served by the platform's pinned unprivileged nginx. Every `__DOMAIN__` is the platform's domain.
+*/}}
+{{- if not .Values.domain }}{{ fail "domain is required (T-4740)" }}{{ end }}
+{{- if not .Values.landing.image }}{{ fail "landing.image is required (T-4740)" }}{{ end }}
+{{- $ns := .Release.Namespace }}
+{{- $labels := dict "app.kubernetes.io/name" "demo-bbsk-landing" }}
+{{- $site := print .Values.domain (toJson .Values.landing) }}
+{{- range $path, $_ := .Files.Glob "files/landing/*" }}{{ $site = print $site ($.Files.Get $path) }}{{ end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-bbsk-landing
+  namespace: {{ $ns }}
+data:
+  default.conf: |
+    {{- .Files.Get "files/landing/nginx.conf" | replace "__DOMAIN__" .Values.domain | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-bbsk-landing-site
+  namespace: {{ $ns }}
+data:
+  {{- range $path, $_ := .Files.Glob "files/landing/*" }}
+  {{- if ne (base $path) "nginx.conf" }}
+  {{ base $path }}: {{ $.Files.Get $path | replace "__DOMAIN__" $.Values.domain | quote }}
+  {{- end }}
+  {{- end }}
+  {{- range $name, $body := .Values.landing.scripts }}
+  {{ $name }}: {{ $body | quote }}
+  {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-bbsk-landing
+  namespace: {{ $ns }}
+  labels:
+    {{- toYaml $labels | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- toYaml $labels | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- toYaml $labels | nindent 8 }}
+      annotations:
+        checksum/site: {{ sha256sum $site }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: nginx
+          image: {{ .Values.landing.image | quote }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.landing.resources | nindent 12 }}
+          volumeMounts:
+            - { name: config, mountPath: /etc/nginx/conf.d/default.conf, subPath: default.conf, readOnly: true }
+            - { name: site, mountPath: /srv/site, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+            - { name: cache, mountPath: /var/cache/nginx }
+      volumes:
+        - { name: config, configMap: { name: demo-bbsk-landing } }
+        - { name: site, configMap: { name: demo-bbsk-landing-site } }
+        - { name: tmp, emptyDir: {} }
+        - { name: cache, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-bbsk-landing
+  namespace: {{ $ns }}
+spec:
+  selector:
+    {{- toYaml $labels | nindent 4 }}
+  ports:
+    - { name: http, port: 8080, targetPort: http }

@@ -1,0 +1,85 @@
+---
+# Argo CD's network life (ADR-N-056 §2.1, OPS-26): its pods talk to each other, the edge reaches
+# the server, Prometheus reads the metrics, and out of the namespace go only DNS, the Kubernetes
+# API and HTTPS to the public internet (GitHub for the repository, the chart repositories and
+# the realm's public issuer). No pod or service of the instance is reachable from here.
+argocd:
+  podSelector:
+    app.kubernetes.io/part-of: argocd
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: argocd
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+      ports:
+        - protocol: TCP
+          port: 8080
+    # The metrics of the controller, the server and the repo server (§2.9).
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+          namespaceFrom: monitoring.monitoring.prometheusNamespace
+      ports:
+        - protocol: TCP
+          port: 8082
+        - protocol: TCP
+          port: 8083
+        - protocol: TCP
+          port: 8084
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: argocd
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The Kubernetes API: not a pod, so named by address; k3s serves it on 6443, and the policy
+    # sees that port after the Service's DNAT.
+    - to:
+        - kubeApi: true
+      ports:
+        - protocol: TCP
+          port: 6443
+    # The public internet only: no pod, node, service or metadata address behind 443.
+    - to:
+        - publicInternet: true
+      ports:
+        - protocol: TCP
+          port: 443
+
+# The edge's side of the route on argocd.{domain}.
+apisix-egress-to-argocd:
+  componentNamespace: apisix
+  podSelector:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/instance: apisix-apisix
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: argocd-server
+          componentNamespace: gitops
+      ports:
+        - protocol: TCP
+          port: 8080

@@ -1,0 +1,28 @@
+---
+apiVersion: kyverno.io/v2
+kind: PolicyException
+metadata:
+  name: gitea-recreate-strategy
+  annotations:
+    reason: >-
+      A rolling update keeps two pods alive at once, and both would have to mount the
+      same ReadWriteOnce claim that holds the bare repositories. Across a node boundary
+      that is a Multi-Attach deadlock: the new pod stays Pending, maxUnavailable 0 keeps
+      the old one running, and the release never converges. On one node it is worse than
+      a deadlock — two Gitea processes writing one data directory, its level queue and
+      its indexer. The forge is single-replica by construction (docs Architecture/14),
+      so the restart a Recreate strategy costs is the outage the volume already implies.
+      Re-check if the repositories ever move to a ReadWriteMany volume.
+spec:
+  exceptions:
+    - policyName: require-rolling-update
+      ruleNames:
+        - require-rolling-update-deployment
+        - autogen-require-rolling-update-deployment
+  match:
+    any:
+      - resources:
+          kinds:
+            - Deployment
+          names:
+            - gitea

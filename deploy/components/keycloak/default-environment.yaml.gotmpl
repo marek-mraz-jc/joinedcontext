@@ -1,0 +1,91 @@
+---
+keycloak:
+  # The `joinedcontext` login theme (UI-82): one ConfigMap the app part copies into its
+  # themes directory. The name is the contract between the two parts.
+  theme:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "keycloak") }}
+    configMapName: keycloak-theme
+  app:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "keycloak") }}
+    subdomain: idm
+    pathPrefix: /
+    admin:
+      forceRecreateSecret: true
+      username: admin
+      secret:
+        name: "keycloak-admin-user"
+        passwordKey: "password"
+  config:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "keycloak") }}
+    # Outbound e-mail. The realm's smtpServer block and the SMTP_* environment
+    # variables are only rendered when this is on; the Secret named here has to
+    # exist in the Keycloak namespace with the keys host, port, from, user and
+    # password (it is a real mail account, so it is never generated).
+    smtp:
+      enabled: false
+      existingSecret: keycloak-smtp
+    # The root of each Organization's group subtree but the installation's (ADR-N-058 2.5): the
+    # seed's organizations/{name}.yaml. Its readers' binding names the root (zilina-viewers).
+    organizations: [zilina, barcelona, bratislava]
+    # The groups inside an Organization, by its subtree root (ADR-N-067 2.2, 2.7): every member
+    # of the Organization is in `members`, a data-access group beside it narrows a dataset. Each
+    # carries the attributes the `jc_org` and `jc_groups` claims read. Created empty on every
+    # realm; on dev demo.orgmember and demo.analyst hold them (demo-users.yaml).
+    organizationGroups:
+      helsinki: [members, traffic-analysts]
+    # Realm users of the development profile (components/keycloak/demo-users.yaml).
+    demoUsers:
+      {{- if eq .Values.global.profile "development" }}
+      {{- readFile "../../components/keycloak/demo-users.yaml" | fromYaml | toYaml | nindent 6 }}
+      {{- else if .Values.global.participationStewardId }}
+      # The one person a production realm seeds besides the owner (T-6448): the login that
+      # administers Decidim (decidim.web.adminEmail) and nothing else. No group, no platform
+      # readers, no Portal role; a generated password read from its Secret, and a TOTP seed
+      # there too unless global.participationStewardEnrols has the person enrol at first sign-in.
+      participacia.steward:
+        id: {{ .Values.global.participationStewardId | quote }}
+        firstName: Participácia
+        lastName: Steward
+        realmRoles: [mfa-required]
+        platformReaders: false
+        groups: []
+        enrols: {{ .Values.global.participationStewardEnrols }}
+      {{- else if not .Values.global.presenterUserId }}
+      {}
+      {{- end }}
+      {{- with .Values.global.presenterUserId }}
+      # The person the owner presents as, the same on dev, stage and prod (T-6542).
+      {{- $presenter := readFile "../../components/keycloak/presenter.yaml" | fromYaml }}
+      {{- $_ := set $presenter "id" . }}
+      presenter:
+        {{- $presenter | toYaml | nindent 8 }}
+      {{- end }}
+    # The owner's account of a production realm that carries dev's seeds (T-4678): the demo
+    # steward's rights under the owner's address, so the seeds' bindings have a holder.
+    initialUser:
+      {{- if and (eq .Values.global.profile "production") .Values.global.valuesProfile }}
+      {{- $steward := index (readFile "../../components/keycloak/demo-users.yaml" | fromYaml) "demo.steward" }}
+      email: {{ .Values.global.initialUserEmail | quote }}
+      # The id the seeds' steward grants name on this instance (PF-126): the keycloak people Job creates
+      # the owner with it, or fails naming the id the owner holds when it is another.
+      id: {{ .Values.global.initialUserId | quote }}
+      realmRoles: {{ $steward.realmRoles | toJson }}
+      groups: {{ $steward.groups | toJson }}
+      {{- else }}
+      {}
+      {{- end }}
+  # The Portal administers the clients it manages and no other (T-2725, AP-27).
+  # Before the realm import: the seeded people under the fixed ids the manifests name (PF-126).
+  people:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "keycloak") }}
+  adminPermissions:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "keycloak") }}
+  configUserCreation:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "keycloak") }}
+

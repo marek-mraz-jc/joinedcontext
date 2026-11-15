@@ -1,0 +1,38 @@
+# Public events of Prague's boroughs, theatres, cinemas, concert halls and culture centres that announce them in a
+# feed or as schema.org JSON-LD (T-5666, owner 2026-10-25). The akce-* pipelines of seeds/bbsk-events/generate.py
+# (inventory sources-cz.csv) write it; nobody else does. docs Research/praha-events.md lists every candidate source.
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: praha-akce
+  namespace: praha
+  title: { cs: Akce v Praze, en: Events in Prague }
+  description:
+    cs: >-
+      Nadcházející veřejné akce pražských městských částí, divadel, kin, koncertních sálů a kulturních center
+      s časem a místem konání. Každá akce má rozsah /CZ/PHA/hlavni_mesto_praha a zůstává v prostoru do dne po svém konci nebo
+      dokud ji zdroj nestáhne. Zdroj: webové stránky a kanály, které akci zveřejnily.
+    en: >-
+      Upcoming public events of Prague's boroughs, theatres, cinemas, concert halls and culture centres with
+      their time and place. Each event carries the scope /CZ/PHA/hlavni_mesto_praha and stays in the space until the day after
+      it ends or until its source drops it. Source: the web sites and feeds that announced it.
+spec:
+  # The space name is the segment its ids carry, pinned so it cannot drift (PF-84).
+  urnSegment: praha-akce
+  isSandbox: false
+  # The one model of this space: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: praha-akce }
+  defaultLocale: cs
+  # Current state only (DM-82): an event leaves the space through the rolling expiresAt its pipeline writes.
+  retention:
+    - entityType: Event
+      history: 'off'
+    - entityType: PointOfInterest
+      history: 'off'
+  # Prague with a margin: a point outside it is flagged (DM-87).
+  quality:
+    - name: in-prague
+      entityType: Event
+      kind: area
+      attribute: location
+      bbox: [14.2, 49.9, 14.8, 50.2]

@@ -1,0 +1,42 @@
+# The PID stop platforms in Prague from ROPID (T-5423), GtfsStop of the space praha-mesto read
+# through its own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-zastavky-pid
+  namespace: praha
+  title: { cs: Zastávky PID — Praha, en: PID stops — Prague }
+  description:
+    cs: 'Zastávková stanoviště PID v Praze: název, stanoviště, tarifní pásmo, linky, druh dopravy a bezbariérovost. Zdroj: ROPID, CC BY 4.0.'
+    en: 'The PID stop platforms in Prague: name, platform, fare zone, lines, mode and step-free access. Source: ROPID, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: cksoxx6dxyfomrs4cnsfb3le4vesw2ks
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-zastavky-pid
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # The public transport network; no record names a person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution: { cs: 'Zdroj: ROPID (CC BY 4.0)', en: 'Source: ROPID (CC BY 4.0)' }
+    themes: [TRAN]
+    keywords:
+      cs: [Praha, PID, zastávky, MHD, bezbariérovost]
+      en: [Prague, PID, stops, public transport, accessibility]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: DAILY
+    source:
+      - url: https://data.pid.cz/geodata/Zastavky_WGS84.json
+        title: { cs: Zastávky PID (ROPID), en: PID stops (ROPID) }
+        description:
+          cs: Zastávková stanoviště Pražské integrované dopravy s linkami a tarifními pásmy, ROPID, CC BY 4.0.
+          en: The Prague Integrated Transport stop platforms with their lines and fare zones, ROPID, CC BY 4.0.

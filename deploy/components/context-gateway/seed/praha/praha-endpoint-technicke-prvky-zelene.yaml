@@ -1,0 +1,58 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-technicke-prvky-zelene
+  namespace: praha
+  title: { cs: Technické prvky zeleně — Praha, en: Green space elements — Prague }
+  description:
+    cs: 'Lavičky, oplocení, cesty, zpevněné plochy, zdi, vodní prvky a stromové mísy sdílených dat o zeleni: druh, materiál, povrch, správce, režim péče a poloha. Zdroj: IPR Praha, CC BY 4.0.'
+    en: 'Benches, fences, paths, paved areas, walls, water features and tree pits of the shared green register: kind, material, surface, manager, care regime and location. Source: IPR Praha, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: gtkj6zpdp3j42sq36aipldpa3oq5vtvx
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-technicke-prvky-zelene
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Mapped elements: the manager is a city district or a department, never a person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha (CC BY 4.0)'
+      en: 'Source: data © IPR Praha (CC BY 4.0)'
+    themes: [ENVI]
+    keywords:
+      cs: [Praha, zeleň, lavičky, cesty, mobiliář]
+      en: [Prague, green spaces, benches, paths, street furniture]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: IRREG
+    source:
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/OPK_CUR_OPK_SMZ_TP_B/FeatureServer/0?f=json
+        title:
+          cs: Sdílená data o zeleni – technické prvky – body (IPR Praha)
+          en: 'Shared green register: technical elements, points (IPR Praha)'
+        description:
+          cs: Technické prvky (body) ze sdílených dat o zeleni z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Technical elements (points) of the shared green register from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/OPK_CUR_OPK_SMZ_TP_L/FeatureServer/0?f=json
+        title:
+          cs: Sdílená data o zeleni – technické prvky – linie (IPR Praha)
+          en: 'Shared green register: technical elements, lines (IPR Praha)'
+        description:
+          cs: Technické prvky (linie) ze sdílených dat o zeleni z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Technical elements (lines) of the shared green register from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/OPK_CUR_OPK_SMZ_TP_P/FeatureServer/0?f=json
+        title:
+          cs: Sdílená data o zeleni – technické prvky – plochy (IPR Praha)
+          en: 'Shared green register: technical elements, areas (IPR Praha)'
+        description:
+          cs: Technické prvky (plochy) ze sdílených dat o zeleni z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Technical elements (areas) of the shared green register from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.

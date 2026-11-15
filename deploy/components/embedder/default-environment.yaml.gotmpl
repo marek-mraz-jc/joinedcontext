@@ -1,0 +1,26 @@
+---
+embedder:
+  server:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "embedder") }}
+    # ONNX Runtime threads (JC_ASSISTANT_EMBED_THREADS' meaning): as many as the CPU limit.
+    threads: 2
+    # [limits] of embedder.toml, the same for every deployment (crates/embedder server.rs).
+    maxTexts: 64
+    maxTextBytes: 8192
+    timeoutSeconds: 20
+    maxInFlight: 4
+    # The deployments that may call, each with its own kaisatsu (issuer and keys), the client ids
+    # it calls with and its texts a minute. The render refuses an empty list.
+    #   - name: dev
+    #     issuer: https://jc.dev.example/id/realms/jc
+    #     jwksUrl: https://jc.dev.example/id/realms/jc/protocol/openid-connect/certs
+    #     clients: [jc-assistant]
+    #     maxTextsPerMinute: 1200
+    deployments: []
+    # The namespaces whose jc pods may reach 8089 (NetworkPolicy and Linkerd meshAuthorization):
+    # empty is jc's own namespace in this environment. Set it in the environment's
+    # global.yaml.gotmpl: the NetworkPolicy render reads no other values file. One embedder shared by several
+    # deployments of this cluster lists each, e.g. [jc-prod, jc-dev]; each still signs in with
+    # its own kaisatsu token (deployments above).
+    callerNamespaces: []

@@ -1,0 +1,7 @@
+---
+apiVersion: v2
+name: identities
+description: The namespace of the pipelines' (PL-19) or wasm App jobs' (AP-159) own ServiceAccounts and the one grant on it
+type: application
+version: 0.1.0
+appVersion: '0.1.0'

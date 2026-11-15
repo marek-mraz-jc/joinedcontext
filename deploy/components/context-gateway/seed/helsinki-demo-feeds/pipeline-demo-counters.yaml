@@ -1,0 +1,19 @@
+# The demo feed's counters as indicators of the KPI space (T-2960): the feed publishes its own
+# type, `DemoCounter`, which no Helsinki model has, so without a mapping every message was
+# refused (DM-61). `KeyPerformanceIndicator` is the class a count over time already has, and
+# the runner-inputs journey proves the same mapping by hand (portal ui/e2e/live/runner-inputs.spec.ts).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: demo-counters
+  namespace: helsinki
+  title:
+    en: Demo feed counters as indicators (synthetic, not a city measurement)
+spec:
+  class: auto
+  source:
+    dataSourceRef: { kind: DataSource, name: demo-feed-counters }
+  # The KPI space's endpoint, where kpi-pipelines-write lets the pipelines account upsert.
+  targetEndpoint: urn:ngsi-ld:Endpoint:hel.fi:helsinki-kpi:helsinki-kpi
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 64, cpuMillicores: 50 }

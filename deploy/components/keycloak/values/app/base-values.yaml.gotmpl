@@ -1,0 +1,249 @@
+---
+{{- $this := .Values.keycloak.app }}
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem`
+# - [x] Health probes -> default in base chart
+# - [ ] Graceful shutdown
+# - [ ] Standard labels
+# - [ ] ServiceAccount with least privilege where required
+# - [ ] Named ports
+# - [x] Ingress with TLS
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+podAnnotations:
+  # justify-api-token-access: the projected kube-api-token below (bound to no RBAC).
+  security.joinedcontext.com/api-access-reason: >-
+    The kubernetes identity provider reads the cluster's issuer discovery with its own token to
+    verify federated ServiceAccount tokens; Keycloak's ServiceAccount is bound to no role.
+  config.linkerd.io/skip-outbound-ports: "25,465,587,7800,57800"
+  config.linkerd.io/skip-inbound-ports: "7800,57800"
+  {{- /* The theme is copied in at start-up and Keycloak caches it, so a changed theme or
+         branding block has to roll the pod: the checksum covers both. */}}
+  {{- $theme := list (toJson (.Values.global.branding | default dict)) }}
+  {{- range readDir "../../charts/theme/files" }}
+  {{- $theme = append $theme (readFile .) }}
+  {{- end }}
+  {{- $theme = append $theme (readFile "../../charts/theme/templates/configmap.yaml") }}
+  checksum/theme: {{ join "\n" $theme | sha256sum }}
+
+
+image:
+{{- with .Values.images.keycloak.app }}
+  repository: {{ .repository }}
+  # The chart copies `tag` verbatim into the `app.kubernetes.io/version` label, where `@` and
+  # `:` are illegal, so the digest cannot ride in the tag: `helm upgrade` is refused by the
+  # API server. `digest` is the chart's own field and still pins the pull (AR-4); the tag
+  # stays a plain version so the label renders and `kubectl get pod` reads the version.
+  tag: {{ .tag }}
+  digest: {{ .digest }}
+{{- end }}
+  pullPolicy: IfNotPresent
+extraEnv: |
+  - name: KC_HOSTNAME_STRICT
+    value: "false"
+  # The pool's default ceiling is 100. One shared Postgres has max_connections 55 on the
+  # development profile (T-4933); Keycloak grew to 10 there on 2026-10-21 and the other clients'
+  # token lookups were refused (53300). 4 serves one realm at this scale (prod held 2 open on
+  # 2026-10-26 11:5xZ) and keeps every client's ceiling within
+  # tests/test_postgres_connection_budget.py since the assistant's pool grew to 10 (T-5780).
+  - name: KC_DB_POOL_MAX_SIZE
+    value: "4"
+  # kc.sh sizes the heap in a container at MaxRAMPercentage=70 with InitialRAMPercentage=50, and its
+  # default MaxHeapFreeRatio=70 rarely gives a page back: on dev's 2048Mi limit that is a 1024Mi
+  # heap from the start and up to 1434Mi, while 146 MB of it is live (jcmd, T-5282). Keycloak sat at
+  # 1021Mi on a node at 97 % (T-5892). A quarter of the limit (512Mi on dev, 2Gi on the production
+  # profile) is the cap kc.sh itself picks outside a container (-Xmx512m) and leaves the live set
+  # three times over; the 5 % start lets the heap grow from about 100Mi instead of committing 1Gi.
+  - name: JAVA_OPTS_KC_HEAP
+    value: "-XX:MaxRAMPercentage=25 -XX:InitialRAMPercentage=5"
+  - name: JGROUPS_DISCOVERY_PROTOCOL
+    value: kubernetes.KUBE_PING
+  - name: JGROUPS_DISCOVERY_PROPERTIES
+    value: dump_requests=true,port_range=0,namespace={{ $this.namespace }}
+  - name: KC_BOOTSTRAP_ADMIN_USERNAME
+    value: {{ $this.admin.username }}
+  - name: KC_HOSTNAME
+    value: 'https://{{ .Values.routes.keycloak.subDomain }}.{{ $global.domain }}'
+  - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: keycloak-admin-user
+        key: password
+
+serviceAccount:
+  # Peers are discovered over the database (KC_CACHE_STACK=jdbc-ping, set by the chart),
+  # never through the Kubernetes API, and the chart grants no pod-read RBAC
+  # (allowReadPods stays false). The default token stays unmounted (BSI TR-03187 AUT-3); the
+  # one token Keycloak holds is the short-lived projected one below, which the realm's
+  # `kubernetes` identity provider reads the cluster's service-account JWKS with (PF-47).
+  automountServiceAccountToken: false
+
+ingress:
+  enabled: false
+  console:
+    enabled: false
+dbchecker:
+  enabled: true
+  image:
+    {{- with .Values.images.keycloak.dbchecker }}
+    repository: {{ .repository }}
+    tag: {{ .tag }}@{{ .digest }}
+    {{- end }}
+  resources:
+    # resources are hardcoded, because dbchecker won't need more resources, even when the platform scales up
+    requests:
+      cpu: "20m"
+      memory: "32Mi"
+    limits:
+      cpu: "20m"
+      memory: "32Mi"
+  securityContext:
+    {{ .Values.securityDefaults.securityContext | toYaml | nindent 4 }}
+    runAsUser: 1000
+    runAsGroup: 1000
+    runAsNonRoot: true
+
+database:
+  vendor: postgres
+  hostname: {{ .Values.databases.keycloak.hostServiceName }}.{{ .Values.postgres.cluster.namespace }}.svc.cluster.local
+  port: {{ .Values.databases.keycloak.port }}
+  database: {{ .Values.databases.keycloak.name }}
+  username: {{ .Values.databases.keycloak.user }}
+  existingSecret: {{ .Values.databases.keycloak.secret.name }}
+  existingSecretKey: "password"
+service:
+  sessionAffinity: "ClientIP"
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
+proxy:
+  enabled: true
+  mode: xforwarded
+  http:
+    enabled: true
+metrics:
+  enabled: {{ $global.metrics.enabled }}
+serviceMonitor:
+  enabled: {{ $global.metrics.enabled }}
+  namespace: {{ $this.namespace }}
+
+command:
+  - "/opt/keycloak/bin/kc.sh"
+  - "start"
+  - "--optimized"
+http:
+  relativePath: '{{ $this.pathPrefix }}'
+
+livenessProbe: |
+  httpGet:
+    path: '{{ $this.pathPrefix | trimSuffix "/" }}/realms/master'
+    port: 'http'
+    scheme: 'HTTP'
+  initialDelaySeconds: 0
+  timeoutSeconds: 5
+readinessProbe: |
+  httpGet:
+    path: '{{ $this.pathPrefix | trimSuffix "/" }}/realms/master'
+    port: 'http'
+    scheme: 'HTTP'
+  initialDelaySeconds: 10
+  timeoutSeconds: 1
+startupProbe: |
+  httpGet:
+    path: '{{ $this.pathPrefix | trimSuffix "/" }}/realms/master'
+    port: 'http'
+    scheme: 'HTTP'
+  initialDelaySeconds: 15
+  timeoutSeconds: 1
+  failureThreshold: 60
+  periodSeconds: 5
+health:
+  enabled: true
+
+# Config for readOnlyRootFilesystem
+# see: https://github.com/keycloak/keycloak/issues/11286
+extraInitContainers: |
+  - name: build-keycloak
+    image: {{ .Values.images.keycloak.app.repository }}:{{ .Values.images.keycloak.app.tag }}@{{ .Values.images.keycloak.app.digest }}
+    imagePullPolicy: IfNotPresent
+    securityContext:
+      {{ .Values.securityDefaults.securityContext | toYaml | nindent 6 }}
+    command:
+      - bash
+      - -c
+    args:
+      - |
+        set -eu
+        cp -R /opt/keycloak/* /app/
+        # The login theme (UI-82): a ConfigMap key is the file's path with `__` for `/`
+        # (components/keycloak/charts/theme).
+        for file in /theme/*; do
+          path="/app/themes/joinedcontext/$(basename "$file")"
+          path="${path//__//}"
+          mkdir -p "${path%/*}"
+          cp "$file" "$path"
+        done
+        # Script mappers stay off: with them, whoever may manage a client runs code in every
+        # token it mints (T-2857). Keycloak 26 ships them off; the build says so, so no image or
+        # default change turns them on.
+        # `cimd` (experimental) lets claude.ai, Claude Code and VS Code sign in by their published
+        # client id URL; `parameterized-scopes` (preview) mints the one `connector:{id}` scope that
+        # binds a token to one Portal connector (T-5954, ADR-N-064 §3.3). `resource-indicators`
+        # stays off: Keycloak 26.8 matches `resource` only against a static list.
+        /app/bin/kc.sh build --db=postgres --health-enabled=true --metrics-enabled=true --features=cimd,parameterized-scopes --features-disabled=scripts --http-relative-path={{ $this.pathPrefix }}
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1Gi"
+    volumeMounts:
+      - name: workspace
+        mountPath: /app
+      - name: tmp
+        mountPath: /tmp
+      - name: theme
+        mountPath: /theme
+        readOnly: true
+
+extraVolumeMounts: |
+  - name: workspace
+    mountPath: /opt/keycloak
+  - name: tmp
+    mountPath: /tmp
+  # Where Keycloak looks for its own token and the cluster CA: the `kubernetes` identity
+  # provider authenticates to `{issuer}/.well-known/openid-configuration` with it, and the CA
+  # joins Keycloak's truststore by that path (PF-47).
+  - name: kube-api-token
+    mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+    readOnly: true
+
+extraVolumes: |
+  - name: workspace
+    emptyDir: {}
+  - name: tmp
+    emptyDir: {}
+  - name: theme
+    configMap:
+      name: {{ .Values.keycloak.theme.configMapName }}
+  # The API server's default audience and an hour's life: good for the issuer discovery the
+  # cluster grants every ServiceAccount (system:service-account-issuer-discovery) and for no
+  # RBAC, because Keycloak's ServiceAccount is bound to none.
+  - name: kube-api-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            path: token
+            expirationSeconds: 3600
+        - configMap:
+            name: kube-root-ca.crt
+            items:
+              - key: ca.crt
+                path: ca.crt

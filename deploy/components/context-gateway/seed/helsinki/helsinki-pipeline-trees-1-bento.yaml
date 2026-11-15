@@ -1,0 +1,79 @@
+# The mapping of the trees pipelines of the space (T-5378, PL-03): one Tree per tree of the city's
+# street and park tree register (puurekisteri), from the open WFS layer Puurekisteri_piste of
+# kartta.hel.fi (67,743 trees on 2026-10-26, 30 MB). Four pipelines read a range of the layer's row
+# ids each (trees-0 to trees-3, about 13,000 to 19,500 trees a run); all of them share this mapping text.
+#
+# A tree is keyed by its register code (tunnus: K-929 a street tree, P-43067-383 a park tree), which
+# the register keeps across its nightly republish. Read: the Finnish name (suomenknimi), the
+# scientific name (suku and laji), the trunk class (kokoluokka), the planting year (istutusvuosi),
+# whether it stands along a street or in a park (paatyyppi) and the street or park it stands in
+# (kadunnimi, puistonnimi). Nothing else of the layer is read: datanomistaja and
+# paivitetty_tietopalveluun are the city's bookkeeping.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a tree without a register code or a point, or whose point
+# lies outside Helsinki's box (the city plus about 5 km), is dropped, and so is a second tree of one
+# code; a trunk class or a setting outside the register's lists and a planting year before 1800 or
+# after this year (the register holds 10, 1716 and 20100) are left out of the tree. The log line counts
+# each reason. An answer that is not a feature list, holds no tree, or where fewer than half the trees
+# survive (a projection or schema change) fails the run, so the trees already written stay.
+#
+# `expiresAt` (NGSI-LD 4.22): a tree leaves every read three days after the register last listed it,
+# so a felled tree is gone after three nightly runs.
+pipeline:
+  processors:
+    # A throw skips the steps after it, so the runner refuses the run and nothing is written.
+    - try:
+        - mapping: |
+            let lease = (now().ts_unix() + 259200).ts_format("2006-01-02T15:04:05Z", "UTC")
+            let year = now().ts_format("2006", "UTC").number()
+            let classes = {
+              "0 - 10 cm": "cm0to10", "10 - 20 cm": "cm10to20", "20 - 30 cm": "cm20to30",
+              "30 - 50 cm": "cm30to50", "50 - 70 cm": "cm50to70", "70 cm -": "cm70plus"
+            }
+            let settings = { "Katu": "street", "Puisto": "park" }
+            let features = this.features.catch(null)
+            let rows = if $features.type() != "array" || $features.length() == 0 {
+              throw("kartta.hel.fi answered no tree of the register")
+            } else { $features }.map_each(f -> {
+              "code": f.properties.tunnus.catch(null),
+              "p": f.properties.catch({}),
+              "g": f.geometry.catch(null),
+              "v": if f.geometry.type.catch("") == "Point" { f.geometry.coordinates.catch(null) } else { null }
+            })
+            let coded = $rows.filter(r -> r.code.type() == "string" && r.code.re_match("^[A-Z]-[0-9]{1,8}(-[0-9]{1,8})?$"))
+            let inside = $coded.filter(r -> r.v.type() == "array" && r.v.length() >= 2 && r.v.index(0).type() == "number" && r.v.index(1).type() == "number" && r.v.index(0) >= 24.7 && r.v.index(0) <= 25.4 && r.v.index(1) >= 60.0 && r.v.index(1) <= 60.4)
+            let unique = $inside.unique(r -> r.code)
+            meta read = $rows.length()
+            meta uncoded = $rows.length() - $coded.length()
+            meta outside = $coded.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            let entities = if $unique.length() * 2 < $rows.length() {
+              throw("only %v of %v trees have a register code and a point in Helsinki".format($unique.length(), $rows.length()))
+            } else { $unique }.map_each(r -> {
+              "name": r.p.suomenknimi.catch(null),
+              "species": [r.p.suku.catch(null), r.p.laji.catch(null)].filter(w -> w.type() == "string" && w.trim() != "").map_each(w -> w.trim()),
+              "size": $classes.get(r.p.kokoluokka.catch("").string()).catch(null),
+              "planted": r.p.istutusvuosi.catch(null),
+              "setting": $settings.get(r.p.paatyyppi.catch("").string()).catch(null),
+              "site": [if r.p.paatyyppi.catch("") == "Katu" { r.p.kadunnimi.catch(null) } else { r.p.puistonnimi.catch(null) }, r.p.kadunnimi.catch(null), r.p.puistonnimi.catch(null)].filter(w -> w.type() == "string" && w.trim() != ""),
+              "r": r
+            }).map_each(a -> {
+              "id": "urn:ngsi-ld:Tree:%v:%v:tree-%v".format(env("JC_ORG_DOMAIN"), env("JC_SPACE"), a.r.code),
+              "type": "Tree",
+              "expiresAt": $lease,
+              "name": if a.name.type() == "string" && a.name.trim() != "" { { "type": "LanguageProperty", "languageMap": { "fi": a.name.trim().lowercase().capitalize() } } } else { null },
+              "species": if a.species.length() > 0 && a.species.index(0).re_match("^[A-Z]") { { "type": "Property", "value": a.species.join(" ") } } else { null },
+              "trunkDiameterClass": if a.size != null { { "type": "Property", "value": a.size } } else { null },
+              "plantingYear": if a.planted.type() == "number" && a.planted >= 1800 && a.planted <= $year { { "type": "Property", "value": a.planted.int64() } } else { null },
+              "treeSetting": if a.setting != null { { "type": "Property", "value": a.setting } } else { null },
+              "treeSite": if a.site.length() > 0 { { "type": "Property", "value": a.site.index(0).trim().lowercase().capitalize() } } else { null },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [a.r.v.index(0), a.r.v.index(1)] } },
+              "dataProvider": { "type": "Property", "value": "City of Helsinki, Urban Environment Division" },
+              "source": { "type": "Property", "value": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:Puurekisteri_piste" }
+            }.filter(entry -> entry.value != null))
+            # 500 trees per write, about 0.5 MB, well under the broker's 4 MiB body limit.
+            root = range(0, ($entities.length() / 500).ceil().int64()).map_each(i -> $entities.slice(i * 500, [(i + 1) * 500, $entities.length()].min()))
+        - log:
+            level: INFO
+            message: 'trees: read ${! meta("read") } trees, dropped ${! meta("uncoded") } without a register code, ${! meta("outside") } without a point in Helsinki, ${! meta("duplicate") } duplicates'
+        - unarchive: { format: json_array }

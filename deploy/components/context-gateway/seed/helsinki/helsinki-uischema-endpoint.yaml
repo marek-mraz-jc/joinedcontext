@@ -1,0 +1,24 @@
+# How the Portal's Endpoint form is arranged (UI-02, CC-29): what the endpoint publishes first,
+# who may read it second, the limits after. The Portal reads this file from the configuration
+# repository, so editing it changes the form in the browser with no rebuild (T-0452).
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: endpoint
+  namespace: org
+spec:
+  for: Endpoint
+  order: [contextSpaceRef, name, title, audience, enabledRepresentations]
+  groups:
+    - title: What it publishes
+      description: The context space the endpoint reads, and the name it has in the repository.
+      fields: [contextSpaceRef, name, title]
+    - title: Who can read it
+      fields: [audience, enabledRepresentations]
+  fields:
+    name:
+      placeholder: helsinki-parking
+      help: Lowercase letters, digits and dashes. It is part of the endpoint's manifest path, not of its public address.
+    contextSpaceRef: { help: The endpoint serves the entities of this space and nothing else. }
+    audience:
+      help: 'public: anyone with the address. organization: every project of the organization. project-list: only the projects you pick.'

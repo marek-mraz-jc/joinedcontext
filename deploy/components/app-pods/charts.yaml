@@ -1,0 +1,4 @@
+---
+app-pods:
+  hsl-transport:
+    chart: ../../charts/workload

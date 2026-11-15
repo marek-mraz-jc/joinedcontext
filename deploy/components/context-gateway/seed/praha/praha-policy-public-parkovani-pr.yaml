@@ -1,0 +1,34 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-parkovani-pr
+  namespace: praha
+  title: { cs: 'Veřejné čtení: parkoviště p+r' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: praha-mesto }
+  assigner: did:web:praha.eu
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116) and the subscriptions of the Endpoint praha-parkoviste-pr, and only
+  # its types: the space's other types stay with their own datasets (T-4344).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+    - queryTemporal
+    - retrieveTemporal
+  # Its types keep history: anyone reads it, as far back as the space keeps it (T-4372).
+  temporalQ: timerel=after;timeAt=P-30D
+  information:
+    - entities:
+        # The IPR car parks only: Mr.Parkit's garages of the same type are the dataset praha-garaze
+        # (T-5680).
+        - type: OffStreetParking
+          idPattern: ^urn:ngsi-ld:OffStreetParking:[a-z0-9.-]+:praha-mesto:ipr-[0-9a-f-]{36}$

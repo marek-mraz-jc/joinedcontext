@@ -1,0 +1,23 @@
+# HSL's GTFS agencies and lines (agency.txt and routes.txt of hsl.zip): 1 agency and 459 lines on
+# 2026-10-12, read as two members of the daily feed by their byte ranges (PL-72), never the 79 MB
+# archive. No key. CC-BY-4.0 (HSL open data). T-3890.
+#
+# routes.txt is 8.3 kB packed, 47 kB inflated; 16 MiB holds 1032 times its packed size (T-3951).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hsl-gtfs-routes
+  namespace: helsinki
+  title:
+    en: HSL GTFS agencies and lines
+    fi: HSL:n GTFS-linjat
+spec:
+  type: http
+  http:
+    url: https://infopalvelut.storage.hsldev.com/gtfs/hsl.zip
+    verb: GET
+    timeout: 60s
+    archive:
+      format: zip
+      members: [agency.txt, routes.txt]
+      maxBytes: 16777216

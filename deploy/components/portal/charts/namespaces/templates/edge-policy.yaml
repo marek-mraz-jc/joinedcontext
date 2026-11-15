@@ -1,0 +1,101 @@
+{{- $release := .Values.release }}
+{{- $sa := .Values.serviceAccount }}
+{{- /*
+  The bound on the edge objects the Portal writes outside a project's apps namespace (T-5702).
+  Each published App gets an Ingress and a Certificate in the APISIX namespace (ADR-N-037,
+  AP-133, joinedcontext-portal reconciler/app_hosts.rs): `app-{app}` for its host and
+  `app-{app}-at-{key}` for each hostname of its own (AP-172). RBAC grants create and delete
+  there without names (a name the Portal does not know yet cannot be listed), and on a
+  single-namespace installation that namespace holds the whole platform. So the policy holds
+  each object to what app_hosts.rs makes:
+
+    labels       app.kubernetes.io/managed-by=joinedcontext-portal and component app-host or
+                 app-hostname, on what it creates and on what it deletes
+    name         app-..., its TLS Secret {name}-tls, so it never names a platform Secret;
+                 an MQTT broker's Certificate (part-of mqtt-brokers, mqtt-...) likewise
+    backend      the APISIX gateway Service alone: an Ingress straight to Keycloak, the
+                 broker or the database would skip the edge's authentication and limits
+    class and    the edge Ingress's class, and only the annotations it carries
+    annotations  (edge.ingressAnnotations): an nginx snippet or a Traefik middleware of
+                 another namespace would change the edge beyond routing (F-R2DEP2-006)
+
+  Hosts are not bounded: an App's own hostname may be any domain its Organization proved.
+*/}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $release }}-portal-edge
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["networking.k8s.io"]
+        apiVersions: ["v1"]
+        resources: ["ingresses"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+      - apiGroups: ["cert-manager.io"]
+        apiVersions: ["v1"]
+        resources: ["certificates"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+  matchConditions:
+    - name: the-portal
+      expression: request.userInfo.username == "system:serviceaccount:{{ $sa.namespace }}:{{ $sa.name }}"
+    # A project's apps namespace holds only what the Portal put there (policy.yaml).
+    - name: outside-an-apps-namespace
+      expression: >-
+        !request.namespace.matches("^{{ $release }}-[a-z0-9]([-a-z0-9]*[a-z0-9])?-apps$")
+  variables:
+    - name: subject
+      expression: 'request.operation == "DELETE" ? oldObject : object'
+    - name: labels
+      expression: 'has(variables.subject.metadata.labels) ? variables.subject.metadata.labels : {}'
+    # An MQTT broker's Certificate (reconciler/mqtt_brokers.rs, components/mqtt-brokers): the
+    # Portal applies and retires one per broker in the brokers' namespace, named mqtt-....
+    - name: mqttCertificate
+      expression: >-
+        request.kind.kind == "Certificate"
+        && variables.labels.exists(k, k == "app.kubernetes.io/managed-by")
+        && variables.labels["app.kubernetes.io/managed-by"] == "joinedcontext-portal"
+        && variables.labels.exists(k, k == "app.kubernetes.io/part-of")
+        && variables.labels["app.kubernetes.io/part-of"] == "mqtt-brokers"
+        && variables.subject.metadata.name.matches("^mqtt-[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
+  validations:
+    - expression: >-
+        variables.labels.exists(k, k == "app.kubernetes.io/managed-by")
+        && variables.labels["app.kubernetes.io/managed-by"] == "joinedcontext-portal"
+        && variables.labels.exists(k, k == "app.kubernetes.io/component")
+        && variables.labels["app.kubernetes.io/component"] in ["app-host", "app-hostname"]
+        && variables.subject.metadata.name.matches("^app-[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
+        || variables.mqttCertificate
+      messageExpression: >-
+        "Outside a project's apps namespace the Portal writes and deletes only the app-{app} edge objects it labelled (managed-by joinedcontext-portal, component app-host or app-hostname) and the mqtt-{broker} Certificates (part-of mqtt-brokers), not " + request.operation + " " + request.namespace + "/" + request.name + " (T-5702)."
+    - expression: >-
+        request.operation == "DELETE" || request.kind.kind != "Ingress"
+        || (!has(object.spec.defaultBackend)
+            && has(object.spec.rules)
+            && object.spec.rules.all(r, has(r.http)
+                && r.http.paths.all(p, has(p.backend.service)
+                    && p.backend.service.name == "{{ .Values.edge.gatewayService }}"))
+            && (!has(object.spec.tls) || object.spec.tls.all(t, has(t.secretName) && t.secretName == object.metadata.name + "-tls")))
+      messageExpression: >-
+        "An App's Ingress routes to the APISIX gateway Service {{ .Values.edge.gatewayService }} alone, with its TLS in " + request.name + "-tls (T-5702)."
+    - expression: >-
+        request.operation == "DELETE" || request.kind.kind != "Ingress"
+        || (has(object.spec.ingressClassName) && object.spec.ingressClassName == {{ .Values.edge.ingressClass | quote }}
+            && (!has(object.metadata.annotations)
+                || object.metadata.annotations.all(k, k in {{ .Values.edge.ingressAnnotations | toJson }})))
+      messageExpression: >-
+        "An App's Ingress keeps the edge's class {{ .Values.edge.ingressClass }} and the edge Ingress's annotations alone, not " + request.name + " (F-R2DEP2-006)."
+    - expression: >-
+        request.operation == "DELETE" || request.kind.kind != "Certificate"
+        || object.spec.secretName == object.metadata.name + "-tls"
+      messageExpression: >-
+        "A Portal Certificate writes its own Secret " + request.name + "-tls and no other (T-5702)."
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $release }}-portal-edge
+spec:
+  policyName: {{ $release }}-portal-edge
+  validationActions: [Deny]

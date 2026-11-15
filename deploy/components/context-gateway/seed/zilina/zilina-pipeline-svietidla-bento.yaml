@@ -1,0 +1,32 @@
+# The mapping of the svietidla pipeline (T-5232): one Streetlight per street light the city's open
+# data portal lists (opendata.zilina.sk dataset 102), its name and place, once a day. 9,247 on
+# 2026-10-22. The portal names a light "Streetlight #153.1001": the part after "#" is the light's
+# number on its line, kept as the name in both languages.
+#
+# Ids: urn:ngsi-ld:Streetlight:zilina.sk:{space}:invipo-{portal id}, the portal's 24-hex id.
+# Output mode replace: each light is written exactly as the portal lists it.
+#
+# An answer with fewer than 1,000 lights is the portal failing, not the city switching its lights
+# off: the run fails before anything is written and yesterday's register stays. More than 50,000
+# is not this city's register and fails the same way.
+
+pipeline:
+  processors:
+    # A response size cap: the count caps below bound the work only once the answer is parsed.
+    - mapping: |
+        root = if content().length() > 16777216 { throw("the portal answered %v bytes; more than 16777216 is not the street light register".format(content().length())) } else { this }
+    - mapping: |
+        let n = if this.type() == "array" { this.length() } else { 0 }
+        root = if $n < 1000 { throw("the portal listed %v street lights; fewer than 1000 is an outage, not the register".format($n)) } else if $n > 50000 { throw("the portal listed %v street lights; more than 50000 is not Žilina's register".format($n)) } else { this }
+    - mapping: |
+        root = this.filter(l -> l.id.or("").string().re_match("^[0-9a-f]{24}$") && l.position.coordinates.type() == "array" && l.position.coordinates.length() == 2 && l.position.coordinates.index(0).type() == "number" && l.position.coordinates.index(1).type() == "number").map_each(l -> {
+          "number": l.name.or("").string().re_replace_all("^.*#\\s*", "").trim(),
+          "l": l
+        }).map_each(r -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:invipo-%v".format("Streetlight", "zilina.sk", env("JC_SPACE"), r.l.id),
+          "type": "Streetlight",
+          "name": { "type": "LanguageProperty", "languageMap": { "sk": "Svietidlo %v".format(r.number), "en": "Street light %v".format(r.number) } },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": r.l.position.coordinates } },
+          "dataProvider": { "type": "Property", "value": "Mesto Žilina, ODbL" },
+          "source": { "type": "Property", "value": "https://opendata.zilina.sk/sk/dataset-list/detail/102" }
+        })

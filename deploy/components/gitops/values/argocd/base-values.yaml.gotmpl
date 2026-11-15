@@ -1,0 +1,239 @@
+---
+{{- $this := index .Values "gitops" "argocd" }}
+{{- $global := .Values.global }}
+{{- $images := index .Values.images "gitops" }}
+{{- $argocd := index $images "argocd" }}
+{{- $redis := index $images "redis" }}
+{{- $helmfile := index $images "helmfile" }}
+# ADR-N-056: Argo CD for one environment, small enough for the single node (§2.1, 600 Mi of
+# requests in all, docs Deployment/15-gitops.md §7).
+# Checklist:
+# - [x] Runs as non-root -> the chart's 999, every capability dropped, read-only root
+# - [x] Health probes -> the chart's, switched on where it ships them off; readiness alone,
+#       a liveness identical to it is what validate-probes refuses
+# - [x] Standard labels -> the chart's
+# - [x] ServiceAccount with least privilege -> the controller's cluster role is Argo CD's job
+# - [x] Ingress with TLS -> the APISIX route of apisix-routes.yaml, never an Ingress here
+
+# argocd-server, argocd-repo-server, …: the names the route and the policies use.
+fullnameOverride: argocd
+
+crds:
+  install: true
+  # Deleting the release never takes the Applications with it.
+  keep: true
+
+global:
+  domain: {{ printf "%s.%s" $this.subDomain $global.domain | quote }}
+  image:
+    repository: {{ $argocd.repository | quote }}
+    # The chart joins repository and tag with a colon, so the digest rides on the tag.
+    tag: {{ printf "%s@%s" $argocd.tag $argocd.digest | quote }}
+    imagePullPolicy: IfNotPresent
+  # Every container the chart writes, unless a component sets its own.
+  containerSecurityContext:
+    runAsNonRoot: true
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    seccompProfile:
+      type: RuntimeDefault
+    capabilities:
+      drop: [ALL]
+
+configs:
+  params:
+    # The edge terminates TLS (argocd.{domain}); inside the mesh the hop is mTLS already.
+    server.insecure: true
+    # One render at a time: a helmfile render of a component holds a few hundred MiB.
+    reposerver.parallelism.limit: 1
+    controller.status.processors: 10
+    controller.operation.processors: 5
+    # A plugin render of a component takes seconds; the default of 60 s cuts the large ones.
+    controller.repo.server.timeout.seconds: 300
+    server.repo.server.timeout.seconds: 300
+  cm:
+    url: {{ printf "https://%s.%s" $this.subDomain $global.domain | quote }}
+    # The local admin exists until a Keycloak login of the admin role has synced (§2.8).
+    admin.enabled: {{ $this.localAdmin }}
+    users.anonymous.enabled: false
+    exec.enabled: false
+    # Poll every 3 minutes; a merge reaches the cluster within 10 (OPS-54).
+    timeout.reconciliation: 180s
+    # Keycloak only, a public client with PKCE: no secret in the cluster for it.
+    oidc.config: |
+      name: Keycloak
+      issuer: https://idm.{{ $global.domain }}/realms/{{ $global.instanceSlug }}
+      clientID: argocd
+      enablePKCEAuthentication: true
+      requestedScopes: [openid, profile, email]
+      requestedIDTokenClaims:
+        roles:
+          essential: true
+    # An Application's health is its own sync and health, so the root waits for each wave.
+    resource.customizations.health.argoproj.io_Application: |
+      hs = {}
+      hs.status = "Progressing"
+      hs.message = ""
+      if obj.status ~= nil and obj.status.health ~= nil then
+        hs.status = obj.status.health.status
+        if obj.status.health.message ~= nil then
+          hs.message = obj.status.health.message
+        end
+      end
+      return hs
+  rbac:
+    # Reading is every login's; changing anything is the admin role's (OPS-58).
+    policy.default: role:readonly
+    scopes: "[roles]"
+    policy.csv: |
+      g, {{ $this.adminRole }}, role:admin
+  cmp:
+    create: true
+    plugins:
+      helmfile:
+        # Only an Application that names the plugin renders through it; nothing is discovered.
+        generate:
+          command: [bash, gitops/cmp/generate.sh]
+  secret:
+    # The initial admin password is the chart's to create and the operator's to delete
+    # once Keycloak logins work (§2.8).
+    createSecret: true
+
+dex:
+  enabled: false
+
+# No ApplicationSet is used; the chart has no switch, so its Deployment stays at none.
+applicationSet:
+  replicas: 0
+  readinessProbe:
+    enabled: true
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 100m, memory: 128Mi}
+
+notifications:
+  enabled: true
+  readinessProbe:
+    enabled: true
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 100m, memory: 128Mi}
+  # The owner stores `github-token` in argocd-notifications-secret (T-4674 owner action);
+  # until then a failed sync is reported by the alert and scripts/gitops-status.sh only.
+  secret:
+    create: false
+  notifiers:
+    service.webhook.github-issue: |
+      url: https://api.github.com/repos/marek-mraz-jc/joinedcontext-deployment/issues
+      headers:
+        - name: Authorization
+          value: token $github-token
+        - name: Accept
+          value: application/vnd.github+json
+  templates:
+    template.app-failed: |
+      webhook:
+        github-issue:
+          method: POST
+          body: |
+            {"title": "Argo CD: {{`{{.app.metadata.name}}`}} {{`{{.app.status.operationState.phase}}`}} at {{`{{.app.status.sync.revision}}`}}",
+             "body": "{{`{{.app.status.operationState.message}}`}}\n\nOpen {{`{{.context.argocdUrl}}`}}/applications/{{`{{.app.metadata.name}}`}}",
+             "labels": ["gitops"]}
+  triggers:
+    trigger.on-sync-failed: |
+      - when: app.status.operationState != nil and app.status.operationState.phase in ['Error', 'Failed']
+        send: [app-failed]
+        oncePer: app.status.sync.revision
+    trigger.on-health-degraded: |
+      - when: app.status.health.status == 'Degraded'
+        send: [app-failed]
+        oncePer: app.status.sync.revision
+  subscriptions:
+    - recipients: [github-issue]
+      triggers: [on-sync-failed, on-health-degraded]
+
+controller:
+  replicas: 1
+  resources:
+    requests: {cpu: 100m, memory: 192Mi}
+    limits: {cpu: "1", memory: 768Mi}
+  metrics:
+    enabled: true
+
+server:
+  replicas: 1
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+  metrics:
+    enabled: true
+
+repoServer:
+  replicas: 1
+  resources:
+    requests: {cpu: 20m, memory: 96Mi}
+    limits: {cpu: 500m, memory: 384Mi}
+  metrics:
+    enabled: true
+  # The helmfile plugin (§2.2): images/gitops-helmfile (T-4706), run as Argo CD's 999 by the
+  # plugin server the repo server shares with it.
+  extraContainers:
+    - name: helmfile
+      image: {{ printf "%s:%s@%s" $helmfile.repository $helmfile.tag $helmfile.digest | quote }}
+      imagePullPolicy: IfNotPresent
+      command: [/var/run/argocd/argocd-cmp-server]
+      # Ready once the plugin server listens on its socket, the one the repo server dials.
+      readinessProbe:
+        exec:
+          command: [test, -S, /home/argocd/cmp-server/plugins/helmfile.sock]
+        periodSeconds: 10
+      env:
+        # The caches go to the writable /tmp: the root filesystem is read-only.
+        - {name: HOME, value: /tmp}
+        - {name: HELM_CACHE_HOME, value: /tmp/helm/cache}
+        - {name: HELM_CONFIG_HOME, value: /tmp/helm/config}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        seccompProfile:
+          type: RuntimeDefault
+        capabilities:
+          drop: [ALL]
+      resources:
+        requests: {cpu: 50m, memory: 160Mi}
+        limits: {cpu: "1", memory: 640Mi}
+      volumeMounts:
+        - {name: var-files, mountPath: /var/run/argocd}
+        - {name: plugins, mountPath: /home/argocd/cmp-server/plugins}
+        - {name: argocd-cmp-cm, mountPath: /home/argocd/cmp-server/config/plugin.yaml, subPath: helmfile.yaml}
+        - {name: cmp-tmp, mountPath: /tmp}
+  volumes:
+    - name: argocd-cmp-cm
+      configMap:
+        name: argocd-cmp-cm
+    - name: cmp-tmp
+      emptyDir: {}
+
+redis:
+  enabled: true
+  image:
+    repository: {{ $redis.repository | quote }}
+    tag: {{ printf "%s@%s" $redis.tag $redis.digest | quote }}
+  # Its own ServiceAccount with no token: Redis never calls the API (OPS-27).
+  serviceAccount:
+    create: true
+    automountServiceAccountToken: false
+  automountServiceAccountToken: false
+  readinessProbe:
+    enabled: true
+  # A cache: no volume, nothing to back up.
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 200m, memory: 128Mi}
+
+redisSecretInit:
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 100m, memory: 64Mi}

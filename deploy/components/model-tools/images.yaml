@@ -1,0 +1,14 @@
+---
+model-tools:
+  tools:
+    # Built from tools/model-tools of the platform repository by its `image` workflow, a
+    # sub-path of the platform's registry name; entrypoint `python -m service`, port 8080.
+    repository: 'ghcr.io/marek-mraz-jc/joinedcontext-platform/model-tools'
+    tag: 'main'
+    # platform 871624a: model tools as main has them (T-3250's inferred required columns,
+    # T-3061's pypdf), on a Debian that clears the 3 fixable perl CRITICALs of b73d19a (T-3297).
+    # platform 0fcaa59: the broker schema generator the Portal's view writer PUTs to /q/schemas
+    # (T-3703, 7f3a8c9); platform 2883bd0: JsonProperty (T-3891) and lifecycle fields (T-3899). Digest from image run's model-tools job for that commit.
+    # platform cbd6f94: the same tools on Debian 13 (trixie), T-4126.
+    # Digest read from the registry for the tag named after the commit; the `main` tag moves.
+    digest: 'sha256:c5682083ed9191073e5e70441d487f47da77fcc3d7c4c9956f136a0ec68427b7'

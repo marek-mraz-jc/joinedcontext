@@ -1,0 +1,150 @@
+---
+# Default values for workload chart.
+# Shared workload template for platform microservices following Pod Security Standards (Restricted).
+
+nameOverride: ''
+fullnameOverride: ''
+replicaCount: 1
+
+# Rolling update surge, as a share of the desired replicas (OPS-07). maxUnavailable is always 0
+# and is not a value: a workload that may go below its replica count during a rollout is not
+# highly available, whatever the number says.
+maxSurge: 25%
+# Recreate only for a workload that must never run twice at once (T-5311).
+updateStrategy: RollingUpdate
+
+image:
+  repository: ''
+  tag: ''
+  digest: ''          # sha256:... ; when set the reference becomes repo:tag@digest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+command: []
+args: []
+
+env: {}               # name -> value, always rendered as a quoted string
+envSecret: {}         # name -> {secret: <secret name>, key: <key>, optional: <bool>}  -> secretKeyRef
+envFrom: []           # raw list, passed through
+goMemLimitPercent: 0  # >0: GOMEMLIMIT = this % of resources.limits.memory (Go workloads)
+
+enableServiceLinks: false
+# Extra /etc/hosts entries of the pod (jc-prod before the DNS move).
+hostAliases: []
+terminationGracePeriodSeconds: 30
+# How long a terminating pod keeps serving before its process is told to stop (OPS-27, T-3008).
+# The kubelet stops a pod at once, while APISIX and the mesh still send to it until they see its
+# endpoint go; without the pause every roll answered about 2 s of 502s in 0.1 s (connection
+# refused). The kubelet's own sleep, because the images are distroless and have no `sleep`. A
+# meshed pod's proxy waits this long plus `meshDrainSeconds`, so it outlives the drain of what
+# the pause let in. 0 turns both off. The grace period must be longer than the proxy's wait.
+preStopSleepSeconds: 5
+meshDrainSeconds: 5
+
+serviceAccount:
+  create: true
+  name: ''
+  automountServiceAccountToken: false
+
+# A namespaced Role and its binding, rendered only when there are rules to grant. `namespace`
+# defaults to the release's own; a workload that writes into another one names it. Empty here
+# on purpose: a workload grants nothing until an environment says what it needs.
+rbac:
+  rules: []
+  namespace: ''
+
+podAnnotations: {}
+podLabels: {}
+# Empty by default and set by each component; policies/workloads.rego refuses a render without
+# runAsNonRoot, drop ALL and a memory limit, so a component that forgets them fails CI.
+podSecurityContext: {}
+securityContext: {}
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: '1'
+    memory: 512Mi
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+  name: http
+  extraPorts: []      # raw list of {name, port, targetPort, protocol}
+  annotations: {}     # e.g. config.linkerd.io/opaque-ports for server-speaks-first protocols
+
+containerPort: 8080
+
+metrics:
+  enabled: false
+  port: 4195
+  name: metrics
+
+probes:
+  # false for a workload that serves nothing to probe, whose health is read elsewhere.
+  enabled: true
+  # With enabled false: a readiness command instead, e.g. ["test", "-s", "/tmp/state"].
+  readinessExec: []
+  readiness:
+    path: /
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /
+    # A command instead of the GET of `path`, e.g. ["sh", "-c", "test -s /tmp/state"].
+    exec: []
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+    initialDelaySeconds: 10
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# A headless Service beside the ClusterIP one, `{name: ...}`: one DNS record per pod. Off unless
+# a component asks (the pipeline runner, T-4004).
+headlessService: null
+
+configMap:
+  enabled: false
+  name: ''            # defaults to <fullname>
+  mountPath: ''
+  data: {}            # filename -> file content
+  binaryData: {}      # filename -> base64 of a binary file (a wasm module)
+
+# A files volume of the workload's own (PL-50): a PersistentVolumeClaim mounted at `mountPath`,
+# the place a runner reads a dropped CSV from. Off unless a component asks.
+persistence:
+  enabled: false
+  size: 1Gi
+  mountPath: /data
+  storageClass: ''    # '' -> the cluster default
+  accessMode: ReadWriteOnce
+extraVolumes: []
+extraInitContainers: []   # raw container specs, run before the workload (a one-time git-sync checkout)
+extraContainers: []       # raw container specs beside the workload (a git-sync sidecar)
+cronJobs: []              # {name, schedule, podLabels, podSpec}: a CronJob beside the workload (a retention job)
+extraVolumeMounts: []
+tmpDir: true          # emptyDir mounted at /tmp, required by readOnlyRootFilesystem
+serviceMesh:
+  enabled: false      # true -> pod annotation linkerd.io/inject: enabled
+# The mesh identities allowed to call `port` (Architecture/13 §6): a Linkerd Server, a
+# MeshTLSAuthentication and an AuthorizationPolicy, rendered only when the workload is meshed and
+# names clients. Every other meshed pod is refused by the proxy; the kubelet's probes are not.
+meshAuthorization:
+  port: 0
+  clients: []         # [{serviceAccount: <name>, namespace: <namespace>}]
+  includeSelf: false  # also admit the workload's own ServiceAccount
+  extraPorts: []      # [{name, port, clients}]: one more Server per port, <fullname>-<name>

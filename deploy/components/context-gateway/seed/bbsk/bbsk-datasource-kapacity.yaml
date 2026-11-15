@@ -1,0 +1,16 @@
+# Accommodation establishments, rooms and beds available per quarter, the kraj and its 13 okresy, 2017 on. No key, CC-BY-4.0 (NKOD record of ŠÚ SR).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: susr-cr3807qr
+  namespace: bbsk
+  title:
+    sk: Návštevnosť, tržby a kapacity UZ – okresy (ŠÚ SR, cr3807qr)
+    en: Accommodation visitors, revenue and capacity, districts (ŠÚ SR, cr3807qr)
+spec:
+  type: http
+  http:
+    url: https://data.statistics.sk/api/v2/dataset/cr3807qr/SK032,SK0321,SK0322,SK0323,SK0324,SK0325,SK0326,SK0327,SK0328,SK0329,SK032A,SK032B,SK032C,SK032D/*/1.Q.,2.Q.,3.Q.,4.Q./U_CR_0002,U_CR_0003,U_CR_0004?lang=sk&type=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

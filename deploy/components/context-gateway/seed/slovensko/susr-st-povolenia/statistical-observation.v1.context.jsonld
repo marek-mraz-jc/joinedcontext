@@ -1,0 +1,71 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "KeyPerformanceIndicator": {
+      "@id": "sdm-kpi:KeyPerformanceIndicator"
+    },
+    "dataSet": {
+      "@id": "qb:dataSet"
+    },
+    "dateObserved": {
+      "@id": "jc:dateObserved",
+      "@type": "xsd:dateTime"
+    },
+    "dimensionKey": {
+      "@id": "jc:dimensionKey"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "id": "@id",
+    "indicator": {
+      "@id": "jc:indicator"
+    },
+    "isPartOf": {
+      "@id": "jc:isPartOf",
+      "@type": "xsd:anyURI"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "kpiValue": {
+      "@id": "sdm-kpi:kpiValue",
+      "@type": "xsd:float"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "name": {
+      "@id": "sdm-kpi:name"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "qb": "http://purl.org/linked-data/cube#",
+    "refArea": {
+      "@id": "sdmx-dim:refArea"
+    },
+    "refPeriod": {
+      "@id": "sdmx-dim:refPeriod"
+    },
+    "schema": "http://schema.org/",
+    "sdm-kpi": "https://smartdatamodels.org/dataModel.KeyPerformanceIndicator/",
+    "sdmx-dim": "http://purl.org/linked-data/sdmx/2009/dimension#",
+    "shex": "http://www.w3.org/ns/shex#",
+    "source": {
+      "@id": "jc:source"
+    },
+    "stewardNote": {
+      "@id": "jc:stewardNote"
+    },
+    "type": "@type",
+    "ucefact": "https://vocabulary.uncefact.org/UnitMeasureCode#",
+    "unitText": {
+      "@id": "jc:unitText"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

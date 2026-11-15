@@ -1,0 +1,121 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "RiverBasin": {
+      "@id": "jc:RiverBasin"
+    },
+    "aCH": {
+      "@id": "jc:aCH",
+      "@type": "xsd:integer"
+    },
+    "aUT": {
+      "@id": "jc:aUT",
+      "@type": "xsd:integer"
+    },
+    "dOW": {
+      "@id": "jc:dOW",
+      "@type": "xsd:dateTime"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "designatio": {
+      "@id": "jc:designatio"
+    },
+    "fACC": {
+      "@id": "jc:fACC"
+    },
+    "fIDKraj0": {
+      "@id": "jc:fIDKraj0",
+      "@type": "xsd:integer"
+    },
+    "fIDSubpovodiaBbsk": {
+      "@id": "jc:fIDSubpovodiaBbsk",
+      "@type": "xsd:integer"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "gmlId": {
+      "@id": "jc:gmlId"
+    },
+    "iDN2": {
+      "@id": "jc:iDN2",
+      "@type": "xsd:integer"
+    },
+    "id": "@id",
+    "inspireIdL": {
+      "@id": "jc:inspireIdL",
+      "@type": "xsd:integer"
+    },
+    "inspireIdN": {
+      "@id": "jc:inspireIdN"
+    },
+    "isPartOf": {
+      "@id": "jc:isPartOf",
+      "@type": "xsd:anyURI"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "link": {
+      "@id": "jc:link"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "nM2": {
+      "@id": "jc:nM2"
+    },
+    "name": {
+      "@id": "sdm:name"
+    },
+    "nameLangua": {
+      "@id": "jc:nameLangua"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "relatedZ1": {
+      "@id": "jc:relatedZ1"
+    },
+    "relatedZon": {
+      "@id": "jc:relatedZon"
+    },
+    "sOI": {
+      "@id": "jc:sOI",
+      "@type": "xsd:integer"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "specialise": {
+      "@id": "jc:specialise"
+    },
+    "thematic1": {
+      "@id": "jc:thematic1"
+    },
+    "thematicId": {
+      "@id": "jc:thematicId"
+    },
+    "type": "@type",
+    "vYMERA": {
+      "@id": "jc:vYMERA",
+      "@type": "xsd:float"
+    },
+    "wiseEvolut": {
+      "@id": "jc:wiseEvolut"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "zoneType": {
+      "@id": "jc:zoneType"
+    }
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

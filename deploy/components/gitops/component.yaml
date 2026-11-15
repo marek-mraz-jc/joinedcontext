@@ -1,0 +1,12 @@
+---
+component: gitops
+parts:
+  # ADR-N-056, T-4674: Argo CD, which keeps the environment on `main` by rendering this
+  # repository's helmfile through its helmfile plugin. Installed by helmfile and never by
+  # itself, so `just dev-apply` can always rebuild it.
+  - name: argocd
+  # The root Application: gitops/chart with gitops/<environment>.yaml and gitops/hold.yaml.
+  # After Argo CD, whose CRDs it needs.
+  - name: root
+    needs:
+      - gitops.argocd

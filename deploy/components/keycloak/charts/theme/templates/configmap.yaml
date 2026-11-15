@@ -1,0 +1,118 @@
+{{/*
+  The `joinedcontext` login theme (UI-82, PF-90). A ConfigMap key cannot hold a slash, so a
+  file's path inside the theme is its name with `__` for `/`: `login__messages__messages_en.properties`
+  is `login/messages/messages_en.properties`. The Keycloak pod's init container undoes the
+  mapping. The files are read verbatim: they are FreeMarker, and Helm must not evaluate them.
+
+  Three entries are written here from the branding block: theme.properties (which names the
+  logo), branding.css (the colours and fonts as custom properties) and the logo itself.
+
+  The account console (`account__…`, T-4203) is keycloak.v3's with the same logo, colours and
+  font, its logo and a "Back to the Portal" line leading to `portalUrl`, and no dark mode.
+*/}}
+{{- $branding := .Values.branding | default dict }}
+{{- $colours := merge (dict) ($branding.colours | default dict) (dict "primary" "#1d4ed8" "secondary" "#0f766e" "accent" "#f59e0b" "background" "#ffffff" "text" "#0f172a") }}
+{{- range $name, $value := $colours }}
+{{- if not (regexMatch "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$" (toString $value)) }}
+{{- fail (printf "branding.colours.%s must be #rgb or #rrggbb, not %q" $name (toString $value)) }}
+{{- end }}
+{{- end }}
+{{- $fonts := merge (dict) ($branding.fonts | default dict) (dict "heading" "system-ui, sans-serif" "body" "system-ui, sans-serif") }}
+{{- range $name, $value := $fonts }}
+{{- if not (regexMatch "^[A-Za-z0-9 ,'\"-]+$" (toString $value)) }}
+{{- fail (printf "branding.fonts.%s must be a list of font names, not %q" $name (toString $value)) }}
+{{- end }}
+{{- end }}
+{{- /* Black or white on the primary colour, whichever reads: the YIQ brightness of the
+       colour against the usual threshold of 128. */}}
+{{- $primary := lower (trimPrefix "#" $colours.primary) }}
+{{- if eq (len $primary) 3 }}
+{{- $primary = printf "%s%s%s%s%s%s" (substr 0 1 $primary) (substr 0 1 $primary) (substr 1 2 $primary) (substr 1 2 $primary) (substr 2 3 $primary) (substr 2 3 $primary) }}
+{{- end }}
+{{- $hex := dict "0" 0 "1" 1 "2" 2 "3" 3 "4" 4 "5" 5 "6" 6 "7" 7 "8" 8 "9" 9 "a" 10 "b" 11 "c" 12 "d" 13 "e" 14 "f" 15 }}
+{{- $channel := list }}
+{{- range $i := list 0 2 4 }}
+{{- $high := substr $i (int (add $i 1)) $primary }}
+{{- $low := substr (int (add $i 1)) (int (add $i 2)) $primary }}
+{{- $channel = append $channel (add (mul 16 (index $hex $high)) (index $hex $low)) }}
+{{- end }}
+{{- $yiq := div (add (mul (index $channel 0) 299) (mul (index $channel 1) 587) (mul (index $channel 2) 114)) 1000 }}
+{{- $primaryForeground := ternary "#000000" "#ffffff" (ge (int $yiq) 128) }}
+{{- $logo := $branding.logo | default "" }}
+{{- $logoSvg := $branding.logoSvg | default "" }}
+{{- if and $logo (not (regexMatch "^[A-Za-z0-9._-]+\\.svg$" $logo)) }}
+{{- fail (printf "branding.logo must be an .svg file name, not %q" $logo) }}
+{{- end }}
+{{- /* A plain drawing and nothing that runs (F-R2DEP2-004): no scripting element, no event
+       attribute however it is separated from the tag (`<svg/onload=`), no character or entity
+       reference that could spell `javascript:` past this check, and no link out of the file
+       (`href` to anything but a `#fragment` of the drawing itself). */}}
+{{- if regexMatch "(?i)<(script|foreignobject|iframe|embed|object|handler)[\\s/>]|<!|[\\s/\"'`]on[a-z]+\\s*=|javascript:|&#|&[a-z][a-z0-9]*;|href\\s*=\\s*[\"']?[^\"'#\\s]" $logoSvg }}
+{{- fail "branding.logoSvg carries script; the logo is served from the login origin and must be a plain drawing" }}
+{{- end }}
+{{- $hasLogo := and $logo $logoSvg }}
+{{- $portalUrl := .Values.portalUrl | default "" }}
+{{- if and $portalUrl (not (regexMatch "^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$" $portalUrl)) }}
+{{- fail (printf "portalUrl must be an https origin, not %q" $portalUrl) }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.configMapName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: keycloak
+    app.kubernetes.io/component: theme
+data:
+  login__theme.properties: |
+    parent=keycloak.v2
+    import=common/keycloak
+    styles=css/styles.css css/joinedcontext.css css/branding.css
+    locales=en,sk,cs,de
+    darkMode=false
+    {{- if $hasLogo }}
+    jcLogo={{ $logo }}
+    {{- if eq ($branding.favicon | default "") $logo }}
+    jcFavicon={{ $logo }}
+    {{- end }}
+    {{- end }}
+  login__resources__css__branding.css: |
+    :root {
+      --jc-primary: {{ $colours.primary }};
+      --jc-primary-fg: {{ $primaryForeground }};
+      --jc-secondary: {{ $colours.secondary }};
+      --jc-accent: {{ $colours.accent }};
+      --jc-background: {{ $colours.background }};
+      --jc-text: {{ $colours.text }};
+      --jc-font-heading: {{ $fonts.heading }};
+      --jc-font-body: {{ $fonts.body }};
+    }
+  {{- if $hasLogo }}
+  login__resources__img__{{ $logo }}: |
+{{ $logoSvg | indent 4 }}
+  account__resources__img__{{ $logo }}: |
+{{ $logoSvg | indent 4 }}
+  {{- end }}
+  account__theme.properties: |
+    parent=keycloak.v3
+    darkMode=false
+    styles=css/branding.css
+    {{- if $hasLogo }}
+    logo=img/{{ $logo }}
+    favIcon=/img/{{ $logo }}
+    {{- end }}
+    {{- if $portalUrl }}
+    logoUrl={{ $portalUrl }}
+    jcPortalUrl={{ $portalUrl }}
+    {{- end }}
+  account__resources__css__branding.css: |
+    :root {
+      --pf-v5-global--primary-color--100: {{ $colours.primary }};
+      --pf-v5-global--link--Color: {{ $colours.primary }};
+      --pf-v5-global--FontFamily--text: {{ $fonts.body }};
+      --pf-v5-global--FontFamily--heading: {{ $fonts.heading }};
+    }
+{{- range $path, $_ := .Files.Glob "files/*" }}
+  {{ base $path }}: |
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}

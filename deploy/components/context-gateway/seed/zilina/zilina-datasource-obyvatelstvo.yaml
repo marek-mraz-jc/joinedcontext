@@ -1,0 +1,16 @@
+# Resident population of the city by sex at the start, middle and end of each quarter, 1993Q1 on: the freshest official figure. No key, CC-BY-SA-4.0 (NKOD, the om7101qr distribution family).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: susr-om7101qr
+  namespace: zilina
+  title:
+    sk: Obyvateľstvo podľa pohlavia – štvrťročne (ŠÚ SR, om7101qr)
+    en: Population by sex, quarterly (ŠÚ SR, om7101qr)
+spec:
+  type: http
+  http:
+    url: https://data.statistics.sk/api/v2/dataset/om7101qr/SK031B517402/*/*/*?lang=sk&type=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

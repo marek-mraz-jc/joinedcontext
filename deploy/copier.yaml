@@ -1,0 +1,60 @@
+---
+componentName:
+  type: str
+  help: 'Human-readable name of the component'
+  validator: |-
+    {% if not componentName.strip() %}
+    componentName cannot be empty
+    {% endif %}
+
+componentSlug:
+  type: str
+  default: "{{ componentName.lower().replace(' ', '-') }}"
+  help: 'URL-friendly slug for the component'
+
+componentVariableName: # camelCase version of componentSlug
+  type: str
+  default: |-
+    {%- set parts = componentSlug.split('-') -%}
+    {{- parts[0] ~ (parts[1:] | map('capitalize') | join('')) -}}
+  help: 'name for the component used in variables'
+  when: false
+
+shortDescription:
+  type: str
+  default: ''
+  help: 'Short Description of the component'
+
+releases:
+  type: str
+  default: '{{ componentVariableName }}'
+  help: "Comma separated list of releases that make up the component. E.g. 'frontend,backend,database'"
+
+releasesList:
+  type: yaml
+  default: |
+    {% set releases_array = releases.split(',') | map('trim') | list %}
+    {{ releases_array }}
+  when: false
+
+next_steps:
+  type: str
+  default: |-
+    Next steps:
+    1. Configure helm charts in `components/{{ componentSlug }}/charts.yaml`
+    2. Configure values for every release in `components/{{ componentSlug }}/values`
+    3. Update your README.md
+    4. Update component to `defaults/environment/global.yaml` - `components` list
+
+    Deploy the component with:
+    $ # navigate to `deployment/` and run:
+    $ helmfile apply -i --selector component={{ componentSlug }}
+  when: false
+
+_answers_file: '{{ componentSlug }}/.copier-answers.yaml'
+_message_after_copy: |-
+  Your component '{{ componentName }}' has been created in the 'components/{{ componentSlug }}' directory.
+
+  {{ next_steps -}}
+
+_subdirectory: template-component

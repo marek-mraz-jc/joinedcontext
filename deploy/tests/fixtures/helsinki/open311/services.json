@@ -1,0 +1,41 @@
+[ {
+  "service_code" : "2805",
+  "service_name" : "Education",
+  "description" : "Education",
+  "metadata" : false,
+  "type" : "realtime",
+  "keywords" : "education,basic education,general upper secondary education,vocational education,services in Swedish",
+  "group" : "Sectors"
+}, {
+  "service_code" : "2806",
+  "service_name" : "City environment",
+  "description" : "City environment",
+  "metadata" : false,
+  "type" : "realtime",
+  "keywords" : "land use,city structure,buildings,public areas,permits",
+  "group" : "Sectors"
+}, {
+  "service_code" : "2807",
+  "service_name" : "Culture and leisure",
+  "description" : "Culture and leisure",
+  "metadata" : false,
+  "type" : "realtime",
+  "keywords" : "culture,sports,youth",
+  "group" : "Sectors"
+}, {
+  "service_code" : "2808",
+  "service_name" : "Social services and health care",
+  "description" : "Social services and health care",
+  "metadata" : false,
+  "type" : "realtime",
+  "keywords" : "family services,social services,health services,hospital services,rehabilitation services,health care services",
+  "group" : "Sectors"
+}, {
+  "service_code" : "2809",
+  "service_name" : "General and other feedback",
+  "description" : "Feedback concerning multiple sectors or the central administration",
+  "metadata" : false,
+  "type" : "realtime",
+  "keywords" : "general feedback,other feedback",
+  "group" : "Sectors"
+} ]

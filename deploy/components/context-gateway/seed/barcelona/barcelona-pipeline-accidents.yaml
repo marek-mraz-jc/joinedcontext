@@ -1,0 +1,21 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: accidents
+  namespace: barcelona
+  title:
+    ca: Accidents de trànsit de Barcelona, cada setmana
+    es: Accidentes de tráfico de Barcelona, cada semana
+    en: Barcelona road accidents, weekly
+spec:
+  class: auto
+  # The city publishes a year's file once, months after the year ends (2025 on 2026-05-19), and
+  # corrects it rarely: a weekly read is enough.
+  schedule: '50 5 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-accidents }
+  targetEndpoint: urn:ngsi-ld:Endpoint:barcelona.cat:barcelona:barcelona
+  # Upsert without expiry: the accidents of every year read stay, so the dataset grows a year at a
+  # time (about 8,000 accidents each).
+  output: { type: RoadAccident, mode: upsert }
+  quotas: { maxMemoryMb: 192, cpuMillicores: 200 }

@@ -1,0 +1,10 @@
+---
+# The background map on its own host, tiles.{domain} (T-4638). `subDomain` also puts the host
+# on the edge Ingress and in the certificate's SAN list. Anonymous and read-only: nginx answers
+# GET, HEAD and a CORS preflight and refuses every other method.
+basemap:
+  name: basemap
+  description: The background map's tiles, style, fonts and sprites
+  upstream: basemap-tiles.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "basemap") }}.svc.cluster.local:8080 # yamllint disable-line rule:line-length
+  subDomain: tiles
+  uri: '/*'

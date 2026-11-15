@@ -1,0 +1,17 @@
+# One Organization per record of `minedu-mapa-skol`, written into the city's public space through its one Endpoint (PL-18, T-2781).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: skoly
+  namespace: banskabystrica
+  title: { sk: Školy v meste, en: Schools in the city }
+spec:
+  class: auto
+  # The map changes a few times a year; weekly is already more than it needs (PL-26).
+  period: 168h
+  schedule: '47 4 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: minedu-mapa-skol }
+  targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:banskabystrica-verejne:banskabystrica-verejne
+  output: { type: Organization, mode: upsert }
+  quotas: { maxMemoryMb: 256, cpuMillicores: 100 }

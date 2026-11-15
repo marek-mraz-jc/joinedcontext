@@ -1,0 +1,49 @@
+networkpolicies:
+  {{- range .Values.components }}
+    {{- $component := . }}
+    {{- $addonPath := printf "../../deployment/addons/%s" $component }}
+    {{- $componentPath := printf "../../components/%s" $component }}
+    {{- if isDir $addonPath }}
+      {{- $componentPath = $addonPath }}  
+    {{- end }}
+  {{- /* Both directions. Ingress alone leaves a compromised pod free to reach anything it
+         can name — the database, the identity provider, an address on the internet — and
+         that is the half of the blast radius that matters after a break-in (OPS-38,
+         SEC-GAP-05). Egress deny means every workload has to declare what it calls, in its
+         own components/<name>/networkpolicies.yaml, down to CoreDNS. */}}
+  default-deny-{{ $component }}:
+    podSelector: {}
+    policyTypes:
+      - Ingress
+      - Egress
+    _component: {{ $component }}
+    {{- $networkpoliciesFile := printf "%s/networkpolicies.yaml" $componentPath }}
+    {{- $templated := printf "%s/networkpolicies.yaml.gotmpl" $componentPath }}
+    {{- if isFile $templated }}
+      {{- $content := tpl (readFile $templated) $ | fromYaml }}
+      {{- range $policyName, $policyConfig := $content }}
+        {{- $_ := set $policyConfig "_component" $component }}
+  {{ $policyName }}:
+    {{- $policyConfig | toYaml | nindent 4 }}
+      {{- end }}
+    {{- end }}
+    {{- if isFile $networkpoliciesFile }}
+      {{- $content := readFile $networkpoliciesFile | fromYaml }}
+      {{- range $policyName, $policyConfig := $content }}
+        {{- $_ := set $policyConfig "_component" $component }}
+  {{ $policyName }}:
+    {{- $policyConfig | toYaml | nindent 4 }}
+      {{- end }}
+    {{- end }}
+    {{- if and ($.Values.global.serviceMesh.enable | default false) (eq ($.Values.global.serviceMesh.type | default "") "linkerd") }}
+      {{- $linkerdFile := printf "%s/networkpolicies-linkerd.yaml" $componentPath }}
+      {{- if isFile $linkerdFile }}
+        {{- $content := readFile $linkerdFile | fromYaml }}
+        {{- range $policyName, $policyConfig := $content }}
+          {{- $_ := set $policyConfig "_component" $component }}
+  {{ $policyName }}:
+    {{- $policyConfig | toYaml | nindent 4 }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+  {{- end }}

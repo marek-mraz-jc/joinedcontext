@@ -1,0 +1,19 @@
+# One RoadSegment per record of the IPR layer Uliční úseky TSK whose objectid falls in objectid>=248849 AND objectid<258849 into the city space (T-5677).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: tsk-useky-3
+  namespace: praha
+  title:
+    en: TSK street sections, part 4 of 5
+    cs: Uliční úseky TSK, část 4 z 5
+spec:
+  class: auto
+  # TSK republishes the layer a few times a year; one read a week keeps up.
+  period: 168h
+  schedule: '20 3 * * 0'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-tsk-useky }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: RoadSegment, mode: upsert }
+  quotas: { maxMemoryMb: 192, cpuMillicores: 100 }

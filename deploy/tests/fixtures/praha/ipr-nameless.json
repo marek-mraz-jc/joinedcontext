@@ -1,0 +1,3714 @@
+{
+ "war-graves": {
+  "description": {
+   "name": "URK_CUR_URK_VALHROBPIETMIST_B",
+   "fields": [
+    {
+     "nullable": false,
+     "defaultValue": null,
+     "editable": false,
+     "length": 4,
+     "type": "esriFieldTypeOID",
+     "modelName": "OBJECTID",
+     "domain": null,
+     "name": "objectid",
+     "alias": "OBJECTID"
+    },
+    {
+     "modelName": "ID_POSKYT",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": null,
+     "name": "id_poskyt",
+     "alias": "ID_POSKYT",
+     "type": "esriFieldTypeDouble"
+    },
+    {
+     "nullable": false,
+     "editable": false,
+     "defaultValue": null,
+     "length": 38,
+     "type": "esriFieldTypeGlobalID",
+     "modelName": "globalid",
+     "domain": null,
+     "name": "globalid",
+     "alias": "globalid"
+    }
+   ]
+  },
+  "features": [
+   {
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      14.473847,
+      50.080908
+     ],
+     "crs": null
+    },
+    "type": "Feature",
+    "properties": {
+     "globalid": "{349FFBA3-8B92-40AA-8B97-AB967FBA99A2}"
+    }
+   },
+   {
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      14.473847,
+      50.080908
+     ],
+     "crs": null
+    },
+    "type": "Feature",
+    "properties": {
+     "globalid": "{7347A27C-C6F3-4C15-B47E-41229551BB51}"
+    }
+   },
+   {
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      14.617681,
+      50.027767
+     ],
+     "crs": null
+    },
+    "type": "Feature",
+    "properties": {
+     "globalid": "{7144EE74-0933-4A62-B333-840DD789D954}"
+    }
+   }
+  ]
+ },
+ "post-offices": {
+  "description": {
+   "name": "FSV_CUR_KV_POSTY_B",
+   "fields": [
+    {
+     "nullable": false,
+     "defaultValue": null,
+     "editable": false,
+     "length": 4,
+     "type": "esriFieldTypeOID",
+     "modelName": "OBJECTID",
+     "domain": null,
+     "name": "objectid",
+     "alias": "OBJECTID"
+    },
+    {
+     "modelName": "ID_POSKYT",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": null,
+     "name": "id_poskyt",
+     "alias": "ID_POSKYT",
+     "type": "esriFieldTypeInteger"
+    },
+    {
+     "nullable": false,
+     "editable": false,
+     "defaultValue": null,
+     "length": 38,
+     "type": "esriFieldTypeGlobalID",
+     "modelName": "globalid",
+     "domain": null,
+     "name": "globalid",
+     "alias": "globalid"
+    }
+   ]
+  },
+  "features": [
+   {
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      14.492807,
+      50.076512
+     ],
+     "crs": null
+    },
+    "type": "Feature",
+    "properties": {
+     "globalid": "{59CC76A7-68F4-4CA3-AC1E-EA1E2515D4C8}"
+    }
+   },
+   {
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      14.543227,
+      50.0725
+     ],
+     "crs": null
+    },
+    "type": "Feature",
+    "properties": {
+     "globalid": "{F0067BE6-B106-4DDC-8887-89AE741B06BA}"
+    }
+   },
+   {
+    "geometry": {
+     "type": "Point",
+     "coordinates": [
+      14.517837,
+      50.053415
+     ],
+     "crs": null
+    },
+    "type": "Feature",
+    "properties": {
+     "globalid": "{5390573A-F02D-4A47-912F-CFB6578457BA}"
+    }
+   }
+  ]
+ },
+ "tech-points": {
+  "description": {
+   "name": "OPK_CUR_OPK_SMZ_TP_B",
+   "fields": [
+    {
+     "nullable": false,
+     "defaultValue": null,
+     "editable": false,
+     "length": 4,
+     "type": "esriFieldTypeOID",
+     "modelName": "OBJECTID",
+     "domain": null,
+     "name": "objectid",
+     "alias": "OBJECTID"
+    },
+    {
+     "modelName": "KOD_SPRAV",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": {
+      "splitPolicy": "esriSPTDefaultValue",
+      "name": "SMZ_spravce1",
+      "description": "spravceSMZ",
+      "type": "codedValue",
+      "codedValues": [
+       {
+        "code": 1,
+        "name": "MČ Praha 1"
+       },
+       {
+        "code": 2,
+        "name": "MČ Praha 2"
+       },
+       {
+        "code": 3,
+        "name": "MČ Praha 3"
+       },
+       {
+        "code": 4,
+        "name": "MČ Praha 4"
+       },
+       {
+        "code": 5,
+        "name": "MČ Praha 5"
+       },
+       {
+        "code": 6,
+        "name": "MČ Praha 6"
+       },
+       {
+        "code": 7,
+        "name": "MČ Praha 7"
+       },
+       {
+        "code": 8,
+        "name": "MČ Praha 8"
+       },
+       {
+        "code": 9,
+        "name": "MČ Praha 9"
+       },
+       {
+        "code": 10,
+        "name": "MČ Praha 10"
+       },
+       {
+        "code": 11,
+        "name": "MČ Praha 11"
+       },
+       {
+        "code": 12,
+        "name": "MČ Praha 12"
+       },
+       {
+        "code": 13,
+        "name": "MČ Praha 13"
+       },
+       {
+        "code": 14,
+        "name": "MČ Praha 14"
+       },
+       {
+        "code": 15,
+        "name": "MČ Praha 15"
+       },
+       {
+        "code": 16,
+        "name": "MČ Praha 16"
+       },
+       {
+        "code": 17,
+        "name": "MČ Praha 17"
+       },
+       {
+        "code": 18,
+        "name": "MČ Praha 18"
+       },
+       {
+        "code": 19,
+        "name": "MČ Praha 19"
+       },
+       {
+        "code": 20,
+        "name": "MČ Praha 20"
+       },
+       {
+        "code": 21,
+        "name": "MČ Praha 21"
+       },
+       {
+        "code": 22,
+        "name": "MČ Praha 22"
+       },
+       {
+        "code": 0,
+        "name": "nespecifikovaný"
+       },
+       {
+        "code": 23,
+        "name": "MČ Praha-Benice"
+       },
+       {
+        "code": 24,
+        "name": "MČ Praha-Běchovice"
+       },
+       {
+        "code": 25,
+        "name": "MČ Praha-Březiněves"
+       },
+       {
+        "code": 26,
+        "name": "MČ Praha-Dolní Chabry"
+       },
+       {
+        "code": 27,
+        "name": "MČ Praha-Dolní Měcholupy"
+       },
+       {
+        "code": 28,
+        "name": "MČ Praha-Dolní Počernice"
+       },
+       {
+        "code": 29,
+        "name": "MČ Praha-Dubeč"
+       },
+       {
+        "code": 30,
+        "name": "MČ Praha-Klánovice"
+       },
+       {
+        "code": 31,
+        "name": "MČ Praha-Koloděje"
+       },
+       {
+        "code": 32,
+        "name": "MČ Praha-Kolovraty"
+       },
+       {
+        "code": 33,
+        "name": "MČ Praha-Královice"
+       },
+       {
+        "code": 34,
+        "name": "MČ Praha-Kunratice"
+       },
+       {
+        "code": 35,
+        "name": "MČ Praha-Křeslice"
+       },
+       {
+        "code": 36,
+        "name": "MČ Praha-Libuš"
+       },
+       {
+        "code": 37,
+        "name": "MČ Praha-Lipence"
+       },
+       {
+        "code": 38,
+        "name": "MČ Praha-Lochkov"
+       },
+       {
+        "code": 39,
+        "name": "MČ Praha-Lysolaje"
+       },
+       {
+        "code": 40,
+        "name": "MČ Praha-Nebušice"
+       },
+       {
+        "code": 41,
+        "name": "MČ Praha-Nedvězí"
+       },
+       {
+        "code": 42,
+        "name": "MČ Praha-Petrovice"
+       },
+       {
+        "code": 43,
+        "name": "MČ Praha-Přední Kopanina"
+       },
+       {
+        "code": 44,
+        "name": "MČ Praha-Satalice"
+       },
+       {
+        "code": 45,
+        "name": "MČ Praha-Slivenec"
+       },
+       {
+        "code": 46,
+        "name": "MČ Praha-Suchdol"
+       },
+       {
+        "code": 47,
+        "name": "MČ Praha-Troja"
+       },
+       {
+        "code": 48,
+        "name": "MČ Praha-Velká Chuchle"
+       },
+       {
+        "code": 49,
+        "name": "MČ Praha-Vinoř"
+       },
+       {
+        "code": 50,
+        "name": "MČ Praha-Zbraslav"
+       },
+       {
+        "code": 51,
+        "name": "MČ Praha-Zličín"
+       },
+       {
+        "code": 52,
+        "name": "MČ Praha-Újezd"
+       },
+       {
+        "code": 53,
+        "name": "MČ Praha-Čakovice"
+       },
+       {
+        "code": 54,
+        "name": "MČ Praha-Ďáblice"
+       },
+       {
+        "code": 55,
+        "name": "MČ Praha-Řeporyje"
+       },
+       {
+        "code": 56,
+        "name": "MČ Praha-Šeberov"
+       },
+       {
+        "code": 57,
+        "name": "MČ Praha-Štěrboholy"
+       },
+       {
+        "code": 58,
+        "name": "MHMP-OCP"
+       },
+       {
+        "code": 59,
+        "name": "Technická správa komunikací hl. m. Prahy, a.s."
+       },
+       {
+        "code": 60,
+        "name": "Stome a spoluvlastníci"
+       },
+       {
+        "code": 61,
+        "name": "Pražské vodovody a kanalizace, a.s."
+       },
+       {
+        "code": 62,
+        "name": "MHMP-HOM"
+       }
+      ],
+      "mergePolicy": "esriMPTDefaultValue"
+     },
+     "name": "kod_sprav",
+     "alias": "Správce",
+     "type": "esriFieldTypeInteger"
+    },
+    {
+     "modelName": "KOD_R_PECE",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": {
+      "splitPolicy": "esriSPTDefaultValue",
+      "name": "SMZ_r_pece",
+      "description": "rezim_peceSZM",
+      "type": "codedValue",
+      "codedValues": [
+       {
+        "code": 1,
+        "name": "Intenzitní třída údržby I"
+       },
+       {
+        "code": 2,
+        "name": "Intenzitní třída údržby II"
+       },
+       {
+        "code": 4,
+        "name": "Intenzitní třída údržby IV"
+       },
+       {
+        "code": 3,
+        "name": "Intenzitní třída údržby III"
+       }
+      ],
+      "mergePolicy": "esriMPTDefaultValue"
+     },
+     "name": "kod_r_pece",
+     "alias": "Režim péče",
+     "type": "esriFieldTypeInteger"
+    },
+    {
+     "modelName": "kod_TP",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": {
+      "splitPolicy": "esriSPTDefaultValue",
+      "name": "SMZ_TP",
+      "description": "tech_prvekSMZ",
+      "type": "codedValue",
+      "codedValues": [
+       {
+        "code": 11,
+        "name": "Cesta"
+       },
+       {
+        "code": 21,
+        "name": "Chodník"
+       },
+       {
+        "code": 31,
+        "name": "Opěrná zeď"
+       },
+       {
+        "code": 41,
+        "name": "Oplocení"
+       },
+       {
+        "code": 51,
+        "name": "Parkoviště"
+       },
+       {
+        "code": 61,
+        "name": "Plocha zpevněná - neurčeno"
+       },
+       {
+        "code": 71,
+        "name": "Schodiště"
+       },
+       {
+        "code": 81,
+        "name": "Zábradlí"
+       },
+       {
+        "code": 91,
+        "name": "Plastika"
+       },
+       {
+        "code": 92,
+        "name": "Socha"
+       },
+       {
+        "code": 93,
+        "name": "Umělecký artefakt jiný"
+       },
+       {
+        "code": 101,
+        "name": "Bazén, kašna"
+       },
+       {
+        "code": 102,
+        "name": "Potok, řeka"
+       },
+       {
+        "code": 103,
+        "name": "Rybník"
+       },
+       {
+        "code": 104,
+        "name": "Umělá vodní nádrž"
+       },
+       {
+        "code": 105,
+        "name": "Umělý vodní tok"
+       },
+       {
+        "code": 106,
+        "name": "Vodní plocha jiná"
+       },
+       {
+        "code": 107,
+        "name": "Vodní prvek jiný"
+       },
+       {
+        "code": 108,
+        "name": "Vodotrysk"
+       },
+       {
+        "code": 201,
+        "name": "Altán"
+       },
+       {
+        "code": 202,
+        "name": "Drobná stavba jiná"
+       },
+       {
+        "code": 203,
+        "name": "Pergola"
+       },
+       {
+        "code": 204,
+        "name": "Prodejní stánek"
+       },
+       {
+        "code": 205,
+        "name": "Přístřešek"
+       },
+       {
+        "code": 206,
+        "name": "Psí WC"
+       },
+       {
+        "code": 207,
+        "name": "Sakrální drobná stavba"
+       },
+       {
+        "code": 208,
+        "name": "Stání pro popelnice"
+       },
+       {
+        "code": 209,
+        "name": "Trafostanice"
+       },
+       {
+        "code": 210,
+        "name": "Veřejné WC"
+       },
+       {
+        "code": 301,
+        "name": "Informační tabule"
+       },
+       {
+        "code": 302,
+        "name": "Klepadlo"
+       },
+       {
+        "code": 303,
+        "name": "Lavička"
+       },
+       {
+        "code": 304,
+        "name": "Odpadkový koš"
+       },
+       {
+        "code": 305,
+        "name": "Orientační tabule"
+       },
+       {
+        "code": 306,
+        "name": "Osvětlení"
+       },
+       {
+        "code": 307,
+        "name": "Pítko"
+       },
+       {
+        "code": 308,
+        "name": "Sloup, stožár"
+       },
+       {
+        "code": 309,
+        "name": "Sloupek"
+       },
+       {
+        "code": 310,
+        "name": "Sportovní nářadí"
+       },
+       {
+        "code": 311,
+        "name": "Treláž"
+       },
+       {
+        "code": 312,
+        "name": "Vybavenost jiná"
+       },
+       {
+        "code": 313,
+        "name": "Zahradní hydrant"
+       },
+       {
+        "code": 401,
+        "name": "Stromová mísa"
+       }
+      ],
+      "mergePolicy": "esriMPTDefaultValue"
+     },
+     "name": "kod_tp",
+     "alias": "Technický prvek",
+     "type": "esriFieldTypeInteger"
+    },
+    {
+     "modelName": "kod_povrch",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": {
+      "splitPolicy": "esriSPTDefaultValue",
+      "name": "SMZ_povrch",
+      "description": "povrchSMZ",
+      "type": "codedValue",
+      "codedValues": [
+       {
+        "code": 100,
+        "name": "Beton"
+       },
+       {
+        "code": 200,
+        "name": "Černý úhor"
+       },
+       {
+        "code": 201,
+        "name": "Černý úhor borka"
+       },
+       {
+        "code": 202,
+        "name": "Černý úhor kačírek"
+       },
+       {
+        "code": 203,
+        "name": "Černý úhor nemulčované"
+       },
+       {
+        "code": 204,
+        "name": "Černý úhor písek"
+       },
+       {
+        "code": 205,
+        "name": "Černý úhor sláma"
+       },
+       {
+        "code": 206,
+        "name": "Černý úhor štěrk"
+       },
+       {
+        "code": 300,
+        "name": "Dlažba"
+       },
+       {
+        "code": 301,
+        "name": "Dlažba betonová"
+       },
+       {
+        "code": 302,
+        "name": "Dlažba kamenná"
+       },
+       {
+        "code": 303,
+        "name": "Dlažba sštětová kamenná"
+       },
+       {
+        "code": 304,
+        "name": "Dlažba zámková"
+       },
+       {
+        "code": 400,
+        "name": "Kamenné kostky"
+       },
+       {
+        "code": 500,
+        "name": "Mlat"
+       },
+       {
+        "code": 600,
+        "name": "Mozaika"
+       },
+       {
+        "code": 701,
+        "name": "Mříže-beton"
+       },
+       {
+        "code": 702,
+        "name": "Mříže-bez mříže"
+       },
+       {
+        "code": 703,
+        "name": "Mříže-hliník"
+       },
+       {
+        "code": 704,
+        "name": "Mříže-konglomerát"
+       },
+       {
+        "code": 705,
+        "name": "Mříže-litina"
+       },
+       {
+        "code": 706,
+        "name": "Mříže-nerez"
+       },
+       {
+        "code": 700,
+        "name": "Mříže-nespecifikována"
+       },
+       {
+        "code": 707,
+        "name": "Mříže-pletivo"
+       },
+       {
+        "code": 800,
+        "name": "Mulč"
+       },
+       {
+        "code": 900,
+        "name": "Štěrk"
+       },
+       {
+        "code": 1000,
+        "name": "Umělý povrch"
+       },
+       {
+        "code": 1100,
+        "name": "Vegetační tvárnice"
+       },
+       {
+        "code": 1200,
+        "name": "Živice"
+       },
+       {
+        "code": 99,
+        "name": "Jiný povrch"
+       },
+       {
+        "code": 1300,
+        "name": "Vegetační povrch"
+       }
+      ],
+      "mergePolicy": "esriMPTDefaultValue"
+     },
+     "name": "kod_povrch",
+     "alias": "Povrch ploch",
+     "type": "esriFieldTypeInteger"
+    },
+    {
+     "modelName": "kod_sk_TP",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": {
+      "splitPolicy": "esriSPTDefaultValue",
+      "name": "SMZ_sk_TP",
+      "description": "SK_TP_SMZ",
+      "type": "codedValue",
+      "codedValues": [
+       {
+        "code": 10,
+        "name": "Cesta"
+       },
+       {
+        "code": 200,
+        "name": "Drobná stavba"
+       },
+       {
+        "code": 20,
+        "name": "Chodník"
+       },
+       {
+        "code": 30,
+        "name": "Opěrná zeď"
+       },
+       {
+        "code": 40,
+        "name": "Oplocení"
+       },
+       {
+        "code": 50,
+        "name": "Parkoviště"
+       },
+       {
+        "code": 60,
+        "name": "Plocha zpevněná - neurčeno"
+       },
+       {
+        "code": 70,
+        "name": "Schodiště"
+       },
+       {
+        "code": 90,
+        "name": "Umělecký artefakt"
+       },
+       {
+        "code": 100,
+        "name": "Vodní prvky"
+       },
+       {
+        "code": 300,
+        "name": "Vybavenost"
+       },
+       {
+        "code": 80,
+        "name": "Zábradlí"
+       },
+       {
+        "code": 400,
+        "name": "Stromová mísa"
+       }
+      ],
+      "mergePolicy": "esriMPTDefaultValue"
+     },
+     "name": "kod_sk_tp",
+     "alias": "Skupinový technický prvek",
+     "type": "esriFieldTypeInteger"
+    },
+    {
+     "modelName": "kod_k_mat",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": {
+      "splitPolicy": "esriSPTDefaultValue",
+      "name": "SMZ_k_mat",
+      "description": "material_SMZ",
+      "type": "codedValue",
+      "codedValues": [
+       {
+        "code": 1,
+        "name": "Beton"
+       },
+       {
+        "code": 2,
+        "name": "Cihla"
+       },
+       {
+        "code": 3,
+        "name": "Dřevo"
+       },
+       {
+        "code": 4,
+        "name": "Kámen"
+       },
+       {
+        "code": 5,
+        "name": "Kombinace"
+       },
+       {
+        "code": 6,
+        "name": "Kov"
+       },
+       {
+        "code": 7,
+        "name": "Kovaný prvek"
+       },
+       {
+        "code": 8,
+        "name": "Kovové lanko"
+       },
+       {
+        "code": 9,
+        "name": "Lano"
+       },
+       {
+        "code": 10,
+        "name": "Plast"
+       },
+       {
+        "code": 11,
+        "name": "Pletivo"
+       },
+       {
+        "code": 12,
+        "name": "Suché zdivo"
+       },
+       {
+        "code": 13,
+        "name": "Vegetační tvárnice"
+       },
+       {
+        "code": 14,
+        "name": "Zdivo"
+       },
+       {
+        "code": 99,
+        "name": "Jiný materiál"
+       }
+      ],
+      "mergePolicy": "esriMPTDefaultValue"
+     },
+     "name": "kod_k_mat",
+     "alias": "Konstrukční materiál",
+     "type": "esriFieldTypeInteger"
+    },
+    {
+     "modelName": "AKTUALIZACE",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": null,
+     "precision": 1,
+     "name": "aktualizace",
+     "length": 29,
+     "alias": "Aktualizace",
+     "type": "esriFieldTypeDate"
+    },
+    {
+     "nullable": false,
+     "editable": false,
+     "defaultValue": null,
+     "length": 38,
+     "type": "esriFieldTypeGlobalID",
+     "modelName": "globalid",
+     "domain": null,
+     "name": "globalid",
+     "alias": "globalid"
+    }
+   ]
+  },
+  "features": [
+   {
+    "geometry": {
+     "type": "MultiPoint",
+     "coordinates": [
+      [
+       14.541051,
+       50.106682
+      ]
+     ],
+     "crs": null
+    },
+    "type": "Feature",
+    "properties": {
+     "kod_udrz": null,
+     "aktualizace": 1782807240000,
+     "kod_k_mat": 99,
+     "globalid": "{CBC32018-F12C-495B-A29D-6C9EAF4D25CC}",
+     "kod_r_pece": null,
+     "kod_povrch": null,
+     "kod_tp": 93,
+     "kod_sprav": 14,
+     "kod_typtp": null,
+     "kod_sk_tp": 90
+    }
+   },
+   {
+    "geometry": {
+     "type": "MultiPoint",
+     "coordinates": [
+      [
+       14.420959,
+       50.104672
+      ]
+     ],
+     "crs": null
+    },
+    "type": "Feature",
+    "properties": {
+     "kod_udrz": 58,
+     "aktualizace": 1738384216000,
+     "kod_k_mat": null,
+     "globalid": "{89C00738-AED8-4CE6-9746-FEF2648F01E9}",
+     "kod_r_pece": 1,
+     "kod_povrch": null,
+     "kod_tp": null,
+     "kod_sprav": 58,
+     "kod_typtp": null,
+     "kod_sk_tp": 90
+    }
+   },
+   {
+    "geometry": {
+     "type": "MultiPoint",
+     "coordinates": [
+      [
+       14.452989,
+       50.010673
+      ]
+     ],
+     "crs": null
+    },
+    "type": "Feature",
+    "properties": {
+     "kod_udrz": 12,
+     "aktualizace": 1738385409000,
+     "kod_k_mat": null,
+     "globalid": "{16E4CD49-4BC7-45F7-B54C-3B20C6A57CC6}",
+     "kod_r_pece": null,
+     "kod_povrch": null,
+     "kod_tp": null,
+     "kod_sprav": 12,
+     "kod_typtp": null,
+     "kod_sk_tp": 300
+    }
+   }
+  ]
+ },
+ "tech-lines": {
+  "description": {
+   "name": "OPK_CUR_OPK_SMZ_TP_L",
+   "fields": [
+    {
+     "nullable": false,
+     "defaultValue": null,
+     "editable": false,
+     "length": 4,
+     "type": "esriFieldTypeOID",
+     "modelName": "OBJECTID",
+     "domain": null,
+     "name": "objectid",
+     "alias": "OBJECTID"
+    },
+    {
+     "modelName": "KOD_SPRAV",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": {
+      "splitPolicy": "esriSPTDefaultValue",
+      "name": "SMZ_spravce1",
+      "description": "spravceSMZ",
+      "type": "codedValue",
+      "codedValues": [
+       {
+        "code": 1,
+        "name": "MČ Praha 1"
+       },
+       {
+        "code": 2,
+        "name": "MČ Praha 2"
+       },
+       {
+        "code": 3,
+        "name": "MČ Praha 3"
+       },
+       {
+        "code": 4,
+        "name": "MČ Praha 4"
+       },
+       {
+        "code": 5,
+        "name": "MČ Praha 5"
+       },
+       {
+        "code": 6,
+        "name": "MČ Praha 6"
+       },
+       {
+        "code": 7,
+        "name": "MČ Praha 7"
+       },
+       {
+        "code": 8,
+        "name": "MČ Praha 8"
+       },
+       {
+        "code": 9,
+        "name": "MČ Praha 9"
+       },
+       {
+        "code": 10,
+        "name": "MČ Praha 10"
+       },
+       {
+        "code": 11,
+        "name": "MČ Praha 11"
+       },
+       {
+        "code": 12,
+        "name": "MČ Praha 12"
+       },
+       {
+        "code": 13,
+        "name": "MČ Praha 13"
+       },
+       {
+        "code": 14,
+        "name": "MČ Praha 14"
+       },
+       {
+        "code": 15,
+        "name": "MČ Praha 15"
+       },
+       {
+        "code": 16,
+        "name": "MČ Praha 16"
+       },
+       {
+        "code": 17,
+        "name": "MČ Praha 17"
+       },
+       {
+        "code": 18,
+        "name": "MČ Praha 18"
+       },
+       {
+        "code": 19,
+        "name": "MČ Praha 19"
+       },
+       {
+        "code": 20,
+        "name": "MČ Praha 20"
+       },
+       {
+        "code": 21,
+        "name": "MČ Praha 21"
+       },
+       {
+        "code": 22,
+        "name": "MČ Praha 22"
+       },
+       {
+        "code": 0,
+        "name": "nespecifikovaný"
+       },
+       {
+        "code": 23,
+        "name": "MČ Praha-Benice"
+       },
+       {
+        "code": 24,
+        "name": "MČ Praha-Běchovice"
+       },
+       {
+        "code": 25,
+        "name": "MČ Praha-Březiněves"
+       },
+       {
+        "code": 26,
+        "name": "MČ Praha-Dolní Chabry"
+       },
+       {
+        "code": 27,
+        "name": "MČ Praha-Dolní Měcholupy"
+       },
+       {
+        "code": 28,
+        "name": "MČ Praha-Dolní Počernice"
+       },
+       {
+        "code": 29,
+        "name": "MČ Praha-Dubeč"
+       },
+       {
+        "code": 30,
+        "name": "MČ Praha-Klánovice"
+       },
+       {
+        "code": 31,
+        "name": "MČ Praha-Koloděje"
+       },
+       {
+        "code": 32,
+        "name": "MČ Praha-Kolovraty"
+       },
+       {
+        "code": 33,
+        "name": "MČ Praha-Královice"
+       },
+       {
+        "code": 34,
+        "name": "MČ Praha-Kunratice"
+       },
+       {
+        "code": 35,
+        "name": "MČ Praha-Křeslice"
+       },
+       {
+        "code": 36,
+        "name": "MČ Praha-Libuš"
+       },
+       {
+        "code": 37,
+        "name": "MČ Praha-Lipence"
+       },
+       {
+        "code": 38,
+        "name": "MČ Praha-Lochkov"
+       },
+       {
+        "code": 39,
+        "name": "MČ Praha-Lysolaje"
+       },
+       {
+        "code": 40,
+        "name": "MČ Praha-Nebušice"
+       },
+       {
+        "code": 41,
+        "name": "MČ Praha-Nedvězí"
+       },
+       {
+        "code": 42,
+        "name": "MČ Praha-Petrovice"
+       },
+       {
+        "code": 43,
+        "name": "MČ Praha-Přední Kopanina"
+       },
+       {
+        "code": 44,
+        "name": "MČ Praha-Satalice"
+       },
+       {
+        "code": 45,
+        "name": "MČ Praha-Slivenec"
+       },
+       {
+        "code": 46,
+        "name": "MČ Praha-Suchdol"
+       },
+       {
+        "code": 47,
+        "name": "MČ Praha-Troja"
+       },
+       {
+        "code": 48,
+        "name": "MČ Praha-Velká Chuchle"
+       },
+       {
+        "code": 49,
+        "name": "MČ Praha-Vinoř"
+       },
+       {
+        "code": 50,
+        "name": "MČ Praha-Zbraslav"
+       },
+       {
+        "code": 51,
+        "name": "MČ Praha-Zličín"
+       },
+       {
+        "code": 52,
+        "name": "MČ Praha-Újezd"
+       },
+       {
+        "code": 53,
+        "name": "MČ Praha-Čakovice"
+       },
+       {
+        "code": 54,
+        "name": "MČ Praha-Ďáblice"
+       },
+       {
+        "code": 55,
+        "name": "MČ Praha-Řeporyje"
+       },
+       {
+        "code": 56,
+        "name": "MČ Praha-Šeberov"
+       },
+       {
+        "code": 57,
+        "name": "MČ Praha-Štěrboholy"
+       },
+       {
+        "code": 58,
+        "name": "MHMP-OCP"
+       },
+       {
+        "code": 59,
+        "name": "Technická správa komunikací hl. m. Prahy, a.s."
+       },
+       {
+        "code": 60,
+        "name": "Stome a spoluvlastníci"
+       },
+       {
+        "code": 61,
+        "name": "Pražské vodovody a kanalizace, a.s."
+       },
+       {
+        "code": 62,
+        "name": "MHMP-HOM"
+       }
+      ],
+      "mergePolicy": "esriMPTDefaultValue"
+     },
+     "name": "kod_sprav",
+     "alias": "Správce",
+     "type": "esriFieldTypeInteger"
+    },
+    {
+     "modelName": "KOD_R_PECE",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": {
+      "splitPolicy": "esriSPTDefaultValue",
+      "name": "SMZ_r_pece",
+      "description": "rezim_peceSZM",
+      "type": "codedValue",
+      "codedValues": [
+       {
+        "code": 1,
+        "name": "Intenzitní třída údržby I"
+       },
+       {
+        "code": 2,
+        "name": "Intenzitní třída údržby II"
+       },
+       {
+        "code": 4,
+        "name": "Intenzitní třída údržby IV"
+       },
+       {
+        "code": 3,
+        "name": "Intenzitní třída údržby III"
+       }
+      ],
+      "mergePolicy": "esriMPTDefaultValue"
+     },
+     "name": "kod_r_pece",
+     "alias": "Režim péče",
+     "type": "esriFieldTypeInteger"
+    },
+    {
+     "modelName": "kod_TP",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": {
+      "splitPolicy": "esriSPTDefaultValue",
+      "name": "SMZ_TP",
+      "description": "tech_prvekSMZ",
+      "type": "codedValue",
+      "codedValues": [
+       {
+        "code": 11,
+        "name": "Cesta"
+       },
+       {
+        "code": 21,
+        "name": "Chodník"
+       },
+       {
+        "code": 31,
+        "name": "Opěrná zeď"
+       },
+       {
+        "code": 41,
+        "name": "Oplocení"
+       },
+       {
+        "code": 51,
+        "name": "Parkoviště"
+       },
+       {
+        "code": 61,
+        "name": "Plocha zpevněná - neurčeno"
+       },
+       {
+        "code": 71,
+        "name": "Schodiště"
+       },
+       {
+        "code": 81,
+        "name": "Zábradlí"
+       },
+       {
+        "code": 91,
+        "name": "Plastika"
+       },
+       {
+        "code": 92,
+        "name": "Socha"
+       },
+       {
+        "code": 93,
+        "name": "Umělecký artefakt jiný"
+       },
+       {
+        "code": 101,
+        "name": "Bazén, kašna"
+       },
+       {
+        "code": 102,
+        "name": "Potok, řeka"
+       },
+       {
+        "code": 103,
+        "name": "Rybník"
+       },
+       {
+        "code": 104,
+        "name": "Umělá vodní nádrž"
+       },
+       {
+        "code": 105,
+        "name": "Umělý vodní tok"
+       },
+       {
+        "code": 106,
+        "name": "Vodní plocha jiná"
+       },
+       {
+        "code": 107,
+        "name": "Vodní prvek jiný"
+       },
+       {
+        "code": 108,
+        "name": "Vodotrysk"
+       },
+       {
+        "code": 201,
+        "name": "Altán"
+       },
+       {
+        "code": 202,
+        "name": "Drobná stavba jiná"
+       },
+       {
+        "code": 203,
+        "name": "Pergola"
+       },
+       {
+        "code": 204,
+        "name": "Prodejní stánek"
+       },
+       {
+        "code": 205,
+        "name": "Přístřešek"
+       },
+       {
+        "code": 206,
+        "name": "Psí WC"
+       },
+       {
+        "code": 207,
+        "name": "Sakrální drobná stavba"
+       },
+       {
+        "code": 208,
+        "name": "Stání pro popelnice"
+       },
+       {
+        "code": 209,
+        "name": "Trafostanice"
+       },
+       {
+        "code": 210,
+        "name": "Veřejné WC"
+       },
+       {
+        "code": 301,
+        "name": "Informační tabule"
+       },
+       {
+        "code": 302,
+        "name": "Klepadlo"
+       },
+       {
+        "code": 303,
+        "name": "Lavička"
+       },
+       {
+        "code": 304,
+        "name": "Odpadkový koš"
+       },
+       {
+        "code": 305,
+        "name": "Orientační tabule"
+       },
+       {
+        "code": 306,
+        "name": "Osvětlení"
+       },
+       {
+        "code": 307,
+        "name": "Pítko"
+       },
+       {
+        "code": 308,
+        "name": "Sloup, stožár"
+       },
+       {
+        "code": 309,
+        "name": "Sloupek"
+       },
+       {
+        "code": 310,
+        "name": "Sportovní nářadí"
+       },
+       {
+        "code": 311,
+        "name": "Treláž"
+       },
+       {
+        "code": 312,
+        "name": "Vybavenost jiná"
+       },
+       {
+        "code": 313,
+        "name": "Zahradní hydrant"
+       },
+       {
+        "code": 401,
+        "name": "Stromová mísa"
+       }
+      ],
+      "mergePolicy": "esriMPTDefaultValue"
+     },
+     "name": "kod_tp",
+     "alias": "Technický prvek",
+     "type": "esriFieldTypeInteger"
+    },
+    {
+     "modelName": "kod_povrch",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": {
+      "splitPolicy": "esriSPTDefaultValue",
+      "name": "SMZ_povrch",
+      "description": "povrchSMZ",
+      "type": "codedValue",
+      "codedValues": [
+       {
+        "code": 100,
+        "name": "Beton"
+       },
+       {
+        "code": 200,
+        "name": "Černý úhor"
+       },
+       {
+        "code": 201,
+        "name": "Černý úhor borka"
+       },
+       {
+        "code": 202,
+        "name": "Černý úhor kačírek"
+       },
+       {
+        "code": 203,
+        "name": "Černý úhor nemulčované"
+       },
+       {
+        "code": 204,
+        "name": "Černý úhor písek"
+       },
+       {
+        "code": 205,
+        "name": "Černý úhor sláma"
+       },
+       {
+        "code": 206,
+        "name": "Černý úhor štěrk"
+       },
+       {
+        "code": 300,
+        "name": "Dlažba"
+       },
+       {
+        "code": 301,
+        "name": "Dlažba betonová"
+       },
+       {
+        "code": 302,
+        "name": "Dlažba kamenná"
+       },
+       {
+        "code": 303,
+        "name": "Dlažba sštětová kamenná"
+       },
+       {
+        "code": 304,
+        "name": "Dlažba zámková"
+       },
+       {
+        "code": 400,
+        "name": "Kamenné kostky"
+       },
+       {
+        "code": 500,
+        "name": "Mlat"
+       },
+       {
+        "code": 600,
+        "name": "Mozaika"
+       },
+       {
+        "code": 701,
+        "name": "Mříže-beton"
+       },
+       {
+        "code": 702,
+        "name": "Mříže-bez mříže"
+       },
+       {
+        "code": 703,
+        "name": "Mříže-hliník"
+       },
+       {
+        "code": 704,
+        "name": "Mříže-konglomerát"
+       },
+       {
+        "code": 705,
+        "name": "Mříže-litina"
+       },
+       {
+        "code": 706,
+        "name": "Mříže-nerez"
+       },
+       {
+        "code": 700,
+        "name": "Mříže-nespecifikována"
+       },
+       {
+        "code": 707,
+        "name": "Mříže-pletivo"
+       },
+       {
+        "code": 800,
+        "name": "Mulč"
+       },
+       {
+        "code": 900,
+        "name": "Štěrk"
+       },
+       {
+        "code": 1000,
+        "name": "Umělý povrch"
+       },
+       {
+        "code": 1100,
+        "name": "Vegetační tvárnice"
+       },
+       {
+        "code": 1200,
+        "name": "Živice"
+       },
+       {
+        "code": 99,
+        "name": "Jiný povrch"
+       },
+       {
+        "code": 1300,
+        "name": "Vegetační povrch"
+       }
+      ],
+      "mergePolicy": "esriMPTDefaultValue"
+     },
+     "name": "kod_povrch",
+     "alias": "Povrch ploch",
+     "type": "esriFieldTypeInteger"
+    },
+    {
+     "modelName": "kod_sk_TP",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": {
+      "splitPolicy": "esriSPTDefaultValue",
+      "name": "SMZ_sk_TP",
+      "description": "SK_TP_SMZ",
+      "type": "codedValue",
+      "codedValues": [
+       {
+        "code": 10,
+        "name": "Cesta"
+       },
+       {
+        "code": 200,
+        "name": "Drobná stavba"
+       },
+       {
+        "code": 20,
+        "name": "Chodník"
+       },
+       {
+        "code": 30,
+        "name": "Opěrná zeď"
+       },
+       {
+        "code": 40,
+        "name": "Oplocení"
+       },
+       {
+        "code": 50,
+        "name": "Parkoviště"
+       },
+       {
+        "code": 60,
+        "name": "Plocha zpevněná - neurčeno"
+       },
+       {
+        "code": 70,
+        "name": "Schodiště"
+       },
+       {
+        "code": 90,
+        "name": "Umělecký artefakt"
+       },
+       {
+        "code": 100,
+        "name": "Vodní prvky"
+       },
+       {
+        "code": 300,
+        "name": "Vybavenost"
+       },
+       {
+        "code": 80,
+        "name": "Zábradlí"
+       },
+       {
+        "code": 400,
+        "name": "Stromová mísa"
+       }
+      ],
+      "mergePolicy": "esriMPTDefaultValue"
+     },
+     "name": "kod_sk_tp",
+     "alias": "Skupinový technický prvek",
+     "type": "esriFieldTypeInteger"
+    },
+    {
+     "modelName": "kod_k_mat",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": {
+      "splitPolicy": "esriSPTDefaultValue",
+      "name": "SMZ_k_mat",
+      "description": "material_SMZ",
+      "type": "codedValue",
+      "codedValues": [
+       {
+        "code": 1,
+        "name": "Beton"
+       },
+       {
+        "code": 2,
+        "name": "Cihla"
+       },
+       {
+        "code": 3,
+        "name": "Dřevo"
+       },
+       {
+        "code": 4,
+        "name": "Kámen"
+       },
+       {
+        "code": 5,
+        "name": "Kombinace"
+       },
+       {
+        "code": 6,
+        "name": "Kov"
+       },
+       {
+        "code": 7,
+        "name": "Kovaný prvek"
+       },
+       {
+        "code": 8,
+        "name": "Kovové lanko"
+       },
+       {
+        "code": 9,
+        "name": "Lano"
+       },
+       {
+        "code": 10,
+        "name": "Plast"
+       },
+       {
+        "code": 11,
+        "name": "Pletivo"
+       },
+       {
+        "code": 12,
+        "name": "Suché zdivo"
+       },
+       {
+        "code": 13,
+        "name": "Vegetační tvárnice"
+       },
+       {
+        "code": 14,
+        "name": "Zdivo"
+       },
+       {
+        "code": 99,
+        "name": "Jiný materiál"
+       }
+      ],
+      "mergePolicy": "esriMPTDefaultValue"
+     },
+     "name": "kod_k_mat",
+     "alias": "Konstrukční materiál",
+     "type": "esriFieldTypeInteger"
+    },
+    {
+     "modelName": "aktualizace",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": null,
+     "precision": 1,
+     "name": "aktualizace",
+     "length": 29,
+     "alias": "Aktualizace",
+     "type": "esriFieldTypeDate"
+    },
+    {
+     "nullable": false,
+     "editable": false,
+     "defaultValue": null,
+     "length": 38,
+     "type": "esriFieldTypeGlobalID",
+     "modelName": "globalid",
+     "domain": null,
+     "name": "globalid",
+     "alias": "globalid"
+    }
+   ]
+  },
+  "features": [
+   {
+    "geometry": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       14.285378,
+       50.068396
+      ],
+      [
+       14.285412,
+       50.068626
+      ],
+      [
+       14.284617,
+       50.068643
+      ],
+      [
+       14.284688,
+       50.068456
+      ]
+     ],
+     "crs": null
+    },
+    "type": "Feature",
+    "properties": {
+     "kod_udrz": null,
+     "aktualizace": 1782812262000,
+     "kod_k_mat": 14,
+     "globalid": "{A2474C15-93C2-4EC5-A722-3335FA3A0502}",
+     "kod_r_pece": null,
+     "kod_povrch": null,
+     "kod_tp": 41,
+     "kod_sprav": 51,
+     "kod_typtp": null,
+     "kod_sk_tp": 40
+    }
+   },
+   {
+    "geometry": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       14.447867,
+       50.087612
+      ],
+      [
+       14.448128,
+       50.087616
+      ],
+      [
+       14.448132,
+       50.087616
+      ]
+     ],
+     "crs": null
+    },
+    "type": "Feature",
+    "properties": {
+     "kod_udrz": 58,
+     "aktualizace": 1738384216000,
+     "kod_k_mat": null,
+     "globalid": "{D4EF4E79-C19C-46AF-B283-DB28B7EDDA7E}",
+     "kod_r_pece": 1,
+     "kod_povrch": null,
+     "kod_tp": null,
+     "kod_sprav": 58,
+     "kod_typtp": null,
+     "kod_sk_tp": 30
+    }
+   },
+   {
+    "geometry": {
+     "type": "LineString",
+     "coordinates": [
+      [
+       14.28967,
+       50.058009
+      ],
+      [
+       14.289695,
+       50.057907
+      ],
+      [
+       14.289428,
+       50.057883
+      ],
+      [
+       14.289411,
+       50.05799
+      ],
+      [
+       14.28967,
+       50.058009
+      ]
+     ],
+     "crs": null
+    },
+    "type": "Feature",
+    "properties": {
+     "kod_udrz": null,
+     "aktualizace": 1790836891000,
+     "kod_k_mat": 3,
+     "globalid": "{A766794D-337D-439B-A616-4D0D2773E1A2}",
+     "kod_r_pece": null,
+     "kod_povrch": null,
+     "kod_tp": 41,
+     "kod_sprav": 51,
+     "kod_typtp": null,
+     "kod_sk_tp": 40
+    }
+   }
+  ]
+ },
+ "tech-areas": {
+  "description": {
+   "name": "OPK_CUR_OPK_SMZ_TP_P",
+   "fields": [
+    {
+     "nullable": false,
+     "defaultValue": null,
+     "editable": false,
+     "length": 4,
+     "type": "esriFieldTypeOID",
+     "modelName": "OBJECTID",
+     "domain": null,
+     "name": "objectid",
+     "alias": "OBJECTID"
+    },
+    {
+     "modelName": "KOD_SPRAV",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": {
+      "splitPolicy": "esriSPTDefaultValue",
+      "name": "SMZ_spravce1",
+      "description": "spravceSMZ",
+      "type": "codedValue",
+      "codedValues": [
+       {
+        "code": 1,
+        "name": "MČ Praha 1"
+       },
+       {
+        "code": 2,
+        "name": "MČ Praha 2"
+       },
+       {
+        "code": 3,
+        "name": "MČ Praha 3"
+       },
+       {
+        "code": 4,
+        "name": "MČ Praha 4"
+       },
+       {
+        "code": 5,
+        "name": "MČ Praha 5"
+       },
+       {
+        "code": 6,
+        "name": "MČ Praha 6"
+       },
+       {
+        "code": 7,
+        "name": "MČ Praha 7"
+       },
+       {
+        "code": 8,
+        "name": "MČ Praha 8"
+       },
+       {
+        "code": 9,
+        "name": "MČ Praha 9"
+       },
+       {
+        "code": 10,
+        "name": "MČ Praha 10"
+       },
+       {
+        "code": 11,
+        "name": "MČ Praha 11"
+       },
+       {
+        "code": 12,
+        "name": "MČ Praha 12"
+       },
+       {
+        "code": 13,
+        "name": "MČ Praha 13"
+       },
+       {
+        "code": 14,
+        "name": "MČ Praha 14"
+       },
+       {
+        "code": 15,
+        "name": "MČ Praha 15"
+       },
+       {
+        "code": 16,
+        "name": "MČ Praha 16"
+       },
+       {
+        "code": 17,
+        "name": "MČ Praha 17"
+       },
+       {
+        "code": 18,
+        "name": "MČ Praha 18"
+       },
+       {
+        "code": 19,
+        "name": "MČ Praha 19"
+       },
+       {
+        "code": 20,
+        "name": "MČ Praha 20"
+       },
+       {
+        "code": 21,
+        "name": "MČ Praha 21"
+       },
+       {
+        "code": 22,
+        "name": "MČ Praha 22"
+       },
+       {
+        "code": 0,
+        "name": "nespecifikovaný"
+       },
+       {
+        "code": 23,
+        "name": "MČ Praha-Benice"
+       },
+       {
+        "code": 24,
+        "name": "MČ Praha-Běchovice"
+       },
+       {
+        "code": 25,
+        "name": "MČ Praha-Březiněves"
+       },
+       {
+        "code": 26,
+        "name": "MČ Praha-Dolní Chabry"
+       },
+       {
+        "code": 27,
+        "name": "MČ Praha-Dolní Měcholupy"
+       },
+       {
+        "code": 28,
+        "name": "MČ Praha-Dolní Počernice"
+       },
+       {
+        "code": 29,
+        "name": "MČ Praha-Dubeč"
+       },
+       {
+        "code": 30,
+        "name": "MČ Praha-Klánovice"
+       },
+       {
+        "code": 31,
+        "name": "MČ Praha-Koloděje"
+       },
+       {
+        "code": 32,
+        "name": "MČ Praha-Kolovraty"
+       },
+       {
+        "code": 33,
+        "name": "MČ Praha-Královice"
+       },
+       {
+        "code": 34,
+        "name": "MČ Praha-Kunratice"
+       },
+       {
+        "code": 35,
+        "name": "MČ Praha-Křeslice"
+       },
+       {
+        "code": 36,
+        "name": "MČ Praha-Libuš"
+       },
+       {
+        "code": 37,
+        "name": "MČ Praha-Lipence"
+       },
+       {
+        "code": 38,
+        "name": "MČ Praha-Lochkov"
+       },
+       {
+        "code": 39,
+        "name": "MČ Praha-Lysolaje"
+       },
+       {
+        "code": 40,
+        "name": "MČ Praha-Nebušice"
+       },
+       {
+        "code": 41,
+        "name": "MČ Praha-Nedvězí"
+       },
+       {
+        "code": 42,
+        "name": "MČ Praha-Petrovice"
+       },
+       {
+        "code": 43,
+        "name": "MČ Praha-Přední Kopanina"
+       },
+       {
+        "code": 44,
+        "name": "MČ Praha-Satalice"
+       },
+       {
+        "code": 45,
+        "name": "MČ Praha-Slivenec"
+       },
+       {
+        "code": 46,
+        "name": "MČ Praha-Suchdol"
+       },
+       {
+        "code": 47,
+        "name": "MČ Praha-Troja"
+       },
+       {
+        "code": 48,
+        "name": "MČ Praha-Velká Chuchle"
+       },
+       {
+        "code": 49,
+        "name": "MČ Praha-Vinoř"
+       },
+       {
+        "code": 50,
+        "name": "MČ Praha-Zbraslav"
+       },
+       {
+        "code": 51,
+        "name": "MČ Praha-Zličín"
+       },
+       {
+        "code": 52,
+        "name": "MČ Praha-Újezd"
+       },
+       {
+        "code": 53,
+        "name": "MČ Praha-Čakovice"
+       },
+       {
+        "code": 54,
+        "name": "MČ Praha-Ďáblice"
+       },
+       {
+        "code": 55,
+        "name": "MČ Praha-Řeporyje"
+       },
+       {
+        "code": 56,
+        "name": "MČ Praha-Šeberov"
+       },
+       {
+        "code": 57,
+        "name": "MČ Praha-Štěrboholy"
+       },
+       {
+        "code": 58,
+        "name": "MHMP-OCP"
+       },
+       {
+        "code": 59,
+        "name": "Technická správa komunikací hl. m. Prahy, a.s."
+       },
+       {
+        "code": 60,
+        "name": "Stome a spoluvlastníci"
+       },
+       {
+        "code": 61,
+        "name": "Pražské vodovody a kanalizace, a.s."
+       },
+       {
+        "code": 62,
+        "name": "MHMP-HOM"
+       }
+      ],
+      "mergePolicy": "esriMPTDefaultValue"
+     },
+     "name": "kod_sprav",
+     "alias": "Správce",
+     "type": "esriFieldTypeInteger"
+    },
+    {
+     "modelName": "KOD_R_PECE",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": {
+      "splitPolicy": "esriSPTDefaultValue",
+      "name": "SMZ_r_pece",
+      "description": "rezim_peceSZM",
+      "type": "codedValue",
+      "codedValues": [
+       {
+        "code": 1,
+        "name": "Intenzitní třída údržby I"
+       },
+       {
+        "code": 2,
+        "name": "Intenzitní třída údržby II"
+       },
+       {
+        "code": 4,
+        "name": "Intenzitní třída údržby IV"
+       },
+       {
+        "code": 3,
+        "name": "Intenzitní třída údržby III"
+       }
+      ],
+      "mergePolicy": "esriMPTDefaultValue"
+     },
+     "name": "kod_r_pece",
+     "alias": "Režim péče",
+     "type": "esriFieldTypeInteger"
+    },
+    {
+     "modelName": "kod_TP",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": {
+      "splitPolicy": "esriSPTDefaultValue",
+      "name": "SMZ_TP",
+      "description": "tech_prvekSMZ",
+      "type": "codedValue",
+      "codedValues": [
+       {
+        "code": 11,
+        "name": "Cesta"
+       },
+       {
+        "code": 21,
+        "name": "Chodník"
+       },
+       {
+        "code": 31,
+        "name": "Opěrná zeď"
+       },
+       {
+        "code": 41,
+        "name": "Oplocení"
+       },
+       {
+        "code": 51,
+        "name": "Parkoviště"
+       },
+       {
+        "code": 61,
+        "name": "Plocha zpevněná - neurčeno"
+       },
+       {
+        "code": 71,
+        "name": "Schodiště"
+       },
+       {
+        "code": 81,
+        "name": "Zábradlí"
+       },
+       {
+        "code": 91,
+        "name": "Plastika"
+       },
+       {
+        "code": 92,
+        "name": "Socha"
+       },
+       {
+        "code": 93,
+        "name": "Umělecký artefakt jiný"
+       },
+       {
+        "code": 101,
+        "name": "Bazén, kašna"
+       },
+       {
+        "code": 102,
+        "name": "Potok, řeka"
+       },
+       {
+        "code": 103,
+        "name": "Rybník"
+       },
+       {
+        "code": 104,
+        "name": "Umělá vodní nádrž"
+       },
+       {
+        "code": 105,
+        "name": "Umělý vodní tok"
+       },
+       {
+        "code": 106,
+        "name": "Vodní plocha jiná"
+       },
+       {
+        "code": 107,
+        "name": "Vodní prvek jiný"
+       },
+       {
+        "code": 108,
+        "name": "Vodotrysk"
+       },
+       {
+        "code": 201,
+        "name": "Altán"
+       },
+       {
+        "code": 202,
+        "name": "Drobná stavba jiná"
+       },
+       {
+        "code": 203,
+        "name": "Pergola"
+       },
+       {
+        "code": 204,
+        "name": "Prodejní stánek"
+       },
+       {
+        "code": 205,
+        "name": "Přístřešek"
+       },
+       {
+        "code": 206,
+        "name": "Psí WC"
+       },
+       {
+        "code": 207,
+        "name": "Sakrální drobná stavba"
+       },
+       {
+        "code": 208,
+        "name": "Stání pro popelnice"
+       },
+       {
+        "code": 209,
+        "name": "Trafostanice"
+       },
+       {
+        "code": 210,
+        "name": "Veřejné WC"
+       },
+       {
+        "code": 301,
+        "name": "Informační tabule"
+       },
+       {
+        "code": 302,
+        "name": "Klepadlo"
+       },
+       {
+        "code": 303,
+        "name": "Lavička"
+       },
+       {
+        "code": 304,
+        "name": "Odpadkový koš"
+       },
+       {
+        "code": 305,
+        "name": "Orientační tabule"
+       },
+       {
+        "code": 306,
+        "name": "Osvětlení"
+       },
+       {
+        "code": 307,
+        "name": "Pítko"
+       },
+       {
+        "code": 308,
+        "name": "Sloup, stožár"
+       },
+       {
+        "code": 309,
+        "name": "Sloupek"
+       },
+       {
+        "code": 310,
+        "name": "Sportovní nářadí"
+       },
+       {
+        "code": 311,
+        "name": "Treláž"
+       },
+       {
+        "code": 312,
+        "name": "Vybavenost jiná"
+       },
+       {
+        "code": 313,
+        "name": "Zahradní hydrant"
+       },
+       {
+        "code": 401,
+        "name": "Stromová mísa"
+       }
+      ],
+      "mergePolicy": "esriMPTDefaultValue"
+     },
+     "name": "kod_tp",
+     "alias": "Technický prvek",
+     "type": "esriFieldTypeInteger"
+    },
+    {
+     "modelName": "kod_povrch",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": {
+      "splitPolicy": "esriSPTDefaultValue",
+      "name": "SMZ_povrch",
+      "description": "povrchSMZ",
+      "type": "codedValue",
+      "codedValues": [
+       {
+        "code": 100,
+        "name": "Beton"
+       },
+       {
+        "code": 200,
+        "name": "Černý úhor"
+       },
+       {
+        "code": 201,
+        "name": "Černý úhor borka"
+       },
+       {
+        "code": 202,
+        "name": "Černý úhor kačírek"
+       },
+       {
+        "code": 203,
+        "name": "Černý úhor nemulčované"
+       },
+       {
+        "code": 204,
+        "name": "Černý úhor písek"
+       },
+       {
+        "code": 205,
+        "name": "Černý úhor sláma"
+       },
+       {
+        "code": 206,
+        "name": "Černý úhor štěrk"
+       },
+       {
+        "code": 300,
+        "name": "Dlažba"
+       },
+       {
+        "code": 301,
+        "name": "Dlažba betonová"
+       },
+       {
+        "code": 302,
+        "name": "Dlažba kamenná"
+       },
+       {
+        "code": 303,
+        "name": "Dlažba sštětová kamenná"
+       },
+       {
+        "code": 304,
+        "name": "Dlažba zámková"
+       },
+       {
+        "code": 400,
+        "name": "Kamenné kostky"
+       },
+       {
+        "code": 500,
+        "name": "Mlat"
+       },
+       {
+        "code": 600,
+        "name": "Mozaika"
+       },
+       {
+        "code": 701,
+        "name": "Mříže-beton"
+       },
+       {
+        "code": 702,
+        "name": "Mříže-bez mříže"
+       },
+       {
+        "code": 703,
+        "name": "Mříže-hliník"
+       },
+       {
+        "code": 704,
+        "name": "Mříže-konglomerát"
+       },
+       {
+        "code": 705,
+        "name": "Mříže-litina"
+       },
+       {
+        "code": 706,
+        "name": "Mříže-nerez"
+       },
+       {
+        "code": 700,
+        "name": "Mříže-nespecifikována"
+       },
+       {
+        "code": 707,
+        "name": "Mříže-pletivo"
+       },
+       {
+        "code": 800,
+        "name": "Mulč"
+       },
+       {
+        "code": 900,
+        "name": "Štěrk"
+       },
+       {
+        "code": 1000,
+        "name": "Umělý povrch"
+       },
+       {
+        "code": 1100,
+        "name": "Vegetační tvárnice"
+       },
+       {
+        "code": 1200,
+        "name": "Živice"
+       },
+       {
+        "code": 99,
+        "name": "Jiný povrch"
+       },
+       {
+        "code": 1300,
+        "name": "Vegetační povrch"
+       }
+      ],
+      "mergePolicy": "esriMPTDefaultValue"
+     },
+     "name": "kod_povrch",
+     "alias": "Povrch ploch",
+     "type": "esriFieldTypeInteger"
+    },
+    {
+     "modelName": "kod_sk_TP",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": {
+      "splitPolicy": "esriSPTDefaultValue",
+      "name": "SMZ_sk_TP",
+      "description": "SK_TP_SMZ",
+      "type": "codedValue",
+      "codedValues": [
+       {
+        "code": 10,
+        "name": "Cesta"
+       },
+       {
+        "code": 200,
+        "name": "Drobná stavba"
+       },
+       {
+        "code": 20,
+        "name": "Chodník"
+       },
+       {
+        "code": 30,
+        "name": "Opěrná zeď"
+       },
+       {
+        "code": 40,
+        "name": "Oplocení"
+       },
+       {
+        "code": 50,
+        "name": "Parkoviště"
+       },
+       {
+        "code": 60,
+        "name": "Plocha zpevněná - neurčeno"
+       },
+       {
+        "code": 70,
+        "name": "Schodiště"
+       },
+       {
+        "code": 90,
+        "name": "Umělecký artefakt"
+       },
+       {
+        "code": 100,
+        "name": "Vodní prvky"
+       },
+       {
+        "code": 300,
+        "name": "Vybavenost"
+       },
+       {
+        "code": 80,
+        "name": "Zábradlí"
+       },
+       {
+        "code": 400,
+        "name": "Stromová mísa"
+       }
+      ],
+      "mergePolicy": "esriMPTDefaultValue"
+     },
+     "name": "kod_sk_tp",
+     "alias": "Skupinový technický prvek",
+     "type": "esriFieldTypeInteger"
+    },
+    {
+     "modelName": "kod_k_mat",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": {
+      "splitPolicy": "esriSPTDefaultValue",
+      "name": "SMZ_k_mat",
+      "description": "material_SMZ",
+      "type": "codedValue",
+      "codedValues": [
+       {
+        "code": 1,
+        "name": "Beton"
+       },
+       {
+        "code": 2,
+        "name": "Cihla"
+       },
+       {
+        "code": 3,
+        "name": "Dřevo"
+       },
+       {
+        "code": 4,
+        "name": "Kámen"
+       },
+       {
+        "code": 5,
+        "name": "Kombinace"
+       },
+       {
+        "code": 6,
+        "name": "Kov"
+       },
+       {
+        "code": 7,
+        "name": "Kovaný prvek"
+       },
+       {
+        "code": 8,
+        "name": "Kovové lanko"
+       },
+       {
+        "code": 9,
+        "name": "Lano"
+       },
+       {
+        "code": 10,
+        "name": "Plast"
+       },
+       {
+        "code": 11,
+        "name": "Pletivo"
+       },
+       {
+        "code": 12,
+        "name": "Suché zdivo"
+       },
+       {
+        "code": 13,
+        "name": "Vegetační tvárnice"
+       },
+       {
+        "code": 14,
+        "name": "Zdivo"
+       },
+       {
+        "code": 99,
+        "name": "Jiný materiál"
+       }
+      ],
+      "mergePolicy": "esriMPTDefaultValue"
+     },
+     "name": "kod_k_mat",
+     "alias": "Konstrukční materiál",
+     "type": "esriFieldTypeInteger"
+    },
+    {
+     "modelName": "aktualizace",
+     "nullable": true,
+     "editable": true,
+     "defaultValue": null,
+     "domain": null,
+     "precision": 1,
+     "name": "aktualizace",
+     "length": 29,
+     "alias": "Aktualizace",
+     "type": "esriFieldTypeDate"
+    },
+    {
+     "nullable": false,
+     "editable": false,
+     "defaultValue": null,
+     "length": 38,
+     "type": "esriFieldTypeGlobalID",
+     "modelName": "globalid",
+     "domain": null,
+     "name": "globalid",
+     "alias": "globalid"
+    }
+   ]
+  },
+  "features": [
+   {
+    "geometry": {
+     "type": "Polygon",
+     "coordinates": [
+      [
+       [
+        14.558584,
+        50.106113
+       ],
+       [
+        14.55859,
+        50.106099
+       ],
+       [
+        14.558674,
+        50.106113
+       ],
+       [
+        14.558669,
+        50.106127
+       ],
+       [
+        14.558584,
+        50.106113
+       ]
+      ]
+     ],
+     "crs": null
+    },
+    "type": "Feature",
+    "properties": {
+     "kod_udrz": null,
+     "aktualizace": 1782807377000,
+     "kod_k_mat": null,
+     "globalid": "{A54FE4A3-CAA5-462C-BF5E-96C8061CDF2A}",
+     "kod_r_pece": null,
+     "kod_povrch": 1200,
+     "kod_tp": 11,
+     "kod_sprav": 14,
+     "kod_typtp": null,
+     "kod_sk_tp": 10
+    }
+   },
+   {
+    "geometry": {
+     "type": "Polygon",
+     "coordinates": [
+      [
+       [
+        14.397177,
+        50.084893
+       ],
+       [
+        14.397179,
+        50.084888
+       ],
+       [
+        14.397181,
+        50.084882
+       ],
+       [
+        14.397184,
+        50.084877
+       ],
+       [
+        14.397187,
+        50.084871
+       ],
+       [
+        14.397191,
+        50.084866
+       ],
+       [
+        14.397196,
+        50.084861
+       ],
+       [
+        14.397201,
+        50.084857
+       ],
+       [
+        14.397207,
+        50.084852
+       ],
+       [
+        14.397214,
+        50.084848
+       ],
+       [
+        14.39722,
+        50.084844
+       ],
+       [
+        14.397227,
+        50.084841
+       ],
+       [
+        14.397235,
+        50.084838
+       ],
+       [
+        14.397243,
+        50.084835
+       ],
+       [
+        14.397251,
+        50.084833
+       ],
+       [
+        14.397259,
+        50.084831
+       ],
+       [
+        14.397268,
+        50.084829
+       ],
+       [
+        14.397277,
+        50.084828
+       ],
+       [
+        14.397286,
+        50.084828
+       ],
+       [
+        14.397295,
+        50.084827
+       ],
+       [
+        14.397304,
+        50.084828
+       ],
+       [
+        14.397312,
+        50.084828
+       ],
+       [
+        14.397321,
+        50.084829
+       ],
+       [
+        14.39733,
+        50.084831
+       ],
+       [
+        14.397338,
+        50.084832
+       ],
+       [
+        14.397346,
+        50.084835
+       ],
+       [
+        14.397354,
+        50.084837
+       ],
+       [
+        14.397362,
+        50.08484
+       ],
+       [
+        14.397369,
+        50.084844
+       ],
+       [
+        14.397376,
+        50.084847
+       ],
+       [
+        14.397382,
+        50.084851
+       ],
+       [
+        14.397388,
+        50.084856
+       ],
+       [
+        14.397394,
+        50.08486
+       ],
+       [
+        14.397398,
+        50.084865
+       ],
+       [
+        14.397403,
+        50.08487
+       ],
+       [
+        14.397406,
+        50.084875
+       ],
+       [
+        14.397409,
+        50.084881
+       ],
+       [
+        14.397412,
+        50.084886
+       ],
+       [
+        14.397413,
+        50.084892
+       ],
+       [
+        14.397415,
+        50.084897
+       ],
+       [
+        14.397415,
+        50.084903
+       ],
+       [
+        14.397415,
+        50.084909
+       ],
+       [
+        14.397414,
+        50.084914
+       ],
+       [
+        14.397412,
+        50.08492
+       ],
+       [
+        14.39741,
+        50.084926
+       ],
+       [
+        14.397407,
+        50.084931
+       ],
+       [
+        14.397404,
+        50.084936
+       ],
+       [
+        14.3974,
+        50.084941
+       ],
+       [
+        14.397395,
+        50.084946
+       ],
+       [
+        14.39739,
+        50.084951
+       ],
+       [
+        14.397384,
+        50.084955
+       ],
+       [
+        14.397378,
+        50.084959
+       ],
+       [
+        14.397371,
+        50.084963
+       ],
+       [
+        14.397364,
+        50.084967
+       ],
+       [
+        14.397357,
+        50.08497
+       ],
+       [
+        14.397349,
+        50.084972
+       ],
+       [
+        14.397341,
+        50.084975
+       ],
+       [
+        14.397333,
+        50.084977
+       ],
+       [
+        14.397324,
+        50.084978
+       ],
+       [
+        14.397315,
+        50.084979
+       ],
+       [
+        14.397307,
+        50.08498
+       ],
+       [
+        14.397298,
+        50.08498
+       ],
+       [
+        14.397289,
+        50.08498
+       ],
+       [
+        14.39728,
+        50.08498
+       ],
+       [
+        14.397279,
+        50.08498
+       ],
+       [
+        14.39727,
+        50.084979
+       ],
+       [
+        14.397261,
+        50.084977
+       ],
+       [
+        14.397253,
+        50.084975
+       ],
+       [
+        14.397245,
+        50.084973
+       ],
+       [
+        14.397237,
+        50.08497
+       ],
+       [
+        14.397229,
+        50.084968
+       ],
+       [
+        14.397222,
+        50.084964
+       ],
+       [
+        14.397215,
+        50.08496
+       ],
+       [
+        14.397209,
+        50.084957
+       ],
+       [
+        14.397203,
+        50.084952
+       ],
+       [
+        14.397198,
+        50.084948
+       ],
+       [
+        14.397193,
+        50.084943
+       ],
+       [
+        14.397189,
+        50.084938
+       ],
+       [
+        14.397185,
+        50.084933
+       ],
+       [
+        14.397182,
+        50.084927
+       ],
+       [
+        14.39718,
+        50.084922
+       ],
+       [
+        14.397178,
+        50.084916
+       ],
+       [
+        14.397177,
+        50.084911
+       ],
+       [
+        14.397176,
+        50.084905
+       ],
+       [
+        14.397176,
+        50.084899
+       ],
+       [
+        14.397177,
+        50.084893
+       ]
+      ],
+      [
+       [
+        14.397192,
+        50.084896
+       ],
+       [
+        14.397191,
+        50.084901
+       ],
+       [
+        14.397191,
+        50.084907
+       ],
+       [
+        14.397192,
+        50.084912
+       ],
+       [
+        14.397193,
+        50.084918
+       ],
+       [
+        14.397195,
+        50.084923
+       ],
+       [
+        14.397198,
+        50.084928
+       ],
+       [
+        14.397202,
+        50.084933
+       ],
+       [
+        14.397205,
+        50.084938
+       ],
+       [
+        14.39721,
+        50.084942
+       ],
+       [
+        14.397215,
+        50.084947
+       ],
+       [
+        14.397221,
+        50.084951
+       ],
+       [
+        14.397227,
+        50.084954
+       ],
+       [
+        14.397233,
+        50.084958
+       ],
+       [
+        14.39724,
+        50.084961
+       ],
+       [
+        14.397247,
+        50.084964
+       ],
+       [
+        14.397254,
+        50.084966
+       ],
+       [
+        14.397262,
+        50.084968
+       ],
+       [
+        14.39727,
+        50.084969
+       ],
+       [
+        14.397278,
+        50.08497
+       ],
+       [
+        14.397287,
+        50.084971
+       ],
+       [
+        14.397295,
+        50.084971
+       ],
+       [
+        14.397303,
+        50.084971
+       ],
+       [
+        14.397311,
+        50.084971
+       ],
+       [
+        14.397319,
+        50.08497
+       ],
+       [
+        14.397327,
+        50.084968
+       ],
+       [
+        14.397335,
+        50.084966
+       ],
+       [
+        14.397343,
+        50.084964
+       ],
+       [
+        14.39735,
+        50.084962
+       ],
+       [
+        14.397357,
+        50.084959
+       ],
+       [
+        14.397364,
+        50.084955
+       ],
+       [
+        14.39737,
+        50.084951
+       ],
+       [
+        14.397376,
+        50.084947
+       ],
+       [
+        14.397381,
+        50.084943
+       ],
+       [
+        14.397386,
+        50.084939
+       ],
+       [
+        14.39739,
+        50.084934
+       ],
+       [
+        14.397393,
+        50.084929
+       ],
+       [
+        14.397396,
+        50.084924
+       ],
+       [
+        14.397398,
+        50.084918
+       ],
+       [
+        14.3974,
+        50.084913
+       ],
+       [
+        14.3974,
+        50.084907
+       ],
+       [
+        14.3974,
+        50.084902
+       ],
+       [
+        14.3974,
+        50.084896
+       ],
+       [
+        14.397399,
+        50.084891
+       ],
+       [
+        14.397397,
+        50.084886
+       ],
+       [
+        14.397394,
+        50.084881
+       ],
+       [
+        14.397391,
+        50.084876
+       ],
+       [
+        14.397387,
+        50.084871
+       ],
+       [
+        14.397382,
+        50.084866
+       ],
+       [
+        14.397377,
+        50.084862
+       ],
+       [
+        14.397372,
+        50.084857
+       ],
+       [
+        14.397366,
+        50.084854
+       ],
+       [
+        14.397359,
+        50.08485
+       ],
+       [
+        14.397352,
+        50.084847
+       ],
+       [
+        14.397345,
+        50.084844
+       ],
+       [
+        14.397337,
+        50.084842
+       ],
+       [
+        14.397329,
+        50.08484
+       ],
+       [
+        14.397321,
+        50.084839
+       ],
+       [
+        14.397313,
+        50.084837
+       ],
+       [
+        14.397305,
+        50.084837
+       ],
+       [
+        14.397296,
+        50.084837
+       ],
+       [
+        14.397288,
+        50.084837
+       ],
+       [
+        14.397279,
+        50.084837
+       ],
+       [
+        14.397271,
+        50.084839
+       ],
+       [
+        14.397263,
+        50.08484
+       ],
+       [
+        14.397255,
+        50.084842
+       ],
+       [
+        14.397247,
+        50.084844
+       ],
+       [
+        14.39724,
+        50.084847
+       ],
+       [
+        14.397233,
+        50.08485
+       ],
+       [
+        14.397226,
+        50.084854
+       ],
+       [
+        14.39722,
+        50.084857
+       ],
+       [
+        14.397215,
+        50.084861
+       ],
+       [
+        14.39721,
+        50.084866
+       ],
+       [
+        14.397205,
+        50.08487
+       ],
+       [
+        14.397201,
+        50.084875
+       ],
+       [
+        14.397198,
+        50.08488
+       ],
+       [
+        14.397195,
+        50.084885
+       ],
+       [
+        14.397193,
+        50.084891
+       ],
+       [
+        14.397192,
+        50.084896
+       ]
+      ]
+     ],
+     "crs": null
+    },
+    "type": "Feature",
+    "properties": {
+     "kod_udrz": 58,
+     "aktualizace": 1738384216000,
+     "kod_k_mat": null,
+     "globalid": "{2163D49E-09C6-4096-B35A-E0BFB815B9EC}",
+     "kod_r_pece": 1,
+     "kod_povrch": null,
+     "kod_tp": null,
+     "kod_sprav": 58,
+     "kod_typtp": null,
+     "kod_sk_tp": 30
+    }
+   },
+   {
+    "geometry": {
+     "type": "Polygon",
+     "coordinates": [
+      [
+       [
+        14.438401,
+        50.086406
+       ],
+       [
+        14.438402,
+        50.0864
+       ],
+       [
+        14.438404,
+        50.086394
+       ],
+       [
+        14.438409,
+        50.086383
+       ],
+       [
+        14.438412,
+        50.086374
+       ],
+       [
+        14.438418,
+        50.086364
+       ],
+       [
+        14.438427,
+        50.086354
+       ],
+       [
+        14.438435,
+        50.086344
+       ],
+       [
+        14.438445,
+        50.086335
+       ],
+       [
+        14.43846,
+        50.086324
+       ],
+       [
+        14.438485,
+        50.086341
+       ],
+       [
+        14.438483,
+        50.086344
+       ],
+       [
+        14.438482,
+        50.086349
+       ],
+       [
+        14.438472,
+        50.086377
+       ],
+       [
+        14.438485,
+        50.086401
+       ],
+       [
+        14.438482,
+        50.086415
+       ],
+       [
+        14.438485,
+        50.086428
+       ],
+       [
+        14.438485,
+        50.086431
+       ],
+       [
+        14.438491,
+        50.086443
+       ],
+       [
+        14.438492,
+        50.086447
+       ],
+       [
+        14.438508,
+        50.086466
+       ],
+       [
+        14.438512,
+        50.086469
+       ],
+       [
+        14.438442,
+        50.086498
+       ],
+       [
+        14.438431,
+        50.086487
+       ],
+       [
+        14.438421,
+        50.086474
+       ],
+       [
+        14.438408,
+        50.086451
+       ],
+       [
+        14.438404,
+        50.086442
+       ],
+       [
+        14.438401,
+        50.08643
+       ],
+       [
+        14.438401,
+        50.086427
+       ],
+       [
+        14.4384,
+        50.086423
+       ],
+       [
+        14.4384,
+        50.086416
+       ],
+       [
+        14.438401,
+        50.086406
+       ]
+      ]
+     ],
+     "crs": null
+    },
+    "type": "Feature",
+    "properties": {
+     "kod_udrz": 3,
+     "aktualizace": 1748753106000,
+     "kod_k_mat": null,
+     "globalid": "{C51E9B21-C2BF-4B26-8437-4110D78503BF}",
+     "kod_r_pece": null,
+     "kod_povrch": null,
+     "kod_tp": null,
+     "kod_sprav": 3,
+     "kod_typtp": null,
+     "kod_sk_tp": 20
+    }
+   }
+  ]
+ }
+}

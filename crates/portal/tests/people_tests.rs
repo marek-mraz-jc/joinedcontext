@@ -347,6 +347,59 @@ async fn without_smtp_a_temporary_password_is_answered_once_and_never_logged() {
     assert!(!read.text.contains(&password));
 }
 
+/// PF-93: an address a Policy the creator cannot change already names opens by the e-mail only;
+/// without mail nothing is created and no temporary password is answered. A platform admin
+/// still gets the password.
+#[tokio::test]
+async fn a_person_created_for_an_address_an_uncovered_grant_names_opens_by_mail_only() {
+    for smtp in [true, false] {
+        let (kc, shako) = (realm(smtp).await, forge().await);
+        let state = state_with(&kc, &shako);
+        state.mirror.upsert(envelope(
+            "Policy",
+            "air-read",
+            "air",
+            json!({ "contextSpaceRef": "air", "assignee": { "kind": "user", "id": "New@Example.org" },
+                    "operations": ["queryEntity"] }),
+        ));
+        let body = json!({ "email": "new@example.org", "firstName": "Nora", "lastName": "Nová" });
+        let created = send(&state, caller("pia"), "POST", PEOPLE, Some(body.clone())).await;
+        assert!(
+            !created.text.contains("temporaryPassword"),
+            "{}",
+            created.text
+        );
+        assert!(received(&kc, "PUT", "/new-id/reset-password")
+            .await
+            .is_empty());
+        if smtp {
+            assert_eq!(created.status, StatusCode::CREATED, "{}", created.text);
+            assert_eq!(
+                received(&kc, "PUT", "/new-id/execute-actions-email")
+                    .await
+                    .len(),
+                1
+            );
+            continue;
+        }
+        assert_eq!(created.status, StatusCode::FORBIDDEN, "{}", created.text);
+        assert!(
+            created.text.contains("Policy air/air-read"),
+            "{}",
+            created.text
+        );
+        assert_eq!(
+            received(&kc, "DELETE", "/users/new-id").await.len(),
+            1,
+            "rolled back"
+        );
+
+        let root = send(&state, caller("root"), "POST", PEOPLE, Some(body)).await;
+        assert_eq!(root.status, StatusCode::CREATED, "{}", root.text);
+        assert!(root.text.contains("temporaryPassword"), "{}", root.text);
+    }
+}
+
 /// PF-93: disabling ends every session; the person is written back whole, `enabled: false`.
 #[tokio::test]
 async fn disabling_a_person_ends_their_sessions() {

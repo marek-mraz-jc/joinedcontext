@@ -1,0 +1,101 @@
+---
+# The probe's mesh proxy reaches the control plane for its identity and destination lookups;
+# its outbound calls to the public hosts leave on the egress of networkpolicies.yaml.
+probe-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: probes-probe
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+
+# Meshed traffic lands on the inbound proxy on 4143, not on the service port: the edge's calls
+# to the status page and the status page's reads of the probe (T-5102).
+status-page-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: probes-status
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+probe-allow-linkerd-from-status-page:
+  podSelector:
+    app.kubernetes.io/name: probes-probe
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: probes-status
+          componentNamespace: probes
+      ports:
+        - port: 4143
+          protocol: TCP
+
+# The status page's mesh proxy reaches the control plane, and the probe through its inbound proxy.
+status-page-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: probes-status
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: probes-probe
+          componentNamespace: probes
+      ports:
+        - protocol: TCP
+          port: 4143
+
+# The edge's meshed calls to the status page land on its inbound proxy (T-5102).
+apisix-linkerd-egress-to-status-page:
+  componentNamespace: apisix
+  podSelector:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/instance: apisix-apisix
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: probes-status
+          componentNamespace: probes
+      ports:
+        - protocol: TCP
+          port: 4143

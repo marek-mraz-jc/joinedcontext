@@ -1,0 +1,12 @@
+---
+# RFC 9116: where to report a vulnerability, on every host the edge serves (T-1721, OPS-52).
+# No host, so it answers on the apex, portal., idm., data. and every App host alike; above
+# every `/*` route. The edge answers it itself: the upstream is a closed local port that is
+# never dialed.
+security-txt:
+  name: security-txt
+  description: RFC 9116 security.txt, answered by the edge
+  upstream: 127.0.0.1:1
+  uri: '/.well-known/security.txt'
+  methods: [GET, HEAD]
+  priority: 50

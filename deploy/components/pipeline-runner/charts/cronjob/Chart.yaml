@@ -1,0 +1,7 @@
+---
+apiVersion: v2
+name: cronjob
+description: Scheduled Bento pipelines as ephemeral Kubernetes CronJobs (PL-04, PL-10, PL-26, PL-27)
+type: application
+version: 0.1.0
+appVersion: '0.1.0'

@@ -1,0 +1,24 @@
+# One WaterBodyStatus per row of "Ekologický potenciál vodných útvarov" (T-4255); one row per water body and assessment.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-ekologicky-potencial-vodnych-utvarov
+  namespace: bbsk
+  title:
+    sk: Ekologický potenciál vodných útvarov
+    en: Ekologický potenciál vodných útvarov
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 3 2 * * 2
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-ekologicky-potencial-vodnych-utvarov
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: WaterBodyStatus
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

@@ -1,0 +1,19 @@
+# DREPO, the University of Žilina's digital library (DSpace 7): the first page of every item, a
+# hundred per page (the server's cap, whatever `size` asks), each with the collection it was
+# deposited in. The mapping asks for the remaining pages itself. No key. Each item carries its own
+# licence in `dc.rights.uri`; 787 of the 1 316 items carried CC BY 4.0 on 2026-10-06, the rest none.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: uniza-drepo
+  namespace: zilina
+  title:
+    sk: DREPO, digitálna knižnica UNIZA
+    en: DREPO, the University of Žilina's digital library
+spec:
+  type: http
+  http:
+    url: https://dspace.uniza.sk/server/api/discover/search/objects?dsoType=ITEM&size=100&embed=owningCollection&page=0
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

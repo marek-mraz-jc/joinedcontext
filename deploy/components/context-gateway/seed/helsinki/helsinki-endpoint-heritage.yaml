@@ -1,0 +1,58 @@
+# One Smart Data Model type per catalogue dataset (T-4344): HeritageArea of the space
+# helsinki, read through its own Policy, which narrows the space's public read to this type (T-5670).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-heritage
+  namespace: helsinki
+  title:
+    fi: Maalinnoitukset ja maisemakulttuuri — Helsinki
+    en: WWI fortifications and landscape culture — Helsinki
+  description:
+    fi: 'Ensimmäisen maailmansodan aikaisen maalinnoituksen 27 tukikohtaa rajoineen (heritageCategory fortification) ja maisemakulttuurikartan alueet: puistot, puistokadut, aukiot, hautausmaat, kartano- ja huvila-alueet, asuinalueiden kokonaisuudet, pihat ja muut (heritageCategory). Lähde: Helsingin kaupunki, CC BY 4.0.'
+    en: "The 27 strongpoints of Helsinki's First World War land fortifications with their outlines (heritageCategory fortification) and the areas of the city's landscape culture map: parks, boulevards, squares, cemeteries, manor and villa environments, residential ensembles, courtyards and more (heritageCategory). Source: City of Helsinki, CC BY 4.0."
+spec:
+  contextSpaceRef: helsinki
+  slug: xtmpry6uo6sswne5bnnqoikpfvfyjihr
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-heritage
+  # The contact lines stay in the space, as on helsinki-all (EP-61). A projection only narrows.
+  projection:
+    hiddenAttributes: [contactPoint]
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Helsingin kaupunki, CC BY 4.0'
+      sv: 'Källa: Helsingfors stad, CC BY 4.0'
+      en: 'Source: City of Helsinki, CC BY 4.0'
+    themes: [EDUC, ENVI]
+    keywords:
+      fi: [maalinnoitukset, ensimmäinen maailmansota, maisemakulttuuri, puistot, kulttuuriperintö]
+      sv: [landbefästningar, första världskriget, landskapskultur, parker, kulturarv]
+      en: [fortifications, First World War, landscape culture, parks, cultural heritage]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: ANNUAL
+    source:
+      - url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Maalinnoitus_rajaukset
+        title:
+          fi: Ensimmäisen maailmansodan aikaiset maalinnoitukset
+          en: First World War fortifications
+        description:
+          fi: Helsingin karttapalvelun WFS-taso, GeoJSON. Luetaan viikoittain (putki fortifications).
+          en: A WFS layer of the city's map service, as GeoJSON. Read weekly (pipeline fortifications).
+      - url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Maisemakulttuuri_alue
+        title: { fi: Maisemakulttuurikartta, en: Landscape culture map }
+        description:
+          fi: Helsingin karttapalvelun WFS-taso, GeoJSON. Luetaan viikoittain (putki landscape-culture).
+          en: A WFS layer of the city's map service, as GeoJSON. Read weekly (pipeline landscape-culture).
+    pipelineRef: { kind: Pipeline, name: fortifications }

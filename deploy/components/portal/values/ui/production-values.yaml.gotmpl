@@ -1,0 +1,16 @@
+# Stateless static files: two replicas and a budget, so a node drain never takes the Portal's UI away
+# (OPS-08, test_production_baseline).
+replicaCount: 2
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Static files: nginx holds a few MiB per worker.
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi

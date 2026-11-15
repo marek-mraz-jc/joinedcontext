@@ -1,0 +1,26 @@
+# The car-sharing cars free to rent in Prague, as Golemio lists them (Shared Cars v2: car4way,
+# Anytime and Bolt), 949 on 2026-10-25 at 15:30Z (T-5680). The key
+# is the owner's (T-2785) and travels as the X-Access-Token header from the secret `golemio`,
+# never as a value here (CC-06, MF-35). Golemio's Shared Bikes, Vehiclesharing and GBFS routes
+# answer this key 403 (T-5680), so they are not read.
+#
+# Terms as for golemio-park-and-ride: Golemio's OpenAPI marks Shared Cars "Open Data" and names no
+# licence; a key is limited to 20 requests per 8 seconds and 10 000 rows per answer.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: golemio-shared-cars
+  namespace: praha
+  title: { en: Shared cars (Golemio), cs: Sdílená auta (Golemio) }
+spec:
+  type: http
+  http:
+    url: https://api.golemio.cz/v2/sharedcars?limit=10000
+    verb: GET
+    headers: { Accept: application/json }
+    authorization:
+      header: X-Access-Token
+      headerRef: { name: golemio, key: token }
+    timeout: 30s
+    # the runner caps the body at its default (32 MiB on platform main); `maxBytes` waits for the
+    # Portal and gateway pins to read it (tests/test_portal_pin_reads_the_seed.py)

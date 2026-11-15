@@ -1,0 +1,83 @@
+# Golemio's city places (T-5276): Municipal Police stations, Municipal Library branches, municipal
+# offices, gardens, playgrounds and waste collection yards, PointOfInterest of the space praha-mesto
+# read through its own Policy, which narrows the public read to the golemio- ids. Its own dataset
+# because Golemio grants no licence of its own, beside the CC BY places of praha-mista.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-sluzby
+  namespace: praha
+  title: { cs: Městské služby — Praha, en: City services — Prague }
+  description:
+    cs: 'Služebny Městské policie, pobočky Městské knihovny, úřady městských částí, zahrady a parky, dětská hřiště a sběrné dvory: poloha, adresa, otevírací doba a web. Zdroj: Golemio, Operátor ICT, a.s.'
+    en: 'Municipal Police stations, Municipal Library branches, city district offices, gardens and parks, playgrounds and waste collection yards: location, address, opening hours and web page. Source: Golemio, Operátor ICT, a.s.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: erj34fswmcrmg7fiwjyklxjqrlg2yqqt
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-sluzby
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  catalog:
+    # Off the catalogue (T-5788, owner order 2026-10-26: an empty dataset leaves it): on 2026-10-26
+    # prod held 0 PointOfInterest (dev 417): its prod runs write nothing.
+    # The harvest feeds leave it out (EP-139); publish it again once prod holds data.
+    harvest: false
+    # Public facilities by address; a police desk or an office is a place, never a person (T-4596).
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    attribution:
+      cs: 'Zdroj: Golemio, Operátor ICT, a.s.; podmínky užití https://api.golemio.cz/api-keys/'
+      en: 'Source: Golemio, Operátor ICT, a.s.; terms of use https://api.golemio.cz/api-keys/'
+    themes: [GOVE, SOCI, ENVI]
+    keywords:
+      cs: [Praha, městská policie, knihovny, úřady, zahrady, dětská hřiště, sběrné dvory]
+      en:
+        - Prague
+        - municipal police
+        - libraries
+        - municipal offices
+        - gardens
+        - playgrounds
+        - waste collection yards
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: WEEKLY
+    source:
+      - url: https://api.golemio.cz/v2/municipalpolicestations?limit=10000
+        title:
+          cs: Služebny Městské policie – API (Golemio)
+          en: Municipal Police stations API (Golemio)
+        description:
+          cs: Služebny a pracoviště Městské policie hl. m. Prahy, Operátor ICT, podle podmínek užití Golemio.
+          en: The stations and desks of the Municipal Police of Prague, Operátor ICT, under Golemio's terms of use.
+      - url: https://api.golemio.cz/v2/municipallibraries?limit=10000
+        title:
+          cs: Pobočky Městské knihovny v Praze – API (Golemio)
+          en: Municipal Library of Prague branches API (Golemio)
+        description:
+          cs: Pobočky Městské knihovny v Praze s otevírací dobou, Operátor ICT, podle podmínek užití Golemio.
+          en: The branches of the Municipal Library of Prague with their opening hours, Operátor ICT, under Golemio's terms of use.
+      - url: https://api.golemio.cz/v2/municipalauthorities?limit=10000
+        title: { cs: Úřady městských částí – API (Golemio), en: Municipal offices API (Golemio) }
+        description:
+          cs: Úřady městských částí a Magistrát s úředními hodinami, Operátor ICT, podle podmínek užití Golemio.
+          en: The city district offices and the City Hall with their office hours, Operátor ICT, under Golemio's terms of use.
+      - url: https://api.golemio.cz/v2/gardens?limit=10000
+        title:
+          cs: Pražské zahrady a parky – API (Golemio)
+          en: Prague gardens and parks API (Golemio)
+        description:
+          cs: Zahrady a parky hl. m. Prahy, Operátor ICT, podle podmínek užití Golemio.
+          en: The gardens and parks of the City of Prague, Operátor ICT, under Golemio's terms of use.
+      - url: https://api.golemio.cz/v2/playgrounds?limit=10000
+        title: { cs: Dětská hřiště – API (Golemio), en: Playgrounds API (Golemio) }
+        description:
+          cs: Dětská hřiště v Praze, Operátor ICT, podle podmínek užití Golemio.
+          en: The children's playgrounds of Prague, Operátor ICT, under Golemio's terms of use.
+      - url: https://api.golemio.cz/v2/wastecollectionyards?limit=10000
+        title: { cs: Sběrné dvory – API (Golemio), en: Waste collection yards API (Golemio) }
+        description:
+          cs: Sběrné dvory hl. m. Prahy s provozní dobou, Operátor ICT, podle podmínek užití Golemio.
+          en: The waste collection yards of Prague with their opening hours, Operátor ICT, under Golemio's terms of use.

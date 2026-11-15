@@ -1,0 +1,24 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: banskabystrica-verejne
+  namespace: banskabystrica
+  title: { sk: Verejné údaje mesta, en: Open data of the city }
+spec:
+  contextSpaceRef: banskabystrica-verejne
+  linkml: ./banskabystrica-verejne.linkml.yaml
+  version: 1.4.0
+  lifecycle: published
+  classes:
+    - Event
+    - Organization
+    - AirQualityObserved
+    - WeatherObserved
+    - PointOfInterest
+    - EVChargingStation
+    - CadastralParcel
+  artifacts:
+    jsonSchema: ./banskabystrica-verejne.v1.schema.json
+    context: ./banskabystrica-verejne.v1.context.jsonld
+    docs: ./banskabystrica-verejne.v1.md
+    example: ./banskabystrica-verejne.v1.example.jsonld

@@ -1,0 +1,14 @@
+---
+# Checklist:
+# - [x] Resources: prom-label-proxy holds no state; it streams each answer through
+# - [x] 1 Replica (one replica)
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 16Mi
+  limits:
+    cpu: 200m
+    memory: 64Mi

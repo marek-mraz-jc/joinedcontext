@@ -1,0 +1,59 @@
+# The one door of the register space, public: every register is the region's own open data under
+# CC BY-SA 4.0, and republishing it with the region's credit and under the same licence is what
+# that licence allows. The catalogue entry carries the licence; the pipelines write through here.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bbsk-registre
+  namespace: bbsk
+  title: { sk: Registre kraja, en: Registers of the region }
+  # The dataset's notes in the catalogue, through this endpoint's DCAT-AP record (EP-27).
+  description:
+    sk: 'Hranice okresov a obcí, organizácie kraja, nemocnice, sociálne služby verejných poskytovateľov a mosty. Zdroj: Banskobystrický samosprávny kraj, https://opendata.bbsk.sk/, CC BY-SA 4.0.'
+    en: "District and municipality outlines, the region's organisations, hospitals, the social services of public providers and bridges. Source: Banská Bystrica Self-Governing Region, https://opendata.bbsk.sk/, CC BY-SA 4.0."
+spec:
+  contextSpaceRef: bbsk-registre
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-registre:app-bbsk-data-1
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-registre:app-bbsk-mapa-1
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-registre:app-bbsk-mosty-1-viewer
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-registre:hranice-read
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-registre:mosty-read
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-registre:organizacie-read
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-registre:registre-pipelines-write
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-registre:registre-read
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-registre:zariadenia-read
+  slug: lws6dd7o56veegwxsjtvak3goeta4mfn
+  audience: public
+  # mcp: the members of the public `otvorene-data` MCP server (T-4141) and the public
+  # assistant's connectors (T-4167); the gateway lists a member only when it serves MCP.
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  # Off the catalogue (T-4344): its unrelated types are each their own dataset, through the
+  # narrowed Endpoints beside it. This Endpoint stays for the Apps and connectors that read it.
+  # What the dataset page and the DCAT-AP record carry beside the title (EP-27, T-3114): the
+  # region as publisher, its ShareAlike licence and credit, the themes and keywords a reader
+  # searches by, the region, and the registers' weekly refresh.
+  catalog:
+    # Not a catalogue dataset: a door over the space; T-4344 split its types into datasets of their own, read by the Apps.
+    # Its own record stays; the harvest feeds leave it out (EP-139, T-4744).
+    harvest: false
+    publisher:
+      name: { sk: Banskobystrický samosprávny kraj, en: Banská Bystrica Self-Governing Region }
+      uri: https://www.bbsk.sk/
+    license: CC_BYSA_4_0
+    attribution:
+      sk: 'Zdroj: Banskobystrický samosprávny kraj, https://opendata.bbsk.sk/, CC BY-SA 4.0'
+      en: 'Source: Banská Bystrica Self-Governing Region, https://opendata.bbsk.sk/, CC BY-SA 4.0'
+    themes: [REGI, GOVE, HEAL, SOCI, TRAN]
+    keywords:
+      sk: [hranice okresov, obce, organizácie kraja, nemocnice, sociálne služby, mosty]
+      en:
+        - district boundaries
+        - municipalities
+        - regional organisations
+        - hospitals
+        - social services
+        - bridges
+    spatial: [SK032]
+    frequency: WEEKLY

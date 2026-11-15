@@ -1,0 +1,17 @@
+{
+  "about": "The Smart Data Models the open-data seed validates against (T-4319): each schema.json of this folder as raw.githubusercontent.com/smart-data-models/<repository>/<commit>/<Model>/schema.json served it, each <repository>/context.jsonld from the same commit (the @context whose IRIs the generated model gives the terms it names, T-4328), and common-schema.json, which they $ref, from smart-data-models/data-models. Never fetched at run time; to move a pin, fetch at the new commit and change it here and in joinedcontext-docs scripts/bb-bbsk-ngsi-ld-mapping.py SDM_SHA.",
+  "dataModel.CPSV-AP": "a05d1663475fc0f79361bc9bc2550c3f24df1ba0",
+  "dataModel.Environment": "2f048407ccc243df67aee7e1b1ca5470092d743e",
+  "dataModel.IssueTracking": "37cd76540e7a33a93101a8862b58929efe5548da",
+  "dataModel.KeyPerformanceIndicator": "ec7f3b642faf3f807d3c8549ccc9e0b743e05f26",
+  "dataModel.Organization": "77a4911e7cbc72bf87bf202ade282c1bc41a36a4",
+  "dataModel.Parking": "24342efb3425c0059c7a4b82d6d201847418b29c",
+  "dataModel.ParksAndGardens": "4563de6c0ab462ab7db73bfc4ca90dbacfa0421d",
+  "dataModel.PointOfInterest": "7e5e24963a142b9bf6fd15b144a0e24588217608",
+  "dataModel.TourismDestinations": "6d78cb4ff0c1a7d16dc0c1bab7266e40d4b3a00c",
+  "dataModel.Transportation": "b83ede9d3db29be1365cc272eb535f46af83bed2",
+  "dataModel.UrbanMobility": "81a052c84d275a71489910c4f93eb3b6c80c4830",
+  "dataModel.WasteManagement": "16d527b36a0c22c9acf7db27f31479e3e29adab4",
+  "dataModel.Weather": "803fec05b20cef20abda29cd70f54c3b88e08e3a",
+  "data-models": "2a721527d856e044922fcc9471a7a16e3e627460"
+}

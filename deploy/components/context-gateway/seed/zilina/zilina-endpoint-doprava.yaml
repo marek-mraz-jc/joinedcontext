@@ -1,0 +1,41 @@
+# The one door of zilina-doprava, which its four pipelines write through, public like the data
+# (ODbL) but not harvested into the catalogue:
+# each kind of thing is its own public dataset (zilina-parkoviska, zilina-mhd, zilina-scitace,
+# zilina-svietidla), one Smart Data Model type per catalogue dataset (T-4344).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: zilina-doprava
+  namespace: zilina
+  title:
+    sk: Žilina — doprava a mesto naživo
+    en: Žilina, mobility live
+spec:
+  contextSpaceRef: zilina-doprava
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-doprava:doprava-pipelines-write
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-doprava:doprava-read
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-doprava:mhd-read
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-doprava:parkoviska-read
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-doprava:scitace-read
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-doprava:svietidla-read
+  slug: 4aw6iqtjp7h7vrsjcfmfvir2ubpukmnf
+  audience: public
+  enabledRepresentations: [ngsi-ld, mcp, csv, websocket, ogc-features, odata]
+  catalog:
+    harvest: false
+    # The city itself, by its registry IRI, as the Project's spec.catalog names it (T-4596).
+    publisher:
+      name: { sk: Mesto Žilina, en: City of Žilina }
+      uri: https://data.gov.sk/id/legal-subject/00321796
+    license: ODC_ODBL
+    attribution:
+      sk: 'Zdroj: Mesto Žilina, otvorené dáta opendata.zilina.sk, ODbL'
+      en: 'Source: City of Žilina (Mesto Žilina), open data opendata.zilina.sk, ODbL'
+    themes: [TRAN]
+    spatial:
+      - SK031
+      - https://data.gov.sk/id/lau2/SK031B517402
+    frequency: CONT
+    pipelineRef: { kind: Pipeline, name: parkovanie }

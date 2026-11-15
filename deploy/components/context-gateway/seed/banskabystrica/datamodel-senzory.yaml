@@ -1,0 +1,19 @@
+# The demo sensors' model (T-4857): bb-air-quality's slots under a name of its own, since a
+# space's model belongs to that space (MF-06).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: bb-air-sensors
+  namespace: banskabystrica
+  title: { sk: Ukážkové senzory ovzdušia, en: Demo air sensors }
+spec:
+  contextSpaceRef: senzory
+  linkml: ./bb-air-sensors.linkml.yaml
+  version: 1.0.0
+  lifecycle: published
+  classes: [AirQualityObserved]
+  artifacts:
+    jsonSchema: ./bb-air-sensors.v1.schema.json
+    context: ./bb-air-sensors.v1.context.jsonld
+    docs: ./bb-air-sensors.v1.md
+    example: ./bb-air-sensors.v1.example.jsonld

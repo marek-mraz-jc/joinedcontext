@@ -1,0 +1,19 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: verejne-osm-delete
+  namespace: banskabystrica
+  title:
+    sk: Kanál OSM odstraňuje miesta, ktoré mapa už nemá
+    en: The OSM pipeline removes the places the map no longer has
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: banskabystrica-verejne }
+  assigner: did:web:banskabystrica.sk
+  assignee: { kind: serviceAccount, id: pipelines }
+  # Only the two OSM types: the space's other types keep "no delete" (verejne-pipelines-write).
+  # The mapping asks only for ids with the osm- local part (T-4514).
+  operations: [deleteBatch]
+  information:
+    - entities:
+        - type: PointOfInterest
+        - type: EVChargingStation

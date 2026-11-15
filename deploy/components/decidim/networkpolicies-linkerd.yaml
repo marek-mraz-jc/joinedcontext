@@ -1,0 +1,223 @@
+---
+# Meshed traffic reaches a pod on its Linkerd inbound proxy (4143), so every rule of
+# networkpolicies.yaml has its half here (T-5314: caller egress and callee ingress on
+# 4143), and each workload with an egress policy reaches the control plane (8080, 8086, 8090).
+decidim-web-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: decidim-web
+    app.kubernetes.io/instance: decidim-web
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+      ports:
+        - protocol: TCP
+          port: 4143
+        - protocol: TCP
+          port: 4190
+        - protocol: TCP
+          port: 4191
+decidim-redis-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: decidim-redis
+    app.kubernetes.io/instance: decidim-redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-web
+              app.kubernetes.io/instance: decidim-web
+          componentNamespace: decidim
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-sidekiq
+              app.kubernetes.io/instance: decidim-sidekiq
+          componentNamespace: decidim
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-sync
+              app.kubernetes.io/instance: decidim-sync
+          componentNamespace: decidim
+      ports:
+        - protocol: TCP
+          port: 4143
+        - protocol: TCP
+          port: 4190
+        - protocol: TCP
+          port: 4191
+postgres-linkerd-from-decidim:
+  componentNamespace: postgres
+  podSelector:
+    cnpg.io/cluster: postgres-cluster
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-web
+              app.kubernetes.io/instance: decidim-web
+          componentNamespace: decidim
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-sidekiq
+              app.kubernetes.io/instance: decidim-sidekiq
+          componentNamespace: decidim
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-sync
+              app.kubernetes.io/instance: decidim-sync
+          componentNamespace: decidim
+      ports:
+        - protocol: TCP
+          port: 4143
+        - protocol: TCP
+          port: 4190
+        - protocol: TCP
+          port: 4191
+decidim-web-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: decidim-web
+    app.kubernetes.io/instance: decidim-web
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-redis
+              app.kubernetes.io/instance: decidim-redis
+          componentNamespace: decidim
+      ports:
+        - protocol: TCP
+          port: 4143
+decidim-sidekiq-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: decidim-sidekiq
+    app.kubernetes.io/instance: decidim-sidekiq
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-redis
+              app.kubernetes.io/instance: decidim-redis
+          componentNamespace: decidim
+      ports:
+        - protocol: TCP
+          port: 4143
+decidim-sync-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: decidim-sync
+    app.kubernetes.io/instance: decidim-sync
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+          componentNamespace: postgres
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-redis
+              app.kubernetes.io/instance: decidim-redis
+          componentNamespace: decidim
+      ports:
+        - protocol: TCP
+          port: 4143
+decidim-redis-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: decidim-redis
+    app.kubernetes.io/instance: decidim-redis
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+apisix-linkerd-egress-to-decidim:
+  componentNamespace: apisix
+  podSelector:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/instance: apisix-apisix
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: decidim-web
+              app.kubernetes.io/instance: decidim-web
+          componentNamespace: decidim
+      ports:
+        - protocol: TCP
+          port: 4143

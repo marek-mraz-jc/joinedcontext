@@ -1,0 +1,26 @@
+# Every PID vehicle in service now (buses, trams, trolleybuses, metro and trains of Prague and the
+# Central Bohemian region), its position, line, next stop and delay, from Golemio's vehicle
+# positions (Operátor ICT, data of ROPID and the carriers). About 1,100 vehicles in the evening,
+# 1.2 MB per answer; Golemio caps an answer at 10,000 rows. The key travels as the X-Access-Token
+# header from the secret `golemio`, never as a value here (CC-06, MF-35).
+#
+# Terms (Golemio API Keys Management, Licence 4.3, read by the supervisor 2026-10-22): republishing
+# is allowed, commercial too, with no right to sublicense and a personal key; credited as
+# "Golemio, Operátor ICT, a.s.; PID (ROPID)", no licence claimed. A key is limited to 20 requests
+# per 8 seconds; this read is 60 an hour.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: golemio-pid-vehicles
+  namespace: praha
+  title: { en: PID vehicle positions (Golemio), cs: Polohy vozidel PID (Golemio) }
+spec:
+  type: http
+  http:
+    url: https://api.golemio.cz/v2/vehiclepositions?limit=10000
+    verb: GET
+    headers: { Accept: application/json }
+    authorization:
+      header: X-Access-Token
+      headerRef: { name: golemio, key: token }
+    timeout: 30s

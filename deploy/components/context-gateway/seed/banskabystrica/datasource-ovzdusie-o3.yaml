@@ -1,0 +1,16 @@
+# Up-to-date (E2a) hourly O3 of sampling point SPO-SK0263A_00007_100, as for PM10 (T-4153). No key. CC BY 4.0, copyright holder EEA (the same SDI record).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: eea-sk0263a-o3
+  namespace: banskabystrica
+  title:
+    sk: O3, SK0263A (EEA)
+    en: O3, SK0263A (EEA)
+spec:
+  type: http
+  http:
+    url: https://eeadmz1batchservice02.blob.core.windows.net/airquality-p/SK/SPO-SK0263A_00007_100.parquet
+    verb: GET
+    headers: { Accept: application/octet-stream }
+    timeout: 60s

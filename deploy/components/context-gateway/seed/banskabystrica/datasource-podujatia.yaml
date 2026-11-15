@@ -1,0 +1,14 @@
+# The city's events from its web site's REST API (WordPress, post type `events`), the newest hundred, with the fields the mapping reads named in `_fields` so the organiser's e-mail and telephone are never sent. 6 116 events in all, 50 kB per page. No key. CC BY 4.0, read from the dataset's NKOD record (publisher legal-subject/00313271).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: mesto-podujatia
+  namespace: banskabystrica
+  title: { sk: Podujatia (Mesto Banská Bystrica), en: Events (City of Banská Bystrica) }
+spec:
+  type: http
+  http:
+    url: https://www.banskabystrica.sk/wp-json/wp/v2/events?per_page=100&_fields=id,modified_gmt,link,title,event_categories,meta.date_start,meta.time_start,meta.date_end,meta.time_end,meta.address_street,meta.address_number,meta.address_locality,meta.coordinates
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

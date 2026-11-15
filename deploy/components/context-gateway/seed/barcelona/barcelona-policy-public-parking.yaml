@@ -1,0 +1,30 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-parking
+  namespace: barcelona
+  title:
+    ca: 'Lectura pública: aparcament en superfície'
+    es: 'Lectura pública: aparcamiento en superficie'
+    en: 'Public read: surface parking'
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: barcelona }
+  assigner: did:web:barcelona.cat
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116), the subscriptions of the Endpoint
+  # barcelona-parking, and only its type (T-4344, T-5262).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: OnStreetParking

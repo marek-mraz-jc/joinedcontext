@@ -1,0 +1,15 @@
+# An RSS 2.0 or Atom feed of event posts (a WordPress events category): each item's title and link. The date
+# and place are on the item's page, read by jsonld-pages.yaml, which follows (T-5047).
+# The xml processor drops namespace prefixes.
+- xml:
+    operator: to_json
+- mapping: |
+    let items = if this.rss.or(null) != null { this.rss.channel.item.or([]) } else if this.feed.or(null) != null { this.feed.entry.or([]) } else { throw("the feed is neither RSS 2.0 nor Atom") }
+    let list = if $items.type() == "array" { $items } else { [$items] }
+    root = $list.map_each(i -> {
+      "name": i.title.or(null).(t -> if t != null && t.type() == "object" { t."#text".or(null) } else { t }),
+      "url": i.link.or(null).(l -> if l != null && l.type() == "object" { l."-href".or(null) } else { l }).or("").string().trim(),
+      "sourceId": i.guid.or(null).(g -> if g != null && g.type() == "object" { g."#text".or(null) } else { g })
+    })
+- unarchive:
+    format: json_array

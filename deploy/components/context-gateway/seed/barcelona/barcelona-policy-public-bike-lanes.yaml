@@ -1,0 +1,30 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-bike-lanes
+  namespace: barcelona
+  title:
+    ca: Lectura pública dels carrils bici
+    es: Lectura pública de los carriles bici
+    en: Public read of bike lanes
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: barcelona }
+  assigner: did:web:barcelona.cat
+  assignee: { kind: role, id: public }
+  # The slice the Endpoint barcelona-bike-lanes publishes, read only, with the discovery a client needs first
+  # (T-4258, EP-116, T-5374). The space keeps no history of this type, so no temporal operation.
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: BikeLane

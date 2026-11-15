@@ -1,0 +1,21 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: tourist-flats
+  namespace: barcelona
+  title:
+    ca: Habitatges d'ús turístic de Barcelona, cada setmana
+    es: Viviendas de uso turístico de Barcelona, cada semana
+    en: Barcelona licensed tourist flats, weekly
+spec:
+  class: auto
+  # The city lists the register as weekly (SETMANAL); the file changed between its May and
+  # October copies.
+  schedule: '35 5 * * 3'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-tourist-flats }
+  targetEndpoint: urn:ngsi-ld:Endpoint:barcelona.cat:barcelona:barcelona
+  # Upsert: a licence the file drops leaves by its expiresAt, three weeks after its last listing.
+  output: { type: TouristRental, mode: upsert }
+  # The whole 1.4 MB file ran in under 96 MiB on 2026-10-23 (docker run --memory 96m).
+  quotas: { maxMemoryMb: 128, cpuMillicores: 200 }

@@ -1,0 +1,195 @@
+# The mapping of the services pipeline (PL-03): one PointOfInterest per unit of the city's
+# service register (Service Map) in Helsinki, 12 465 units on 2026-10-22 (T-5257; before it, the
+# 219 libraries, health stations, swimming halls, beaches and schools only). Those five keep their
+# serviceCategory for any provider. A public institution (the city, the state, a joint municipal
+# authority, a city-owned company or a service the city buys, by the unit's contract_type) with a
+# point inside the city also gets its kind from the register's service tree (T-5689): kindergarten,
+# hospital, socialServices, publicAuthority, sports, culture and the rest below. Every other unit,
+# a private one included, is `other`. The DataSource reads the first page of 1 000 units
+# and the fields kept here; this mapping reads the pages after it from the same host. Every unit
+# is a place a Linked Events venue (`tprek:` id) or a beach sensor can name.
+#
+# The register's contact sections (`PHONE_OR_EMAIL`) can name a member of staff, so only the
+# opening hours are read from `connections`, and nothing else from it reaches the space.
+
+pipeline:
+  processors:
+    # A register that lists no unit is broken, not empty: the run fails instead of writing nothing.
+    - mapping: |
+        root = if content().length() > 16777216 {
+          throw("the Service Map page is %d bytes, more than the 16 MiB read".format(content().length()))
+        } else if this.count.or(0) == 0 {
+          throw("the Service Map lists no unit in Helsinki: nothing is written")
+        } else { this }
+
+    # The register's service tree (1 295 nodes on 2026-10-25, two pages): each unit names the
+    # leaves it offers, and its kind is the leaf's second-level node (Hospitals, Day care...).
+    - branch:
+        request_map: root = ""
+        processors:
+          - http:
+              url: https://api.hel.fi/servicemap/v2/service_node/?page_size=1000&only=id,parent,level&format=json&page=1
+              verb: GET
+              headers:
+                Accept: application/json
+                User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public services)
+              timeout: 60s
+              retries: 2
+        result_map: |
+          root.tree = if content().length() > 4194304 { throw("a service tree page over 4 MiB") } else { this.results.or([]) }
+          root.tree_count = this.count.or(0)
+    - branch:
+        request_map: root = if this.tree_count.or(0) > 1000 { "" } else { deleted() }
+        processors:
+          - http:
+              url: https://api.hel.fi/servicemap/v2/service_node/?page_size=1000&only=id,parent,level&format=json&page=2
+              verb: GET
+              headers:
+                Accept: application/json
+                User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public services)
+              timeout: 60s
+              retries: 2
+        result_map: |
+          root.tree_rest = if content().length() > 4194304 { throw("a service tree page over 4 MiB") } else { this.results.or([]) }
+    # Each node's second-level ancestor, parents first. A tree of more than the two pages read
+    # fails the run rather than writing units with a kind half the tree decided.
+    - mapping: |
+        let nodes = this.tree.or([]).concat(this.tree_rest.or([]))
+        root = if $nodes.length() == 0 || $nodes.length() != this.tree_count.or(0) {
+          throw("the service tree lists %v nodes and %d were read: read another page".format(this.tree_count.or(0), $nodes.length()))
+        } else {
+          this.without("tree", "tree_rest", "tree_count").assign({ "kinds": $nodes.sort_by(n -> n.level).fold({}, item -> item.tally.assign({
+            item.value.id.string(): if item.value.level <= 1 { item.value.id } else { item.tally.get(item.value.parent.string()).or(0) }
+          })) })
+        }
+
+    # One message per page: the first carries its units, the others the page number that reads
+    # them. 30 pages (30 000 units) is more than twice today's register and the most one run reads.
+    - mapping: |
+        let pages = [((this.count + 999) / 1000).floor().int64(), 30].min()
+        let rest = if $pages > 1 { range(2, $pages + 1).map_each(p -> { "page": p.string() }) } else { [] }
+        let kinds = this.kinds
+        root = [{ "results": this.results.or([]) }].concat($rest).map_each(m -> m.assign({ "kinds": $kinds }))
+    - unarchive: { format: json_array }
+    - split: { size: 1 }
+    - branch:
+        request_map: |
+          meta page = this.page.or("")
+          root = if this.page.or(null) == null { deleted() } else { "" }
+        processors:
+          - sleep: { duration: '500ms' }
+          - http:
+              url: https://api.hel.fi/servicemap/v2/unit/?municipality=helsinki&page_size=1000&only=id,name,location,street_address,address_zip,services,service_nodes,root_service_nodes,contract_type,www,last_modified_time,connections&format=json&page=${! @page }
+              verb: GET
+              headers:
+                Accept: application/json
+                User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public services)
+              timeout: 60s
+              retries: 2
+        result_map: |
+          root.results = if content().length() > 16777216 { throw("a Service Map page over 16 MiB") } else { this.results.or([]) }
+
+    # Plausibility (owner 2026-10-22T18:10Z): a point outside Helsinki and 1 km around it (also 0,0
+    # or a swapped longitude and latitude) is left out and the unit kept, as is a unit with no
+    # point; a unit listed twice is written once. Each is counted in the run's log.
+    - mapping: |
+        let units = this.results.unique(u -> u.id.string())
+        let checked = $units.map_each(u -> u.assign({ "_where": if u.location.coordinates.or([]).length() != 2 { "no position" }
+          else if u.location.coordinates.index(0) < 24.76 || u.location.coordinates.index(0) > 25.29 || u.location.coordinates.index(1) < 59.91 || u.location.coordinates.index(1) > 60.31 { "outside Helsinki" }
+          else { null } }))
+        let tally = $checked.filter(u -> u._where != null).fold({}, item -> item.tally.assign({ item.value._where + " (kept without a point)": item.tally.get(item.value._where + " (kept without a point)").or(0) + 1 }))
+        let dups = this.results.length() - $units.length()
+        meta counted = (if $dups > 0 { $tally.assign({ "duplicate": $dups }) } else { $tally }).format_json(no_indent: true)
+        meta kept = $units.length().string()
+        root = { "results": $checked.map_each(u -> if u._where == null { u.without("_where") } else { u.without("_where", "location") }), "kinds": this.kinds }
+    - log: { level: INFO, message: 'services: ${! @kept } units, by reason ${! @counted }' }
+
+    - mapping: |
+        # One category per unit, the first that matches: a school that also runs a library is a
+        # school's building to a parent and a library's to a reader, and the register lists the
+        # library service first only where the unit is one. The first five read the unit's
+        # services for any provider, as before T-5689 (the city's sports halls company and several
+        # state schools carry a private or undisplayed contract_type). The kinds after them read
+        # the second-level node of each service the unit offers (`kinds`), for a public unit with
+        # a point inside the city only.
+        map category {
+          root = match {
+            this.services.contains(813) => "library",
+            this.services.contains(703) => "healthStation",
+            this.services.contains(729) => "swimmingHall",
+            this.services.contains(731) => "beach",
+            [661, 662, 601, 602, 149, 150].any(code -> this.services.contains(code)) => "school",
+            !this.public || !this.located => "other",
+            [991, 2190].any(n -> this.kinds.contains(n)) => "healthStation",
+            this.kinds.contains(1009) => "hospital",
+            [1097, 1257].any(n -> this.kinds.contains(n)) => "school",
+            [868, 2118, 1088].any(n -> this.kinds.contains(n)) => "kindergarten",
+            [2179, 1353].any(n -> this.kinds.contains(n)) => "vocationalSchool",
+            [1359, 1356].any(n -> this.kinds.contains(n)) => "university",
+            this.kinds.contains(1335) => "adultEducation",
+            this.kinds.contains(995) => "dentalCare",
+            this.kinds.contains(1004) => "maternityClinic",
+            this.kinds.contains(819) => "elderlyCare",
+            [787, 791, 797, 798, 810, 839, 845, 2189, 784, 860].any(n -> this.kinds.contains(n)) => "socialServices",
+            [365, 1334].any(n -> this.kinds.contains(n)) => "youth",
+            this.kinds.contains(1070) => "rescueStation",
+            this.kinds.contains(1076) => "police",
+            this.kinds.contains(1083) => "publicShelter",
+            [171, 755, 122, 1382, 221, 1080].any(n -> this.kinds.contains(n)) => "publicAuthority",
+            this.kinds.contains(551) => "sports",
+            [343, 717].any(n -> this.kinds.contains(n)) => "culture",
+            this.roots.contains(986) => "healthCare",
+            this.roots.contains(783) => "socialServices",
+            _ => "other",
+          }
+        }
+        # The register's own providers of a public service: the city and its companies, the state,
+        # a joint or regional authority, the wellbeing area, a service the city buys and a contract
+        # school. Private and undisplayed providers (SUPPORTED_OPERATIONS, the city's grant to an
+        # association, included) are not.
+        let public = ["MUNICIPAL_SERVICE", "STATE_SERVICE", "SERVICE_BY_JOINT_MUNICIPAL_AUTHORITY",
+          "SERVICE_BY_MUNICIPALLY_OWNED_COMPANY", "SERVICE_BY_MUNICIPAL_GROUP_ENTITY",
+          "SERVICE_BY_REGIONAL_COOPERATION_ORGANIZATION", "SERVICE_BY_WELLBEING_AREA", "PURCHASED_SERVICE",
+          "PRIVATE_CONTRACT_SCHOOL", "STATE_CONTRACT_SCHOOL"]
+        let kinds = this.kinds.or({})
+        # A language map without the languages the register left empty.
+        map texts {
+          root = this.or({}).filter(entry -> entry.value.type() == "string" && entry.value.trim() != "")
+        }
+        root = this.results.or([]).map_each(unit -> {
+          "unit": unit,
+          "category": {
+            "services": unit.services.or([]),
+            "kinds": unit.service_nodes.or([]).map_each(n -> $kinds.get(n.string()).or(0)),
+            "roots": unit.root_service_nodes.or([]),
+            "public": $public.contains(unit.contract_type.or({}).id.or("")),
+            "located": unit.location.or(null) != null
+          }.apply("category"),
+          "names": unit.name.apply("texts"),
+          "hours": unit.connections.or([]).filter(c -> c.section_type == "OPENING_HOURS").index(0).or({}).name.apply("texts"),
+          "street": unit.street_address.or({}).fi.or(null),
+          "www": [unit.www.or({}).fi.or(null), unit.www.or({}).en.or(null), unit.www.or({}).sv.or(null)].filter(u -> u != null && u.string().re_match("^https?://[^\\s/]+\\.[^\\s]+$")).index(0).or(null)
+        }).filter(u -> u.names.length() > 0).map_each(u -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:servicemap-%v".format("PointOfInterest", env("JC_ORG_DOMAIN"), env("JC_SPACE"), u.unit.id),
+          "type": "PointOfInterest",
+          "name": { "type": "LanguageProperty", "languageMap": u.names },
+          "serviceCategory": { "type": "Property", "value": u.category },
+          "address": if u.street == null { null } else {
+            { "type": "Property", "value": {
+              "streetAddress": u.street,
+              "postalCode": u.unit.address_zip.or(null),
+              # Service Map has no city field; every unit is one the request filters by municipality=helsinki.
+              "addressLocality": "Helsinki",
+              "addressCountry": "FI"
+            }.filter(entry -> entry.value != null && entry.value != "") }
+          },
+          "url": if u.www == null { null } else { { "type": "Property", "value": u.www } },
+          "openingHours": if u.hours.length() == 0 { null } else { { "type": "LanguageProperty", "languageMap": u.hours } },
+          "location": if u.unit.location.or(null) == null { null } else { { "type": "GeoProperty", "value": u.unit.location } },
+          "dateModified": if u.unit.last_modified_time.or(null) == null { null } else {
+            { "type": "Property", "value": u.unit.last_modified_time }
+          },
+          "dataProvider": { "type": "Property", "value": "City of Helsinki, Service Map" },
+          # The unit's own record, whose point the location is (never geocoded).
+          "source": { "type": "Property", "value": "https://api.hel.fi/servicemap/v2/unit/%v/".format(u.unit.id) }
+        }.filter(entry -> entry.value != null))

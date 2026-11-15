@@ -1,0 +1,86 @@
+---
+{{- $thisFeed := index .Values "demo-feeds" "feed" -}}
+{{- $natsNs := index .Values "demo-feeds" "nats" "namespace" -}}
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Containers run as non-root with `readOnlyRootFilesystem`
+# - [x] Health probes -> /ready and /ping
+# - [x] Graceful shutdown
+# - [x] Standard labels
+# - [x] ServiceAccount with least privilege where required
+# - [ ] Named ports -> not applicable, Service disabled
+# - [ ] Ingress with TLS -> not applicable, internal feed publisher
+
+fullnameOverride: demo-feed
+nameOverride: demo-feeds-feed
+
+{{- $images := index .Values.images "demo-feeds" "feed" }}
+image:
+  repository: {{ $images.repository }}
+  tag: {{ $images.tag | quote }}
+  digest: {{ $images.digest }}
+  pullPolicy: IfNotPresent
+
+args: ["-c", "/etc/feed/feed.yaml"]
+
+configMap:
+  enabled: true
+  mountPath: /etc/feed
+  data:
+    feed.yaml: |
+      http:
+        address: 0.0.0.0:4195
+      input:
+        generate:
+          interval: {{ $thisFeed.interval }}
+          mapping: |
+            let n = count("demo-feed")
+            # An NGSI-LD entity of the helsinki space, or the gateway refuses every write
+            # (PF-10, T-1464): urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.
+            root.id = "urn:ngsi-ld:DemoCounter:{{ .Values.global.orgDomain }}:helsinki:demo-counter-%d".format(($n % 5) + 1)
+            root.type = "DemoCounter"
+            root.note = "synthetic demo reading, not a city measurement"
+            root.count = $n
+            root.observedAt = now()
+      output:
+        nats:
+          urls: [ "nats://demo-nats.{{ $natsNs }}.svc.cluster.local:4222" ]
+          subject: {{ $thisFeed.subject }}
+      logger:
+        level: INFO
+        format: json
+
+containerPort: 4195
+
+probes:
+  readiness:
+    path: /ready
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /ping
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+    initialDelaySeconds: 5
+
+service:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+podSecurityContext:
+  {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}
+
+securityContext:
+  {{ .Values.securityDefaults.securityContext | toYaml | nindent 2 }}
+
+serviceMesh:
+  enabled: {{ and ($global.serviceMesh.enable | default false) (eq ($global.serviceMesh.type | default "") "linkerd") }}

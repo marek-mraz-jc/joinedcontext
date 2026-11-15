@@ -1,0 +1,24 @@
+# One Garden per row of "DTM_BB-register-verejnej-zelene-1" (T-4255); the definition point of each kept green area (DTM_BB).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-dtm-bb-register-verejnej-zelene-p3
+  namespace: banskabystrica
+  title:
+    sk: DTM_BB-register-verejnej-zelene-1
+    en: DTM_BB-register-verejnej-zelene-1
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 49 1 * * 5
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-dtm-bb-register-verejnej-zelene-p3
+  targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:banskabystrica-otvorene-data:banskabystrica-otvorene-data
+  output:
+    type: Garden
+    mode: replace
+  quotas:
+    maxMemoryMb: 256
+    cpuMillicores: 100

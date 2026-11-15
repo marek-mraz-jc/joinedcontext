@@ -1,0 +1,27 @@
+{#
+  One published chart (T-4641, ADR-N-053): the title and the description as its text alternative,
+  the frame of the renderer on viz.{domain} (named by the view id alone; the renderer reads the
+  spec from CKAN and the rows from the Endpoint), and the snippet that embeds it elsewhere. Both
+  the dataset page and CKAN's own view page render it.
+#}
+{% if viz %}
+  <figure class="jc-viz" aria-labelledby="jc-viz-{{ viz.id }}-title"{% if viz.description %} aria-describedby="jc-viz-{{ viz.id }}-desc"{% endif %}>
+    <figcaption>
+      <h3 id="jc-viz-{{ viz.id }}-title">{{ viz.title }}</h3>
+      {% if viz.description %}<p id="jc-viz-{{ viz.id }}-desc">{{ viz.description }}</p>{% endif %}
+    </figcaption>
+    <iframe class="jc-viz-frame" loading="lazy" title="{{ viz.title }}" src="{{ viz.src }}" data-jc-viz="{{ viz.origin }}"
+            referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-downloads"></iframe>
+    <div class="jc-viz-actions">
+      {% if viz.package %}<a href="{{ h.url_for('dataset.read', id=viz.package) }}#jc-preview-title">{{ h.jc_t('viz_table') }}</a>{% endif %}
+      <details class="jc-viz-embed">
+        <summary>{{ h.jc_t('viz_embed') }}</summary>
+        <p>{{ h.jc_t('viz_embed_lead') }}</p>
+        <div class="jc-copy jc-copy-code">
+          <pre id="jc-viz-{{ viz.id }}-code" tabindex="0"><code>{{ viz.code }}</code></pre>
+          <button type="button" class="btn btn-default" data-jc-copy="jc-viz-{{ viz.id }}-code" data-jc-copied="{{ h.jc_t('copied') }}" data-jc-select="{{ h.jc_t('copy_select') }}">{{ h.jc_t('copy') }}</button>
+        </div>
+      </details>
+    </div>
+  </figure>
+{% endif %}

@@ -1,0 +1,4 @@
+---
+networkpolicies:
+  networkpolicies:
+    chart: charts/networkpolicies

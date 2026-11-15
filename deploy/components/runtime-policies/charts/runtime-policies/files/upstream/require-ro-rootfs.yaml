@@ -1,0 +1,40 @@
+---
+# upstream content is vendored verbatim, so long lines are tolerated:
+# yamllint disable rule:line-length
+# Vendored from github.com/kyverno/policies
+# path: best-practices/require-ro-rootfs/require-ro-rootfs.yaml
+# ref: 76be98a25d49ae01278a94ecde8f50f9e08577ef
+# Do not edit by hand; re-run ci/policies/vendor-upstream-policies.sh instead.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-ro-rootfs
+  annotations:
+    policies.kyverno.io/title: Require Read-Only Root Filesystem
+    policies.kyverno.io/category: Best Practices, EKS Best Practices, PSP Migration
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      A read-only root file system helps to enforce an immutable infrastructure strategy;
+      the container only needs to write on the mounted volume that persists the state.
+      An immutable root filesystem can also prevent malicious binaries from writing to the
+      host system. This policy validates that containers define a securityContext
+      with `readOnlyRootFilesystem: true`.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: validate-readOnlyRootFilesystem
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: 'Root filesystem must be read-only.'
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  readOnlyRootFilesystem: true

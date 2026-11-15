@@ -1,0 +1,15 @@
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Minimal Resources -> idle between calls; the limit is what 16 invocations of 64 MiB need
+# - [x] Minimal storage -> stateless
+# - [x] 1 Replica
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    cpu: '1'
+    memory: 1Gi

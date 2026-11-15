@@ -1,0 +1,126 @@
+---
+demo-nats:
+  podSelector:
+    app.kubernetes.io/name: demo-feeds-nats
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: demo-feeds-feed
+          componentNamespace: demo-feeds.feed
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pipeline-runner-runner
+          componentNamespace: pipeline-runner.runner
+      ports:
+        - protocol: TCP
+          port: 4222
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+demo-feed:
+  podSelector:
+    app.kubernetes.io/name: demo-feeds-feed
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: demo-feeds-nats
+          componentNamespace: demo-feeds.nats
+      ports:
+        - protocol: TCP
+          port: 4222
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+pipeline-runner-to-demo-nats:
+  componentNamespace: pipeline-runner.runner
+  podSelector:
+    app.kubernetes.io/name: pipeline-runner-runner
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: demo-feeds-nats
+          componentNamespace: demo-feeds.nats
+      ports:
+        - protocol: TCP
+          port: 4222
+
+# The HSL bridge (T-5883) only dials out: HSL's broker over WebSocket on 443 at any public
+# address (the cluster's firewall lets nothing out on 8883), and the cluster's own public host
+# for the realm's token (443) and the broker hsl-bridge (8883), which the node rewrites to the
+# ingress controller's pod before this rule is evaluated, on its container port (8443 for
+# Traefik's websecure, 8883 for its mqtts entrypoint; 443 for ingress-nginx). Every private range
+# is excepted, as for the pipeline runner.
+hsl-bridge:
+  podSelector:
+    app.kubernetes.io/name: demo-feeds-hsl-bridge
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - publicInternet: true
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: [traefik, kube-system, ingress-nginx]
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [traefik, ingress-nginx]
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8443
+        - protocol: TCP
+          port: 8883
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

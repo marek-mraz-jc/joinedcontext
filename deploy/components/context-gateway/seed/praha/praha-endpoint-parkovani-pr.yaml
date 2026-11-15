@@ -1,0 +1,52 @@
+# One Smart Data Model type per catalogue dataset (T-4344): OffStreetParking of the space
+# praha-mesto, read through its own Policy, which narrows the space's public read to these types.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-parkoviste-pr
+  namespace: praha
+  title: { cs: Parkoviště P+R — Praha, en: Park and ride car parks — Prague }
+  description:
+    cs: 'Parkoviště P+R a jejich obsazenost z počítadel TSK hl. m. Prahy. Zdroje: IPR Praha (CC BY 4.0), Golemio, Operátor ICT.'
+    en: "Prague's park-and-ride car parks and how full they are, from TSK hl. m. Prahy's counters. Sources: IPR Praha (CC BY 4.0), Golemio, Operátor ICT."
+spec:
+  contextSpaceRef: praha-mesto
+  slug: 4qt5psgy3oxnd5eiuh4ku4thx7ozqgbl
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-parkovani-pr
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # The publisher and contact desk are the Project's spec.catalog, its registry IRI (T-4596).
+    # Aggregates of public facilities and readings: no record names a person (T-4596).
+    personalData: does-not-contain
+    # Open data under the Czech act on free access to information (DCAT-AP-CZ, API/08 section 3).
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroje: datový podklad © IPR Praha (CC BY 4.0); Golemio, Operátor ICT, s daty TSK hl. m. Prahy'
+      en: 'Sources: data © IPR Praha (CC BY 4.0); Golemio, Operátor ICT, with data of TSK hl. m. Prahy'
+    themes: [TRAN]
+    keywords:
+      cs: [Praha, P+R, parkování, obsazenost]
+      en: [Prague, park and ride, parking, occupancy]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: CONT
+    source:
+      - url: https://hub.arcgis.com/api/v3/datasets/7dce241cdbb141fa8104e3a65ca67ad6_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Parkoviště P+R (IPR Praha), en: Park and ride car parks (IPR Praha) }
+        description:
+          cs: Parkoviště P+R z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Park-and-ride car parks from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://api.golemio.cz/v3/parking-measurements?primarySource=tsk-offstreet
+        title: { cs: Parkování P+R – API (Golemio), en: Park and ride parking API (Golemio) }
+        description:
+          cs: Obsazenost parkovišť P+R z počítadel TSK hl. m. Prahy, Operátor ICT, bez omezení práv.
+          en: Occupancy of the park-and-ride car parks from the counters of TSK hl. m. Prahy, Operátor ICT, free of rights.
+    pipelineRef: { kind: Pipeline, name: park-and-ride-occupancy }

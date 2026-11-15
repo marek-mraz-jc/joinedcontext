@@ -1,0 +1,9 @@
+---
+# Checklist:
+# - [x] Resources (requests and limits) -> PL-11
+# - [x] Larger Storage -> none: nothing is kept between runs
+# - [ ] 2+ Replicas or HorizontalPodAutoscaler -> not applicable, one run is one pod
+# - [ ] Rolling updates -> not applicable
+# - [ ] PodDisruptionBudget -> not applicable: an evicted run is retried by the next tick
+
+failedJobsHistoryLimit: 3

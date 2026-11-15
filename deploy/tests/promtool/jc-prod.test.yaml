@@ -1,0 +1,138 @@
+# promtool unit tests of jc-prod's own alert rules (T-6727): per alert, a fault that fires it and the
+# recovery that clears it. tests/test_alert_rules.py renders the rules from jc-prod, writes them
+# beside this file as rules.yaml and runs `promtool test rules` in the pinned image.
+rule_files:
+- rules.yaml
+evaluation_interval: 1m
+tests:
+- interval: 1m
+  input_series:
+  - series: kube_deployment_status_replicas_available{namespace="jc-prod",deployment="jc"}
+    values: 1x5 0x15 1x10
+  - series: kube_deployment_spec_replicas{namespace="jc-prod",deployment="jc"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 18m
+    alertname: JcProdWorkloadDown
+    exp_alerts:
+    - exp_labels:
+        namespace: jc-prod
+        deployment: jc
+        severity: critical
+      exp_annotations:
+        summary: 'jc-prod/jc has fewer available replicas than it asks for: read its pods'
+        runbook_url: https://github.com/marek-mraz-jc/joinedcontext-deployment/blob/main/components/monitoring/RUNBOOK.md#jcprodworkloaddown
+  - eval_time: 25m
+    alertname: JcProdWorkloadDown
+    exp_alerts: []
+  - eval_time: 25m
+    alertname: JcProdMetricsMissing
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: kube_deployment_spec_replicas{namespace="jc-prod",deployment="jc"}
+    values: _x20 1x10
+  alert_rule_test:
+  - eval_time: 18m
+    alertname: JcProdMetricsMissing
+    exp_alerts:
+    - exp_labels:
+        namespace: jc-prod
+        deployment: jc
+        severity: critical
+      exp_annotations:
+        summary: 'kube-state-metrics reports no jc Deployment in jc-prod: jc is gone or every jc-prod rule is blind'
+        runbook_url: https://github.com/marek-mraz-jc/joinedcontext-deployment/blob/main/components/monitoring/RUNBOOK.md#jcprodmetricsmissing
+- interval: 1m
+  input_series:
+  - series: kube_pod_container_status_restarts_total{namespace="jc-prod-mqtt",pod="mqtt-helsinki-sensors-0",container="broker"}
+    values: 0x10 1 2 3 4 5x130
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: JcProdContainerRestarting
+    exp_alerts:
+    - exp_labels:
+        namespace: jc-prod-mqtt
+        pod: mqtt-helsinki-sensors-0
+        container: broker
+        severity: warning
+      exp_annotations:
+        summary: 'jc-prod-mqtt/mqtt-helsinki-sensors-0 container broker restarted more than 3 times in an hour'
+        runbook_url: https://github.com/marek-mraz-jc/joinedcontext-deployment/blob/main/components/monitoring/RUNBOOK.md#jcprodcontainerrestarting
+  - eval_time: 140m
+    alertname: JcProdContainerRestarting
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: kube_pod_status_ready{namespace="jc-prod",pod="postgres-cluster-1",condition="true"}
+    values: 1x5 0x10 1x10
+  alert_rule_test:
+  - eval_time: 13m
+    alertname: JcProdPostgresDown
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+      exp_annotations:
+        summary: 'No postgres-cluster instance in jc-prod is Ready: jc fails its writes'
+        runbook_url: https://github.com/marek-mraz-jc/joinedcontext-deployment/blob/main/components/monitoring/RUNBOOK.md#jcprodpostgresdown
+  - eval_time: 22m
+    alertname: JcProdPostgresDown
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: kube_pod_status_ready{namespace="jc-prod",pod="postgres-cluster-1",condition="true"}
+    values: _x10
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: JcProdPostgresDown
+    exp_alerts:
+    - exp_labels:
+        namespace: jc-prod
+        condition: "true"
+        severity: critical
+      exp_annotations:
+        summary: 'No postgres-cluster instance in jc-prod is Ready: jc fails its writes'
+        runbook_url: https://github.com/marek-mraz-jc/joinedcontext-deployment/blob/main/components/monitoring/RUNBOOK.md#jcprodpostgresdown
+- interval: 1m
+  input_series:
+  # 14 days and 30 minutes left at the start: under 14 days from minute 31, renewed (90 days) at 150.
+  - series: certmanager_certificate_expiration_timestamp_seconds{namespace="jc-prod",name="app-helsinki-data"}
+    values: 1211400x149 7776000x60
+  - series: certmanager_certificate_ready_status{namespace="jc-prod",name="app-helsinki-data",condition="True"}
+    values: 1x210
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: JcProdCertificateExpiresSoon
+    exp_alerts: []
+  - eval_time: 100m
+    alertname: JcProdCertificateExpiresSoon
+    exp_alerts:
+    - exp_labels:
+        namespace: jc-prod
+        name: app-helsinki-data
+        severity: critical
+      exp_annotations:
+        summary: 'Certificate jc-prod/app-helsinki-data expires within 14 days or is not Ready: renewal has failed'
+        runbook_url: https://github.com/marek-mraz-jc/joinedcontext-deployment/blob/main/components/monitoring/RUNBOOK.md#jcprodcertificateexpiressoon
+  - eval_time: 170m
+    alertname: JcProdCertificateExpiresSoon
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: certmanager_certificate_ready_status{namespace="jc-prod",name="app-zilina-mapa",condition="True"}
+    values: 1x10 0x80 1x10
+  alert_rule_test:
+  - eval_time: 80m
+    alertname: JcProdCertificateExpiresSoon
+    exp_alerts:
+    - exp_labels:
+        namespace: jc-prod
+        name: app-zilina-mapa
+        condition: "True"
+        severity: critical
+      exp_annotations:
+        summary: 'Certificate jc-prod/app-zilina-mapa expires within 14 days or is not Ready: renewal has failed'
+        runbook_url: https://github.com/marek-mraz-jc/joinedcontext-deployment/blob/main/components/monitoring/RUNBOOK.md#jcprodcertificateexpiressoon
+  - eval_time: 100m
+    alertname: JcProdCertificateExpiresSoon
+    exp_alerts: []

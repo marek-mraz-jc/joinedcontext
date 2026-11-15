@@ -1,0 +1,89 @@
+# The mapping of the service-usage pipeline (T-5258, T-5667): the city's web analytics as Smart Data
+# Model KeyPerformanceIndicator series, city-wide, beside the area statistics.
+#
+# The DataSource's answer is the site register of the city's Matomo (one object per site id); a
+# register that is not an object of sites fails the run, since then the publication itself moved.
+# The second read is the web analytics export (datastore.hri.fi), one file per month published on
+# the 1st: the month before the current one (Europe/Helsinki), visits and page views per site.
+# Both reads are open (CC BY 4.0), 30 s and 4 MiB each; a failed read fails the run, nothing is
+# deleted (output upsert). Korkeasaari zoo's visitor API, the first read until October 2026, is
+# suspended by its host and left out: every run failed on it before the export was read.
+#
+# Ids: urn:ngsi-ld:KeyPerformanceIndicator:hel.fi:{space}:stat-services-{series}-{key}-0910000000;
+# the theme segment `services` is what the theme's Endpoint Policy selects by idPattern. kpiValue
+# carries the period's last day as observedAt, so the space records one history row per period
+# (record: observed, DM-132).
+#
+# Plausibility: a count that is not a number or is negative is dropped and counted; a site listed
+# twice keeps its first row and counts the duplicate.
+
+pipeline:
+  processors:
+    - try:
+        - mapping: |
+            root = if content().length() > 4194304 { throw("the web analytics site register answered %v bytes; more than 4194304 is not a list of sites".format(content().length())) } else if this.type() != "object" || this.keys().length() == 0 { throw("the web analytics site register lists no site") } else { { "registered": this.keys().length() } }
+        - branch:
+            request_map: |
+              # The month before this one, as the export names it (2026-9): the last day of the
+              # previous month is today minus today's day of the month.
+              meta month = (now().ts_unix() - now().ts_format("02", "Europe/Helsinki").number().int64() * 86400).ts_format("2006-1", "Europe/Helsinki")
+              root = ""
+            processors:
+              - http:
+                  url: https://datastore.hri.fi/Helsinki/kanslia/kavijaanalytiikka/matomo-export-${! @month }-sites.json
+                  verb: GET
+                  headers:
+                    Accept: application/json
+                    User-Agent: joinedcontext-helsinki/1.0 (+https://dev.joinedcontext.com)
+                  timeout: 30s
+                  retries: 1
+              - mapping: |
+                  root = if content().length() > 4194304 { throw("datastore.hri.fi answered %v bytes; more than 4194304 is not one month of site analytics".format(content().length())) } else { { "month": @month, "sites": this } }
+            result_map: root.web = this
+        - mapping: |
+            let web = this.web
+            let web_from = "%v-01".format($web.month.ts_parse("2006-1").ts_format("2006-01"))
+            let web_to = ((($web_from.ts_parse("2006-01-02").ts_unix() + 32 * 86400).ts_format("2006-01", "UTC") + "-01").ts_parse("2006-01-02").ts_unix() - 86400).ts_format("2006-01-02", "UTC")
+            let sites = $web.sites.or([]).filter(s -> s.idsite != null)
+            let web_rows = $sites.map_each(s -> [
+              { "series": "web-visits", "key": s.idsite.string(), "value": s.nb_visits, "from": $web_from, "to": $web_to, "every": "monthly",
+                "name": "%v: käynnit kuukaudessa".format(s.label.or(s.idsite.string())), "site": s.main_url.or(""), "source": "https://hri.fi/data/fi/dataset/helsingin-kaupungin-verkkosivustojen-kavijaanalytiikka", "by": "City of Helsinki, Digitalisation unit" },
+              { "series": "web-pageviews", "key": s.idsite.string(), "value": s.nb_pageviews, "from": $web_from, "to": $web_to, "every": "monthly",
+                "name": "%v: sivunäytöt kuukaudessa".format(s.label.or(s.idsite.string())), "site": s.main_url.or(""), "source": "https://hri.fi/data/fi/dataset/helsingin-kaupungin-verkkosivustojen-kavijaanalytiikka", "by": "City of Helsinki, Digitalisation unit" }
+            ]).flatten()
+            let rows = $web_rows.map_each(r -> r.merge({
+              "id": "urn:ngsi-ld:%v:%v:%v:stat-services-%v-%v-0910000000".format("KeyPerformanceIndicator", env("JC_ORG_DOMAIN"), env("JC_SPACE"), r.series, r.key.re_replace_all("[^A-Za-z0-9._]", "_")),
+              "reason": if r.value == null { "no value" } else if r.value.type() != "number" { "not a number" } else if r.value < 0 { "negative count" } else { "" }
+            }))
+            let kept = $rows.filter(r -> r.reason == "")
+            let unique = $kept.unique(r -> r.id)
+            let reasons = $rows.filter(r -> r.reason != "").map_each(r -> r.reason)
+            let dropped = $reasons.unique().map_each(x -> { x: $reasons.filter(y -> y == x).length() }).squash()
+            let dropped = if $kept.length() > $unique.length() { $dropped.merge({ "duplicate id": $kept.length() - $unique.length() }) } else { $dropped }
+            root = if $sites.length() == 0 { throw("the web analytics export of %v lists no site".format($web.month)) } else { {
+              "period": $web.month,
+              "dropped": $dropped,
+              "entities": $unique.map_each(r -> {
+                "id": r.id,
+                "type": "KeyPerformanceIndicator",
+                "name": { "type": "LanguageProperty", "languageMap": { "fi": r.name } },
+                "description": { "type": "LanguageProperty", "languageMap": { "fi": "Helsingin kaupungin verkkosivustojen kävijäanalytiikka" } },
+                "kpiValue": { "type": "Property", "value": r.value, "unitCode": "C62", "observedAt": "%vT00:00:00Z".format(r.to) },
+                "calculationPeriod": { "type": "Property", "value": { "from": r.from, "to": r.to } },
+                "calculationFrequency": { "type": "Property", "value": r.every },
+                "calculatedBy": { "type": "Property", "value": r.by },
+                "organization": { "type": "Property", "value": "City of Helsinki" },
+                "process": { "type": "Property", "value": "Matomo web analytics, %v".format(r.site) },
+                "area": { "type": "Property", "value": "Helsinki" },
+                "districtCode": { "type": "Property", "value": "0910000000" },
+                "divisionLevel": { "type": "Property", "value": "city" },
+                "statisticsTable": { "type": "Property", "value": r.series },
+                "dimensionKey": { "type": "Property", "value": "idsite=%v".format(r.key) },
+                "dataProvider": { "type": "Property", "value": "%v, CC BY 4.0".format(r.by) },
+                "source": { "type": "Property", "value": r.source }
+              })
+            } }
+        - log:
+            level: INFO
+            message: 'service usage web ${! this.period }: ${! this.entities.length() } written, dropped ${! this.dropped.format_json(no_indent: true) }'
+        - mapping: root = this.entities

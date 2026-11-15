@@ -1,0 +1,15 @@
+# Hub item 3b46759b, layer 2, from SSC Model cestnej siete (Cestná databanka 01.01.2024), updated yearly; 1 651 bridges, 1 MB with 6-decimal coordinates. Read from the region's own ArcGIS FeatureServer, the service behind its open-data portal (opendata.bbsk.sk): the query asks for the columns the mapping reads, in WGS 84 (outSR=4326). No key. CC BY-SA 4.0, read from the Hub DCAT feed (opendata.bbsk.sk/api/feed/dcat-us/1.1.json) and the item's licenseInfo on arcgis.com.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bbsk-mosty
+  namespace: bbsk
+  title: { sk: Mosty v Banskobystrickom kraji (BBSK), en: Bridges in the region (BBSK) }
+spec:
+  type: http
+  http:
+    url: https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Mosty_v_Banskobystrickom_kraji_(public_view)/FeatureServer/2/query?where=1%3D1&outFields=ID_mosta,N%C3%A1zov_mosta,Trieda_PK,%C4%8C%C3%ADslo_PK,Rok_postavenia,Po%C4%8Det_otvorov,D%C4%BA%C5%BEka_premostenia___m,materialText,druhKonstrukcieText,mostAkoPamiatkaText,Spr%C3%A1vca_mostu,Okres&returnGeometry=true&f=geojson&outSR=4326&geometryPrecision=6
+    verb: GET
+    headers:
+      Accept: application/geo+json, application/json
+    timeout: 60s

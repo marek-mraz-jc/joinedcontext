@@ -1,0 +1,20 @@
+# Open Data BCN's trees of local interest (dataset arbres-interes-local, CC BY 4.0): the 208 trees
+# the city protects for their age, size or history, entries of its register (Guia BCN). The
+# DataStore resource of the CSV is read with one SQL query, one row per tree (main address first);
+# the CSV itself is UTF-16, which a pipeline cannot read. About 54 KB; no credential. T-5413.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-local-trees
+  namespace: barcelona
+  title:
+    ca: Arbres d'interès local (Open Data BCN)
+    es: Árboles de interés local (Open Data BCN)
+    en: Trees of local interest (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/data/api/3/action/datastore_search_sql?sql=SELECT%20DISTINCT%20ON%20%28id%29%20replace%28register_id%2C%20U%26%27%5CFEFF%27%2C%20%27%27%29%20AS%20id%2C%20name%2C%20addresses_road_name%20AS%20street%2C%20addresses_start_street_number%20AS%20num%2C%20addresses_district_name%20AS%20district%2C%20geo_epgs_4326_lat%20AS%20lat%2C%20geo_epgs_4326_lon%20AS%20lon%2C%20modified%20FROM%20%225bedd7c3-3201-4d9b-9062-1af8e9288ab1%22%20ORDER%20BY%20id%2C%20addresses_main_address%20%3D%20%27True%27%20DESC%20LIMIT%201000
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

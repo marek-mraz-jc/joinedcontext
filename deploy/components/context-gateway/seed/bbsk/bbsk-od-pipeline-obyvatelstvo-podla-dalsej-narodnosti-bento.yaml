@@ -1,0 +1,222 @@
+# The mapping of the od-obyvatelstvo-podla-dalsej-narodnosti pipeline, generated from the T-4254 mapping: one KeyPerformanceIndicator per row of
+# "Obyvateľstvo podľa ďalšej národnosti (2021), obce" (https://opendata.dev.joinedcontext.com/dataset/bbsk-obyvatelstvo-podla-dalsej-narodnosti-2021-obce-11667a). Do not edit: change the mapping and run scripts/open-data/generate.py.
+
+pipeline:
+  processors:
+    # A layer that answers an error or no feature list is the service failing, so the run fails
+    # where it can be seen rather than writing nothing.
+    - mapping: |
+        root = if this.error.or(null) != null || this.features.or(null) == null { throw("the layer answered no features: %v".format(this.error.message.or(""))) } else { this }
+    # Page 0 as it came. When the layer says there is more, it is asked how many rows it holds and
+    # every further page of them is read (T-5288), one page at a time: the runner fetches, maps and
+    # writes a page before the next, so a layer of any size runs in a page's memory (jc-ekiben-paging).
+    - branch:
+        request_map: |
+          root = if this.properties.exceededTransferLimit.or(false) { "" } else { deleted() }
+        processors:
+          - http:
+              url: "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Mapa_SODB_2021_%C4%8Fal%C5%A1ia_n%C3%A1rodnos%C5%A5/FeatureServer/0/query?where=1%3D1&returnCountOnly=true&f=json"
+              verb: GET
+              headers:
+                Accept: application/json
+              timeout: 60s
+              retries: 2
+              rate_limit: pipeline_egress
+        result_map: |
+          root.rowCount = this.count.or(this.error.message.or("no count"))
+    - mapping: |
+        let rows = this.rowCount.or(null)
+        root = if !this.properties.exceededTransferLimit.or(false) { [this] } else if errored() || $rows.type() != "number" { [{ "problem": "the layer did not say how many rows it holds: %v".format(error().or($rows)) }] } else if this.features.length() < [1000, $rows].min() { [{ "problem": "the layer answered %v rows where 1000 were asked, so its pages would skip rows".format(this.features.length()) }] } else if $rows <= 1000 { [this] } else { [this].concat(range(1, (($rows + 999) / 1000).floor()).map_each(p -> { "offset": p * 1000, "rowCount": $rows })) }
+    - unarchive:
+        format: json_array
+    # Each page its own batch: fetched, mapped and written before the next is read.
+    - split:
+        size: 1
+    - switch:
+        - check: this.offset.or(null) != null
+          processors:
+            - mapping: |
+                meta offset = this.offset
+                meta rows = this.rowCount
+                root = ""
+            - http:
+                url: "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Mapa_SODB_2021_%C4%8Fal%C5%A1ia_n%C3%A1rodnos%C5%A5/FeatureServer/0/query?where=1%3D1&outFields=DOW,FACC,IDN4,NM4,IDN3,NM3,IDN2,NM2,VYMERA,NUTS1,NUTS1_CODE,NUTS2,NUTS2_CODE,NUTS3,NUTS3_CODE,LAU1,LAU1_CODE,LAU2,LAU2_CODE,K%C3%B3d_obce,%C3%9Azemn%C3%A1_jednotka,K%C3%B3d_okresu,Okres,Spolu,slovensk%C3%A1__abs__,slovensk%C3%A1____,ma%C4%8Farsk%C3%A1__abs__,ma%C4%8Farsk%C3%A1____,r%C3%B3mska__abs__,r%C3%B3mska____,rus%C3%ADnska__abs__,rus%C3%ADnska____,%C4%8Desk%C3%A1__abs__,%C4%8Desk%C3%A1____,ukrajinsk%C3%A1__abs__,ukrajinsk%C3%A1____,nemeck%C3%A1__abs__,nemeck%C3%A1____,moravsk%C3%A1__abs__,moravsk%C3%A1____,po%C4%BEsk%C3%A1__abs__,po%C4%BEsk%C3%A1____,rusk%C3%A1__abs__,rusk%C3%A1____,vietnamsk%C3%A1__abs__,vietnamsk%C3%A1____,bulharsk%C3%A1__abs__,bulharsk%C3%A1____,chorv%C3%A1tska__abs__,chorv%C3%A1tska____,srbsk%C3%A1__abs__,srbsk%C3%A1____,%C5%BEidovsk%C3%A1__abs__,%C5%BEidovsk%C3%A1____,rumunsk%C3%A1__abs__,rumunsk%C3%A1____,alb%C3%A1nska__abs__,alb%C3%A1nska____,rak%C3%BAska__abs__,rak%C3%BAska____,gr%C3%A9cka__abs__,gr%C3%A9cka____,sliezska__abs__,sliezska____,%C4%8D%C3%ADnska__abs__,%C4%8D%C3%ADnska____,talianska__abs__,talianska____,k%C3%B3rejsk%C3%A1__abs__,k%C3%B3rejsk%C3%A1____,anglick%C3%A1__abs__,anglick%C3%A1____,franc%C3%BAzska__abs__,franc%C3%BAzska____,tureck%C3%A1__abs__,tureck%C3%A1____,ir%C3%A1nska__abs__,ir%C3%A1nska____,%C3%ADrska__abs__,%C3%ADrska____,kanadsk%C3%A1__abs__,kanadsk%C3%A1____,in%C3%A1__abs__,in%C3%A1____,nezisten%C3%A1__abs__,nezisten%C3%A1____&returnGeometry=true&outSR=4326&geometryPrecision=6&f=geojson&resultOffset=${! @offset }&resultRecordCount=1000&orderByFields=ObjectId"
+                verb: GET
+                headers:
+                  Accept: application/geo+json
+                timeout: 60s
+                retries: 2
+                rate_limit: pipeline_egress
+            - mapping: |
+                root = if errored() { throw("the page at %v did not come: %v".format(@offset, error())) } else if this.features.or(null) == null { { "problem": "the page at %v answered no features: %v".format(@offset, this.error.message.or("")) } } else if this.features.length() < [1000, @rows - @offset].min() { { "problem": "the page at %v answered %v rows where %v were due".format(@offset, this.features.length(), [1000, @rows - @offset].min()) } } else { this }
+    # A refusal above fails the run and writes none of its page's rows; earlier pages stay written
+    # and the failed run deletes nothing (sourceDeletes waits for a finished run).
+    - mapping: |
+        root = if this.problem.or(null) != null { throw(this.problem) } else { this }
+    - mapping: |
+        root = this.features.or([])
+    - unarchive:
+        format: json_array
+    - mapping: |
+        # Slovak notation: a space (or a no-break one) between thousands, a comma before the decimals, so
+        # "10 700,01" is 10700.01 (T-4324); a text without a comma keeps its dot, "1.5" is one and a half.
+        map number {
+          let s = this.string().re_replace_all("[ 	  ]", "")
+          let t = if $s.contains(",") { $s.replace_all(".", "").replace_all(",", ".") } else { $s }
+          root = $t.number().catch(null)
+        }
+        map integer {
+          let v = if this == null { null } else { this.apply("number") }
+          root = if $v == null { null } else { { "type": "Property", "value": $v.round().int64() } }
+        }
+        map float {
+          let v = if this == null { null } else { this.apply("number") }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        map string {
+          let v = if this == null { "" } else { this.string().trim() }
+          root = if $v == "" { null } else { { "type": "Property", "value": $v } }
+        }
+        map string_list {
+          let v = if this == null { "" } else { this.string().trim() }
+          root = if $v == "" { null } else { { "type": "Property", "value": [$v] } }
+        }
+        map uri {
+          root = this.apply("string")
+        }
+        # An Esri date is milliseconds since the epoch; a WordPress one is text.
+        # `match` rebinds `this` to what it matches, so the value is named first.
+        map datetime {
+          let x = this
+          let v = match $x.type() {
+            "number" => ($x / 1000).ts_format("2006-01-02T15:04:05Z", "UTC").catch(null),
+            "string" => $x.ts_parse("2006-01-02T15:04:05").ts_format("2006-01-02T15:04:05Z", "UTC").catch($x.ts_format("2006-01-02T15:04:05Z", "UTC").catch(null)),
+            _ => null,
+          }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        # The instant a row was observed, from its `observedAt` column: a bare year is its first instant,
+        # anything else reads as a datetime (T-4288).
+        map observed {
+          let x = this
+          root = if $x == null { null } else if $x.string().re_match("^[0-9]{4}$") { $x.string() + "-01-01T00:00:00Z" } else {
+            $x.apply("datetime").value.catch(null)
+          }
+        }
+        # A measured Property with the instant it holds, so SensorThings charts it (T-4288).
+        map stamped {
+          root = if this.p == null || this.at == null { this.p } else { this.p.merge({ "observedAt": this.at }) }
+        }
+        map date {
+          let x = this
+          let v = match $x.type() {
+            "number" => ($x / 1000).ts_format("2006-01-02", "UTC").catch(null),
+            # ISO, or the Slovak "29.08.2026" and "1. 3. 2024".
+            "string" => if $x.re_match("^[0-9]{4}-[0-9]{2}-[0-9]{2}") { $x.slice(0, 10) } else {
+              $x.re_replace_all("[.] +", ".").trim().ts_parse("2.1.2006").ts_format("2006-01-02", "UTC").catch(null)
+            },
+            _ => null,
+          }
+          root = if $v == null { null } else { { "type": "Property", "value": $v } }
+        }
+        let local = "obyvatelstvo-podla-dalsej-narodnosti-" + [this.properties."IDN4"].map_each(v -> v.string()).join("-").re_replace_all("[^A-Za-z0-9._~-]", "-").slice(0, 80)
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:%v".format("KeyPerformanceIndicator", "bbsk.sk", env("JC_SPACE"), $local),
+          "type": "KeyPerformanceIndicator",
+          "dOW": this.properties."DOW".apply("datetime"),
+          "fACC": this.properties."FACC".apply("string"),
+          "iDN4": this.properties."IDN4".apply("integer"),
+          "nM4": this.properties."NM4".apply("string"),
+          "iDN3": this.properties."IDN3".apply("integer"),
+          "nM3": this.properties."NM3".apply("string"),
+          "iDN2": this.properties."IDN2".apply("integer"),
+          "nM2": this.properties."NM2".apply("string"),
+          "vYMERA": this.properties."VYMERA".apply("float"),
+          "nUTS1": this.properties."NUTS1".apply("string"),
+          "nUTS1CODE": this.properties."NUTS1_CODE".apply("string"),
+          "nUTS2": this.properties."NUTS2".apply("string"),
+          "nUTS2CODE": this.properties."NUTS2_CODE".apply("string"),
+          "nUTS3": this.properties."NUTS3".apply("string"),
+          "nUTS3CODE": this.properties."NUTS3_CODE".apply("string"),
+          "lAU1": this.properties."LAU1".apply("string"),
+          "lAU1CODE": this.properties."LAU1_CODE".apply("string"),
+          "lAU2": this.properties."LAU2".apply("string"),
+          "lAU2CODE": this.properties."LAU2_CODE".apply("string"),
+          "kodObce": this.properties."Kód_obce".apply("string"),
+          "uzemnaJednotka": this.properties."Územná_jednotka".apply("string"),
+          "kodOkresu": this.properties."Kód_okresu".apply("string"),
+          "okres": this.properties."Okres".apply("string"),
+          "spolu": this.properties."Spolu".apply("integer"),
+          "slovenskaAbs": this.properties."slovenská__abs__".apply("integer"),
+          "slovenska": this.properties."slovenská____".apply("float"),
+          "madarskaAbs": this.properties."maďarská__abs__".apply("integer"),
+          "madarska": this.properties."maďarská____".apply("float"),
+          "romskaAbs": this.properties."rómska__abs__".apply("integer"),
+          "romska": this.properties."rómska____".apply("float"),
+          "rusinskaAbs": this.properties."rusínska__abs__".apply("integer"),
+          "rusinska": this.properties."rusínska____".apply("float"),
+          "ceskaAbs": this.properties."česká__abs__".apply("integer"),
+          "ceska": this.properties."česká____".apply("float"),
+          "ukrajinskaAbs": this.properties."ukrajinská__abs__".apply("integer"),
+          "ukrajinska": this.properties."ukrajinská____".apply("float"),
+          "nemeckaAbs": this.properties."nemecká__abs__".apply("integer"),
+          "nemecka": this.properties."nemecká____".apply("float"),
+          "moravskaAbs": this.properties."moravská__abs__".apply("integer"),
+          "moravska": this.properties."moravská____".apply("float"),
+          "polskaAbs": this.properties."poľská__abs__".apply("integer"),
+          "polska": this.properties."poľská____".apply("float"),
+          "ruskaAbs": this.properties."ruská__abs__".apply("integer"),
+          "ruska": this.properties."ruská____".apply("float"),
+          "vietnamskaAbs": this.properties."vietnamská__abs__".apply("integer"),
+          "vietnamska": this.properties."vietnamská____".apply("float"),
+          "bulharskaAbs": this.properties."bulharská__abs__".apply("integer"),
+          "bulharska": this.properties."bulharská____".apply("float"),
+          "chorvatskaAbs": this.properties."chorvátska__abs__".apply("integer"),
+          "chorvatska": this.properties."chorvátska____".apply("float"),
+          "srbskaAbs": this.properties."srbská__abs__".apply("integer"),
+          "srbska": this.properties."srbská____".apply("float"),
+          "zidovskaAbs": this.properties."židovská__abs__".apply("integer"),
+          "zidovska": this.properties."židovská____".apply("float"),
+          "rumunskaAbs": this.properties."rumunská__abs__".apply("integer"),
+          "rumunska": this.properties."rumunská____".apply("float"),
+          "albanskaAbs": this.properties."albánska__abs__".apply("integer"),
+          "albanska": this.properties."albánska____".apply("float"),
+          "rakuskaAbs": this.properties."rakúska__abs__".apply("integer"),
+          "rakuska": this.properties."rakúska____".apply("float"),
+          "greckaAbs": this.properties."grécka__abs__".apply("integer"),
+          "grecka": this.properties."grécka____".apply("float"),
+          "sliezskaAbs": this.properties."sliezska__abs__".apply("integer"),
+          "sliezska": this.properties."sliezska____".apply("float"),
+          "cinskaAbs": this.properties."čínska__abs__".apply("integer"),
+          "cinska": this.properties."čínska____".apply("float"),
+          "talianskaAbs": this.properties."talianska__abs__".apply("integer"),
+          "talianska": this.properties."talianska____".apply("float"),
+          "korejskaAbs": this.properties."kórejská__abs__".apply("integer"),
+          "korejska": this.properties."kórejská____".apply("float"),
+          "anglickaAbs": this.properties."anglická__abs__".apply("integer"),
+          "anglicka": this.properties."anglická____".apply("float"),
+          "francuzskaAbs": this.properties."francúzska__abs__".apply("integer"),
+          "francuzska": this.properties."francúzska____".apply("float"),
+          "tureckaAbs": this.properties."turecká__abs__".apply("integer"),
+          "turecka": this.properties."turecká____".apply("float"),
+          "iranskaAbs": this.properties."iránska__abs__".apply("integer"),
+          "iranska": this.properties."iránska____".apply("float"),
+          "irskaAbs": this.properties."írska__abs__".apply("integer"),
+          "irska": this.properties."írska____".apply("float"),
+          "kanadskaAbs": this.properties."kanadská__abs__".apply("integer"),
+          "kanadska": this.properties."kanadská____".apply("float"),
+          "inaAbs": this.properties."iná__abs__".apply("integer"),
+          "ina": this.properties."iná____".apply("float"),
+          "nezistenaAbs": this.properties."nezistená__abs__".apply("integer"),
+          "nezistena": this.properties."nezistená____".apply("float"),
+          "location": if this.geometry.or(null) == null { null } else { { "type": "GeoProperty", "value": this.geometry } },
+          "dataProvider": { "type": "Property", "value": "Banskobystrický samosprávny kraj (CC BY-SA 4.0)" },
+          "source": { "type": "Property", "value": "https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Mapa_SODB_2021_%C4%8Fal%C5%A1ia_n%C3%A1rodnos%C5%A5/FeatureServer/0/query?where=1%3D1&outFields=DOW,FACC,IDN4,NM4,IDN3,NM3,IDN2,NM2,VYMERA,NUTS1,NUTS1_CODE,NUTS2,NUTS2_CODE,NUTS3,NUTS3_CODE,LAU1,LAU1_CODE,LAU2,LAU2_CODE,K%C3%B3d_obce,%C3%9Azemn%C3%A1_jednotka,K%C3%B3d_okresu,Okres,Spolu,slovensk%C3%A1__abs__,slovensk%C3%A1____,ma%C4%8Farsk%C3%A1__abs__,ma%C4%8Farsk%C3%A1____,r%C3%B3mska__abs__,r%C3%B3mska____,rus%C3%ADnska__abs__,rus%C3%ADnska____,%C4%8Desk%C3%A1__abs__,%C4%8Desk%C3%A1____,ukrajinsk%C3%A1__abs__,ukrajinsk%C3%A1____,nemeck%C3%A1__abs__,nemeck%C3%A1____,moravsk%C3%A1__abs__,moravsk%C3%A1____,po%C4%BEsk%C3%A1__abs__,po%C4%BEsk%C3%A1____,rusk%C3%A1__abs__,rusk%C3%A1____,vietnamsk%C3%A1__abs__,vietnamsk%C3%A1____,bulharsk%C3%A1__abs__,bulharsk%C3%A1____,chorv%C3%A1tska__abs__,chorv%C3%A1tska____,srbsk%C3%A1__abs__,srbsk%C3%A1____,%C5%BEidovsk%C3%A1__abs__,%C5%BEidovsk%C3%A1____,rumunsk%C3%A1__abs__,rumunsk%C3%A1____,alb%C3%A1nska__abs__,alb%C3%A1nska____,rak%C3%BAska__abs__,rak%C3%BAska____,gr%C3%A9cka__abs__,gr%C3%A9cka____,sliezska__abs__,sliezska____,%C4%8D%C3%ADnska__abs__,%C4%8D%C3%ADnska____,talianska__abs__,talianska____,k%C3%B3rejsk%C3%A1__abs__,k%C3%B3rejsk%C3%A1____,anglick%C3%A1__abs__,anglick%C3%A1____,franc%C3%BAzska__abs__,franc%C3%BAzska____,tureck%C3%A1__abs__,tureck%C3%A1____,ir%C3%A1nska__abs__,ir%C3%A1nska____,%C3%ADrska__abs__,%C3%ADrska____,kanadsk%C3%A1__abs__,kanadsk%C3%A1____,in%C3%A1__abs__,in%C3%A1____,nezisten%C3%A1__abs__,nezisten%C3%A1____&returnGeometry=true&outSR=4326&geometryPrecision=6&f=geojson&resultOffset=0&resultRecordCount=1000&orderByFields=ObjectId" },
+          "isPartOf": { "type": "Property", "value": "https://opendata.dev.joinedcontext.com/dataset/bbsk-obyvatelstvo-podla-dalsej-narodnosti-2021-obce-11667a" }
+        }.filter(entry -> entry.value != null)
+    # One request per run's batch rather than one per row.
+    - split:
+        size: 1000
+        byte_size: 2097152
+    - archive:
+        format: json_array

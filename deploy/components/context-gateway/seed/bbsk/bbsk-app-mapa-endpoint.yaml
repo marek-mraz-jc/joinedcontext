@@ -1,0 +1,13 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-bbsk-mapa
+  namespace: bbsk
+  title: { en: Map of the Banská Bystrica region, sk: Mapa Banskobystrického kraja }
+  annotations: { joinedcontext.com/generated-by: portal/app-reconciler }
+spec:
+  audience: public
+  callerRole: true
+  contextSpaceRef: { kind: ContextSpace, name: bbsk-registre }
+  enabledRepresentations: [ngsi-ld, mcp, ogc-features, odata]
+  slug: rv5cn2kxq7bmt3wza6hjd4ype2

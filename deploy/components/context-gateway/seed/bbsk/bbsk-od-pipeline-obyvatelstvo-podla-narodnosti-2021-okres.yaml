@@ -1,0 +1,24 @@
+# One KeyPerformanceIndicator per row of "Obyvateľstvo podľa národnosti (2021), okresy" (T-4255); one row per area (and year).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-obyvatelstvo-podla-narodnosti-2021-okres
+  namespace: bbsk
+  title:
+    sk: Obyvateľstvo podľa národnosti (2021), okresy
+    en: Obyvateľstvo podľa národnosti (2021), okresy
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 47 5 14 * *
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-obyvatelstvo-podla-narodnosti-2021-okres
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: KeyPerformanceIndicator
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

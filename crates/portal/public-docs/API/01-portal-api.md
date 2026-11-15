@@ -2960,6 +2960,10 @@ description name the ids, never the e-mails. Each person gets their own `person.
   `person.changed` event names the rule that allowed the action. A platform administrator (the
   bootstrap group, or `org-admin` bound with no Organization scope) covers every grant; the
   RoleBinding rule above still applies to them.
+- The same holds when a person is created: if a grant the caller could not change, or a RoleBinding
+  right the caller lacks, already names the new address, the account opens by the sign-up e-mail
+  alone; when the realm cannot send mail the new account is removed again and the answer is `403`,
+  never a temporary password (PF-93).
 - An e-mail another person already has is `409` naming it. A malformed e-mail, a name longer than
   255 characters, a locale outside the Portal's languages or an unknown field is `400`.
 - An `{id}` the realm does not know is `404`.

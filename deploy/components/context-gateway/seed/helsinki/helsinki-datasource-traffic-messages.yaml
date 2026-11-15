@@ -1,0 +1,17 @@
+# Fintraffic's road works and traffic announcements, the whole country in one document; the
+# mapping keeps the capital region. Digitraffic asks every client to name itself.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: digitraffic-traffic-messages
+  namespace: helsinki
+  title:
+    en: Road works and traffic announcements (Fintraffic Digitraffic)
+    fi: Tietyöt ja liikennetiedotteet (Fintraffic Digitraffic)
+spec:
+  type: http
+  http:
+    url: https://tie.digitraffic.fi/api/traffic-message/v1/messages?inactiveHours=0&includeAreaGeometry=false&situationType=TRAFFIC_ANNOUNCEMENT&situationType=ROAD_WORK
+    verb: GET
+    headers: { Accept: application/json, Digitraffic-User: joinedcontext-helsinki }
+    timeout: 30s

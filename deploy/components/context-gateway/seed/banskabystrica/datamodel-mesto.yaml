@@ -1,0 +1,21 @@
+# The same model the region's raw space publishes, declared again in the city's own space: a
+# DataModel belongs to one Context Space, and the two projects share the shape of a published
+# statistical cell without sharing a space. The LinkML source is one file, read from the
+# region's folder by the seed index.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: statistical-observation
+  namespace: banskabystrica
+  title: { sk: Štatistické pozorovanie, en: Statistical observation }
+spec:
+  contextSpaceRef: banskabystrica-mesto
+  linkml: ./statistical-observation.linkml.yaml
+  version: 1.1.0
+  lifecycle: published
+  classes: [KeyPerformanceIndicator]
+  artifacts:
+    jsonSchema: ./statistical-observation.v1.schema.json
+    context: ./statistical-observation.v1.context.jsonld
+    docs: ./statistical-observation.v1.md
+    example: ./statistical-observation.v1.example.jsonld

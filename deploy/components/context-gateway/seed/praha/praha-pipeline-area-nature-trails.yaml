@@ -1,0 +1,18 @@
+# One PointOfInterest per record of the IPR layer Naučné stezky into the city space (T-5426).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: area-nature-trails
+  namespace: praha
+  title: { en: Nature trails, cs: Naučné stezky }
+spec:
+  class: auto
+  # IPR republishes the layer a few times a year; one read a week keeps up.
+  period: 168h
+  schedule: '40 2 * * 5'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-area-nature-trails }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: PointOfInterest, mode: upsert }
+  # 943575 bytes on 2026-10-25.
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

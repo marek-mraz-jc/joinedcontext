@@ -1,0 +1,17 @@
+# One AirQualityObserved per record of `eea-sk0020a-pm10`, written into the city's public space through its one Endpoint (PL-18, T-3138).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: ovzdusie-pm10
+  namespace: zilina
+  title: { sk: PM10 na stanici SK0020A, en: PM10 at station SK0020A }
+spec:
+  class: auto
+  # EEA publishes each hour about 25 minutes after it ends; a read at minute 40 finds it (PL-26).
+  period: 1h
+  schedule: '40 * * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: eea-sk0020a-pm10 }
+  targetEndpoint: urn:ngsi-ld:Endpoint:zilina.sk:zilina-verejne:zilina-verejne
+  output: { type: AirQualityObserved, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

@@ -1,0 +1,21 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: zilina-doprava
+  namespace: zilina
+  title:
+    sk: Doprava a mesto naživo
+    en: Mobility of Žilina, live
+spec:
+  contextSpaceRef: zilina-doprava
+  linkml: ./zilina-doprava.linkml.yaml
+  version: 1.0.0
+  lifecycle: published
+  classes: [OffStreetParking, Vehicle, TrafficFlowObserved, Streetlight]
+  # A published model commits all four artifacts (DM-02); the gateway serves schema/v1 from them
+  # (DM-22, EP-49). Regenerate: see README.md.
+  artifacts:
+    jsonSchema: ./zilina-doprava.v1.schema.json
+    context: ./zilina-doprava.v1.context.jsonld
+    docs: ./zilina-doprava.v1.md
+    example: ./zilina-doprava.v1.example.jsonld

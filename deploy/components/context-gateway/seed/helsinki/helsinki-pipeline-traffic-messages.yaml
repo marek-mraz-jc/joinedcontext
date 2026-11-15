@@ -1,0 +1,23 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: traffic-messages
+  namespace: helsinki
+  title: { en: Road works and traffic announcements in the capital region }
+spec:
+  class: auto
+  period: 10m
+  schedule: '*/10 * * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: digitraffic-traffic-messages }
+  targetEndpoint: urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }
+  # An Alert's end (PL-80, NGSI-LD 4.22 expiresAt): its validTo, and at most an hour after the
+  # write; without a validTo, an hour after the write. The feed lists only running situations
+  # and this pipeline reads it every ten minutes, so each run moves the hour on for a situation
+  # still running, and one that ended early or names no end leaves every read an hour after the
+  # feed last listed it (T-4823, T-5353). A feed outage longer than the hour empties the desk
+  # until the feed answers again.
+  lifetime:
+    - type: Alert
+      entity: { from: validTo, notAfter: PT1H }

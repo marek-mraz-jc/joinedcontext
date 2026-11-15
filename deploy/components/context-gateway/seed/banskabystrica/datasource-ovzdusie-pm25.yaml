@@ -1,0 +1,16 @@
+# Up-to-date (E2a) hourly PM2.5 of sampling point SPO-SK0263A_06001_100, as for PM10. No key. CC BY 4.0, copyright holder EEA (the same SDI record).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: eea-sk0263a-pm25
+  namespace: banskabystrica
+  title:
+    sk: PM2.5, SK0263A (EEA)
+    en: PM2.5, SK0263A (EEA)
+spec:
+  type: http
+  http:
+    url: https://eeadmz1batchservice02.blob.core.windows.net/airquality-p/SK/SPO-SK0263A_06001_100.parquet
+    verb: GET
+    headers: { Accept: application/octet-stream }
+    timeout: 60s

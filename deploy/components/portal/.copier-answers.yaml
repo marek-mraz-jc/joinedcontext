@@ -1,0 +1,8 @@
+---
+# Changes here will be overwritten by Copier.
+_commit: e167757
+_src_path: ..
+componentName: Portal
+componentSlug: portal
+releases: portal
+shortDescription: Management UI, API, and in-process reconciler

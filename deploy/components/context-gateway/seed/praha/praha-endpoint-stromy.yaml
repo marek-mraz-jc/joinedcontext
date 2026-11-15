@@ -1,0 +1,60 @@
+# Trees of the IPR Praha geoportal (T-5425): the trees and tree rows of the shared green register and
+# the tree rows of the planning analysis, Tree of the space praha-mesto read through its own Policy,
+# which narrows the public read to the green- ids. One SDM type per dataset (T-4344): the parks and
+# green areas are the dataset praha-zelen.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-stromy
+  namespace: praha
+  title: { cs: Stromy a stromořadí — Praha, en: Trees and tree rows — Prague }
+  description:
+    cs: 'Stromy a stromořadí: poloha, druh, správce, režim péče a datum poslední změny. Zdroj: IPR Praha, CC BY 4.0.'
+    en: 'Trees and tree rows: location, kind, manager, care regime and date of the last edit. Source: IPR Praha, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: 6gwzhmt5ldpzxpcwjt7rnbkptv7g5uon
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-stromy
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Trees with their manager, a city district or a city department: no person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha (CC BY 4.0)'
+      en: 'Source: data © IPR Praha (CC BY 4.0)'
+    themes: [ENVI, REGI]
+    keywords:
+      cs: [Praha, zeleň, stromy, stromořadí]
+      en: [Prague, green areas, trees, tree rows]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: WEEKLY
+    source:
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/OPK_CUR_OPK_SMZ_VP_B/FeatureServer/0?f=json
+        title:
+          cs: Sdílená data o zeleni – stromy (IPR Praha)
+          en: 'Shared green register: trees (IPR Praha)'
+        description:
+          cs: Stromy (body vegetačních prvků) ze sdílených dat o zeleni z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Trees (the vegetation element points) of the shared green register from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/OPK_CUR_OPK_SMZ_VP_L/FeatureServer/0?f=json
+        title:
+          cs: Sdílená data o zeleni – stromořadí (IPR Praha)
+          en: 'Shared green register: tree rows (IPR Praha)'
+        description:
+          cs: Stromořadí (linie vegetačních prvků) ze sdílených dat o zeleni z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Tree rows (the vegetation element lines) of the shared green register from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/URK_CUR_URK_SS_STROMORADI_L/FeatureServer/0?f=json
+        title: { cs: Stromořadí (IPR Praha), en: Tree rows (IPR Praha) }
+        description:
+          cs: Stromořadí z územně analytických podkladů z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Tree rows of the planning analysis from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.

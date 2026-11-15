@@ -1,0 +1,544 @@
+# promtool unit tests of the monitoring component's alert rules (T-5104): per alert, a fault that
+# fires it and the recovery that clears it. tests/test_alert_rules.py renders the rules from dev with
+# metrics on, writes them beside this file as rules.yaml and runs `promtool test rules` in the pinned image.
+rule_files:
+- rules.yaml
+evaluation_interval: 1m
+tests:
+- interval: 1m
+  input_series:
+  - series: apisix_yaml_configuration_load_status{instance="edge"}
+    values: 1 0 0 0 1 1
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: APISIXConfigReloadFailed
+    exp_alerts:
+    - exp_labels:
+        instance: edge
+        severity: critical
+      exp_annotations:
+        summary: 'APISIX standalone failed to reload apisix.yaml (check the #END marker)'
+  - eval_time: 5m
+    alertname: APISIXConfigReloadFailed
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: apisix_http_status{code="500"}
+    values: 0+10x15 150x20
+  - series: apisix_http_status{code="200"}
+    values: 0+100x35
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: APISIXHigh5xxRate
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        summary: APISIX edge 5xx error rate exceeded 1%
+  - eval_time: 25m
+    alertname: APISIXHigh5xxRate
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: jc_probe_up{target="dev",endpoint="parking",surface="odata"}
+    values: 1 0 0 0 1 1
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: ProbeSurfaceDown
+    exp_alerts:
+    - exp_labels:
+        target: dev
+        endpoint: parking
+        surface: odata
+        severity: critical
+      exp_annotations:
+        summary: odata of parking on dev fails its synthetic probe (GET /results.json on the probe pod names the reason)
+  - eval_time: 5m
+    alertname: ProbeSurfaceDown
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: jc_probe_round_timestamp_seconds{target="dev"}
+    values: 0+60x5 300x5 660+60x10
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: ProbeStalled
+    exp_alerts:
+    - exp_labels:
+        target: dev
+        severity: warning
+      exp_annotations:
+        summary: The synthetic probe of dev finished no round for three minutes
+  - eval_time: 13m
+    alertname: ProbeStalled
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: jc_probe_request_duration_seconds_count{target="dev",surface="odata"}
+    values: 0+2x120
+  - series: jc_probe_failures_total{target="dev",surface="odata"}
+    values: 0+1x30 30x90
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: SurfaceAvailabilityBudgetBurnFast
+    exp_alerts:
+    - exp_labels:
+        target: dev
+        surface: odata
+        severity: critical
+        slo: failure
+      exp_annotations:
+        summary: 'odata on dev spends its 30-day availability (99.5 %) budget at 6x or more: at this rate it is gone in under five days (GET /results.json on the
+          probe pod names the failing Endpoints)'
+  - eval_time: 100m
+    alertname: SurfaceAvailabilityBudgetBurnFast
+    exp_alerts: []
+- interval: 10m
+  input_series:
+  - series: jc_probe_request_duration_seconds_count{target="dev",surface="odata"}
+    values: 0+20x150
+  - series: jc_probe_failures_total{target="dev",surface="odata"}
+    values: 0+0.2x72 14.4x78
+  alert_rule_test:
+  - eval_time: 4h
+    alertname: SurfaceAvailabilityBudgetBurnSlow
+    exp_alerts:
+    - exp_labels:
+        target: dev
+        surface: odata
+        severity: warning
+        slo: failure
+      exp_annotations:
+        summary: odata on dev has spent its availability (99.5 %) budget faster than 30 days allow for three days
+  - eval_time: 19h30m
+    alertname: SurfaceAvailabilityBudgetBurnSlow
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: jc_probe_request_duration_seconds_count{target="dev",surface="odata"}
+    values: 0+2x120
+  - series: jc_probe_request_duration_seconds_bucket{target="dev",surface="odata",le="0.5"}
+    values: 0x30 0+2x89
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: SurfaceLatencyBudgetBurnFast
+    exp_alerts:
+    - exp_labels:
+        target: dev
+        surface: odata
+        severity: critical
+        slo: slow
+      exp_annotations:
+        summary: 'odata on dev spends its 30-day latency (p95 < 500 ms) budget at 6x or more: at this rate it is gone in under five days (GET /results.json on the
+          probe pod names the failing Endpoints)'
+  - eval_time: 100m
+    alertname: SurfaceLatencyBudgetBurnFast
+    exp_alerts: []
+- interval: 10m
+  input_series:
+  - series: jc_probe_request_duration_seconds_count{target="dev",surface="odata"}
+    values: 0+20x150
+  - series: jc_probe_request_duration_seconds_bucket{target="dev",surface="odata",le="0.5"}
+    values: 0+18x72 1296+20x77
+  alert_rule_test:
+  - eval_time: 4h
+    alertname: SurfaceLatencyBudgetBurnSlow
+    exp_alerts:
+    - exp_labels:
+        target: dev
+        surface: odata
+        severity: warning
+        slo: slow
+      exp_annotations:
+        summary: odata on dev has spent its latency (p95 < 500 ms) budget faster than 30 days allow for three days
+  - eval_time: 19h30m
+    alertname: SurfaceLatencyBudgetBurnSlow
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: jc_probe_tls_cert_expiry_timestamp_seconds{host="api.dev.example.org"}
+    values: 1000000x30 9000000x10
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: TLSCertificateExpiresSoon
+    exp_alerts:
+    - exp_labels:
+        host: api.dev.example.org
+        severity: critical
+      exp_annotations:
+        summary: 'The certificate api.dev.example.org serves expires within 14 days or fails verification: check its cert-manager Certificate and the HTTP-01 challenge'
+  - eval_time: 40m
+    alertname: TLSCertificateExpiresSoon
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: jc_probe_domain_expiry_timestamp_seconds{domain="example.org"}
+    values: 2000000x30 9000000x10
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: DomainExpiresSoon
+    exp_alerts:
+    - exp_labels:
+        domain: example.org
+        severity: critical
+      exp_annotations:
+        summary: 'The registration of example.org expires within 30 days: renew it at the registrar'
+  - eval_time: 40m
+    alertname: DomainExpiresSoon
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: node_filesystem_avail_bytes{instance="node-1",mountpoint="/",fstype="ext4"}
+    values: 50x30 500x10
+  - series: node_filesystem_size_bytes{instance="node-1",mountpoint="/",fstype="ext4"}
+    values: 1000x40
+  - series: node_filesystem_avail_bytes{instance="node-1",mountpoint="/run",fstype="tmpfs"}
+    values: '0x40'
+  - series: node_filesystem_size_bytes{instance="node-1",mountpoint="/run",fstype="tmpfs"}
+    values: 1000x40
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: NodeDiskAlmostFull
+    exp_alerts:
+    - exp_labels:
+        instance: node-1
+        mountpoint: /
+        fstype: ext4
+        severity: critical
+      exp_annotations:
+        summary: '/ on node-1 is more than 85 % full: Postgres and local-path volumes stop at 100 %'
+        runbook_url: https://github.com/marek-mraz-jc/joinedcontext-deployment/blob/main/components/monitoring/RUNBOOK.md#nodediskalmostfull
+  - eval_time: 40m
+    alertname: NodeDiskAlmostFull
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: kubelet_volume_stats_used_bytes{namespace="jc",persistentvolumeclaim="data-postgres-1"}
+    values: 900x30 100x10
+  - series: kubelet_volume_stats_capacity_bytes{namespace="jc",persistentvolumeclaim="data-postgres-1"}
+    values: 1000x40
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: VolumeAlmostFull
+    exp_alerts:
+    - exp_labels:
+        namespace: jc
+        persistentvolumeclaim: data-postgres-1
+        severity: critical
+      exp_annotations:
+        summary: Volume jc/data-postgres-1 is more than 85 % full
+        runbook_url: https://github.com/marek-mraz-jc/joinedcontext-deployment/blob/main/components/monitoring/RUNBOOK.md#volumealmostfull
+  - eval_time: 40m
+    alertname: VolumeAlmostFull
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: node_memory_MemAvailable_bytes{instance="node-1"}
+    values: 50x30 500x10
+  - series: node_memory_MemTotal_bytes{instance="node-1"}
+    values: 1000x40
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: NodeMemoryHigh
+    exp_alerts:
+    - exp_labels:
+        instance: node-1
+        severity: critical
+      exp_annotations:
+        summary: 'node-1 has used more than 90 % of its memory for 10 minutes: the next pod to grow gets OOM-killed'
+        runbook_url: https://github.com/marek-mraz-jc/joinedcontext-deployment/blob/main/components/monitoring/RUNBOOK.md#nodememoryhigh
+  - eval_time: 40m
+    alertname: NodeMemoryHigh
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: kube_cronjob_status_last_successful_time{namespace="jc",cronjob="postgres-cluster-local-backup"}
+    values: 0x1700 108000x200
+  alert_rule_test:
+  - eval_time: 1600m
+    alertname: PostgresBackupStale
+    exp_alerts:
+    - exp_labels:
+        namespace: jc
+        cronjob: postgres-cluster-local-backup
+        severity: critical
+      exp_annotations:
+        summary: 'The newest Postgres backup in jc is older than 26 hours: check the backup job and its volume'
+        runbook_url: https://github.com/marek-mraz-jc/joinedcontext-deployment/blob/main/components/monitoring/RUNBOOK.md#postgresbackupstale
+  - eval_time: 1850m
+    alertname: PostgresBackupStale
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cnpg_collector_last_available_backup_timestamp{namespace="jc",cluster="postgres-cluster",pod="postgres-cluster-1"}
+    values: 0x1500 1x100 108000x200
+  alert_rule_test:
+  - eval_time: 1600m
+    alertname: PostgresBackupStale
+    exp_alerts:
+    - exp_labels:
+        namespace: jc
+        cluster: postgres-cluster
+        severity: critical
+      exp_annotations:
+        summary: 'The newest Postgres backup in jc is older than 26 hours: check the backup job and its volume'
+        runbook_url: https://github.com/marek-mraz-jc/joinedcontext-deployment/blob/main/components/monitoring/RUNBOOK.md#postgresbackupstale
+  - eval_time: 1850m
+    alertname: PostgresBackupStale
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  # T-5662: the nightly at minute 30 fails after a good one at minute 0; one at minute 60 completes.
+  - series: cnpg_collector_last_available_backup_timestamp{namespace="jc",cluster="postgres-cluster",pod="postgres-cluster-1"}
+    values: 0x60 3600x60
+  - series: cnpg_collector_last_failed_backup_timestamp{namespace="jc",cluster="postgres-cluster",pod="postgres-cluster-1"}
+    values: 0x30 1800x90
+  alert_rule_test:
+  - eval_time: 33m
+    alertname: PostgresBackupFailed
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: PostgresBackupFailed
+    exp_alerts:
+    - exp_labels:
+        namespace: jc
+        cluster: postgres-cluster
+        severity: critical
+      exp_annotations:
+        summary: 'The newest base backup of postgres-cluster in jc failed: read kubectl get backups and the instance log (barman-cloud-backup), then start one with kubectl cnpg backup'
+  - eval_time: 70m
+    alertname: PostgresBackupFailed
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  # promtool's clock starts at 0: a drill 36 days before it.
+  - series: jc_probe_restore_drill_timestamp_seconds{namespace="jc"}
+    values: -3110400x100
+  - series: jc_probe_restore_drill_passed{namespace="jc"}
+    values: 1x100
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: PostgresRestoreDrillStale
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        summary: 'The newest Postgres restore drill is older than 35 days or did not pass: start it with kubectl create job --from=cronjob/postgres-cluster-dr-drill and read configmap/postgres-cluster-dr-drill'
+- interval: 1m
+  input_series:
+  - series: jc_probe_restore_drill_timestamp_seconds{namespace="jc"}
+    values: 0+60x100
+  - series: jc_probe_restore_drill_passed{namespace="jc"}
+    values: 1x50 0x50
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: PostgresRestoreDrillStale
+    exp_alerts: []
+  - eval_time: 90m
+    alertname: PostgresRestoreDrillStale
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        summary: 'The newest Postgres restore drill is older than 35 days or did not pass: start it with kubectl create job --from=cronjob/postgres-cluster-dr-drill and read configmap/postgres-cluster-dr-drill'
+- interval: 1m
+  input_series:
+  - series: jc_gateway_ws_refused_total{reason="fan-out-full"}
+    values: 0x5 1x20
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: GatewayWebSocketFanoutFull
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        summary: 'The gateway refused WebSockets: every fan-out hub is in use (raise JC_GATEWAY_WS_HUBS or add a replica)'
+  - eval_time: 25m
+    alertname: GatewayWebSocketFanoutFull
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: jc_gateway_ws_closed_total{reason="rate"}
+    values: 0x5 20x20
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: GatewayWebSocketClientsOverRate
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        summary: More than 10 WebSockets closed in 10 minutes for flooding messages
+  - eval_time: 25m
+    alertname: GatewayWebSocketClientsOverRate
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: apisix_http_status{code="429",route="context-endpoint-ws"}
+    values: 0x5 5x20
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: EdgeWebSocketAddressAtItsShare
+    exp_alerts:
+    - exp_labels:
+        route: context-endpoint-ws
+        severity: warning
+      exp_annotations:
+        summary: A client address reached its 50 open WebSockets on context-endpoint-ws
+  - eval_time: 25m
+    alertname: EdgeWebSocketAddressAtItsShare
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: antares_pg_pool_timeouts_total
+    values: 0x5 3x20
+  alert_rule_test:
+  - eval_time: 9m
+    alertname: ContextBrokerPoolExhausted
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+      exp_annotations:
+        summary: 'The context broker refuses requests: its database pool hands out no connection (antares_pg_pool_timeouts_total rising)'
+  - eval_time: 25m
+    alertname: ContextBrokerPoolExhausted
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: jc_agent_answer_duration_seconds_bucket{le="5"}
+    values: 0x40 10+10x39
+  - series: jc_agent_answer_duration_seconds_bucket{le="30"}
+    values: 0+10x80
+  - series: jc_agent_answer_duration_seconds_bucket{le="+Inf"}
+    values: 0+10x80
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: AssistantSlowAnswers
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        summary: Assistant answers p95 above 10 s for 15 minutes
+  - eval_time: 75m
+    alertname: AssistantSlowAnswers
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: jc_agent_runs_finished_total{status="failed"}
+    values: 0+5x120 600x120
+  - series: jc_agent_runs_finished_total{status="ok"}
+    values: 0+5x240
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: AssistantRunsFailing
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        summary: More than 20% of assistant runs failed or expired in the last hour
+  - eval_time: 190m
+    alertname: AssistantRunsFailing
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: jc_model_key_valid
+    values: 0x10 1x10
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: ModelKeyInvalid
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+      exp_annotations:
+        summary: 'The model key is refused or out of credit: the assistant and the app builder cannot answer'
+  - eval_time: 18m
+    alertname: ModelKeyInvalid
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: jc_model_key_remaining
+    values: 10x30 90x10
+  - series: jc_model_key_limit
+    values: 100x40
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: ModelKeyCreditLow
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        summary: Less than 20% of the model key credit is left
+  - eval_time: 40m
+    alertname: ModelKeyCreditLow
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: jc_pipeline_orphans{project="city",pipeline="parking"}
+    values: 3x4400 0x60
+  alert_rule_test:
+  - eval_time: 4330m
+    alertname: PipelineOrphansStuck
+    exp_alerts:
+    - exp_labels:
+        project: city
+        pipeline: parking
+        severity: warning
+      exp_annotations:
+        summary: 'Pipeline parking in city keeps 3 entities its source dropped: open its Source vs space panel'
+  - eval_time: 4450m
+    alertname: PipelineOrphansStuck
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: jc_pipeline_missing{project="city",pipeline="parking"}
+    values: 20x1500 0x60
+  alert_rule_test:
+  - eval_time: 1445m
+    alertname: PipelineRecordsMissing
+    exp_alerts:
+    - exp_labels:
+        project: city
+        pipeline: parking
+        severity: warning
+      exp_annotations:
+        summary: 'Pipeline parking in city could not write 20 records its source lists: see its rejected records'
+  - eval_time: 1530m
+    alertname: PipelineRecordsMissing
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: jc_pipeline_stale{project="city",pipeline="parking"}
+    values: 1x30 0x10
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: PipelineDataStale
+    exp_alerts:
+    - exp_labels:
+        project: city
+        pipeline: parking
+        severity: warning
+      exp_annotations:
+        summary: 'Pipeline parking in city has written nothing newer than its freshness target allows: check its runs and its source'
+  - eval_time: 40m
+    alertname: PipelineDataStale
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: jc_pipeline_error_ratio{project="city",pipeline="parking"}
+    values: 0.1x30 0x10
+  - series: jc_pipeline_error_ratio{project="city",pipeline="bikes"}
+    values: 0.05x40
+  - series: jc_pipeline_error_ratio{project="city",pipeline="idle"}
+    values: 0x40
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: PipelineErrorRatio
+    exp_alerts:
+    - exp_labels:
+        project: city
+        pipeline: parking
+        severity: warning
+      exp_annotations:
+        summary: "Pipeline parking in city lost 10% of the last hour's records: open its Source health and log"
+  - eval_time: 40m
+    alertname: PipelineErrorRatio
+    exp_alerts: []

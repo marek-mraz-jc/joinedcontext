@@ -1,0 +1,55 @@
+# One Smart Data Model type per catalogue dataset (T-4344): PointOfInterest of the space
+# zilina-verejne, read through its own Policy, which narrows the space's public read to these types.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: zilina-pamiatky
+  namespace: zilina
+  title: { sk: Kultúrne pamiatky — Žilina, en: Cultural monuments — Žilina }
+  description:
+    sk: 'Nehnuteľné národné kultúrne pamiatky mesta umiestnené podľa registra adries. Zdroje: Pamiatkový úrad SR a MV SR, CC BY 4.0.'
+    en: "The city's immovable national cultural monuments, placed through the register of addresses. Sources: the Monuments Board of the SR and the Ministry of Interior of the SR, CC BY 4.0."
+spec:
+  contextSpaceRef: zilina-verejne
+  slug: yl5ifsuftssvaghx2ke4atgvuxx4zonl
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:zilina.sk:zilina-verejne:pamiatky-read
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: zilina }
+      license: cc-by
+  catalog:
+    publisher:
+      name:
+        sk: Projekt Žilina, platforma joinedcontext
+        en: The Žilina project, joinedcontext platform
+      uri: https://dev.joinedcontext.com/
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroje: Pamiatkový úrad SR, register NKP, CC BY 4.0; Ministerstvo vnútra SR, register adries, CC BY 4.0'
+      en: 'Sources: Monuments Board of the SR, register of national cultural monuments, CC BY 4.0; Ministry of Interior of the SR, register of addresses, CC BY 4.0'
+    themes: [EDUC, SOCI]
+    keywords:
+      sk: [kultúrne pamiatky, pamiatky, Žilina]
+      en: [cultural monuments, heritage, Žilina]
+    spatial:
+      - SK031
+      - https://data.gov.sk/id/lau2/SK031B517402
+    frequency: ANNUAL
+    source:
+      - url: https://data.slovensko.sk/download?id=dc413b1c-3c2e-454f-b986-d15e1c16093c
+        title:
+          sk: Register nehnuteľných národných kultúrnych pamiatok, Žilinský kraj
+          en: Register of immovable national cultural monuments, Žilina region
+        description:
+          sk: Pamiatkový úrad SR, CSV, CC BY 4.0; bez parciel, autorov a vlastníkov.
+          en: Monuments Board of the SR, CSV, CC BY 4.0; parcels, authors and owners left out.
+      - url: https://rageo.minv.sk/opendata/dataset/address_by_lau2_SK031B517402.geojson
+        title:
+          sk: Register adries, obec Žilina
+          en: Register of addresses, municipality of Žilina
+        description:
+          sk: MV SR, GeoJSON, CC BY 4.0; poloha pamiatok podľa súpisného čísla.
+          en: Ministry of Interior of the SR, GeoJSON, CC BY 4.0; positions of the monuments by súpisné číslo.
+    pipelineRef: { kind: Pipeline, name: pamiatky }

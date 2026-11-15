@@ -1,0 +1,12 @@
+---
+release: {{ .Values.global.instanceSlug | quote }}
+serviceAccount:
+  # fullnameOverride of the portal part names its ServiceAccount.
+  name: portal
+  namespace: {{ .Values.portal.portal.namespace | quote }}
+# The edge Ingress class, which every App's Ingress keeps (edge-policy.yaml, F-R2DEP2-006).
+edge:
+  ingressClass: {{ .Values.global.ingress.ingressClass | quote }}
+# A run's tests run on the lane's builder image (SDK-38), which the gitea-runner component pins.
+appTests:
+  enabled: {{ has "gitea-runner" .Values.components }}

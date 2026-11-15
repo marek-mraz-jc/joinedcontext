@@ -1,0 +1,18 @@
+# One Tree per record of `hel-trees-3`, written into the city space (T-5378).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: trees-3
+  namespace: helsinki
+  title:
+    en: Street and park trees, register ids from 100000
+spec:
+  class: auto
+  # The register is republished every night (paivitetty_tietopalveluun moves daily); one read a day keeps up.
+  period: 24h
+  schedule: '41 2 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-trees-3 }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: Tree, mode: upsert }
+  quotas: { maxMemoryMb: 256, cpuMillicores: 100 }

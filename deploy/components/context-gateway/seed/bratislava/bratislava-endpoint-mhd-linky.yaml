@@ -1,0 +1,50 @@
+# One catalogue dataset (T-4344, T-5273): GtfsRoute and GtfsAgency of the space bratislava, read through
+# its own Policy, which narrows the space's public read to them.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-mhd-linky
+  namespace: bratislava
+  title: { sk: Linky MHD — Bratislava, en: Public transport lines — Bratislava }
+  description:
+    sk: >-
+      Linky mestskej hromadnej dopravy Dopravného podniku Bratislava s číslom, druhom dopravy (električka, autobus, trolejbus) a farbou linky a dopravca, ktorý ich prevádzkuje, z cestovného poriadku GTFS, obnovované každú noc. Typy Smart Data Models GtfsRoute a GtfsAgency. Vynechané sú linky bez čísla, s iným druhom dopravy a zopakované. Zdroj: Dopravný podnik Bratislava, CC BY 4.0.
+    en: >-
+      The public transport lines of Dopravný podnik Bratislava with their number, what runs them (tram, bus, trolleybus) and their colour, and the agency that runs them, from the GTFS timetable, refreshed nightly. Smart Data Models types GtfsRoute and GtfsAgency. Left out: lines without a number, of another mode and repeated ones. Source: Dopravný podnik Bratislava, CC BY 4.0.
+spec:
+  contextSpaceRef: bratislava
+  slug: mdm2osyjmmyfiuqqetvrp4bhwt5aat5j
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-mhd-linky
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  catalog:
+    # Off the catalogue (T-5788, owner order 2026-10-26: an empty dataset leaves it): on 2026-10-26
+    # dev and prod hold 0 GtfsRoute, although the mapping turns today's zip into 90 lines: mhd-gtfs writes nothing. Cause (T-5766):
+    # CloudFront refused each member request 403 (it carried a body; platform 068296a) and 64 MiB
+    # killed the run (now 128).
+    # The harvest feeds leave it out (EP-139); publish it again once prod holds data.
+    harvest: false
+    # The publisher is the Project's spec.catalog (T-4596). A timetable network: no record names a person.
+    personalData: does-not-contain
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Dopravný podnik Bratislava, a.s., data.bratislava.sk, CC BY 4.0'
+      en: 'Source: Dopravný podnik Bratislava, a.s., data.bratislava.sk, CC BY 4.0'
+    themes: [TRAN]
+    keywords:
+      sk: [Bratislava, MHD, linky, GTFS]
+      en: [Bratislava, public transport, lines, GTFS]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    # DPB republishes the timetable with each change, read nightly.
+    frequency: IRREG
+    source:
+      - url: https://data.bratislava.sk/datasets/aba12fd2cbac4843bc7406151bc66106
+        title:
+          sk: Cestovné poriadky MHD vo formáte GTFS (data.bratislava.sk)
+          en: Bratislava public transport timetables as GTFS (data.bratislava.sk)
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Cestovné poriadky MHD vo formáte GTFS. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Bratislava public transport timetables as GTFS. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: mhd-gtfs }

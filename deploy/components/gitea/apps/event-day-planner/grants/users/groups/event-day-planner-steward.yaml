@@ -1,0 +1,11 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Group
+metadata:
+  name: event-day-planner-steward
+  namespace: org
+  annotations:
+    joinedcontext.com/app: helsinki/event-day-planner
+spec:
+  description: The stewards of event-day-planner, its default group.
+  members:
+  - user: de300000-0000-4000-8000-000000000001 # demo.steward

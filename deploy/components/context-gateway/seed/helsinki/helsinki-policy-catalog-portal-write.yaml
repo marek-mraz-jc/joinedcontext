@@ -1,0 +1,18 @@
+# Only the Portal reconciler writes the catalogue (Architecture/21 §10), as in slovensko's: its
+# platform client `portal-reconciler` is decided as the user `service-account-portal-reconciler`.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: catalog-portal-write
+  namespace: helsinki
+  title: { fi: Portaali kirjoittaa katalogin, en: The Portal writes the catalogue }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: catalog }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: user, id: service-account-portal-reconciler }
+  operations: [upsertBatch, deleteBatch, retrieveOps]
+  information:
+    - entities:
+        - type: Dataset
+        - type: DataService
+        - type: Organization

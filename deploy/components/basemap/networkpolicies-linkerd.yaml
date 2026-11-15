@@ -1,0 +1,76 @@
+---
+# Meshed traffic reaches the server through its Linkerd inbound proxy on 4143, not on 8080, so
+# the rule in networkpolicies.yaml alone would leave the edge blocked.
+basemap-server-allow-linkerd:
+  _component: basemap
+  podSelector:
+    app.kubernetes.io/name: tiles
+    app.kubernetes.io/instance: basemap-tiles
+    app.kubernetes.io/component: server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+# Both pods declare an egress policy, so each proxy needs identity (8080), destination (8086)
+# and policy (8090) named explicitly, else the kubelet probe gets a 403 and the pod stays in Init.
+basemap-linkerd-control-plane:
+  _component: basemap
+  podSelector:
+    app.kubernetes.io/name: tiles
+    app.kubernetes.io/instance: basemap-tiles
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+apisix-linkerd-egress-to-basemap:
+  componentNamespace: apisix
+  podSelector:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/instance: apisix-apisix
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tiles
+              app.kubernetes.io/component: server
+          componentNamespace: basemap
+      ports:
+        - protocol: TCP
+          port: 4143

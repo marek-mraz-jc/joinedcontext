@@ -1,0 +1,46 @@
+# The radon risk map of the IPR Praha geoportal (T-5429), RadonRiskArea of the space praha-mesto read
+# through its own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-radon
+  namespace: praha
+  title: { cs: Radonové riziko — Praha, en: Radon risk — Prague }
+  description:
+    cs: 'Kategorie radonového rizika podloží (přechodná, nízká, střední, vysoká) jako plochy. Zdroj: IPR Praha, CC BY 4.0.'
+    en: 'The radon risk category of the ground (transitional, low, medium, high) as areas. Source: IPR Praha, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: zkwtpr3fawimj4ez6g6367m5ct36wbb7
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-radon
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Mapped areas and lines: no record names a person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha (CC BY 4.0)'
+      en: 'Source: data © IPR Praha (CC BY 4.0)'
+    themes: [ENVI]
+    keywords:
+      cs: [Praha, radon, radonové riziko, geologie]
+      en: [Prague, radon, radon risk, geology]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: IRREG
+    source:
+      - url: https://hub.arcgis.com/api/v3/datasets/a74bc85ba5354490a23afcfe495693d9_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Kategorie radonového rizika (IPR Praha)
+          en: Radon risk categories (IPR Praha)
+        description:
+          cs: Kategorie radonového rizika z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Radon risk categories from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.

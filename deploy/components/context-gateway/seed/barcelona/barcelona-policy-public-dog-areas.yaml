@@ -1,0 +1,31 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-dog-areas
+  namespace: barcelona
+  title:
+    ca: 'Lectura pública: àrees de gossos'
+    es: 'Lectura pública: áreas para perros'
+    en: 'Public read: dog areas'
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: barcelona }
+  assigner: did:web:barcelona.cat
+  assignee: { kind: role, id: public }
+  # Read only, the dog areas and no other PointOfInterest (idPattern): open data under CC BY 4.0,
+  # nothing about a person. Discovery beside the reads (T-4258, EP-116).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: PointOfInterest
+          idPattern: ^urn:ngsi-ld:PointOfInterest:[a-z0-9.-]+:barcelona:dog-area-[0-9]{1,12}$

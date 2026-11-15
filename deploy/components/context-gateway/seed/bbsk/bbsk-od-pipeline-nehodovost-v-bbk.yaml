@@ -1,0 +1,24 @@
+# One RoadAccident per row of "Nehodovosť v BBK" (T-4255); generated from the T-4254 mapping.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-nehodovost-v-bbk
+  namespace: bbsk
+  title:
+    sk: Nehodovosť v BBK
+    en: Nehodovosť v BBK
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 48 3 * * 3
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-nehodovost-v-bbk
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: RoadAccident
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

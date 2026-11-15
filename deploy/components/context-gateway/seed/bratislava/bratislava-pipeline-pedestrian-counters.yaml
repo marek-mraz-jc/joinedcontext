@@ -1,0 +1,19 @@
+# One CrowdFlowObserved per counter site with the pedestrians of the day the hub's import closed,
+# once a day (T-5273): two small answers a run.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: pedestrian-counters
+  namespace: bratislava
+  title: { sk: Chodci podľa sčítačov za deň, en: Pedestrians counted per day }
+spec:
+  class: auto
+  # The hub loads the counters once a day about a day late (at 06:40 UTC on 2026-10-23 it held
+  # 2026-10-21): a morning read finds the day before closed.
+  period: 24h
+  schedule: '40 7 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: counters-newest }
+  targetEndpoint: urn:ngsi-ld:Endpoint:bratislava.sk:bratislava:bratislava
+  output: { type: CrowdFlowObserved, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

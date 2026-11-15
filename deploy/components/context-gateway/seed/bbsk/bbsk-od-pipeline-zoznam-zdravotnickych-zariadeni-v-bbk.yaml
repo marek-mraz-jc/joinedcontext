@@ -1,0 +1,24 @@
+# One PointOfInterest per row of "Zoznam zdravotníckych zariadení v BBK" (T-4255); category from the facility kind.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-zoznam-zdravotnickych-zariadeni-v-bbk
+  namespace: bbsk
+  title:
+    sk: Zoznam zdravotníckych zariadení v BBK
+    en: Zoznam zdravotníckych zariadení v BBK
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 34 5 * * 5
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-zoznam-zdravotnickych-zariadeni-v-bbk
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: PointOfInterest
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

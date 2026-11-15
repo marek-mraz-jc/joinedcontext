@@ -1,0 +1,45 @@
+# The street sections of Prague's road network that TSK hl. m. Prahy maps on the IPR geoportal (T-5677), one RoadSegment per record of the space praha-mesto, read through its own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-ulicni-useky
+  namespace: praha
+  title: { cs: Uliční úseky — Praha, en: Street sections — Prague }
+  description:
+    cs: 'Uliční úseky silniční sítě Prahy: název úseku, typ komunikace a třída silnice nebo místní komunikace. Zdroj: TSK hl. m. Prahy na geoportálu IPR Praha, CC BY 4.0.'
+    en: 'The street sections of the Prague road network: the name of the section, the kind of way and the class of the road or local road. Source: TSK hl. m. Prahy on the IPR Praha geoportal, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: klgq75zt3i5autwrkgjq2slgz5wbmkwa
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-ulicni-useky
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Streets and their maintenance: no record names a person.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha, TSK hl. m. Prahy (CC BY 4.0)'
+      en: 'Source: data © IPR Praha, TSK hl. m. Prahy (CC BY 4.0)'
+    themes: [TRAN]
+    keywords:
+      cs: [Praha, ulice, uliční úseky, komunikace, silnice, doprava]
+      en: [Prague, streets, street sections, roads, traffic]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: IRREG
+    source:
+      - url: https://mp.iprpraha.cz/arcgis/rest/services/Hosted/DOP_CUR_DOP_TSK_ULICUSPAKOM_L/FeatureServer/0?f=json
+        title:
+          cs: Uliční úseky TSK včetně zatřídění komunikací (IPR Praha)
+          en: TSK street sections with their road class (IPR Praha)
+        description:
+          cs: Uliční úseky TSK včetně zatřídění komunikací z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha, TSK hl. m. Prahy.
+          en: The TSK street sections with their road class from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha, TSK hl. m. Prahy.

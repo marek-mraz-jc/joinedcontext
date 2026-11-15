@@ -1,0 +1,79 @@
+# The city's public space (T-2781): what anybody may read and the catalogue republishes. The
+# events the city announces (banskabystrica.sk, CC BY 4.0), the national school map's schools in
+# the city (MŠVVaM SR, CC BY 4.0) and the hourly particulate readings of the city's station as
+# the EEA republishes them (CC BY 4.0). The statistics stay in `banskabystrica-mesto`, and
+# `ovzdusie` keeps its seeded stations.
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: banskabystrica-verejne
+  namespace: banskabystrica
+  title:
+    sk: Banská Bystrica — verejné údaje
+    en: Banská Bystrica, open data
+  description:
+    sk: >-
+      Podujatia mesta, školy a školské zariadenia v meste, hodinové merania prachových častíc, NO2
+      a ozónu na mestskej stanici, počasie na automatických staniciach SHMÚ každých päť minút a
+      lekárne, nemocnice, ambulancie, defibrilátory a nabíjacie stanice v okrese z OpenStreetMap.
+      Zdroje: Mesto Banská Bystrica (banskabystrica.sk), Ministerstvo školstva SR (Digitálna mapa
+      škôl), Európska environmentálna agentúra (údaje SHMÚ) a Slovenský hydrometeorologický ústav,
+      pod CC BY 4.0, a © prispievatelia OpenStreetMap pod ODbL 1.0.
+    en: >-
+      The city's events, the schools and school facilities in the city, the hourly particulate,
+      NO2 and ozone readings of the city's station, and the weather at SHMÚ's automatic stations
+      every five minutes, and the pharmacies, hospitals, clinics, defibrillators and charging
+      stations in the district from OpenStreetMap. Sources: the City of Banská Bystrica
+      (banskabystrica.sk), the Slovak Ministry of Education (Digitálna mapa škôl), the European
+      Environment Agency (SHMÚ's data) and the Slovak Hydrometeorological Institute, under CC BY
+      4.0, and © OpenStreetMap contributors under ODbL 1.0.
+spec:
+  # The space name is the segment its ids carry, pinned so it cannot drift (PF-84).
+  urnSegment: banskabystrica-verejne
+  isSandbox: false
+  # The one model of this space: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: banskabystrica-verejne }
+  defaultLocale: sk
+  # History per type (DM-82, ADR-N-046 2.3, T-4275): a measurement series keeps 30 days, every
+  # other type keeps its current state only. Owners change it on the space's Retention tab.
+  retention:
+    - entityType: AirQualityObserved
+      history: P30D
+      # Written on every run without an observedAt: one row per change and one a week,
+      # not one per run (T-4844, DM-108, DM-109; scripts/temporal-audit.py).
+      attributes:
+        dataProvider: { record: onChange, heartbeat: P7D }
+        dateObserved: { record: onChange, heartbeat: P7D }
+        location: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+        stationCode: { record: onChange, heartbeat: P7D }
+    - entityType: Event
+      history: 'off'
+    - entityType: WeatherObserved
+      history: P30D
+      # Written on every run without an observedAt: one row per change and one a week,
+      # not one per run (T-4844, DM-108, DM-109; scripts/temporal-audit.py).
+      attributes:
+        dataProvider: { record: onChange, heartbeat: P7D }
+        dateObserved: { record: onChange, heartbeat: P7D }
+        location: { record: onChange, heartbeat: P7D }
+        name: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+    - entityType: Organization
+      history: 'off'
+    - entityType: PointOfInterest
+      history: 'off'
+    - entityType: EVChargingStation
+      history: 'off'
+    # Current state only (T-4697): 19,773 parcels and more to come, on a node near its memory.
+    - entityType: CadastralParcel
+      history: 'off'
+  # The space's place (T-4525): the catalogue's Dataset carries it, so georel=near finds the space.
+  # the city of Banská Bystrica with a margin; a Event outside it is flagged, never refused (DM-87).
+  quality:
+    - name: in-area
+      entityType: Event
+      kind: area
+      attribute: location
+      bbox: [18.95, 48.6, 19.35, 48.9]

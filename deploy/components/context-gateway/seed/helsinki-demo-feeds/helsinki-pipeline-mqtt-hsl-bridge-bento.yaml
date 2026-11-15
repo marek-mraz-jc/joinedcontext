@@ -1,0 +1,128 @@
+# The mapping of the mqtt-hsl-bridge pipeline (T-5883): from `pipeline:` on, the hsl-hfp-vehicles
+# mapping unchanged (tests/test_mqtt_demo_seed.py holds the two equal). The bridge republishes
+# HSL's topic under `hsl`, so every level the mapping reads (mode, operator, vehicle, next stop)
+# is where HSL's own topic has it.
+
+pipeline:
+  processors:
+    # What a frame is comes from its topic, read before the frame is parsed:
+    # /hfp/v2/journey/ongoing/vp/<mode>/<oper>/<veh>/<route>/<dir>/<headsign>/<start>/<next stop>/…
+    # A frame over 4 KiB (a VP frame is about 300 bytes) or of a mode the Vehicle model does
+    # not name is dropped here. HSL's U-line and robot buses are buses.
+    - mutation: |
+        let topic = meta("mqtt_topic").or("").split("/")
+        let mode = {"bus": "bus", "ubus": "bus", "robot": "bus", "tram": "tram", "metro": "metro", "train": "train", "ferry": "ferry"}.get($topic.index(6).catch("")).or("")
+        let oper = $topic.index(7).catch("").re_match("^[0-9]{1,6}$")
+        let veh = $topic.index(8).catch("").re_match("^[0-9]{1,6}$")
+        meta mode = $mode
+        meta vehicle = if $oper && $veh { "%v-%v".format($topic.index(7).number(), $topic.index(8).number()) } else { "" }
+        meta next_stop = $topic.index(13).catch("")
+        root = if $mode == "" || !($oper && $veh) || content().length() > 4096 { deleted() }
+
+    # Only a VP frame with a GPS fix is a position (T-3129: `loc: "ODO"` reports carry null
+    # lat and long); a frame that is not JSON is dropped. Only the fields the Vehicle is built
+    # from are kept, with what the topic said, since the batch below keeps no metadata.
+    - mapping: |
+        let vp = this.VP.catch(null)
+        root = if $vp.type() != "object" || $vp.lat.type() != "number" || $vp.long.type() != "number" { deleted() } else { {
+          "lat": $vp.lat, "long": $vp.long, "spd": $vp.spd, "hdg": $vp.hdg, "tst": $vp.tst, "route": $vp.route,
+          "dl": $vp.dl, "occu": $vp.occu,
+          "_mode": meta("mode"), "_vehicle": meta("vehicle"), "_next_stop": meta("next_stop")
+        } }
+
+    # Every report of every vehicle, oldest first (owner 2026-10-22T17:45Z, T-5247: the live
+    # position and the complete history of the last five minutes): only an exact repeat, the
+    # same fields at the same instant (the broker resending a frame), is one. The broker
+    # applies the same id twice in one batch in that order (NGSI-LD 4.6.6).
+    - archive: { format: json_array }
+    - mapping: |
+        root = this.unique(v -> v.string()).sort_by(v -> v.tst.ts_unix_nano().catch(0))
+    - unarchive: { format: json_array }
+
+    # The safety valve for a feed flood (T-5046): a position waits for its token, 5,000 a
+    # second, two and a half times HSL's peak. A flood slows the read of this stream to that
+    # rate instead of reaching the gateway or the node.
+    - rate_limit: { resource: hfp_vehicles }
+    - mutation: |
+        meta mode = this._mode
+        meta vehicle = this._vehicle
+        meta next_stop = this._next_stop
+        root = this.without("_mode", "_vehicle", "_next_stop")
+
+    # onRoute and nextStop name the GTFS line and stop by HSL's ids (T-3890), and only ones the
+    # daily GTFS read wrote into the space: the view refuses a whole Vehicle whose relationship
+    # names an entity it does not hold (threat model D7), and HFP runs lines GTFS does not list
+    # (train 3002X3 on 2026-10-12, one of 178 vehicles, in half the upsert batches). The read
+    # leaves each URN in the `gtfs` cache; an unknown one leaves the link out and the position
+    # lands. A stop past the last one (`EOL`) is no stop.
+    - mapping: |
+        let urn = "urn:ngsi-ld:%v:" + env("JC_ORG_DOMAIN") + ":" + env("JC_SPACE") + ":%v"
+        let route = this.route.or("").string()
+        let next_stop = meta("next_stop").or("")
+        meta route_urn = if $route == "" { "none" } else { $urn.format("GtfsRoute", $route) }
+        meta stop_urn = if !$next_stop.re_match("^[0-9]+$") { "none" } else { $urn.format("GtfsStop", $next_stop) }
+    - branch:
+        request_map: root = ""
+        processors:
+          - cache:
+              resource: gtfs
+              operator: exists
+              key: ${! meta("route_urn") }
+        result_map: meta route_known = content().string()
+    - branch:
+        request_map: root = ""
+        processors:
+          - cache:
+              resource: gtfs
+              operator: exists
+              key: ${! meta("stop_urn") }
+        result_map: meta stop_known = content().string()
+
+    # The vehicle's lifetime is the pipeline's spec.lifetime (PL-80, T-4843): five minutes after
+    # the position it reports, which every write moves on. A report whose time cannot be read
+    # would get no end and live forever, so it is dropped here.
+    - mapping: |
+        root = if this.tst.ts_parse("2006-01-02T15:04:05.999Z07:00").catch(null) == null { deleted() } else { this }
+
+    # The entity. The domain comes from the deployment, never from this file (PF-44, PF-42).
+    - mapping: |
+        let domain = env("JC_ORG_DOMAIN")
+        let id = "urn:ngsi-ld:%v:%v:%v:%v".format("Vehicle", $domain, env("JC_SPACE"), meta("vehicle"))
+        let route = this.route.or("").string()
+        root = {
+          "id": $id,
+          "type": "Vehicle",
+          "location": {
+            "type": "GeoProperty",
+            "value": { "type": "Point", "coordinates": [ this.long.number(), this.lat.number() ] },
+            "observedAt": this.tst
+          },
+          "speed": if this.spd.type() != "number" { deleted() } else { {
+            "type": "Property",
+            "value": this.spd,
+            "unitCode": "MTS",
+            "observedAt": this.tst
+          } },
+          "heading": if this.hdg.type() != "number" { deleted() } else { {
+            "type": "Property",
+            "value": this.hdg,
+            "unitCode": "DD",
+            "observedAt": this.tst
+          } },
+          "route": if $route == "" { deleted() } else { { "type": "Property", "value": $route, "observedAt": this.tst } },
+          "onRoute": if meta("route_known") != "true" { deleted() } else { {
+            "type": "Relationship", "object": meta("route_urn"), "observedAt": this.tst
+          } },
+          "nextStop": if meta("stop_known") != "true" { deleted() } else { {
+            "type": "Relationship", "object": meta("stop_urn"), "observedAt": this.tst
+          } },
+          "delay": if this.dl.type() != "number" { deleted() } else { {
+            "type": "Property", "value": 0 - this.dl.number().round(), "unitCode": "SEC", "observedAt": this.tst
+          } },
+          "occupancy": if this.occu.type() != "number" { deleted() } else { {
+            "type": "Property", "value": this.occu.number().round(), "unitCode": "P1", "observedAt": this.tst
+          } },
+          "transportMode": { "type": "Property", "value": meta("mode") },
+          "vehicleType": { "type": "Property", "value": {"bus": "bus", "tram": "tram", "ferry": "passengerVessel"}.get(meta("mode")).or("other") },
+          "fleetVehicleId": { "type": "Property", "value": meta("vehicle") }
+        }

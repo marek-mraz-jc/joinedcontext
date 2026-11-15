@@ -1,0 +1,48 @@
+{% extends "page.html" %}
+
+{# One assistant, step by step (T-4643), for someone who has never added anything to one: who may,
+   numbered steps with the address to paste inside the step that asks for it, a question to try,
+   what goes wrong, and the maker's help page the steps were checked against. Each adds our address
+   as a custom MCP server, never a plugin or a store listing, and has no store button (T-4735). #}
+{% set guide = jc_guide %}
+
+{% block subtitle %}{{ guide.title }}{% endblock %}
+
+{% block breadcrumb_content %}
+  <li><a href="{{ h.url_for('jc_pages.assistants') }}">{{ h.jc_t('assistants') }}</a></li>
+  <li class="active"><a href="{{ h.url_for('jc_pages.guide', id=guide.id) }}">{{ guide.name }}</a></li>
+{% endblock %}
+
+{% block primary %}
+  <div class="primary col-12" role="main"><article class="module-content jc-page jc-guide">
+    <h1 class="page-heading">{% include "jc/card-" ~ guide.id ~ ".svg" %}{{ guide.title }}</h1>
+    <h2>{{ h.jc_t('guide_who') }}</h2>
+    {% for line in guide.who %}<p>{{ line }}</p>{% endfor %}
+    <h2>{{ h.jc_t('guide_steps') }}</h2>
+    <ol class="jc-guide-steps">
+      {% for step in guide.steps %}
+        <li>{{ step }}
+          {% if loop.index0 == guide.paste %}
+            <p class="jc-store-address">
+              <span id="jc-store-url" class="jc-store-url">{{ guide.mcp.url_parts | join('<wbr>' | safe) }}</span>
+              <button type="button" class="btn btn-default" data-jc-copy="jc-store-url" data-jc-copied="{{ h.jc_t('copied') }}" data-jc-select="{{ h.jc_t('copy_select') }}"><span class="jc-code-copy-label">{{ h.jc_t('copy') }}</span></button>
+            </p>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ol>
+    <p class="visually-hidden" role="status" aria-live="polite" id="jc-copy-status"></p>
+    {% with prompt = guide.prompt %}{% include "jc/connector_note.html" %}{% endwith %}
+    <h2>{{ h.jc_t('guide_try') }}</h2>
+    <blockquote class="jc-guide-example">{{ guide.example }}</blockquote>
+    <p>{{ guide.good }}</p>
+    <h2>{{ h.jc_t('guide_trouble') }}</h2>
+    <dl class="jc-guide-trouble">
+      {% for problem, fix in guide.trouble %}<dt>{{ problem }}</dt><dd>{{ fix }}</dd>{% endfor %}
+    </dl>
+    <p class="jc-guide-checked">{{ guide.checked }} <a href="{{ guide.help }}" target="_blank" rel="noopener noreferrer">{{ guide.help }}</a></p>
+    <p><a href="{{ h.url_for('jc_pages.assistants') }}">{{ h.jc_t('guide_back') }}</a></p>
+  </article></div>
+{% endblock %}
+
+{% block secondary %}{% endblock %}

@@ -1,0 +1,78 @@
+# The one door of the indicator space: the computing pipeline writes through it with the
+# runner's service account, and the application, a dashboard and the open web read it (PL-45).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bbsk-kpi
+  namespace: bbsk
+  title: { sk: Ukazovatele kraja, en: Region indicators }
+  # The dataset's notes in the catalogue, through this endpoint's DCAT-AP record (EP-27, T-2432).
+  description:
+    sk: 'Ukazovatele Banskobystrického samosprávneho kraja vypočítané z otvorených údajov ŠÚ SR: hodnota, jednotka, územie, obdobie a čas výpočtu, jeden záznam na ukazovateľ a obdobie.'
+    en: 'The indicators of the Banská Bystrica self-governing region, computed from the open data of the Slovak Statistical Office: value, unit, territory, period and when it was computed, one record per indicator and period.'
+spec:
+  contextSpaceRef: bbsk-kpi
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-kpi:kpi-pipelines-write
+    - urn:ngsi-ld:Policy:bbsk.sk:bbsk-kpi:kpi-read
+  slug: qfhhh5no5wz4lk3rfjisdtx3chiyfig3
+  # Public: the indicators are what the region publishes, and the gateway synthesises the
+  # `public` role only on a public endpoint, so the read grant below applies to a signed-in
+  # steward and to the application alike (EP-16, GW22).
+  audience: public
+  # mcp: the members of the public `otvorene-data` MCP server (T-4141) and the public
+  # assistant's connectors (T-4167); the gateway lists a member only when it serves MCP.
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  # The catalogue entry the region cleared (EP-62..EP-65, T-2407): region-level aggregates only,
+  # no person and no address, in the region's own organization with a DataStore sheet.
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bbsk }
+      # CC-BY 4.0, chosen by the owner on 2026-09-21 (T-2407, T-2465).
+      license: cc-by
+  # Computed from `bbsk-kraj`, whose CC BY-SA 4.0 inputs pass the share-alike duty on.
+  catalog:
+    publisher:
+      name: { sk: Banskobystrický samosprávny kraj, en: Banská Bystrica Self-Governing Region }
+      uri: https://www.bbsk.sk/
+    license: CC_BYSA_4_0
+    attribution:
+      sk: 'Zdroj: Štatistický úrad SR (DATAcube om7102rr, zp3803rs), CC BY-SA 4.0'
+      en: 'Source: Statistical Office of the SR (DATAcube om7102rr, zp3803rs), CC BY-SA 4.0'
+    themes: [REGI, SOCI, ENVI]
+    keywords:
+      sk: [ukazovatele, kraj, obyvateľstvo, emisie]
+      en: [indicators, region, population, emissions]
+    spatial:
+      - SK032
+      - https://data.gov.sk/id/lau1/SK0321
+      - https://data.gov.sk/id/lau1/SK0322
+      - https://data.gov.sk/id/lau1/SK0323
+      - https://data.gov.sk/id/lau1/SK0324
+      - https://data.gov.sk/id/lau1/SK0325
+      - https://data.gov.sk/id/lau1/SK0326
+      - https://data.gov.sk/id/lau1/SK0327
+      - https://data.gov.sk/id/lau1/SK0328
+      - https://data.gov.sk/id/lau1/SK0329
+      - https://data.gov.sk/id/lau1/SK032A
+      - https://data.gov.sk/id/lau1/SK032B
+      - https://data.gov.sk/id/lau1/SK032C
+      - https://data.gov.sk/id/lau1/SK032D
+    frequency: WEEKLY
+    source:
+      - url: https://data.slovensko.sk/datasety/5be7a861-025b-4189-b01f-bd64546304ad
+        title:
+          sk: Stav obyvateľstva (ŠÚ SR, om7102rr)
+          en: Resident population (Statistical Office of the SR, om7102rr)
+        description:
+          sk: Počet obyvateľov podľa pohlavia za kraj a okresy, ročne; distribúcia data.statistics.sk pod CC BY-SA 4.0.
+          en: Residents by sex for the region and its districts, yearly; the data.statistics.sk distribution under CC BY-SA 4.0.
+      - url: https://data.slovensko.sk/datasety/52995c9e8fc3d0bd50b072323d406fde
+        title:
+          sk: Emisie základných znečisťujúcich látok (ŠÚ SR, zp3803rs)
+          en: Emissions of basic pollutants (Statistical Office of the SR, zp3803rs)
+        description:
+          sk: Emisie tuhých látok z veľkých a stredných zdrojov na km², kraj a okresy, 2019 až 2023.
+          en: Solid particulate emissions from large and medium sources per km², the region and its districts, 2019 to 2023.
+    pipelineRef: { kind: Pipeline, name: ukazovatele }

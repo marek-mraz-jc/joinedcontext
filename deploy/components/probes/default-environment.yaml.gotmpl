@@ -1,0 +1,18 @@
+---
+probes:
+  probe:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "probes") }}
+    # Requests a minute per target, paced evenly: well under the edge's 300 a minute per address,
+    # so the probe never trips the limit a visitor shares (T-5103). 12..200, probe.py refuses others.
+    budget: 120
+    # How often each Endpoint's record (its surfaces and entity type) is read again.
+    discoverySeconds: 900
+    # The public assistant deployment whose config route is probed (no model call).
+    assistantId: data
+    # Other environments this cluster probes from outside, beside its own domain, so a cluster
+    # that is down entirely goes red on the other one: [{name: smartcity, domain: smartcity.example}].
+    peers: []
+  status:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "probes") }}

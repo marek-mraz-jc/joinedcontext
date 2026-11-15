@@ -1,0 +1,28 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-zastavky-pid
+  namespace: praha
+  title: { cs: 'Veřejné čtení: zastávky pid' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: praha-mesto }
+  assigner: did:web:praha.eu
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116) and the subscriptions of the Endpoint praha-zastavky-pid, and only
+  # its type, of the pid- ids its pipeline writes (T-5423).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: GtfsStop
+          idPattern: ^urn:ngsi-ld:GtfsStop:[a-z0-9.-]+:praha-mesto:pid-u[0-9]+z[0-9]+[a-z]?$

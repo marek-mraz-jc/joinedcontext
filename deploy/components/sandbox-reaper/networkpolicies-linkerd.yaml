@@ -1,0 +1,25 @@
+---
+# The reaper declares an egress policy, so its proxy needs identity (8080), destination (8086)
+# and policy (8090) named explicitly. Without them the proxy never learns the inbound policy
+# for its own admin port, the kubelet probe gets a 403 and the pod never leaves Init. It has
+# no meshed peer: the API server is outside the mesh and is already covered by the ipBlock
+# rule in networkpolicies.yaml.
+sandbox-reaper-linkerd-control-plane:
+  _component: sandbox-reaper
+  podSelector:
+    app.kubernetes.io/name: reaper
+    app.kubernetes.io/instance: sandbox-reaper-reaper
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090

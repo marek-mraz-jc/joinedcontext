@@ -1,0 +1,19 @@
+# One KeyPerformanceIndicator per cell of the ŠÚ SR cube pr5001rr, written through the space's one Endpoint with the runner's service account (PL-18, PF-39, T-2783).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: uchadzaci
+  namespace: bbsk
+  title:
+    sk: Evidovaní uchádzači o zamestnanie kraja a okresov
+    en: Registered jobseekers of the region and its districts
+spec:
+  class: auto
+  # Annual or quarterly data: a weekly read is already far more often than it changes (PL-26, PL-27).
+  period: 168h
+  schedule: '17 3 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: susr-pr5001rr }
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

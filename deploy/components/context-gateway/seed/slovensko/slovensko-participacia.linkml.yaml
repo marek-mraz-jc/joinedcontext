@@ -1,0 +1,950 @@
+id: https://joinedcontext.com/models/slovensko/slovensko-participacia
+name: slovensko-participacia
+title: Citizen participation in Slovakia
+description: >-
+  What a town publishes on its participation platform (Decidim): the participatory processes and
+  assemblies, the proposals residents filed, the projects of a participatory budget, the results
+  the town reports, the meetings, the debates and the surveys. Each record is copied from
+  the platform's public GraphQL API, or from its public pages where the API hides it, and carries
+  the link back to its page. No personal data: author names, profiles, comments and their authors
+  are never read, and e-mail addresses and phone numbers are cut from every text. An id is
+  `urn:ngsi-ld:{Type}:slovensko-participacia:{instance}-{Decidim id}`, so a record keeps its
+  entity from run to run; one no run has seen for three days leaves the space (expiresAt).
+  ProposalStatistic is the one derived class: the counts the space computes from its own Proposal
+  records.
+license: https://joinedcontext.com/licenses/cc-by-4.0
+prefixes:
+  linkml: https://w3id.org/linkml/
+  jc: https://joinedcontext.com/models/
+  sdm: https://smartdatamodels.org/
+  schema: https://schema.org/
+  ngsi-ld: https://uri.etsi.org/ngsi-ld/
+default_prefix: jc
+default_range: string
+imports:
+  - linkml:types
+  - ngsi-ld-core
+
+slots:
+  name:
+    slot_uri: schema:name
+    description: The title as the platform shows it, in the instance's language.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Názov
+          cs: Název
+          en: Name
+          de: Name
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/name
+  description:
+    slot_uri: schema:description
+    description: The text as plain text without markup, at most 2000 characters, e-mail addresses and phone numbers cut out.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Popis
+          cs: Popis
+          en: Description
+          de: Beschreibung
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/description
+  startDate:
+    slot_uri: schema:startDate
+    description: When it starts, a date (`2026-05-01`) or an RFC 3339 instant with its offset.
+    range: string
+    pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2}))?$
+    examples:
+      - value: '2026-05-01'
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Začiatok
+          cs: Začátek
+          en: Start
+          de: Beginn
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/startDate
+  endDate:
+    slot_uri: schema:endDate
+    description: When it ends, a date or an RFC 3339 instant with its offset.
+    range: string
+    pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2}))?$
+    examples:
+      - value: '2027-12-30'
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Koniec
+          cs: Konec
+          en: End
+          de: Ende
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/endDate
+  url:
+    slot_uri: schema:url
+    description: The record's own page on the participation platform.
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Odkaz
+          cs: Odkaz
+          en: Link
+          de: Link
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/url
+  source:
+    slot_uri: sdm:source
+    description: The participation platform the record was read from, its base URL.
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Zdroj
+          cs: Zdroj
+          en: Source
+          de: Quelle
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models
+  sourceId:
+    slot_uri: jc:sourceId
+    description: The record's id on the platform (Decidim's own numeric id).
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Identifikátor v zdroji
+          cs: Identifikátor ve zdroji
+          en: Source id
+          de: Quellkennung
+      ngsi_ld_kind: Property
+  reference:
+    slot_uri: jc:reference
+    description: Decidim's reference code of the record, `BB-PROP-2026-05-21616`.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Referencia
+          cs: Reference
+          en: Reference
+          de: Referenz
+      ngsi_ld_kind: Property
+  dataProvider:
+    slot_uri: sdm:dataProvider
+    description: The town or body that runs the participation platform.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Poskytovateľ
+          cs: Poskytovatel
+          en: Provider
+          de: Anbieter
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models
+  dateCreated:
+    slot_uri: sdm:dateCreated
+    description: When the platform created or published the record.
+    range: datetime
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Vytvorené
+          cs: Vytvořeno
+          en: Created
+          de: Erstellt
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models
+  dateModified:
+    slot_uri: sdm:dateModified
+    description: When the platform last changed the record.
+    range: datetime
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Zmenené
+          cs: Změněno
+          en: Modified
+          de: Geändert
+      ngsi_ld_kind: Property
+      upstream_source: https://github.com/smart-data-models/data-models
+  category:
+    slot_uri: jc:category
+    description: The category the platform files the record under, `Životné prostredie`.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Kategória
+          cs: Kategorie
+          en: Category
+          de: Kategorie
+      ngsi_ld_kind: Property
+  refParticipatoryProcess:
+    slot_uri: jc:refParticipatoryProcess
+    description: The ParticipatoryProcess of this space the record belongs to, its URN.
+    range: uriorcurie
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Participatívny proces
+          cs: Participativní proces
+          en: Participatory process
+          de: Beteiligungsprozess
+      ngsi_ld_kind: Relationship
+  address:
+    slot_uri: schema:address
+    description: Where it is, as the platform writes it; the town is the instance's.
+    range: PostalAddress
+    inlined: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Adresa
+          cs: Adresa
+          en: Address
+          de: Adresse
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/address
+  streetAddress:
+    slot_uri: schema:streetAddress
+    description: The street and number, or the place, as the platform writes it.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Ulica
+          cs: Ulice
+          en: Street
+          de: Straße
+  addressLocality:
+    slot_uri: schema:addressLocality
+    description: The town.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Obec
+          cs: Obec
+          en: Town
+          de: Ort
+  addressCountry:
+    slot_uri: schema:addressCountry
+    description: The country code, `SK`.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Krajina
+          cs: Země
+          en: Country
+          de: Land
+  processType:
+    slot_uri: jc:processType
+    description: Whether the space is a participatory process or a standing assembly.
+    range: ParticipatorySpaceType
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Druh
+          cs: Druh
+          en: Kind
+          de: Art
+      ngsi_ld_kind: Property
+  status:
+    slot_uri: jc:status
+    description: Whether the process has not started, runs or is over, from its dates on the day of the run.
+    range: ProcessStatus
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Stav
+          cs: Stav
+          en: Status
+          de: Status
+      ngsi_ld_kind: Property
+  activeStep:
+    slot_uri: jc:activeStep
+    description: The title of the phase the process is in, `Hlasovanie`.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Aktuálna fáza
+          cs: Aktuální fáze
+          en: Current phase
+          de: Aktuelle Phase
+      ngsi_ld_kind: Property
+  steps:
+    slot_uri: jc:steps
+    description: The phases of the process in their order, each with its title and dates.
+    range: ProcessStep
+    multivalued: true
+    inlined_as_list: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Fázy
+          cs: Fáze
+          en: Phases
+          de: Phasen
+      ngsi_ld_kind: Property
+  title:
+    slot_uri: schema:name
+    description: The phase's title.
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Názov fázy
+          cs: Název fáze
+          en: Phase title
+          de: Phasentitel
+  active:
+    slot_uri: jc:active
+    description: Whether this phase is the current one.
+    range: boolean
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Aktuálna
+          cs: Aktuální
+          en: Current
+          de: Aktuell
+  proposalState:
+    slot_uri: jc:proposalState
+    description: >-
+      The town's answer as Decidim's state token: `not_answered`, `evaluating`, `accepted`,
+      `rejected`, `withdrawn`, or a token the instance defined itself. Empty when only the page
+      was readable; `stateLabel` then holds what the page shows.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Stav návrhu
+          cs: Stav návrhu
+          en: Proposal state
+          de: Status des Vorschlags
+      ngsi_ld_kind: Property
+  stateLabel:
+    slot_uri: jc:stateLabel
+    description: The state as the page shows it, `Postupuje do hlasovania`.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Stav na stránke
+          cs: Stav na stránce
+          en: State shown
+          de: Angezeigter Status
+      ngsi_ld_kind: Property
+  proposalAnswer:
+    slot_uri: jc:proposalAnswer
+    description: >-
+      The town's published answer to the proposal. Only the platform's own Decidim sends it, because
+      the public API hides it.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Odpoveď mesta
+          cs: Odpověď města
+          en: Town's answer
+          de: Antwort der Stadt
+      ngsi_ld_kind: Property
+  voteCount:
+    slot_uri: jc:voteCount
+    description: How many votes the proposal or project has, where the platform shows them.
+    range: integer
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Počet hlasov
+          cs: Počet hlasů
+          en: Votes
+          de: Stimmen
+      ngsi_ld_kind: Property
+  endorsementsCount:
+    slot_uri: jc:endorsementsCount
+    description: How many residents support the proposal.
+    range: integer
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Podpory
+          cs: Podpory
+          en: Endorsements
+          de: Unterstützungen
+      ngsi_ld_kind: Property
+  official:
+    slot_uri: jc:official
+    description: Whether the town itself filed the proposal.
+    range: boolean
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Návrh mesta
+          cs: Návrh města
+          en: Filed by the town
+          de: Von der Stadt
+      ngsi_ld_kind: Property
+  budgetAmount:
+    slot_uri: jc:budgetAmount
+    description: What the project costs, in euro.
+    range: integer
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Rozpočet projektu (EUR)
+          cs: Rozpočet projektu (EUR)
+          en: Project budget (EUR)
+          de: Projektbudget (EUR)
+      ngsi_ld_kind: Property
+      unit_code: EUR
+  selected:
+    slot_uri: jc:selected
+    description: Whether the vote selected the project for funding.
+    range: boolean
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Vybraný
+          cs: Vybraný
+          en: Selected
+          de: Ausgewählt
+      ngsi_ld_kind: Property
+  budgetName:
+    slot_uri: jc:budgetName
+    description: The budget the project competes in, `Online hlasovanie 2025/2026`.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Rozpočet
+          cs: Rozpočet
+          en: Budget
+          de: Budget
+      ngsi_ld_kind: Property
+  budgetTotal:
+    slot_uri: jc:budgetTotal
+    description: The whole budget the projects share, in euro.
+    range: integer
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Celkový rozpočet (EUR)
+          cs: Celkový rozpočet (EUR)
+          en: Total budget (EUR)
+          de: Gesamtbudget (EUR)
+      ngsi_ld_kind: Property
+      unit_code: EUR
+  progress:
+    slot_uri: jc:progress
+    description: How far the town reports the result to be, in percent.
+    range: float
+    minimum_value: 0
+    maximum_value: 100
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Plnenie (%)
+          cs: Plnění (%)
+          en: Progress (%)
+          de: Fortschritt (%)
+      ngsi_ld_kind: Property
+      unit_code: P1
+  resultStatus:
+    slot_uri: jc:resultStatus
+    description: The status the town gives the result, `Realizuje sa`.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Stav realizácie
+          cs: Stav realizace
+          en: Delivery status
+          de: Umsetzungsstand
+      ngsi_ld_kind: Property
+  refParent:
+    slot_uri: jc:refParent
+    description: The Result this one is part of, its URN.
+    range: uriorcurie
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Nadradený výsledok
+          cs: Nadřazený výsledek
+          en: Part of
+          de: Teil von
+      ngsi_ld_kind: Relationship
+  meetingType:
+    slot_uri: jc:meetingType
+    description: How people attend, `in_person`, `online` or `hybrid`.
+    range: MeetingType
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Forma stretnutia
+          cs: Forma setkání
+          en: Attendance
+          de: Teilnahmeform
+      ngsi_ld_kind: Property
+  onlineUrl:
+    slot_uri: jc:onlineUrl
+    description: Where an online meeting is held.
+    range: uri
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Online odkaz
+          cs: Online odkaz
+          en: Online link
+          de: Online-Link
+      ngsi_ld_kind: Property
+  closed:
+    slot_uri: jc:closed
+    description: Whether the meeting is over and its minutes are published.
+    range: boolean
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Uzavreté
+          cs: Uzavřeno
+          en: Closed
+          de: Abgeschlossen
+      ngsi_ld_kind: Property
+
+  closingReport:
+    slot_uri: jc:closingReport
+    description: >-
+      The minutes of a closed meeting, once they are public. Only the platform's own Decidim sends them.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Zápisnica
+          cs: Zápis
+          en: Closing report
+          de: Protokoll
+      ngsi_ld_kind: Property
+  attendeesCount:
+    slot_uri: jc:attendeesCount
+    description: >-
+      How many people attended a closed meeting, once that is public. Only the platform's own Decidim
+      sends it.
+    range: integer
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Počet účastníkov
+          cs: Počet účastníků
+          en: Attendees
+          de: Teilnehmende
+      ngsi_ld_kind: Property
+  processName:
+    slot_uri: jc:processName
+    description: The title of the process the figure counts, as the platform shows it.
+    range: string
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Proces
+          cs: Proces
+          en: Process
+          de: Prozess
+      ngsi_ld_kind: Property
+  proposalCount:
+    slot_uri: jc:proposalCount
+    description: How many proposals of the process are in this state.
+    range: integer
+    minimum_value: 0
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Počet návrhov
+          cs: Počet návrhů
+          en: Proposals
+          de: Vorschläge
+      ngsi_ld_kind: Property
+enums:
+  ParticipatorySpaceType:
+    permissible_values:
+      process:
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Participatívny proces
+              cs: Participativní proces
+              en: Participatory process
+              de: Beteiligungsprozess
+      assembly:
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Zhromaždenie
+              cs: Shromáždění
+              en: Assembly
+              de: Versammlung
+  ProcessStatus:
+    permissible_values:
+      upcoming:
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Pripravuje sa
+              cs: Připravuje se
+              en: Upcoming
+              de: Geplant
+      active:
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Prebieha
+              cs: Probíhá
+              en: Active
+              de: Laufend
+      past:
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Ukončený
+              cs: Ukončený
+              en: Past
+              de: Beendet
+  MeetingType:
+    permissible_values:
+      in_person:
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Osobne
+              cs: Osobně
+              en: In person
+              de: Vor Ort
+      online:
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Online
+              cs: Online
+              en: Online
+              de: Online
+      hybrid:
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Osobne aj online
+              cs: Osobně i online
+              en: Hybrid
+              de: Hybrid
+
+classes:
+  ParticipatoryProcess:
+    class_uri: jc:ParticipatoryProcess
+    description: >-
+      One participatory process or assembly of the platform: a participatory budget year, a
+      consultation on a strategy, a survey. Its phases and dates as the town set them.
+    is_a: Entity
+    slots:
+      - name
+      - description
+      - processType
+      - status
+      - startDate
+      - endDate
+      - activeStep
+      - steps
+      - reference
+      - url
+      - source
+      - sourceId
+      - dataProvider
+      - dateModified
+    slot_usage:
+      name:
+        required: true
+        rank: 1
+        annotations: { summary: true }
+      status:
+        rank: 2
+        annotations: { summary: true }
+      startDate:
+        rank: 3
+        annotations: { summary: true }
+      endDate: { rank: 4 }
+      activeStep:
+        rank: 5
+        annotations: { summary: true }
+  ProcessStep:
+    class_uri: jc:ProcessStep
+    description: The value of one of `steps`, never an entity of its own.
+    slots: [title, startDate, endDate, active]
+  Proposal:
+    class_uri: jc:Proposal
+    description: >-
+      One proposal residents or the town filed in a process, with the town's answer and its
+      support. The author is never kept.
+    is_a: Entity
+    slots:
+      - name
+      - description
+      - proposalState
+      - stateLabel
+      - proposalAnswer
+      - voteCount
+      - endorsementsCount
+      - official
+      - category
+      - address
+      - refParticipatoryProcess
+      - reference
+      - url
+      - source
+      - sourceId
+      - dataProvider
+      - dateCreated
+      - dateModified
+    slot_usage:
+      name:
+        required: true
+        rank: 1
+        annotations: { summary: true }
+      proposalState:
+        rank: 2
+        annotations: { summary: true }
+      stateLabel:
+        rank: 3
+        annotations: { summary: true }
+      refParticipatoryProcess: { required: true }
+  BudgetProject:
+    class_uri: jc:BudgetProject
+    description: One project of a participatory budget, what it costs and whether the vote selected it.
+    is_a: Entity
+    slots:
+      - name
+      - description
+      - budgetAmount
+      - selected
+      - voteCount
+      - budgetName
+      - budgetTotal
+      - category
+      - address
+      - refParticipatoryProcess
+      - reference
+      - url
+      - source
+      - sourceId
+      - dataProvider
+      - dateModified
+    slot_usage:
+      name:
+        required: true
+        rank: 1
+        annotations: { summary: true }
+      budgetAmount:
+        rank: 2
+        annotations: { summary: true }
+      selected:
+        rank: 3
+        annotations: { summary: true }
+      refParticipatoryProcess: { required: true }
+  Result:
+    class_uri: jc:Result
+    description: One result the town reports on (Decidim accountability), with its progress and dates.
+    is_a: Entity
+    slots:
+      - name
+      - description
+      - progress
+      - resultStatus
+      - startDate
+      - endDate
+      - category
+      - refParent
+      - refParticipatoryProcess
+      - reference
+      - url
+      - source
+      - sourceId
+      - dataProvider
+      - dateModified
+    slot_usage:
+      name:
+        required: true
+        rank: 1
+        annotations: { summary: true }
+      progress:
+        rank: 2
+        annotations: { summary: true }
+      refParticipatoryProcess: { required: true }
+  Meeting:
+    class_uri: jc:Meeting
+    description: One public meeting of a process, where and when; a private one is never read.
+    is_a: Entity
+    slots:
+      - name
+      - description
+      - startDate
+      - endDate
+      - meetingType
+      - address
+      - onlineUrl
+      - closed
+      - closingReport
+      - attendeesCount
+      - category
+      - refParticipatoryProcess
+      - reference
+      - url
+      - source
+      - sourceId
+      - dataProvider
+      - dateModified
+    slot_usage:
+      name:
+        required: true
+        rank: 1
+        annotations: { summary: true }
+      startDate:
+        required: true
+        rank: 2
+        annotations: { summary: true }
+      endDate: { rank: 3 }
+      refParticipatoryProcess: { required: true }
+  Debate:
+    class_uri: jc:Debate
+    description: One debate of a process, its question and dates; the contributions are not kept.
+    is_a: Entity
+    slots:
+      - name
+      - description
+      - startDate
+      - endDate
+      - category
+      - refParticipatoryProcess
+      - reference
+      - url
+      - source
+      - sourceId
+      - dataProvider
+      - dateCreated
+      - dateModified
+    slot_usage:
+      name:
+        required: true
+        rank: 1
+        annotations: { summary: true }
+      refParticipatoryProcess: { required: true }
+  Survey:
+    class_uri: jc:Survey
+    description: One survey of a process, its title and link only; the questions and answers are not kept.
+    is_a: Entity
+    slots:
+      - name
+      - refParticipatoryProcess
+      - url
+      - source
+      - sourceId
+      - dataProvider
+      - dateCreated
+      - dateModified
+    slot_usage:
+      name:
+        required: true
+        rank: 1
+        annotations: { summary: true }
+      refParticipatoryProcess: { required: true }
+  ProposalStatistic:
+    class_uri: jc:ProposalStatistic
+    description: >-
+      How many proposals of one process are in one state, counted from the Proposal records of this
+      space. It holds figures only, so no text a resident wrote reaches it.
+    is_a: Entity
+    slots:
+      - name
+      - processName
+      - proposalState
+      - stateLabel
+      - proposalCount
+      - refParticipatoryProcess
+      - source
+      - dataProvider
+      - dateModified
+    slot_usage:
+      name:
+        required: true
+        rank: 1
+        annotations: { summary: true }
+      processName:
+        required: true
+        rank: 2
+        annotations: { summary: true }
+      stateLabel:
+        rank: 3
+        annotations: { summary: true }
+      proposalCount:
+        required: true
+        rank: 4
+        annotations: { summary: true }
+      refParticipatoryProcess: { required: true }
+  PostalAddress:
+    class_uri: schema:PostalAddress
+    description: The value of `address`, never an entity of its own.
+    slots: [streetAddress, addressLocality, addressCountry]

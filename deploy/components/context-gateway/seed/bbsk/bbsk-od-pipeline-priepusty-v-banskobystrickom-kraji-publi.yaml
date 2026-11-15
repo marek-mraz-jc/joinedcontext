@@ -1,0 +1,24 @@
+# One RoadStructure per row of "Priepusty v Banskobystrickom kraji (public view)" (T-4255); generated from the T-4254 mapping.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-priepusty-v-banskobystrickom-kraji-publi
+  namespace: bbsk
+  title:
+    sk: Priepusty v Banskobystrickom kraji (public view)
+    en: Priepusty v Banskobystrickom kraji (public view)
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 0 3 * * 4
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-priepusty-v-banskobystrickom-kraji-publi
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: RoadStructure
+    mode: replace
+  quotas:
+    maxMemoryMb: 256
+    cpuMillicores: 100

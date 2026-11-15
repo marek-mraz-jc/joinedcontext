@@ -1,0 +1,14 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: mesto-pipelines-write
+  namespace: zilina
+  title: { sk: Kanály zapisujú priestor zilina-mesto, en: The pipelines write zilina-mesto }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: zilina-mesto }
+  assigner: did:web:zilina.sk
+  assignee: { kind: serviceAccount, id: pipelines }
+  operations: [upsertBatch, createBatch, queryBatch, queryEntity]
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator

@@ -1,0 +1,64 @@
+# The city's protected architectural heritage as one public dataset (T-6570): the 1,484 buildings of
+# Barcelona with a code of the Generalitat's architectural heritage inventory (IPAC) as Smart Data
+# Models PointOfInterest with the category heritage and their designations, refreshed weekly from
+# Wikidata (CC0). The city's own catalogue is a Shapefile in UTM a pipeline cannot read; it is
+# named beside it as the official register.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: heritage
+  namespace: barcelona
+  title:
+    ca: Patrimoni arquitectònic de Barcelona
+    es: Patrimonio arquitectónico de Barcelona
+    en: Barcelona architectural heritage
+  description:
+    ca: "Els edificis i elements protegits del patrimoni arquitectònic de Barcelona que l'Inventari del Patrimoni Arquitectònic de Catalunya (IPAC) recull: el nom, l'adreça on se sap, el punt i la protecció (BCIN, BCIL, bé integrant del patrimoni cultural català, protecció urbanística, Patrimoni de la Humanitat). Font: Wikidata, CC0."
+    es: 'Los edificios y elementos protegidos del patrimonio arquitectónico de Barcelona que recoge el Inventario del Patrimonio Arquitectónico de Cataluña (IPAC): el nombre, la dirección donde se conoce, el punto y la protección (BCIN, BCIL, bien integrante del patrimonio cultural catalán, protección urbanística, Patrimonio de la Humanidad). Fuente: Wikidata, CC0.'
+    en: "The protected buildings and elements of Barcelona's architectural heritage listed in Catalonia's architectural heritage inventory (IPAC): name, address where known, point and protection (BCIN, BCIL, part of the Catalan cultural heritage, urban protection, World Heritage). Source: Wikidata, CC0."
+spec:
+  contextSpaceRef: barcelona
+  slug: csagymfqb2jfhfpuviwiqqmxe6dklggl
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:barcelona.cat:barcelona:public-heritage
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: barcelona }
+  catalog:
+    # The data is Wikidata's, not the Ajuntament's: the record names Wikidata as its publisher.
+    publisher:
+      name:
+        ca: Wikidata (Fundació Wikimedia)
+        es: Wikidata (Fundación Wikimedia)
+        en: Wikidata (Wikimedia Foundation)
+      uri: https://www.wikidata.org/
+    license: CC0
+    attribution:
+      ca: "Font: Wikidata, CC0; codis de l'Inventari del Patrimoni Arquitectònic de Catalunya"
+      es: 'Fuente: Wikidata, CC0; códigos del Inventario del Patrimonio Arquitectónico de Cataluña'
+      en: 'Source: Wikidata, CC0; codes of the Inventari del Patrimoni Arquitectònic de Catalunya'
+    themes: [EDUC]
+    keywords:
+      ca: [patrimoni, patrimoni arquitectònic, edificis històrics, monuments, BCIN, BCIL]
+      es: [patrimonio, patrimonio arquitectónico, edificios históricos, monumentos, BCIN, BCIL]
+      en: [heritage, architectural heritage, historic buildings, monuments, listed buildings]
+    spatial:
+      - ES511
+      - https://sws.geonames.org/3128760/
+    frequency: WEEKLY
+    source:
+      - url: https://query.wikidata.org/
+        title: { ca: Wikidata, en: Wikidata }
+        description:
+          ca: Els elements de Wikidata amb codi IPAC dins el municipi de Barcelona, CC0.
+          en: The Wikidata items with an IPAC code inside the municipality of Barcelona, CC0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/patrimoni-arquitectonic-protegit
+        title:
+          ca: Catàleg del patrimoni arquitectònic protegit
+          en: Catalogue of the protected architectural heritage
+        description:
+          ca: El catàleg oficial de l'Ajuntament (Shapefile en UTM 31N), CC BY 4.0; no se'n llegeix cap fila.
+          en: The city's official catalogue (Shapefile in UTM 31N), CC BY 4.0; no row of it is read.
+    pipelineRef: { kind: Pipeline, name: heritage }

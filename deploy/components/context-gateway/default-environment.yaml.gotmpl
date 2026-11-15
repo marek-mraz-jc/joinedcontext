@@ -1,0 +1,10 @@
+---
+context-gateway:
+  gateway:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}
+  # The Portal's Role here: it writes the Secret `personal-data-keys`, each space's resolved
+  # `spec.personalData.keyRef`, and nothing else in this namespace (DM-121).
+  portal-access:
+    enabled: {{ has "portal" .Values.components }}
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "context-gateway") }}

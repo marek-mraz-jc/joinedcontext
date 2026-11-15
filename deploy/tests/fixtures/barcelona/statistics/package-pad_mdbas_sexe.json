@@ -1,0 +1,48 @@
+{
+ "success": true,
+ "result": {
+  "name": "pad_mdbas_sexe",
+  "title": "Population by sex",
+  "title_translated": {
+   "ca": "Població per sexe"
+  },
+  "resources": [
+   {
+    "id": "3057b89d-9713-4001-8f07-a6fb122a152b",
+    "name": "2026_pad_mdbas_sexe.csv",
+    "format": "CSV",
+    "datastore_active": true
+   },
+   {
+    "id": "0d22e719-9fc6-4a1a-b8e3-7b0ee53dbc9f",
+    "name": "2026_pad_mdbas_sexe.json",
+    "format": "JSON",
+    "datastore_active": false
+   },
+   {
+    "id": "30d95868-7968-4a26-bf9b-9eaee53b2e3f",
+    "name": "2025_pad_mdbas_sexe.csv",
+    "format": "CSV",
+    "datastore_active": true
+   },
+   {
+    "id": "c3e2f76d-8397-4316-9353-deb41154b495",
+    "name": "2025_pad_mdbas_sexe.json",
+    "format": "JSON",
+    "datastore_active": false
+   },
+   {
+    "id": "3febe572-f530-4f89-8e9c-5c23c7d3d807",
+    "name": "2024_pad_mdbas_sexe.csv",
+    "format": "CSV",
+    "datastore_active": true
+   },
+   {
+    "id": "997fd7d4-a94f-4981-a16e-22b911db4bda",
+    "name": "2024_pad_mdbas_sexe.json",
+    "format": "JSON",
+    "datastore_active": false
+   }
+  ]
+ }
+}

@@ -1,0 +1,38 @@
+# One Smart Data Model type per catalogue dataset (T-4344): EVChargingStation of the space
+# banskabystrica-verejne from OpenStreetMap (T-4514), read through its own Policy. ODbL 1.0: the
+# dataset and every entity credit © OpenStreetMap contributors, and the CKAN dataset is ODbL,
+# never CC BY (share-alike on the derived database).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: banskabystrica-nabijanie
+  namespace: banskabystrica
+  title: { sk: Nabíjacie stanice — Banská Bystrica, en: Charging stations — Banská Bystrica }
+  description:
+    sk: Nabíjacie stanice pre elektromobily a elektrobicykle v okrese Banská Bystrica, ako ich mapuje OpenStreetMap, s typmi zásuviek a kapacitou, kde ich mapa uvádza, týždenne. © prispievatelia OpenStreetMap, ODbL 1.0.
+    en: The charging stations for electric cars and bicycles in the district of Banská Bystrica as OpenStreetMap maps them, with socket types and capacity where the map gives them, weekly. © OpenStreetMap contributors, ODbL 1.0.
+spec:
+  contextSpaceRef: banskabystrica-verejne
+  slug: plgaltgaom2rbfbpsnc7xn7ifoamabun
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:nabijanie-read
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  catalog:
+    # Off the catalogue (T-5767, owner order 2026-10-26T06:33Z: an empty dataset leaves it): on dev
+    # the broker refuses every one of the 22 charging stations OpenStreetMap maps (403, T-5717).
+    # The harvest feeds leave it out (EP-139); publish it again once it holds data.
+    harvest: false
+    # The publisher and contact desk are the Project's spec.catalog, its registry IRI (T-4596).
+    # Aggregates of public facilities and readings: no record names a person (T-4596).
+    personalData: does-not-contain
+    license: ODC_ODBL
+    attribution:
+      sk: © prispievatelia OpenStreetMap, ODbL 1.0 (openstreetmap.org/copyright)
+      en: © OpenStreetMap contributors, ODbL 1.0 (openstreetmap.org/copyright)
+    themes: [TRAN]
+    keywords:
+      sk: [nabíjacia stanica, elektromobilita, OpenStreetMap, Banská Bystrica]
+      en: [charging station, electric vehicles, OpenStreetMap, Banská Bystrica]
+    spatial: [SK032]
+    frequency: WEEKLY
+    pipelineRef: { kind: Pipeline, name: osm }

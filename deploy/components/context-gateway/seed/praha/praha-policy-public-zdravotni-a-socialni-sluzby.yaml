@@ -1,0 +1,28 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-zdravotni-a-socialni-sluzby
+  namespace: praha
+  title: { cs: 'Veřejné čtení: zdravotní a sociální služby' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: praha-mesto }
+  assigner: did:web:praha.eu
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116) and the subscriptions of the Endpoint
+  # praha-zdravotni-a-socialni-sluzby, and only the places of NRPZS (nrpzs-) and RPSS (rpss-) (T-5691).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: PointOfInterest
+          idPattern: ^urn:ngsi-ld:PointOfInterest:[a-z0-9.-]+:praha-mesto:(nrpzs-[0-9]+|rpss-[0-9]+-[0-9]+)$

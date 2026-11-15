@@ -1,0 +1,48 @@
+{{- /* With wasm-host in the environment the Portal inside jc writes each shard's placement and
+       store key through the Kubernetes API (AP-157, AP-158; the Role is components/wasm-host
+       portal-access). The API server is no pod: named by address, on 6443, the port the policy
+       sees after the Service's DNAT (components/portal/networkpolicies.yaml, T-0938). Without
+       wasm-host, or in the import window (jc.server.importWindow), jc holds no API token and
+       this file renders empty. */}}
+{{- if and (has "wasm-host" .Values.components) (not (dig "jc" "server" "importWindow" false .Values)) }}
+jc-server-kube-api:
+  podSelector:
+    app.kubernetes.io/name: jc-server
+    app.kubernetes.io/instance: jc-server
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - kubeApi: true
+      ports:
+        - protocol: TCP
+          port: 6443
+{{- end }}
+{{- /* jc calling the shared embedder of another environment on this cluster (jc.server.embedder:
+       url and the namespace it runs in): jc's egress half to 8089, and meshed to 4143. Where this
+       environment deploys embedder itself, components/embedder renders the same halves. */}}
+{{- $embedderNs := dig "jc" "server" "embedder" "namespace" "" .Values }}
+{{- if and $embedderNs (not (has "embedder" .Values.components)) }}
+jc-egress-to-shared-embedder:
+  podSelector:
+    app.kubernetes.io/name: jc-server
+    app.kubernetes.io/instance: jc-server
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $embedderNs }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: embedder-server
+              app.kubernetes.io/instance: embedder-server
+      ports:
+        - protocol: TCP
+          port: 8089
+        {{- if and (dig "global" "serviceMesh" "enable" false .Values) (eq (dig "global" "serviceMesh" "type" "" .Values) "linkerd") }}
+        - protocol: TCP
+          port: 4143
+        {{- end }}
+{{- end }}

@@ -1,0 +1,91 @@
+# The city's public map data: the air-quality station, the monuments and the railway stations,
+# open to anyone as their publishers' licences allow (CC BY 4.0, CC0).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: zilina-verejne
+  namespace: zilina
+  title:
+    sk: Žilina — verejné dáta
+    en: Žilina, public data
+  description:
+    sk: 'Hodinové merania PM10, PM2,5, NO2, O3 a CO na stanici SK0020A, nehnuteľné národné kultúrne pamiatky mesta umiestnené podľa registra adries a železničné stanice mesta s počtom odchodov vlakov v daný deň. Zdroje: Európska environmentálna agentúra (údaje SHMÚ), Pamiatkový úrad SR, MV SR, ŽSR.'
+    en: "Hourly PM10, PM2.5, NO2, O3 and CO at station SK0020A, the city's immovable national cultural monuments placed through the register of addresses, and the city's railway stations with the trains leaving each that day. Sources: the European Environment Agency (SHMÚ's data), the Monuments Board of the SR, the Ministry of Interior of the SR, ŽSR."
+spec:
+  contextSpaceRef: zilina-verejne
+  # The Policies this Endpoint evaluates; a Policy added to the space later binds only once named here (P-18).
+  policyRefs:
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-verejne:app-zilina-mapa-1
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-verejne:app-zilina-zaznamy-1
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-verejne:ovzdusie-read
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-verejne:pamiatky-read
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-verejne:stanice-read
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-verejne:verejne-pipelines-write
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-verejne:verejne-read
+    - urn:ngsi-ld:Policy:zilina.sk:zilina-verejne:verejne-read-history
+  slug: zhu42lbyivllciy7pluenlhxmqn5hi7c
+  audience: public
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  # Off the catalogue (T-4344): its unrelated types are each their own dataset, through the
+  # narrowed Endpoints beside it. This Endpoint stays for the Apps and connectors that read it.
+  # The dataset page and the DCAT-AP record beside the title (EP-27, T-3139). The space is a
+  # compilation of four publishers' open data, so the publisher is the project that compiled it
+  # and each source keeps its credit in the attribution.
+  catalog:
+    # Not a catalogue dataset: a door over the space; T-4344 split its types into datasets of their own, read by the Apps.
+    # Its own record stays; the harvest feeds leave it out (EP-139, T-4744).
+    harvest: false
+    publisher:
+      name:
+        sk: Projekt Žilina, platforma joinedcontext
+        en: The Žilina project, joinedcontext platform
+      uri: https://dev.joinedcontext.com/
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroje: Európska environmentálna agentúra, údaje SHMÚ (ovzdušie), CC BY 4.0; Pamiatkový úrad SR, register NKP (pamiatky), CC BY 4.0; Ministerstvo vnútra SR, register adries (poloha pamiatok), CC BY 4.0; ŽSR, grafikon vlakovej dopravy GTFS (stanice), CC0'
+      en: "Sources: European Environment Agency, SHMÚ's data (air), CC BY 4.0; Monuments Board of the SR, register of national cultural monuments (monuments), CC BY 4.0; Ministry of Interior of the SR, register of addresses (monument positions), CC BY 4.0; ŽSR, train timetable GTFS (stations), CC0"
+    themes: [ENVI, TRAN, EDUC]
+    keywords:
+      sk:
+        - kvalita ovzdušia
+        - PM10
+        - PM2,5
+        - NO2
+        - kultúrne pamiatky
+        - železničné stanice
+        - Žilina
+      en: [air quality, PM10, PM2.5, NO2, cultural monuments, railway stations, Žilina]
+    spatial:
+      - SK031
+      - https://data.gov.sk/id/lau2/SK031B517402
+    frequency: HOURLY
+    source:
+      - url: https://eeadmz1batchservice02.blob.core.windows.net/airquality-p/SK/SPO-SK0020A_00005_100.parquet
+        title:
+          sk: Kvalita ovzdušia, stanica SK0020A (EEA, E2a)
+          en: Air quality, station SK0020A (EEA, E2a)
+        description:
+          sk: Aktuálne hodinové údaje stanice Žilina, súbory Parquet podľa vzorkovacieho bodu, CC BY 4.0.
+          en: Up-to-date hourly data of the Žilina station, one Parquet file per sampling point, CC BY 4.0.
+      - url: https://data.slovensko.sk/download?id=dc413b1c-3c2e-454f-b986-d15e1c16093c
+        title:
+          sk: Register nehnuteľných národných kultúrnych pamiatok, Žilinský kraj
+          en: Register of immovable national cultural monuments, Žilina region
+        description:
+          sk: Pamiatkový úrad SR, CSV, CC BY 4.0; bez parciel, autorov a vlastníkov.
+          en: Monuments Board of the SR, CSV, CC BY 4.0; parcels, authors and owners left out.
+      - url: https://rageo.minv.sk/opendata/dataset/address_by_lau2_SK031B517402.geojson
+        title:
+          sk: Register adries, obec Žilina
+          en: Register of addresses, municipality of Žilina
+        description:
+          sk: MV SR, GeoJSON, CC BY 4.0; poloha pamiatok podľa súpisného čísla.
+          en: Ministry of Interior of the SR, GeoJSON, CC BY 4.0; positions of the monuments by súpisné číslo.
+      - url: https://data.slovensko.sk/download?id=a5503f2c-c7cc-4a9a-a713-511e7406800d
+        title:
+          sk: Grafikon vlakovej dopravy, GTFS
+          en: Train timetable, GTFS
+        description:
+          sk: ŽSR, ZIP s GTFS, CC0 podľa vydavateľa.
+          en: ŽSR, a GTFS ZIP, CC0 by the publisher.
+    pipelineRef: { kind: Pipeline, name: ovzdusie-pm10 }

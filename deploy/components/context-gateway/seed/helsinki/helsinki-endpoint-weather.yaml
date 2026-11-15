@@ -1,0 +1,48 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-weather
+  namespace: helsinki
+  title: { en: Helsinki road weather }
+  description:
+    fi: 'Tiesääasemien mittaukset Helsingissä, Espoossa ja Vantaalla: ilman ja tien lämpötila, tuuli ja keli. Lähde: Fintraffic / digitraffic.fi, CC BY 4.0.'
+    en: 'Road weather station readings in Helsinki, Espoo and Vantaa: air and road temperature, wind and road conditions. Source: Fintraffic / digitraffic.fi, CC BY 4.0.'
+spec:
+  contextSpaceRef: helsinki
+  slug: 6wrymzu5x2uwjo2xqei66ppw53mafvbu
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-weather
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  # Its own dataset in the hel-fi catalogue (T-4344): one type, every mandatory surface (EP-118).
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Fintraffic / digitraffic.fi, CC BY 4.0'
+      sv: 'Källa: Fintraffic / digitraffic.fi, CC BY 4.0'
+      en: 'Source: Fintraffic / digitraffic.fi, CC BY 4.0'
+    themes: [TRAN, ENVI]
+    keywords:
+      fi: [tiesää, sää, tieolosuhteet]
+      sv: [väglag, väder, vägförhållanden]
+      en: [road weather, weather, road conditions]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/049
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/092
+    frequency: CONT
+    source:
+      - url: https://www.digitraffic.fi/en/road-traffic/
+        title: { fi: Digitraffic tiesääasemat, en: Digitraffic road weather stations }
+        description:
+          fi: Fintrafficin tiesääasemien havainnot, CC BY 4.0.
+          en: Fintraffic's road weather station observations, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: road-weather }

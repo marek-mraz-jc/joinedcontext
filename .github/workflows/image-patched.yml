@@ -1,0 +1,82 @@
+name: image-patched
+# Upstream images pinned as shipped, with their OS packages upgraded (T-6114): a distribution fix
+# the upstream project has not rebuilt yet (CVE-2026-111497 in libbrotli1, CISA KEV) reaches the
+# cluster without waiting for its release. Rebuilt when their files change and once a month, each
+# time without the build cache, so the upgrade layer reads the archive of that day. The repository
+# is public, so its minutes are not metered (T-3289).
+on:
+  # Dispatch only until the cut-over (T-6988): the deployment repository still builds these images,
+  # and the owner first grants this repository write access to the ghcr package. Then the two
+  # commented triggers come back.
+  # push: { branches: [jc-portal-1], paths: ["deploy/images/patched-*/**", ".github/workflows/image-patched.yml"] }
+  # schedule: [{ cron: "0 6 1 * *" }]
+  workflow_dispatch:
+permissions: { contents: read }
+concurrency: { group: "image-patched-${{ github.ref }}", cancel-in-progress: true }
+jobs:
+  build:
+    # the one job that pushes and signs (keyless) holds the two publish grants (T-5564)
+    permissions: { contents: read, packages: write, id-token: write }
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { context: patched-keycloak-config-cli, image: joinedcontext-keycloak-config-cli, tag: "6.5.1-26", pin: "keycloak.configCli in components/keycloak/images.yaml" }
+          - { context: patched-ckan-solr, image: joinedcontext-ckan-solr, tag: "2.11-solr9", pin: "ckan.solr in components/ckan/images.yaml" }
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - id: push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: deploy/images/${{ matrix.context }}
+          push: true
+          no-cache: true
+          tags: |
+            ${{ env.IMAGE }}:${{ matrix.tag }}
+            ${{ env.IMAGE }}:${{ github.sha }}
+          provenance: true
+          sbom: true
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+      # Signed like every image this platform deploys: the cluster's policy verifies the
+      # signature (OPS-27).
+      - run: cosign sign --yes "$IMAGE@${{ steps.push.outputs.digest }}"
+      # The CycloneDX bill of materials, attested to the digest (OPS-41, T-2412), then read back
+      # under this workflow's identity.
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: "${{ env.IMAGE }}@${{ steps.push.outputs.digest }}"
+          format: cyclonedx
+          output: sbom.cdx.json
+      - run: cosign attest --yes --type cyclonedx --predicate sbom.cdx.json "$IMAGE@${{ steps.push.outputs.digest }}"
+      - run: |
+          cosign verify-attestation --type cyclonedx \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/image-patched.yml@${{ github.ref }}" \
+            "$IMAGE@${{ steps.push.outputs.digest }}" > /dev/null
+      # What this image exists for: no fixable HIGH or CRITICAL left in the OS packages. The
+      # application's own libraries stay as upstream ships them, so pinned-images keeps judging
+      # those (scripts/scan-pinned-images.py).
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: "${{ env.IMAGE }}@${{ steps.push.outputs.digest }}"
+          vuln-type: os
+          severity: "HIGH,CRITICAL"
+          ignore-unfixed: true
+          exit-code: "1"
+      # The digest to pin; nothing deploys until it is pinned.
+      - run: |
+          {
+            echo "pin this as ${{ matrix.pin }}:"
+            echo '```yaml'
+            echo "    repository: '$IMAGE'"
+            echo "    tag: '${{ matrix.tag }}'"
+            echo "    digest: '${{ steps.push.outputs.digest }}'"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

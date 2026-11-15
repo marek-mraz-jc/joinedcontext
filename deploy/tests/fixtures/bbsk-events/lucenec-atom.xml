@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+
+	<title>Lučenec Feed</title>
+	<subtitle>Kultúra a šport</subtitle>
+	<link href="https://www.lucenec.sk/get_rss.php?id=3_atom" type="application/atom+rss" rel="alternate" />
+	<id>https://www.lucenec.sk/get_rss.php?id=3_atom</id>
+	<updated>2026-10-20T22:47:25+02:00</updated>
+	<author>
+		<name>Lučenec</name>
+	</author>
+
+	<entry>
+
+		<id>https://www.lucenec.sk/akcia/sila-svetla--tomas-kriz-vystava-grafik.html</id>
+
+		<title type="text">Sila svetla- Tomáš Kríž - výstava grafík</title>
+
+		<published>2026-10-09T09:21:46+02:00</published>
+
+		<link rel="alternate" href="https://www.lucenec.sk/akcia/sila-svetla--tomas-kriz-vystava-grafik.html" />
+
+		<summary type="text">Mesto Lučenec a LUKUS Vás pozýva na výstavu grafík Tomáša Kríža s názvom SILA SVETLA.Výstava p...</summary>
+
+		<content type="text">Mesto Lučenec a LUKUS Vás pozýva na výstavu grafík Tomáša Kríža s názvom SILA SVETLA.Výstava p...</content>
+
+		<updated>2026-10-09T09:21:46+02:00</updated>
+	</entry>
+	<entry>
+
+		<id>https://www.lucenec.sk/akcia/diskusne-vecery-v-radnici--socialne-siete-musia-byt-znicene.html</id>
+
+		<title type="text">Diskusné večery v RADNICI- Sociálne siete musia byť zničené</title>
+
+		<published>2026-10-09T09:34:51+02:00</published>
+
+		<link rel="alternate" href="https://www.lucenec.sk/akcia/diskusne-vecery-v-radnici--socialne-siete-musia-byt-znicene.html" />
+
+		<summary type="text">SAMO MARECSociálne siete musia byť zničenéPredstavenie novej knihy spisovateľa, pub...</summary>
+
+		<content type="text">SAMO MARECSociálne siete musia byť zničenéPredstavenie novej knihy spisovateľa, pub...</content>
+
+		<updated>2026-10-09T09:34:51+02:00</updated>
+	</entry>
+	<entry>
+
+		<id>https://www.lucenec.sk/akcia/silne-reci-1.html</id>
+
+		<title type="text">SILNÉ REČI</title>
+
+		<published>2026-10-06T14:24:36+02:00</published>
+
+		<link rel="alternate" href="https://www.lucenec.sk/akcia/silne-reci-1.html" />
+
+		<summary type="text">Predaj lístkov na silnereci.sk...</summary>
+
+		<content type="text">Predaj lístkov na silnereci.sk...</content>
+
+		<updated>2026-10-06T14:24:36+02:00</updated>
+	</entry>
+	<entry>
+
+		<id>https://www.lucenec.sk/akcia/jazzove-listie-lucenec.html</id>
+
+		<title type="text">JAZZOVÉ LÍSTIE LUČENEC</title>
+
+		<published>2026-09-21T15:49:23+02:00</published>
+
+		<link rel="alternate" href="https://www.lucenec.sk/akcia/jazzove-listie-lucenec.html" />
+
+		<summary type="text">PROGRAM:07.10.2026 o 18:00 ( streda)Synagóga LučenecCLASSIC WITH ROOTSĽUBOMÍR GAŠPAR...</summary>
+
+		<content type="text">PROGRAM:07.10.2026 o 18:00 ( streda)Synagóga LučenecCLASSIC WITH ROOTSĽUBOMÍR GAŠPAR...</content>
+
+		<updated>2026-09-21T15:49:23+02:00</updated>
+	</entry>
+	<entry>
+
+		<id>https://www.lucenec.sk/akcia/diskusia-s-usmevom-aj-velmi-vazne--o-sebe-aj-o-slovensku.html</id>
+
+		<title type="text">DISKUSIA s úsmevom aj veľmi vážne, o sebe aj o Slovensku</title>
+
+		<published>2026-08-25T10:43:33+02:00</published>
+
+		<link rel="alternate" href="https://www.lucenec.sk/akcia/diskusia-s-usmevom-aj-velmi-vazne--o-sebe-aj-o-slovensku.html" />
+
+		<summary type="text">Vstupenky kúpite cez QR kód, alebo v MIC Lučenec a na mieste podujatia....</summary>
+
+		<content type="text">Vstupenky kúpite cez QR kód, alebo v MIC Lučenec a na mieste podujatia....</content>
+
+		<updated>2026-08-25T10:43:33+02:00</updated>
+	</entry>
+	<entry>
+
+		<id>https://www.lucenec.sk/akcia/chovatelske-burzy-v-lucenci-0.html</id>
+
+		<title type="text">Chovateľské burzy v Lučenci</title>
+
+		<published>2026-04-24T14:19:56+02:00</published>
+
+		<link rel="alternate" href="https://www.lucenec.sk/akcia/chovatelske-burzy-v-lucenci-0.html" />
+
+		<summary type="text">Chovateľské burzy v Lučenci sa uskutočňujú v nasledovných termínoch v čase od 07:00 do 11:00:05.04.2026...</summary>
+
+		<content type="text">Chovateľské burzy v Lučenci sa uskutočňujú v nasledovných termínoch v čase od 07:00 do 11:00:05.04.2026...</content>
+
+		<updated>2026-04-24T14:19:56+02:00</updated>
+	</entry>
+	<entry>
+
+		<id>https://www.lucenec.sk/akcia/burzy-detskeho-oblecenia-a-inych-potrieb-pre-deti-.html</id>
+
+		<title type="text">Burzy detského oblečenia a iných potrieb pre deti </title>
+
+		<published>2026-04-09T10:19:47+02:00</published>
+
+		<link rel="alternate" href="https://www.lucenec.sk/akcia/burzy-detskeho-oblecenia-a-inych-potrieb-pre-deti-.html" />
+
+		<summary type="text">V roku 2026 spúšťame organizovanie búrz detského oblečenia a iných potrieb pre deti v máji, rovnako ako minulý rok.Termíny nájdete...</summary>
+
+		<content type="text">V roku 2026 spúšťame organizovanie búrz detského oblečenia a iných potrieb pre deti v máji, rovnako ako minulý rok.Termíny nájdete...</content>
+
+		<updated>2026-04-09T10:19:47+02:00</updated>
+	</entry>
+	<entry>
+
+		<id>https://www.lucenec.sk/akcia/zberatelska-burza-2.html</id>
+
+		<title type="text">Zberateľská burza</title>
+
+		<published>2026-02-16T11:37:27+02:00</published>
+
+		<link rel="alternate" href="https://www.lucenec.sk/akcia/zberatelska-burza-2.html" />
+
+		<summary type="text">Srdečne vás pozývame na Zberateľské burzy Lučenec, ktoré sa uskutočnia počas roka 2026. Viac informácií o termínoch a spôsobe prihlásenia nájdete n...</summary>
+
+		<content type="text">Srdečne vás pozývame na Zberateľské burzy Lučenec, ktoré sa uskutočnia počas roka 2026. Viac informácií o termínoch a spôsobe prihlásenia nájdete n...</content>
+
+		<updated>2026-02-16T11:37:27+02:00</updated>
+	</entry>
+	<entry>
+
+		<id>https://www.lucenec.sk/akcia/futsalova-liga-majstrov.html</id>
+
+		<title type="text">Futsalová Liga majstrov</title>
+
+		<published>2026-09-09T11:51:57+02:00</published>
+
+		<link rel="alternate" href="https://www.lucenec.sk/akcia/futsalova-liga-majstrov.html" />
+
+		<summary type="text">HISTORICKÝ SVIATOK FUTSALU V LUČENCI: LIGA MAJSTROV JE TU!V dňoch 26. – 31. októbra sa Lučenec a naša Aréna stanú centrom európs...</summary>
+
+		<content type="text">HISTORICKÝ SVIATOK FUTSALU V LUČENCI: LIGA MAJSTROV JE TU!V dňoch 26. – 31. októbra sa Lučenec a naša Aréna stanú centrom európs...</content>
+
+		<updated>2026-09-09T11:51:57+02:00</updated>
+	</entry>
+</feed>

@@ -1,0 +1,14 @@
+---
+# Checklist:
+# - [x] Resources: 96 MB maxmemory plus Redis' own overhead
+# - [x] 1 Replica
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 160Mi

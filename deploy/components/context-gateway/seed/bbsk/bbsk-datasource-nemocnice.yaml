@@ -1,0 +1,17 @@
+# Hub item 701db22f, data from e-VÚC, updated yearly; the query keeps the 28 hospitals and leaves out the professional representative, telephone and e-mail columns. Read from the region's own ArcGIS FeatureServer, the service behind its open-data portal (opendata.bbsk.sk): the query asks for the columns the mapping reads, in WGS 84 (outSR=4326). No key. CC BY-SA 4.0, read from the Hub DCAT feed (opendata.bbsk.sk/api/feed/dcat-us/1.1.json) and the item's licenseInfo on arcgis.com.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bbsk-nemocnice
+  namespace: bbsk
+  title:
+    sk: Zoznam zdravotníckych zariadení v BBK – nemocnice (BBSK)
+    en: Health-care facilities in the region, hospitals (BBSK)
+spec:
+  type: http
+  http:
+    url: https://services-eu1.arcgis.com/ODrCBoJHlKVMl3Cg/arcgis/rest/services/Zoznam_zdravotn%C3%ADckych_zariaden%C3%AD_v_BBK_public_2025/FeatureServer/0/query?where=Druh_zariadenia%20IN%20%28%27v%C5%A1eobecn%C3%A1%20nemocnica%27,%27%C5%A1pecializovan%C3%A1%20nemocnica%27%29&outFields=I%C4%8CO,N%C3%A1zov_poskytovate%C4%BEa,IdZZ,Vlastn%C3%BD_n%C3%A1zov_zariadenia,Druh_zariadenia,Odborn%C3%A9_zameranie,Ulica_poskytovania,Mesto_poskytovania,PS%C4%8C_poskytovania&returnGeometry=true&f=geojson&outSR=4326&geometryPrecision=6
+    verb: GET
+    headers:
+      Accept: application/geo+json, application/json
+    timeout: 60s

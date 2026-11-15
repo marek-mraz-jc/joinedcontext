@@ -1,0 +1,59 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-rolling-update
+  annotations:
+    policies.kyverno.io/title: Require Rolling Update Strategy
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/minversion: 1.8.0
+    policies.kyverno.io/subject: Deployment,StatefulSet
+    policies.kyverno.io/scored: 'true'
+    policies.kyverno.io/description: >-
+      Zero-downtime deployments require a RollingUpdate strategy with `maxUnavailable: 0`
+      so no pods are taken down before new ones are ready. A non-zero `maxSurge` (for
+      Deployments) ensures new pods can be scheduled above the desired count during the
+      rollout. This policy validates that Deployments and StatefulSets use the
+      RollingUpdate strategy, that `maxUnavailable` is 0, and that `maxSurge` is
+      explicitly set for Deployments. Both integer and percentage-string values are
+      accepted for `maxSurge` (e.g. `1` or `"25%"`).
+spec:
+  background: true
+  rules:
+    - name: require-rolling-update-deployment
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+      validate:
+        failureAction: Audit
+        message: >-
+          Deployments must use RollingUpdate strategy with maxUnavailable: 0 and a
+          non-zero maxSurge (e.g. 1 or 25%) to ensure zero-downtime rollouts.
+        pattern:
+          spec:
+            strategy:
+              type: RollingUpdate
+              rollingUpdate:
+                maxUnavailable: 0
+                maxSurge: '?*'
+
+    - name: require-rolling-update-statefulset
+      match:
+        any:
+          - resources:
+              kinds:
+                - StatefulSet
+      validate:
+        failureAction: Audit
+        message: >-
+          StatefulSets must use the RollingUpdate strategy with no partition set,
+          so every Pod is replaced one at a time.
+        pattern:
+          spec:
+            updateStrategy:
+              type: RollingUpdate
+              =(rollingUpdate):
+                =(partition): 0

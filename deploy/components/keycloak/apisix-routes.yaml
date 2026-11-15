@@ -1,0 +1,44 @@
+---
+keycloak:
+  name: keycloak
+  description: Keycloak API
+  upstream: keycloak-app-keycloakx-http.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "keycloak") }}.svc.cluster.local:80 # yamllint disable-line rule:line-length
+  subDomain: idm
+  uri: '/*'
+
+# T-5611: an MCP client reads the realm's discovery document before it signs a person in, and
+# one that finds `registration_endpoint` there registers itself first. The realm refuses an
+# anonymous registration (403, "Host not trusted"), so Claude and ChatGPT showed a failed
+# connection instead of asking for the fixed client id the User Guide names (`mcp-mobile`,
+# `mcp-local`). These four documents leave the edge without the member (both copies: the top
+# level and `mtls_endpoint_aliases`); everything else on idm.{domain} is the `keycloak` route.
+# The registration endpoint itself still answers 403: nobody advertised it, nobody opened it.
+keycloak-discovery:
+  name: keycloak-discovery
+  description: Keycloak discovery documents, without the dynamic client registration endpoint
+  upstream: keycloak-app-keycloakx-http.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "keycloak") }}.svc.cluster.local:80 # yamllint disable-line rule:line-length
+  subDomain: idm
+  uri: '/*'
+  priority: 5
+  methods: [GET, HEAD]
+  # RFC 8414 §3.1 inserts the well-known name before the issuer path; OIDC Discovery appends it.
+  vars:
+    - - uri
+      - '~~'
+      - '^(/\.well-known/(openid-configuration|oauth-authorization-server)/realms/[^/]+|/realms/[^/]+/\.well-known/(openid-configuration|oauth-authorization-server))$'
+  pluginConfig: keycloak
+  plugins:
+    # Replaces the plugin config's `response-rewrite`, so its security headers come first, word
+    # for word (tests/test_keycloak_discovery.py).
+    response-rewrite:
+      headers:
+        set:
+          Strict-Transport-Security: "max-age=31536000; includeSubDomains; preload"
+          X-Content-Type-Options: "nosniff"
+          X-Frame-Options: "SAMEORIGIN"
+          Referrer-Policy: "strict-origin-when-cross-origin"
+          Cache-Control: "no-store, no-cache, must-revalidate"
+      filters:
+        - regex: ',"registration_endpoint":"[^"]*"'
+          scope: global
+          replace: ''

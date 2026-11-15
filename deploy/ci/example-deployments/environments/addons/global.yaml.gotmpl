@@ -1,0 +1,82 @@
+---
+# The environment the optional add-ons render in.
+#
+# An add-on is opt-in per installation (docs Deployment/04 section 2): it is registered by
+# adding it to this list, and nothing else in the repository turns it on. So an add-on that
+# is in no environment is in no render, and a component nobody renders is a component nobody
+# checks. This environment is that render — the smallest installation an add-on needs around
+# it (the edge that routes to it, the realm that logs into it, the generator that mints its
+# credentials, the default-deny it has to declare through) and then the add-ons themselves.
+#
+# It is a render surface and not a deployment: no cluster is described here, and the values
+# below are the ones an operator would have to supply, written out as the worked example of
+# supplying them.
+components:
+  - prepare
+  - secrets
+  - networkpolicies
+  # The Prometheus the dashboards read (T-5154): dev and smartcity deploy it; this render holds
+  # it to the same base policies as the add-ons around it.
+  - prometheus
+  # The realm's own database. Keycloak addresses it by name in its values, so the render
+  # needs the component even though nothing here is deployed.
+  - postgres
+  - keycloak
+  - apisix
+  # Operational dashboards (OPS-16). The Prometheus is named below; without it the component
+  # refuses to render rather than serving four panels that all say "No data".
+  - grafana
+  # Argo CD keeping an environment on main (ADR-N-056, T-4674), with its root Application on.
+  - gitops
+  # The participation platform (ADR-N-065, T-6316): rendered here with the chart defaults; stage
+  # and smartcity list it with their own administrator (T-6448).
+  - decidim
+  # joinedcontext in one binary (monorepo bins/jc): rendered here with an example image pin
+  # (jc.yaml.gotmpl) until the first signed digest exists; no live environment lists it yet.
+  - jc
+  # The embedding model as a service the deployments share (monorepo crates/embedder): rendered
+  # here with an example image pin and jc as its one caller (embedder.yaml.gotmpl).
+  - embedder
+  # The ui-rust App pods jc's Portal proxies on their hosts (hsl-transport): rendered here with an
+  # example image pin and Endpoint slug (app-pods.yaml.gotmpl); jc-prod lists them with the real pin.
+  - app-pods
+
+global:
+  domain: addons.example.org
+  # The organisation's own domain in every entity id; production has no placeholder (CC-73).
+  orgDomain: example.org
+  profile: production
+  # security.txt (RFC 9116, T-1721): an example contact of the example domain.
+  securityTxt:
+    contact: mailto:security@addons.example.org
+    expires: "2027-09-24T00:00:00Z"
+  instanceSlug: addons
+  ingress:
+    enabled: true
+    clusterIssuer: 'letsencrypt-prod'
+    ingressClass: 'nginx'
+  metrics:
+    enabled: true
+
+# Argo CD with its root Application on, so the render covers the switch-over (ADR-N-056).
+gitops:
+  root:
+    enabled: true
+
+grafana:
+  dashboards:
+    enabled: true
+  grafana:
+    enabled: true
+    # The Prometheus that scrapes this installation: the prometheus component's (T-5154), named
+    # here as an operator would name one this repository does not deploy.
+    prometheusUrl: 'http://prometheus-operated.addons.svc.cluster.local:9090'
+    # One project, so this render holds the organization, the hook and the mapping (T-6504).
+    projects:
+      - name: helsinki
+        title: Helsinki
+        groups: [/helsinki]
+        endpoints:
+          - { name: helsinki-cycle-counts, slug: kvhnixtbe5dex2wt2kx3i37dzw6yzsxt }
+          - { name: helsinki-air-quality, slug: jtjnhkaau64zmzz5csmcwem52icvufy2 }
+          - { name: helsinki-bikes-ops, slug: ydp6nddchg4sewmylsiclg4377mlldrj }

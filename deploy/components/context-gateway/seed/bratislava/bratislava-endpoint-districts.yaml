@@ -1,0 +1,40 @@
+# Bratislava city districts: one public dataset of the hub (T-5274), item f1daafc79a9247e8b93241aa005fbea3, written by the districts pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-districts
+  namespace: bratislava
+  title: { sk: Mestské časti Bratislavy, en: Bratislava city districts }
+  description:
+    sk: '17 mestských častí hlavného mesta s hranicou a kódom ZÚJ; každá štatistika mestskej časti sa na ne odkazuje kódom. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The 17 city districts of the capital with their outline and ZÚJ code; every district statistic names its district by that code. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: lnas57xvzgqlwprfmtliidr4mid5nxlt
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-districts
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [REGI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: WEEKLY
+    source:
+      - url: https://data.bratislava.sk/datasets/f1daafc79a9247e8b93241aa005fbea3
+        title: { sk: Mestské časti Bratislavy, en: Bratislava city districts }
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Mestské časti Bratislavy. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Bratislava city districts. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: districts }

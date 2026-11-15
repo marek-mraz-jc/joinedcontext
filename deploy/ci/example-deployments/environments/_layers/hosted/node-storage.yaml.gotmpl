@@ -1,0 +1,6 @@
+---
+# dev's node is MicroOS with SELinux enforcing: the local-path helper needs spc_t to delete a
+# released build cache (T-3431, owner decision 2026-10-18, option 1).
+node-storage:
+  local-path:
+    enabled: true

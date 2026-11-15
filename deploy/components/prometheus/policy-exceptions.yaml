@@ -1,0 +1,34 @@
+---
+apiVersion: kyverno.io/v2
+kind: PolicyException
+metadata:
+  name: prometheus-node-exporter-host-filesystems
+  annotations:
+    reason: >-
+      node-exporter reports the node's own filesystems and memory, which NodeDiskAlmostFull and
+      NodeMemoryHigh read (T-5104, T-5154); a node's filesystems are only visible from the node, so
+      the DaemonSet mounts the host's root, /proc and /sys, each read-only. It shares neither the
+      host's network nor its process table (hostNetwork and hostPID off), runs as 65534 with a
+      read-only root filesystem, and lives in kube-system beside the node's other agents, closed
+      to everything but Prometheus by its NetworkPolicy. The exception names this one DaemonSet,
+      so nothing else in the platform gains host access by inheriting it. Re-check on every
+      kube-prometheus-stack bump.
+spec:
+  exceptions:
+    - policyName: disallow-host-path
+      ruleNames:
+        - host-path
+        - autogen-host-path
+    - policyName: restrict-volume-types
+      ruleNames:
+        - restricted-volumes
+        - autogen-restricted-volumes
+  match:
+    any:
+      - resources:
+          kinds:
+            - DaemonSet
+          namespaces:
+            - kube-system
+          names:
+            - node-exporter

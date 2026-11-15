@@ -1,0 +1,45 @@
+﻿{
+ "data": {
+  "row": [
+   {
+    "rok": "2026",
+    "oblast": "09",
+    "odpa": "003122",
+    "pol": "6121",
+    "uz": "000000000",
+    "nazev_oblast": "Školství",
+    "nazev_odpa": "Střední odborné školy",
+    "nazev_pol": "Stavby",
+    "nazev_uz": "Nespecifikováno",
+    "rozpocet_schvaleny": "1700.00",
+    "rozpocet_upraveny": "102413.60"
+   },
+   {
+    "rok": "2026",
+    "oblast": "01",
+    "odpa": "000000",
+    "pol": "1511",
+    "uz": "000000002",
+    "nazev_oblast": "Daňové příjmy",
+    "nazev_odpa": "ČNB dotace OPP",
+    "nazev_pol": "Příjem z daně z nemovitých věcí",
+    "nazev_uz": "Obec",
+    "rozpocet_schvaleny": "0.00",
+    "rozpocet_upraveny": "0.00"
+   },
+   {
+    "rok": "2026",
+    "oblast": "",
+    "odpa": "000000",
+    "pol": "0000",
+    "uz": "000000000",
+    "nazev_oblast": "",
+    "nazev_odpa": "ČNB dotace OPP",
+    "nazev_pol": "neurčeno",
+    "nazev_uz": "Nespecifikováno",
+    "rozpocet_schvaleny": "0.00",
+    "rozpocet_upraveny": "-0.03"
+   }
+  ]
+ }
+}

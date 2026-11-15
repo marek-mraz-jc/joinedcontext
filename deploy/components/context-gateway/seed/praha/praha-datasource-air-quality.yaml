@@ -1,0 +1,17 @@
+# ČHMÚ's current hourly means for every station of the country, one CSV of about 470 rows; the mapping keeps Prague's 14
+# stations. No key. CC BY 4.0, read from the national catalogue (NKOD dataset 00020699/2d09f0590be20565ee49d64ad148dcb8).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: chmi-air-quality
+  namespace: praha
+  title:
+    en: Air quality, hourly means (ČHMÚ)
+    cs: Kvalita ovzduší, hodinové průměry (ČHMÚ)
+spec:
+  type: http
+  http:
+    url: https://opendata.chmi.cz/air_quality/now/data/airquality_1h_avg_CZ.csv
+    verb: GET
+    headers: { Accept: text/csv }
+    timeout: 30s

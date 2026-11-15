@@ -1,0 +1,14 @@
+# The City of Helsinki's news, the English RSS feed of hel.fi. No credential; HTTPS.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-news-rss
+  namespace: helsinki
+  title: { en: Helsinki city news (hel.fi RSS), fi: Helsingin kaupungin uutiset (hel.fi RSS) }
+spec:
+  type: http
+  http:
+    url: https://www.hel.fi/en/news/rss
+    verb: GET
+    headers: { Accept: application/rss+xml }
+    timeout: 20s

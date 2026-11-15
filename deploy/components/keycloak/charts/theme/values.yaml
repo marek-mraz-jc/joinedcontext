@@ -1,0 +1,9 @@
+---
+# The ConfigMap the Keycloak pod copies into /opt/keycloak/themes/joinedcontext. The name is a
+# contract between this release and the app release of the component.
+configMapName: keycloak-theme
+
+# The installation's branding block (`global.branding`, OPS-46). Missing colours and fonts
+# fall back to the neutral defaults below; a value that is not a colour or a font list stops
+# the render instead of reaching a stylesheet.
+branding: {}

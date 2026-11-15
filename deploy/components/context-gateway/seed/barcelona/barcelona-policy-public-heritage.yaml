@@ -1,0 +1,31 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-heritage
+  namespace: barcelona
+  title:
+    ca: 'Lectura pública: patrimoni arquitectònic'
+    es: 'Lectura pública: patrimonio arquitectónico'
+    en: 'Public read: architectural heritage'
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: barcelona }
+  assigner: did:web:barcelona.cat
+  assignee: { kind: role, id: public }
+  # Read only, the heritage buildings and no other PointOfInterest (idPattern): open data under
+  # CC0 (Wikidata), nothing about a person. Discovery beside the reads (T-4258, EP-116).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: PointOfInterest
+          idPattern: ^urn:ngsi-ld:PointOfInterest:[a-z0-9.-]+:barcelona:heritage-Q[0-9]{1,12}$

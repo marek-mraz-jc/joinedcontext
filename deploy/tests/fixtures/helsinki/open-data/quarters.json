@@ -1,0 +1,154 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "id": "Helsingin_korttelit.2352",
+   "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [
+     [
+      [
+       [
+        25.12630559,
+        60.22642
+       ],
+       [
+        25.12507066,
+        60.22619226
+       ],
+       [
+        25.1254,
+        60.22575043
+       ],
+       [
+        25.12663491,
+        60.22597817
+       ],
+       [
+        25.12630559,
+        60.22642
+       ]
+      ]
+     ]
+    ]
+   },
+   "geometry_name": "geom",
+   "properties": {
+    "id": 2352,
+    "korttelitunnus": "0910470363",
+    "kunta": "091",
+    "sijaintialue": "047",
+    "ryhma": "0363",
+    "pintaala_kvyks": 3832,
+    "rakennusoikeus": 3197,
+    "kayttotarkoitusluokat": "AK Asuinkerrostalot",
+    "kaavayks_lkm": 1,
+    "nimi_suomi": null,
+    "nimi_ruotsi": null,
+    "datanomistaja": "Helsinki/KMO",
+    "paivitetty_tietopalveluun": "2026-10-23"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "Helsingin_korttelit.3757",
+   "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [
+     [
+      [
+       [
+        25.01580835,
+        60.16848
+       ],
+       [
+        25.01507642,
+        60.16855571
+       ],
+       [
+        25.0144874,
+        60.16714176
+       ],
+       [
+        25.0152193,
+        60.16706606
+       ],
+       [
+        25.01580835,
+        60.16848
+       ]
+      ]
+     ]
+    ]
+   },
+   "geometry_name": "geom",
+   "properties": {
+    "id": 3757,
+    "korttelitunnus": "0910490277",
+    "kunta": "091",
+    "sijaintialue": "049",
+    "ryhma": "0277",
+    "pintaala_kvyks": 6677,
+    "rakennusoikeus": 6750,
+    "kayttotarkoitusluokat": "AP Asuinpientalot",
+    "kaavayks_lkm": 1,
+    "nimi_suomi": null,
+    "nimi_ruotsi": null,
+    "datanomistaja": "Helsinki/KMO",
+    "paivitetty_tietopalveluun": "2026-10-23"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "Helsingin_korttelit.882",
+   "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [
+     [
+      [
+       [
+        24.97351258,
+        60.17832342
+       ],
+       [
+        24.97262163,
+        60.17830906
+       ],
+       [
+        24.97264853,
+        60.17789507
+       ],
+       [
+        24.9732865,
+        60.17782349
+       ],
+       [
+        24.97351258,
+        60.17832342
+       ]
+      ]
+     ]
+    ]
+   },
+   "geometry_name": "geom",
+   "properties": {
+    "id": 882,
+    "korttelitunnus": "0910100671",
+    "kunta": "091",
+    "sijaintialue": "010",
+    "ryhma": "0671",
+    "pintaala_kvyks": 2178,
+    "rakennusoikeus": 10000,
+    "kayttotarkoitusluokat": "K Liike- ja toimistorakennukset",
+    "kaavayks_lkm": 1,
+    "nimi_suomi": "Kaija",
+    "nimi_ruotsi": "Kajen",
+    "datanomistaja": "Helsinki/KMO",
+    "paivitetty_tietopalveluun": "2026-10-23"
+   }
+  }
+ ],
+ "totalFeatures": 5970,
+ "numberMatched": 5970
+}

@@ -1,0 +1,17 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: bbsk-podujatia
+  namespace: bbsk
+  title: { sk: Podujatia, en: Events }
+spec:
+  contextSpaceRef: bbsk-podujatia
+  linkml: ./bbsk-podujatia.linkml.yaml
+  version: 1.0.0
+  lifecycle: published
+  classes: [Event, PointOfInterest]
+  artifacts:
+    jsonSchema: ./bbsk-podujatia.v1.schema.json
+    context: ./bbsk-podujatia.v1.context.jsonld
+    docs: ./bbsk-podujatia.v1.md
+    example: ./bbsk-podujatia.v1.example.jsonld

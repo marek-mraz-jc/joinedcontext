@@ -1,0 +1,117 @@
+# The mapping of the golemio-garages pipeline (T-5680, PL-03): one OffStreetParking per garage
+# Mr.Parkit rents out by reservation in Prague, from Golemio's Parking v3 register, with its name,
+# address, reservation page and tariff. Golemio publishes no occupancy for these garages (their
+# measurements carry nulls, T-5268), so none is written.
+#
+# Tariffs: the pipeline reads /v3/parking-tariffs?primarySource=mr_parkit itself, with the key the
+# DataSource's headerRef puts into the runner as DS_GOLEMIO_MR_PARKIT_TOKEN. A garage names its
+# tariff by id; a tariff's charges give the price of an hour (charge_interval 3600, written as
+# priceRatePerMinute) and of a day (86400, pricePerDay), in Czech crowns: the register names no
+# currency, and Mr.Parkit sells in CZK.
+#
+# Ids: urn:ngsi-ld:OffStreetParking:{org}:{space}:golemio-mr-parkit-{Mr.Parkit's garage uuid}, apart
+# from the park-and-ride car parks the IPR pipeline keys ipr-{globalid}.
+#
+# Plausibility (owner 2026-10-22T18:10Z): a garage outside Prague's box (the city plus about 1 km,
+# the space's in-area rule), at 0,0, without a uuid or a name is dropped; two records of one garage
+# keep the newer; a price that is not a number from 0 to 100 000 CZK is left out and the garage
+# stays. The run logs how many it dropped and why.
+#
+# An answer that is not a feature list, an empty one (Mr.Parkit's listing gone is Golemio failing,
+# not 132 garages closing), or a tariff answer that is not a list fails the run: the last garages
+# stay as they are.
+pipeline:
+  processors:
+    # One try: the first refusal ends the message there, so its reason is the one the run reports.
+    - try:
+        - branch:
+            request_map: root = ""
+            processors:
+              - http:
+                  url: https://api.golemio.cz/v3/parking-tariffs?primarySource=mr_parkit&limit=10000
+                  verb: GET
+                  headers:
+                    Accept: application/json
+                    X-Access-Token: ${DS_GOLEMIO_MR_PARKIT_TOKEN}
+                  timeout: 30s
+                  retries: 1
+              # 164 tariffs are 630 KB; 8 MiB is room for ten times as many.
+              - mapping: |
+                  root = if content().length() > 8388608 { throw("Golemio's tariffs are %v bytes, more than the 8 MiB read".format(content().length())) } else { content().string() }
+            result_map: root.tariffs = content().string()
+        - mapping: |
+            let features = this.features.catch(null)
+            let tariffs = this.tariffs.parse_json().catch(null)
+            let n = if $features.type() == "array" { $features.length() } else { -1 }
+            root = if $n < 0 {
+              throw("Golemio's parking register is not a feature list")
+            } else if $n == 0 {
+              throw("Golemio listed no Mr.Parkit garage; the listing failed")
+            } else if $tariffs.type() != "array" {
+              throw("Golemio's parking tariffs are not a list")
+            } else {
+              {
+                "features": $features,
+                "charges": $tariffs.filter(t -> t.id.type() == "string").map_each(t -> {
+                  "id": t.id.lowercase(),
+                  "all": t.charge_bands.or([]).map_each(b -> b.charges.or([])).flatten().filter(c -> c.charge_interval == 3600 || c.charge_interval == 86400)
+                })
+              }
+            }
+        - mapping: |
+            map at {
+              root = this.ts_parse("2006-01-02T15:04:05Z07:00").ts_format("2006-01-02T15:04:05Z", "UTC")
+            }
+            let rows = this.features.map_each(f -> {
+              "c": f.geometry.coordinates.catch(null),
+              "p": f.properties.catch({}),
+              "key": f.properties.primary_source_id.catch("").string().lowercase(),
+              "at": f.properties.last_updated_at.apply("at").catch("1970-01-01T00:00:00Z")
+            })
+            let usable = $rows.filter(r -> r.key.re_match("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$") && r.p.name.or("").string().trim() != "")
+            let located = $usable.filter(r -> r.c.type() == "array" && r.c.length() == 2 && r.c.index(0).type() == "number" && r.c.index(1).type() == "number")
+            let inside = $located.filter(r -> r.c.index(0) >= 14.2 && r.c.index(0) <= 14.75 && r.c.index(1) >= 49.9 && r.c.index(1) <= 50.2)
+            let unique = $inside.sort_by(r -> 0 - r.at.ts_parse("2006-01-02T15:04:05Z").ts_unix()).unique(r -> r.key)
+            let charges = this.charges
+            meta read = $rows.length()
+            meta unusable = $rows.length() - $usable.length()
+            meta outside = $usable.length() - $inside.length()
+            meta duplicate = $inside.length() - $unique.length()
+            root = $unique.map_each(r -> r.merge({
+              "tariff": $charges.filter(t -> t.id == r.p.tariff.or("").string().lowercase()).index(0).catch({ "all": [] }).all
+            }))
+        - mapping: |
+            map price {
+              root = if this.type() == "string" && this.re_match("^[0-9]{1,6}([.][0-9]{1,4})?$") && this.number() <= 100000 { this.number() } else if this.type() == "number" && this >= 0 && this <= 100000 { this } else { null }
+            }
+            meta price_range = this.filter(r -> r.tariff.length() > 0 && r.tariff.map_each(c -> c.charge.apply("price")).filter(v -> v == null).length() > 0).length()
+            root = this
+        - log:
+            level: INFO
+            message: 'golemio-garages: read ${! meta("read") }, dropped ${! meta("unusable") } without uuid or name, ${! meta("outside") } outside Prague, ${! meta("duplicate") } duplicate records; left out a price of ${! meta("price_range") } garages out of range'
+        - mapping: |
+            map price {
+              root = if this.type() == "string" && this.re_match("^[0-9]{1,6}([.][0-9]{1,4})?$") && this.number() <= 100000 { this.number() } else if this.type() == "number" && this >= 0 && this <= 100000 { this } else { null }
+            }
+            root = this.map_each(r -> r.merge({
+              "hour": r.tariff.filter(c -> c.charge_interval == 3600).map_each(c -> c.charge.apply("price")).filter(v -> v != null).index(0).catch(null),
+              "day": r.tariff.filter(c -> c.charge_interval == 86400).map_each(c -> c.charge.apply("price")).filter(v -> v != null).index(0).catch(null),
+              "street": if r.p.address.street_address.or("").string().trim() != "" {
+                (r.p.address.street_address.string().trim() + " " + r.p.address.house_number.or("").string().trim()).trim()
+              } else {
+                r.p.address.address_formatted.or("").string().split(",").index(0).catch("").trim()
+              }
+            })).map_each(v -> {
+              "id": "urn:ngsi-ld:%v:%v:%v:golemio-mr-parkit-%v".format("OffStreetParking", env("JC_ORG_DOMAIN"), env("JC_SPACE"), v.key),
+              "type": "OffStreetParking",
+              "name": { "type": "LanguageProperty", "languageMap": { "cs": v.p.name.string().trim() } },
+              "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": v.c } },
+              "address": if v.street != "" { { "type": "Property", "value": { "streetAddress": v.street, "addressLocality": "Praha", "addressCountry": "CZ" } } } else { null },
+              "url": if v.p.reservation.web_url.or("").string().has_prefix("https://") { { "type": "Property", "value": v.p.reservation.web_url } } else { null },
+              "priceRatePerMinute": if v.hour != null { { "type": "Property", "value": (v.hour / 60 * 10000).round() / 10000 } } else { null },
+              "pricePerDay": if v.day != null { { "type": "Property", "value": v.day } } else { null },
+              "priceCurrency": if v.hour != null || v.day != null { { "type": "Property", "value": "CZK" } } else { null },
+              "dateModified": if v.p.last_modified_at_source.or("").string().re_match("^[0-9]{4}-[0-9]{2}-[0-9]{2}T") { { "type": "Property", "value": v.p.last_modified_at_source.ts_parse("2006-01-02T15:04:05Z07:00").ts_format("2006-01-02T15:04:05Z", "UTC") } } else { null },
+              "dataProvider": { "type": "Property", "value": "Golemio, Operátor ICT, a.s.; Mr.Parkit" },
+              "source": { "type": "Property", "value": "https://api.golemio.cz/v3/parking" }
+            }.filter(kv -> kv.value != null))

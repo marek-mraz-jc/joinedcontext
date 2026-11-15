@@ -1,0 +1,44 @@
+# Year-on-year growth of foreign direct investment in the Bratislava region 2016 to 2019: one public dataset of the hub (T-5676), item 94747ea9e72b4031b654b478c0442f0f, written by the statistics-mesto pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-pzi-rast
+  namespace: bratislava
+  title:
+    sk: Medziročný rast priamych zahraničných investícií v BSK v rokoch 2016 – 2019
+    en: Year-on-year growth of foreign direct investment in the Bratislava region 2016 to 2019
+  description:
+    sk: 'Ukazovatele tabuľky „Medziročný rast priamych zahraničných investícií v BSK v rokoch 2016 – 2019“ z data.bratislava.sk, jeden na údaj, členenie a obdobie, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table "Year-on-year growth of foreign direct investment in the Bratislava region 2016 to 2019", one per figure, breakdown and period, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: g5tgdtjrcodqy3nfxnbevqcjw5k3jgm5
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-pzi-rast
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [ECON]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/94747ea9e72b4031b654b478c0442f0f
+        title:
+          sk: Medziročný rast priamych zahraničných investícií v BSK v rokoch 2016 – 2019
+          en: Year-on-year growth of foreign direct investment in the Bratislava region 2016 to 2019
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Medziročný rast priamych zahraničných investícií v BSK v rokoch 2016 – 2019. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Year-on-year growth of foreign direct investment in the Bratislava region 2016 to 2019. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-mesto }

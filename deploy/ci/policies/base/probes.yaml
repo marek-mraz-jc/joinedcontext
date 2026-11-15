@@ -1,0 +1,64 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: validate-probes
+  annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
+    policies.kyverno.io/title: Validate Health Probes
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/minversion: 1.8.0
+    policies.kyverno.io/subject: Deployment,DaemonSet,StatefulSet
+    policies.kyverno.io/scored: 'true'
+    policies.kyverno.io/description: >-
+      Health probes enable Kubernetes to detect and recover from unhealthy containers.
+      Every container in a long-running workload (Deployment, DaemonSet, StatefulSet)
+      must define at least one of readinessProbe or livenessProbe. Additionally,
+      liveness and readiness probes must not be identical, as they serve different
+      purposes: readiness gates traffic, liveness triggers restarts. Startup probes
+      are recommended for slow-starting containers but are not enforced here.
+      Jobs and init containers are excluded from this policy.
+spec:
+  background: true
+  rules:
+    - name: require-at-least-one-probe
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - DaemonSet
+                - StatefulSet
+      validate:
+        failureAction: Audit
+        message: >-
+          Every container must define at least one health probe (readinessProbe or livenessProbe).
+        deny:
+          conditions:
+            any:
+              - key: '{{ request.object.spec.template.spec.containers[?!readinessProbe
+                  && !livenessProbe] | length(@) }}'
+                operator: GreaterThan
+                value: 0
+
+    - name: require-different-probes
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - DaemonSet
+                - StatefulSet
+      validate:
+        failureAction: Audit
+        message: >-
+          Liveness and readiness probes must not be identical. They serve different purposes:
+          readiness controls traffic routing, liveness triggers container restarts.
+        deny:
+          conditions:
+            any:
+              - key: '{{ request.object.spec.template.spec.containers[?readinessProbe
+                  && livenessProbe && readinessProbe==livenessProbe] | length(@) }}'
+                operator: GreaterThan
+                value: 0

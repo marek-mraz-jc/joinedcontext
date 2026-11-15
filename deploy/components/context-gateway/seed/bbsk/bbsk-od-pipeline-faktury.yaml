@@ -1,0 +1,24 @@
+# One Invoice per row of "Faktúry" (T-4255); generated from the T-4254 mapping.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-faktury
+  namespace: bbsk
+  title:
+    sk: Faktúry
+    en: Faktúry
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 17 2 * * *
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-faktury
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: Invoice
+    mode: replace
+  quotas:
+    maxMemoryMb: 256
+    cpuMillicores: 100

@@ -1,0 +1,18 @@
+# One WeatherObserved per ČHMÚ weather station in Prague into the city space (T-5429).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: chmi-weather
+  namespace: praha
+  title: { en: Weather from ČHMÚ, cs: Počasí z ČHMÚ }
+spec:
+  class: auto
+  # ČHMÚ rewrites the day files once an hour, a few minutes past the hour; minute 15 finds the hour's
+  # six new 10-minute values.
+  period: 1h
+  schedule: '15 * * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: chmi-weather }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: WeatherObserved, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

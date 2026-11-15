@@ -1,0 +1,18 @@
+---
+# Re-pin a digest with: docker buildx imagetools inspect <repository>:<tag>
+# and copy the Digest of the image index.
+apisix:
+  apisix:
+    gateway:
+      repository: apache/apisix
+      tag: '3.17.0-ubuntu'
+      # The APISIX chart takes no digest, so the values file appends this one to the tag:
+      # `repository:tag@sha256:...` is a single reference and the digest is what is pulled,
+      # while the tag stays readable in `kubectl get pod` (BSI TR-03187 AR-4).
+      digest: 'sha256:27fdde75b83023cd0dfa9ae34761a01417ef899cf17aca84e2e81b2e35615782'
+  dns01:
+    webhook:
+      repository: docker.io/hetzner/cert-manager-webhook-hetzner
+      tag: 'v0.9.0'
+      # The chart takes no digest either; the values file appends it to the tag the same way.
+      digest: 'sha256:b64db89ba4c1f008aeaf3d834681d4227316c78e0c3ab6c21939457e90d42586'

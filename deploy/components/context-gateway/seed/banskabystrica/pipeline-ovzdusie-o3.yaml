@@ -1,0 +1,17 @@
+# One AirQualityObserved per record of `eea-sk0263a-o3`, written into the city's public space through its one Endpoint (PL-18, T-2781, T-4153).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: ovzdusie-o3
+  namespace: banskabystrica
+  title: { sk: O3 na stanici SK0263A, en: O3 at station SK0263A }
+spec:
+  class: auto
+  # As for PM10, six minutes later so the two streams do not merge into the same entity at once.
+  period: 1h
+  schedule: '46 * * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: eea-sk0263a-o3 }
+  targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:banskabystrica-verejne:banskabystrica-verejne
+  output: { type: AirQualityObserved, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

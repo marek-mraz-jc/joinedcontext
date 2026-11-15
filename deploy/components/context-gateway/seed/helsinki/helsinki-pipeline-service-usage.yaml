@@ -1,0 +1,21 @@
+# Usage counters of city services as KeyPerformanceIndicator series (T-5258): visits and page views
+# per city website and month. Written into the city space beside the area statistics; the mapping
+# names the reads and the checks. Korkeasaari zoo's visitor API was the first read until its host
+# suspended it in October 2026 (T-5667): every run then failed before the web analytics.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: service-usage
+  namespace: helsinki
+  title: { en: Helsinki service usage, fi: Helsingin palvelujen käyttö }
+spec:
+  class: auto
+  # The web analytics export appears on the 1st of the month: a daily read writes each ended month
+  # once within a day of its export (record: observed).
+  period: 24h
+  schedule: '50 5 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-web-analytics-sites }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 64, cpuMillicores: 50 }

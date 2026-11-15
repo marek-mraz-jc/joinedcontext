@@ -1,0 +1,180 @@
+# One Smart Data Model type per catalogue dataset (T-4344): the traffic state of Barcelona's
+# street sections and the travel time of its routes, read through its own Policy, which narrows the space's public read to it.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: barcelona-traffic
+  namespace: barcelona
+  title:
+    ca: Estat del trànsit per trams — Barcelona
+    es: Estado del tráfico por tramos — Barcelona
+    en: Traffic state by street section — Barcelona
+  description:
+    ca: "Estat del trànsit de cada tram viari de la ciutat ara i previst a 15 minuts, actualitzat cada 5 minuts, amb la línia del tram, i el temps de recorregut de cada itinerari ara i l'habitual. Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0."
+    es: 'Estado del tráfico de cada tramo viario de la ciudad ahora y previsto a 15 minutos, actualizado cada 5 minutos, con la línea del tramo, y el tiempo de recorrido de cada itinerario ahora y el habitual. Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0.'
+    en: "The traffic state of each street section of the city now and forecast for 15 minutes, every 5 minutes, with the section's line, and the travel time of each route now and as usual. Source: Barcelona City Council, Open Data BCN, CC BY 4.0."
+spec:
+  contextSpaceRef: barcelona
+  slug: 73jd7qdgjysvov6xfhwpmnwgwomjg4fi
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:barcelona.cat:barcelona:public-traffic
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: barcelona }
+      license: cc-by
+  catalog:
+    publisher:
+      name:
+        ca: Ajuntament de Barcelona
+        es: Ayuntamiento de Barcelona
+        en: Barcelona City Council
+      uri: http://datos.gob.es/recurso/sector-publico/org/Organismo/L01080193
+    license: CC_BY_4_0
+    attribution:
+      ca: 'Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0'
+      es: 'Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0'
+      en: 'Source: Barcelona City Council (Ajuntament de Barcelona), Open Data BCN, CC BY 4.0'
+    themes: [TRAN]
+    keywords:
+      ca: [trànsit, estat del trànsit, trams, congestió, temps de recorregut]
+      es: [tráfico, estado del tráfico, tramos, congestión, tiempo de recorrido]
+      en: [traffic, traffic state, street sections, congestion, travel time]
+    spatial:
+      - ES511
+      - https://sws.geonames.org/3128760/
+    frequency: CONT
+    source:
+      - url: https://opendata-ajuntament.barcelona.cat/data/ca/dataset/trams
+        title: { ca: Estat del trànsit per trams, en: Traffic state by section }
+        description:
+          ca: Fitxer d'estat de cada tram, cada 5 minuts.
+          en: The state file of each section, every 5 minutes.
+      - url: https://opendata-ajuntament.barcelona.cat/data/ca/dataset/transit-relacio-trams
+        title: { ca: Relació de trams de la via pública, en: Street sections of the public road }
+        description: { ca: La línia i el nom de cada tram., en: The line and name of each section. }
+      - url: https://opendata-ajuntament.barcelona.cat/data/ca/dataset/itineraris
+        title: { ca: Estat del trànsit per itineraris, en: Traffic by route }
+        description:
+          ca: El temps de recorregut actual i l'habitual de cada itinerari, cada 5 minuts (canal traffic-routes).
+          en: The travel time now and as usual of each route, every 5 minutes (pipeline traffic-routes).
+      - url: https://opendata-ajuntament.barcelona.cat/data/ca/dataset/transit-relacio-trams-per-itinerari
+        title: { ca: Relació de trams per itinerari, en: Sections of each route }
+        description:
+          ca: Els trams i el nom de cada itinerari.
+          en: The sections and name of each route.
+      - url: https://opendata-ajuntament.barcelona.cat/data/ca/dataset/aforaments-detall
+        title: { ca: Detall dels aforaments de mobilitat, en: Mobility counter readings }
+        description:
+          ca: La intensitat mitjana de cada aforament de trànsit i de bicicletes per mes i tipus de dia; el canal traffic-counters en llegeix la del dia laborable del darrer mes, cada setmana.
+          en: The mean intensity of each traffic and bicycle counter per month and day type; the pipeline traffic-counters reads the working-day one of the newest month, every week.
+      - url: https://opendata-ajuntament.barcelona.cat/data/ca/dataset/aforaments-descriptiu
+        title: { ca: Equips d'aforament de mobilitat, en: Mobility counters }
+        description:
+          ca: El nom, el tipus i el lloc de cada aforament.
+          en: The name, kind and place of each counter.
+    pipelineRef: { kind: Pipeline, name: traffic-state }
+    # Declared charts replace the automatic ones (T-5432): intensity holds monthly counts of the
+    # aforaments (the newest month 2025-12, one entity each) with no observedAt, so a 7-day history
+    # is empty; the newest month is drawn from the current values instead.
+    visualizations:
+      - name: auto-trafficflowobserved-traveltime
+        title: { ca: Temps de recorregut, sk: Čas jazdy, en: Travel time }
+        description:
+          sk: Hodnoty za posledných 7 dní, jedna čiara na úsek.
+          en: The values of the last 7 days, one line per section.
+        data:
+          source: temporal
+          type: TrafficFlowObserved
+          attrs: [travelTime]
+          last: P7D
+        spec:
+          $schema: https://vega.github.io/schema/vega-lite/v5.json
+          data: { name: source }
+          mark: { type: line, point: true }
+          encoding:
+            x: { field: observedAt, type: temporal, title: null }
+            'y':
+              field: travelTime
+              type: quantitative
+              scale: { zero: false }
+            color: { field: name, type: nominal, title: null }
+            tooltip:
+              - field: observedAt
+                type: temporal
+              - field: travelTime
+                type: quantitative
+                format: ',d'
+              - field: name
+                type: nominal
+      - name: auto-trafficflowobserved-usualtraveltime
+        title: { ca: Temps de recorregut habitual, sk: Obvyklý čas jazdy, en: Usual travel time }
+        description:
+          sk: Hodnoty za posledných 7 dní, jedna čiara na úsek.
+          en: The values of the last 7 days, one line per section.
+        data:
+          source: temporal
+          type: TrafficFlowObserved
+          attrs: [usualTravelTime]
+          last: P7D
+        spec:
+          $schema: https://vega.github.io/schema/vega-lite/v5.json
+          data: { name: source }
+          mark: { type: line, point: true }
+          encoding:
+            x: { field: observedAt, type: temporal, title: null }
+            'y':
+              field: usualTravelTime
+              type: quantitative
+              scale: { zero: false }
+            color: { field: name, type: nominal, title: null }
+            tooltip:
+              - field: observedAt
+                type: temporal
+              - field: usualTravelTime
+                type: quantitative
+                format: ',d'
+              - field: name
+                type: nominal
+      - name: busiest-aforaments
+        title:
+          ca: Aforaments amb més vehicles
+          sk: Najvyťaženejšie sčítacie miesta
+          en: Busiest counters
+        description:
+          ca: Els 20 aforaments amb més vehicles del mes més recent publicat.
+          sk: '20 sčítacích miest s najviac vozidlami v najnovšom zverejnenom mesiaci.'
+          en: The 20 counters with the most vehicles in the newest published month.
+        data:
+          source: odata
+          entitySet: TrafficFlowObserved
+          $filter: intensity ne null
+          $select: name,intensity,dateObserved
+        spec:
+          $schema: https://vega.github.io/schema/vega-lite/v5.json
+          data: { name: source }
+          transform:
+            - filter: isValid(datum.intensity)
+            - window:
+                - op: row_number
+                  as: rank
+              sort:
+                - field: intensity
+                  order: descending
+            - filter: datum.rank <= 20
+          mark: { type: bar }
+          encoding:
+            'y':
+              field: name
+              type: nominal
+              sort: '-x'
+              title: null
+            x: { field: intensity, type: quantitative, title: null }
+            tooltip:
+              - field: name
+                type: nominal
+              - field: intensity
+                type: quantitative
+                format: ',d'
+              - field: dateObserved
+                type: temporal

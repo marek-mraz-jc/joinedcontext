@@ -1,0 +1,164 @@
+# file in this folder -> its path in the configuration repository (jc-core PATH_TEMPLATEs), read
+# by the forge bootstrap's seed (components/gitea/values/bootstrap/development-values).
+# Ajuntament de Barcelona as an Organization of its own (ADR-N-058, T-5260), its administrator
+# and its readers; the bindings end at this Organization (PF-123).
+barcelona-org.yaml: organizations/barcelona.yaml
+barcelona-rolebinding-admins.yaml: users/assignments/barcelona-admins.yaml
+barcelona-rolebinding-viewers.yaml: users/assignments/barcelona-viewers.yaml
+# The project barcelona: one space of Open Data BCN as Smart Data Models, its one door, the
+# pipelines' account and Policy, and the CKAN organisation its datasets publish to.
+barcelona-project.yaml: projects/barcelona/project.yaml
+barcelona-serviceaccount-pipelines.yaml: projects/barcelona/access/serviceaccounts/pipelines.yaml
+barcelona-ckan.yaml: projects/barcelona/ckan/barcelona.yaml
+barcelona-space.yaml: projects/barcelona/spaces/barcelona/space.yaml
+barcelona-datamodel.yaml: projects/barcelona/spaces/barcelona/datamodels/barcelona.yaml
+barcelona.linkml.yaml: projects/barcelona/spaces/barcelona/datamodels/barcelona.linkml.yaml
+barcelona.v1.schema.json: projects/barcelona/spaces/barcelona/datamodels/barcelona.v1.schema.json
+barcelona.v1.context.jsonld: projects/barcelona/spaces/barcelona/datamodels/barcelona.v1.context.jsonld
+barcelona.v1.example.jsonld: projects/barcelona/spaces/barcelona/datamodels/barcelona.v1.example.jsonld
+barcelona.v1.md: projects/barcelona/spaces/barcelona/datamodels/barcelona.v1.md
+barcelona-endpoint.yaml: projects/barcelona/spaces/barcelona/endpoints/barcelona.yaml
+barcelona-policy-pipelines-write.yaml: projects/barcelona/spaces/barcelona/policies/pipelines-write.yaml
+barcelona-policy-public-read.yaml: projects/barcelona/spaces/barcelona/policies/public-read.yaml
+# Batch 2, environment (T-5263): the hourly air quality, the daily weather and the groundwater.
+barcelona-datasource-air-quality.yaml: projects/barcelona/datasources/bcn-air-quality.yaml
+barcelona-pipeline-air-quality.yaml: projects/barcelona/pipelines/air-quality/pipeline.yaml
+barcelona-pipeline-air-quality-bento.yaml: projects/barcelona/pipelines/air-quality/bento.yaml
+barcelona-endpoint-air-quality.yaml: projects/barcelona/spaces/barcelona/endpoints/air-quality.yaml
+barcelona-policy-public-air-quality.yaml: projects/barcelona/spaces/barcelona/policies/public-air-quality.yaml
+barcelona-datasource-weather.yaml: projects/barcelona/datasources/bcn-weather.yaml
+barcelona-pipeline-weather.yaml: projects/barcelona/pipelines/weather/pipeline.yaml
+barcelona-pipeline-weather-bento.yaml: projects/barcelona/pipelines/weather/bento.yaml
+barcelona-endpoint-weather.yaml: projects/barcelona/spaces/barcelona/endpoints/weather.yaml
+barcelona-policy-public-weather.yaml: projects/barcelona/spaces/barcelona/policies/public-weather.yaml
+barcelona-datasource-groundwater.yaml: projects/barcelona/datasources/bcn-groundwater.yaml
+barcelona-pipeline-groundwater.yaml: projects/barcelona/pipelines/groundwater/pipeline.yaml
+barcelona-pipeline-groundwater-bento.yaml: projects/barcelona/pipelines/groundwater/bento.yaml
+barcelona-endpoint-groundwater.yaml: projects/barcelona/spaces/barcelona/endpoints/groundwater.yaml
+barcelona-policy-public-groundwater.yaml: projects/barcelona/spaces/barcelona/policies/public-groundwater.yaml
+# Transport (T-5262): the traffic state of each street section every five minutes, and the
+# regulated surface parking sections of B:SM once a day, each its own public catalogue dataset.
+barcelona-datasource-traffic-state.yaml: projects/barcelona/datasources/bcn-traffic-state.yaml
+barcelona-pipeline-traffic-state.yaml: projects/barcelona/pipelines/traffic-state/pipeline.yaml
+barcelona-pipeline-traffic-state-bento.yaml: projects/barcelona/pipelines/traffic-state/bento.yaml
+barcelona-endpoint-traffic.yaml: projects/barcelona/spaces/barcelona/endpoints/barcelona-traffic.yaml
+barcelona-policy-public-traffic.yaml: projects/barcelona/spaces/barcelona/policies/public-traffic.yaml
+barcelona-datasource-parking-sections.yaml: projects/barcelona/datasources/bcn-parking-sections.yaml
+barcelona-pipeline-parking-sections.yaml: projects/barcelona/pipelines/parking-sections/pipeline.yaml
+barcelona-pipeline-parking-sections-bento.yaml: projects/barcelona/pipelines/parking-sections/bento.yaml
+barcelona-endpoint-parking.yaml: projects/barcelona/spaces/barcelona/endpoints/barcelona-parking.yaml
+barcelona-policy-public-parking.yaml: projects/barcelona/spaces/barcelona/policies/public-parking.yaml
+# The travel time of the city's traffic routes every five minutes, into the traffic dataset, and
+# the Endolla charging points with their free ports every five minutes, a dataset of its own.
+barcelona-datasource-traffic-routes.yaml: projects/barcelona/datasources/bcn-traffic-routes.yaml
+barcelona-pipeline-traffic-routes.yaml: projects/barcelona/pipelines/traffic-routes/pipeline.yaml
+barcelona-pipeline-traffic-routes-bento.yaml: projects/barcelona/pipelines/traffic-routes/bento.yaml
+barcelona-datasource-ev-charging.yaml: projects/barcelona/datasources/bcn-ev-charging.yaml
+barcelona-pipeline-ev-charging.yaml: projects/barcelona/pipelines/ev-charging/pipeline.yaml
+barcelona-pipeline-ev-charging-bento.yaml: projects/barcelona/pipelines/ev-charging/bento.yaml
+barcelona-endpoint-charging.yaml: projects/barcelona/spaces/barcelona/endpoints/barcelona-charging.yaml
+barcelona-policy-public-charging.yaml: projects/barcelona/spaces/barcelona/policies/public-charging.yaml
+# Transport part 2 (T-5374): the counters' working-day intensity weekly, into the traffic dataset;
+# the cycle network and the road accidents weekly, each a dataset of its own.
+barcelona-datasource-traffic-counters.yaml: projects/barcelona/datasources/bcn-traffic-counters.yaml
+barcelona-pipeline-traffic-counters.yaml: projects/barcelona/pipelines/traffic-counters/pipeline.yaml
+barcelona-pipeline-traffic-counters-bento.yaml: projects/barcelona/pipelines/traffic-counters/bento.yaml
+barcelona-datasource-bike-lanes.yaml: projects/barcelona/datasources/bcn-bike-lanes.yaml
+barcelona-pipeline-bike-lanes.yaml: projects/barcelona/pipelines/bike-lanes/pipeline.yaml
+barcelona-pipeline-bike-lanes-bento.yaml: projects/barcelona/pipelines/bike-lanes/bento.yaml
+barcelona-endpoint-bike-lanes.yaml: projects/barcelona/spaces/barcelona/endpoints/barcelona-bike-lanes.yaml
+barcelona-policy-public-bike-lanes.yaml: projects/barcelona/spaces/barcelona/policies/public-bike-lanes.yaml
+barcelona-datasource-accidents.yaml: projects/barcelona/datasources/bcn-accidents.yaml
+barcelona-pipeline-accidents.yaml: projects/barcelona/pipelines/accidents/pipeline.yaml
+barcelona-pipeline-accidents-bento.yaml: projects/barcelona/pipelines/accidents/bento.yaml
+barcelona-endpoint-accidents.yaml: projects/barcelona/spaces/barcelona/endpoints/barcelona-accidents.yaml
+barcelona-policy-public-accidents.yaml: projects/barcelona/spaces/barcelona/policies/public-accidents.yaml
+# Batch 3, urbanism (T-5264): the districts and barris, the works on the public space and the
+# pedestrian crossings.
+barcelona-datasource-districts.yaml: projects/barcelona/datasources/bcn-districts.yaml
+barcelona-datasource-neighbourhoods.yaml: projects/barcelona/datasources/bcn-neighbourhoods.yaml
+barcelona-datasource-city-works.yaml: projects/barcelona/datasources/bcn-city-works.yaml
+barcelona-pipeline-districts.yaml: projects/barcelona/pipelines/districts/pipeline.yaml
+barcelona-pipeline-districts-bento.yaml: projects/barcelona/pipelines/districts/bento.yaml
+barcelona-pipeline-neighbourhoods.yaml: projects/barcelona/pipelines/neighbourhoods/pipeline.yaml
+barcelona-pipeline-neighbourhoods-bento.yaml: projects/barcelona/pipelines/neighbourhoods/bento.yaml
+barcelona-pipeline-city-works.yaml: projects/barcelona/pipelines/city-works/pipeline.yaml
+barcelona-pipeline-city-works-bento.yaml: projects/barcelona/pipelines/city-works/bento.yaml
+barcelona-endpoint-areas.yaml: projects/barcelona/spaces/barcelona/endpoints/areas.yaml
+barcelona-policy-public-areas.yaml: projects/barcelona/spaces/barcelona/policies/public-areas.yaml
+barcelona-endpoint-city-works.yaml: projects/barcelona/spaces/barcelona/endpoints/city-works.yaml
+barcelona-policy-public-city-works.yaml: projects/barcelona/spaces/barcelona/policies/public-city-works.yaml
+barcelona-datasource-pedestrian-crossings.yaml: projects/barcelona/datasources/bcn-pedestrian-crossings.yaml
+barcelona-pipeline-pedestrian-crossings.yaml: projects/barcelona/pipelines/pedestrian-crossings/pipeline.yaml
+barcelona-pipeline-pedestrian-crossings-bento.yaml: projects/barcelona/pipelines/pedestrian-crossings/bento.yaml
+barcelona-endpoint-pedestrian-crossings.yaml: projects/barcelona/spaces/barcelona/endpoints/pedestrian-crossings.yaml
+barcelona-policy-public-pedestrian-crossings.yaml: projects/barcelona/spaces/barcelona/policies/public-pedestrian-crossings.yaml
+# The rest of urbanism (T-5431): the speed reducers as StreetFurniture, one weekly pipeline, one
+# dataset; the drinking and ornamental fountains as PointOfInterest of the places dataset.
+barcelona-datasource-speed-reducers.yaml: projects/barcelona/datasources/bcn-speed-reducers.yaml
+barcelona-pipeline-speed-reducers.yaml: projects/barcelona/pipelines/speed-reducers/pipeline.yaml
+barcelona-pipeline-speed-reducers-bento.yaml: projects/barcelona/pipelines/speed-reducers/bento.yaml
+barcelona-endpoint-street-furniture.yaml: projects/barcelona/spaces/barcelona/endpoints/street-furniture.yaml
+barcelona-policy-public-street-furniture.yaml: projects/barcelona/spaces/barcelona/policies/public-street-furniture.yaml
+barcelona-datasource-drinking-fountains.yaml: projects/barcelona/datasources/bcn-drinking-fountains.yaml
+barcelona-pipeline-drinking-fountains.yaml: projects/barcelona/pipelines/drinking-fountains/pipeline.yaml
+barcelona-pipeline-drinking-fountains-bento.yaml: projects/barcelona/pipelines/drinking-fountains/bento.yaml
+barcelona-datasource-ornamental-fountains.yaml: projects/barcelona/datasources/bcn-ornamental-fountains.yaml
+barcelona-pipeline-ornamental-fountains.yaml: projects/barcelona/pipelines/ornamental-fountains/pipeline.yaml
+barcelona-pipeline-ornamental-fountains-bento.yaml: projects/barcelona/pipelines/ornamental-fountains/bento.yaml
+# The licensed tourist flats (T-5417): one CSV file, one weekly pipeline, one public dataset.
+barcelona-datasource-tourist-flats.yaml: projects/barcelona/datasources/bcn-tourist-flats.yaml
+barcelona-pipeline-tourist-flats.yaml: projects/barcelona/pipelines/tourist-flats/pipeline.yaml
+barcelona-pipeline-tourist-flats-bento.yaml: projects/barcelona/pipelines/tourist-flats/bento.yaml
+barcelona-endpoint-tourist-flats.yaml: projects/barcelona/spaces/barcelona/endpoints/tourist-flats.yaml
+barcelona-policy-public-tourist-flats.yaml: projects/barcelona/spaces/barcelona/policies/public-tourist-flats.yaml
+# The activity agendas (T-5265): one DataStore query, one daily pipeline, one public dataset.
+barcelona-datasource-agenda.yaml: projects/barcelona/datasources/bcn-agenda.yaml
+barcelona-pipeline-agenda.yaml: projects/barcelona/pipelines/agenda/pipeline.yaml
+barcelona-pipeline-agenda-bento.yaml: projects/barcelona/pipelines/agenda/bento.yaml
+barcelona-endpoint-events.yaml: projects/barcelona/spaces/barcelona/endpoints/barcelona-events.yaml
+barcelona-policy-public-events.yaml: projects/barcelona/spaces/barcelona/policies/public-events.yaml
+# The register of facilities, equipaments (T-5265): sixteen families and seven thematic extracts, one daily pipeline, one dataset.
+barcelona-datasource-equipaments.yaml: projects/barcelona/datasources/bcn-equipaments.yaml
+barcelona-pipeline-equipaments.yaml: projects/barcelona/pipelines/equipaments/pipeline.yaml
+barcelona-pipeline-equipaments-bento.yaml: projects/barcelona/pipelines/equipaments/bento.yaml
+barcelona-endpoint-places.yaml: projects/barcelona/spaces/barcelona/endpoints/barcelona-places.yaml
+barcelona-policy-public-places.yaml: projects/barcelona/spaces/barcelona/policies/public-places.yaml
+# Its public data as one read-only MCP connector (T-5367).
+barcelona-mcp-dades-obertes.yaml: projects/barcelona/mcp/dades-obertes.yaml
+# The city's statistics (T-5266): one pipeline over the Padró, cadastre, notaries' and vehicle
+# tables of Open Data BCN, three public datasets by theme.
+barcelona-datasource-statistics.yaml: projects/barcelona/datasources/bcn-statistics-dimensions.yaml
+barcelona-pipeline-statistics.yaml: projects/barcelona/pipelines/statistics/pipeline.yaml
+barcelona-pipeline-statistics-bento.yaml: projects/barcelona/pipelines/statistics/bento.yaml
+barcelona-endpoint-statistics-population.yaml: projects/barcelona/spaces/barcelona/endpoints/statistics-population.yaml
+barcelona-endpoint-statistics-housing.yaml: projects/barcelona/spaces/barcelona/endpoints/statistics-housing.yaml
+barcelona-endpoint-statistics-vehicles.yaml: projects/barcelona/spaces/barcelona/endpoints/statistics-vehicles.yaml
+barcelona-policy-public-statistics-population.yaml: projects/barcelona/spaces/barcelona/policies/public-statistics-population.yaml
+barcelona-policy-public-statistics-housing.yaml: projects/barcelona/spaces/barcelona/policies/public-statistics-housing.yaml
+barcelona-policy-public-statistics-vehicles.yaml: projects/barcelona/spaces/barcelona/policies/public-statistics-vehicles.yaml
+# Batch 2, environment rest (T-5413): the city's dog areas, one weekly pipeline, one dataset.
+barcelona-datasource-dog-areas.yaml: projects/barcelona/datasources/bcn-dog-areas.yaml
+barcelona-pipeline-dog-areas.yaml: projects/barcelona/pipelines/dog-areas/pipeline.yaml
+barcelona-pipeline-dog-areas-bento.yaml: projects/barcelona/pipelines/dog-areas/bento.yaml
+barcelona-endpoint-dog-areas.yaml: projects/barcelona/spaces/barcelona/endpoints/dog-areas.yaml
+barcelona-policy-public-dog-areas.yaml: projects/barcelona/spaces/barcelona/policies/public-dog-areas.yaml
+# The trees of local interest (T-5413), entries of the facility register read from its DataStore.
+barcelona-datasource-local-trees.yaml: projects/barcelona/datasources/bcn-local-trees.yaml
+barcelona-pipeline-local-trees.yaml: projects/barcelona/pipelines/local-trees/pipeline.yaml
+barcelona-pipeline-local-trees-bento.yaml: projects/barcelona/pipelines/local-trees/bento.yaml
+barcelona-endpoint-local-trees.yaml: projects/barcelona/spaces/barcelona/endpoints/local-trees.yaml
+barcelona-policy-public-local-trees.yaml: projects/barcelona/spaces/barcelona/policies/public-local-trees.yaml
+# Meteocat's forecast for Barcelonès (T-5413), every half hour, one dataset.
+barcelona-datasource-weather-forecast.yaml: projects/barcelona/datasources/bcn-weather-forecast.yaml
+barcelona-pipeline-weather-forecast.yaml: projects/barcelona/pipelines/weather-forecast/pipeline.yaml
+barcelona-pipeline-weather-forecast-bento.yaml: projects/barcelona/pipelines/weather-forecast/bento.yaml
+barcelona-endpoint-weather-forecast.yaml: projects/barcelona/spaces/barcelona/endpoints/weather-forecast.yaml
+barcelona-policy-public-weather-forecast.yaml: projects/barcelona/spaces/barcelona/policies/public-weather-forecast.yaml
+# Architectural heritage (T-6570): the 1,484 buildings Wikidata lists with an IPAC code inside the
+# city, weekly, as PointOfInterest with the category heritage and the prefix heritage-.
+barcelona-datasource-heritage.yaml: projects/barcelona/datasources/bcn-heritage.yaml
+barcelona-pipeline-heritage.yaml: projects/barcelona/pipelines/heritage/pipeline.yaml
+barcelona-pipeline-heritage-bento.yaml: projects/barcelona/pipelines/heritage/bento.yaml
+barcelona-endpoint-heritage.yaml: projects/barcelona/spaces/barcelona/endpoints/heritage.yaml
+barcelona-policy-public-heritage.yaml: projects/barcelona/spaces/barcelona/policies/public-heritage.yaml

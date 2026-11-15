@@ -1,0 +1,35 @@
+# What ŠÚ SR publishes for the city of Žilina (SK031B517402), one entity per cube cell, the publisher's codes kept verbatim. The indicators computed from it live in zilina-kpi and never here (PF-54).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: zilina-mesto
+  namespace: zilina
+  title:
+    sk: Žilina — zdrojové údaje
+    en: Žilina, raw data
+  description:
+    sk: Riadky ŠÚ SR pre mesto Žilina (SK031B517402), tak ako ich publikoval ŠÚ SR.
+    en: ŠÚ SR rows for the city of Žilina (SK031B517402), as ŠÚ SR published them.
+spec:
+  # The space name is the segment its ids carry, pinned so it cannot drift (PF-84).
+  urnSegment: zilina-mesto
+  isSandbox: false
+  # The one model of this space: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: statistical-observation }
+  defaultLocale: sk
+  # History per type (DM-82, ADR-N-046 2.3, T-4275): a measurement series keeps 30 days, every
+  # other type keeps its current state only. Owners change it on the space's Retention tab.
+  retention:
+    - entityType: KeyPerformanceIndicator
+      history: P30D
+      # Written on every run without an observedAt: one row per change and one a week,
+      # not one per run (T-4844, DM-108, DM-109; scripts/temporal-audit.py).
+      attributes:
+        dataSet: { record: onChange, heartbeat: P7D }
+        dateObserved: { record: onChange, heartbeat: P7D }
+        dimensionKey: { record: onChange, heartbeat: P7D }
+        indicator: { record: onChange, heartbeat: P7D }
+        refArea: { record: onChange, heartbeat: P7D }
+        refPeriod: { record: onChange, heartbeat: P7D }
+        source: { record: onChange, heartbeat: P7D }
+        unitText: { record: onChange, heartbeat: P7D }

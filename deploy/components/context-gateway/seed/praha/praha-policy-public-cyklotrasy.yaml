@@ -1,0 +1,28 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-cyklotrasy
+  namespace: praha
+  title: { cs: 'Veřejné čtení: cyklotrasy' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: praha-mesto }
+  assigner: did:web:praha.eu
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116) and the subscriptions of the Endpoint praha-cyklotrasy, and only
+  # the records of its IPR layer (area-cycle-routes-): the space's other BikeLane stay with their own datasets (T-5426).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: BikeLane
+          idPattern: ^urn:ngsi-ld:BikeLane:[a-z0-9.-]+:praha-mesto:area-cycle-routes-[0-9a-f-]{36}$

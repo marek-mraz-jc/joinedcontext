@@ -1,0 +1,44 @@
+# Dwellings by number of living rooms in the basic settlement units: one public dataset of the hub (T-5674), item 899203befc3f4515a8a10703a71a7c11, written by the statistics-zsj pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-pocet-bytov-podla-poctu-miestnosti-zsj
+  namespace: bratislava
+  title:
+    sk: Počet bytov podľa počtu obytných miestností v základných sídelných jednotkách
+    en: Dwellings by number of living rooms in the basic settlement units
+  description:
+    sk: 'Ukazovatele tabuľky „Počet bytov podľa počtu obytných miestností v základných sídelných jednotkách“ z data.bratislava.sk, jeden na základnú sídelnú jednotku mesta (sčítanie 2021) a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “Dwellings by number of living rooms in the basic settlement units”, one per basic settlement unit of the city (census 2021) and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: oiss6kfbsgjgslbyvvshvv2lqr4u4ssf
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-pocet-bytov-podla-poctu-miestnosti-zsj
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/899203befc3f4515a8a10703a71a7c11
+        title:
+          sk: Počet bytov podľa počtu obytných miestností v základných sídelných jednotkách
+          en: Dwellings by number of living rooms in the basic settlement units
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet bytov podľa počtu obytných miestností v základných sídelných jednotkách. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Dwellings by number of living rooms in the basic settlement units. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-zsj }

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Chart</title>
+<link rel="stylesheet" href="host.css">
+<script src="refuse.js" defer></script>
+<script src="host.js" defer></script>
+</head>
+<body>
+<main>
+  <figure aria-labelledby="title" aria-describedby="description">
+    <figcaption class="caption">
+      <h1 id="title"></h1>
+      <p id="description"></p>
+    </figcaption>
+    <p id="status" role="status" hidden></p>
+    <iframe id="frame" src="render.html" sandbox="allow-scripts allow-downloads" title="Chart"></iframe>
+    <p class="caption"><a id="table" href="#" target="_blank" rel="noopener">Data and table in the open-data catalogue</a></p>
+  </figure>
+</main>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# Stage reads prod's public Endpoint bbsk-registre for what stage does not hold yet (T-6545).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSourceRegistration
+metadata:
+  name: prod-bbsk-registre
+  namespace: bbsk
+  title: Prod bbsk-registre
+spec:
+  contextSpaceRef: bbsk-registre
+  endpoint: https://api.smartcity.joinedcontext.com/api/endpoint/lws6dd7o56veegwxsjtvak3goeta4mfn
+  information:
+    - entities:
+        - type: PublicOrganization
+  mode: auxiliary
+  operations: [retrieveOps]
+  federation: { identity: anonymous }

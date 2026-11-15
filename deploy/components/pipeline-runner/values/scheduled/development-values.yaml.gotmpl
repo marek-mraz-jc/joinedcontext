@@ -1,0 +1,8 @@
+---
+# Checklist:
+# - [x] Minimal Resources -> PL-11 mandates the same envelope in both profiles
+# - [x] Minimal storage -> none: the pod holds the config ConfigMap and an emptyDir for /tmp
+# - [x] 1 Replica -> a CronJob has no replicas
+
+# A failed run is visible for longer while a pipeline is being written.
+failedJobsHistoryLimit: 5

@@ -1,0 +1,18 @@
+# The city's list of tourist coach stops as Smart Data Models OnStreetParking (T-5435). The list
+# changes once a season at most; a weekly run shows a change within a week. 13 stops on
+# 2026-10-25; the run is one request of 3 kB.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: coach-stops
+  namespace: bratislava
+  title: { sk: Zastávky turistických autobusov, en: Tourist coach stops }
+spec:
+  class: auto
+  period: 168h
+  schedule: '55 3 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: bratislava-hub }
+  targetEndpoint: urn:ngsi-ld:Endpoint:bratislava.sk:bratislava:bratislava
+  output: { type: OnStreetParking, mode: upsert }
+  quotas: { maxMemoryMb: 64, cpuMillicores: 50 }

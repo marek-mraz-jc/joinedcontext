@@ -1,0 +1,36 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: pipelines-write
+  namespace: barcelona
+  title:
+    ca: Els canals escriuen l'espai barcelona
+    es: Los canales escriben el espacio barcelona
+    en: The pipelines write the space barcelona
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: barcelona }
+  assigner: did:web:barcelona.cat
+  assignee: { kind: serviceAccount, id: pipelines }
+  # Upsert is each read; create and query let a stream start from nothing and check itself. No
+  # delete: a source that returns nothing fails its run and leaves the entities (T-5260).
+  # Only the types the model declares; each batch adds its own here.
+  operations: [upsertBatch, createBatch, queryBatch]
+  information:
+    - entities:
+        - type: AirQualityObserved
+        - type: WeatherObserved
+        - type: WeatherForecast
+        - type: PhreaticObserved
+        - type: TrafficFlowObserved
+        - type: OnStreetParking
+        - type: EVChargingStation
+        - type: AdministrativeArea
+        - type: CityWork
+        - type: PedestrianCrossing
+        - type: StreetFurniture
+        - type: TouristRental
+        - type: BikeLane
+        - type: RoadAccident
+        - type: Event
+        - type: PointOfInterest
+        - type: KeyPerformanceIndicator

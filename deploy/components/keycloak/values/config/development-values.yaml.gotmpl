@@ -1,0 +1,16 @@
+---
+{{- $this := .Values.keycloak.config }}
+{{- $global := .Values.global }}
+# Checklist:
+# - [ ] Minimal Resources
+# - [ ] Minimal storage
+# - [ ] 1 Replica
+
+config:
+  {{ $global.instanceSlug }}:
+    inline:
+      # dev only: the Portal's cookie session lives exactly as long as the access token
+      # (src/auth/oidc.rs takes expires_in as the session TTL; T-0492 adds a refresh). With
+      # the base 300 s a demo logs out every five minutes; an hour equals the SSO idle
+      # timeout the base already grants.
+      accessTokenLifespan: 3600

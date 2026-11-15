@@ -1,0 +1,17 @@
+# One AdministrativeArea per record of `hel-districts`, written into the city space (T-2787).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: districts
+  namespace: helsinki
+  title: { en: City districts }
+spec:
+  class: auto
+  # The division changes a few times a decade; weekly is already more than it needs.
+  period: 168h
+  schedule: '50 3 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-districts }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: AdministrativeArea, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

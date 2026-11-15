@@ -1,0 +1,246 @@
+{
+  "id": "urn:ngsi-ld:Grant:joinedcontext.com:example:1",
+  "type": "Grant",
+  "akcia": {
+    "type": "Property",
+    "value": "akcia"
+  },
+  "cDodavatela": {
+    "type": "Property",
+    "value": "cDodavatela"
+  },
+  "cZmluvy": {
+    "type": "Property",
+    "value": "cZmluvy"
+  },
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "datumDoruceniaVyuctovania": {
+    "type": "Property",
+    "value": "2026-01-01"
+  },
+  "datumRealizacieProjektu": {
+    "type": "Property",
+    "value": "datumRealizacieProjektu"
+  },
+  "datumUhradyDotacie": {
+    "type": "Property",
+    "value": "2026-01-01"
+  },
+  "datumZverejneniaZmluvy": {
+    "type": "Property",
+    "value": "2026-01-01"
+  },
+  "denneTabory": {
+    "type": "Property",
+    "value": "denneTabory"
+  },
+  "dotacnyTitul": {
+    "type": "Property",
+    "value": "dotacnyTitul"
+  },
+  "druh": {
+    "type": "Property",
+    "value": "druh"
+  },
+  "ePFRVSucet": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "ePZFSucet": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "iCO": {
+    "type": "Property",
+    "value": "iCO"
+  },
+  "iCOZiadatela": {
+    "type": "Property",
+    "value": "iCOZiadatela"
+  },
+  "iD": {
+    "type": "Property",
+    "value": 0
+  },
+  "identifier": {
+    "type": "Property",
+    "value": "identifier"
+  },
+  "isPartOf": {
+    "type": "Property",
+    "value": "https://example.org/isPartOf"
+  },
+  "kampan": {
+    "type": "Property",
+    "value": "kampan"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "mena": {
+    "type": "Property",
+    "value": "mena"
+  },
+  "name": {
+    "type": "Property",
+    "value": "name"
+  },
+  "obecPO": {
+    "type": "Property",
+    "value": "obecPO"
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "okres": {
+    "type": "Property",
+    "value": "okres"
+  },
+  "opravneneSpolu": {
+    "type": "Property",
+    "value": 0
+  },
+  "pSC": {
+    "type": "Property",
+    "value": "pSC"
+  },
+  "pobytoveTabory": {
+    "type": "Property",
+    "value": "pobytoveTabory"
+  },
+  "pocetDeti": {
+    "type": "Property",
+    "value": "pocetDeti"
+  },
+  "pocetDni": {
+    "type": "Property",
+    "value": "pocetDni"
+  },
+  "popisDotacnehoTitulu": {
+    "type": "Property",
+    "value": "popisDotacnehoTitulu"
+  },
+  "pozadovanaDotacia": {
+    "type": "Property",
+    "value": 0
+  },
+  "pozadovaneProstriedky": {
+    "type": "Property",
+    "value": "pozadovaneProstriedky"
+  },
+  "poznamky": {
+    "type": "Property",
+    "value": "poznamky"
+  },
+  "pravnaForma": {
+    "type": "Property",
+    "value": "pravnaForma"
+  },
+  "prveDorucenie": {
+    "type": "Property",
+    "value": "2026-01-01"
+  },
+  "rok": {
+    "type": "Property",
+    "value": "rok"
+  },
+  "rokDotacie": {
+    "type": "Property",
+    "value": 0
+  },
+  "rokKampan": {
+    "type": "Property",
+    "value": 0
+  },
+  "rozdielNaVratenie": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "rozpocet": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "sRSRSucet": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "schvProstr": {
+    "type": "Property",
+    "value": "schvProstr"
+  },
+  "schvalenaVyskaDotacie": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "sidlo": {
+    "type": "Property",
+    "value": "sidlo"
+  },
+  "skutocneCerpanie": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "stavFinanVyuctovania": {
+    "type": "Property",
+    "value": "stavFinanVyuctovania"
+  },
+  "stavVybav": {
+    "type": "Property",
+    "value": "stavVybav"
+  },
+  "stavZiadosti": {
+    "type": "Property",
+    "value": "stavZiadosti"
+  },
+  "typ": {
+    "type": "Property",
+    "value": "typ"
+  },
+  "typDotacie": {
+    "type": "Property",
+    "value": "typDotacie"
+  },
+  "typTabora": {
+    "type": "Property",
+    "value": "typTabora"
+  },
+  "vSuladeSPrioritamiPoskytovaniaDotacii": {
+    "type": "Property",
+    "value": "vSuladeSPrioritamiPoskytovaniaDotacii"
+  },
+  "vZN": {
+    "type": "Property",
+    "value": "vZN"
+  },
+  "vratenaNedocerpanaCastDotacieDna": {
+    "type": "Property",
+    "value": "vratenaNedocerpanaCastDotacieDna"
+  },
+  "vyplatenaSumaSpoluSucet": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "ziadatel": {
+    "type": "Property",
+    "value": "ziadatel"
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/Grant/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

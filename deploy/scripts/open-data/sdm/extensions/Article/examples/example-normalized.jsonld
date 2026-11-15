@@ -1,0 +1,58 @@
+{
+  "id": "urn:ngsi-ld:Article:joinedcontext.com:example:1",
+  "type": "Article",
+  "content": {
+    "type": "Property",
+    "value": "content"
+  },
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "dateGmt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "identifier": {
+    "type": "Property",
+    "value": "identifier"
+  },
+  "isPartOf": {
+    "type": "Property",
+    "value": "https://example.org/isPartOf"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "modifiedGmt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "name": {
+    "type": "Property",
+    "value": "name"
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "url": {
+    "type": "Property",
+    "value": "https://example.org/url"
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/Article/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

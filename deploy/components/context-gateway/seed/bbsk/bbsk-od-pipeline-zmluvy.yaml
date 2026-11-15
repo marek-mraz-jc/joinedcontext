@@ -1,0 +1,24 @@
+# One Contract per row of "Zmluvy" (T-4255); generated from the T-4254 mapping.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-zmluvy
+  namespace: bbsk
+  title:
+    sk: Zmluvy
+    en: Zmluvy
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 13 5 * * 2
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-zmluvy
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: Contract
+    mode: replace
+  quotas:
+    maxMemoryMb: 256
+    cpuMillicores: 100

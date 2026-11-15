@@ -1,0 +1,61 @@
+# The mapping of the air-quality pipeline (PL-03): one AirQualityObserved per FMI air quality
+# station inside the Helsinki box, with its newest hourly PM10, PM2.5 and air quality index. The
+# feed is FMI's simple WFS features, one element per station, hour and parameter, for the last
+# day; the stations' names and ids are not in it, so they are listed here by position, read once
+# from FMI's station register (stored query fmi::ef::stations). A station with no reading in the
+# feed is left out rather than written without values. A station inside Helsinki names its
+# district: the `districtCode` of the AdministrativeArea its point lies in (live polygons,
+# 2026-11-02), so an indicator can meet the districts on that code. An Espoo or Vantaa station has
+# no Helsinki district and writes none.
+
+pipeline:
+  processors:
+    # XML to JSON; the namespace prefixes (wfs:, BsWfs:, gml:) are dropped on the way.
+    - xml: { operator: to_json, cast: false }
+
+    - mapping: |
+        let domain = env("JC_ORG_DOMAIN")
+        # Keyed by the feed's position with '_' for '.', because `get` reads a dot as a path.
+        let stations = {
+          "60_18739 24_95060": { "id": "kallio-2", "name": "Helsinki Kallio 2", "coordinates": [24.9506, 60.18739], "district": "12" },
+          "60_16964 24_93924": { "id": "mannerheimintie", "name": "Helsinki Mannerheimintie", "coordinates": [24.93924, 60.16964], "district": "02" },
+          "60_19512 24_94480": { "id": "teollisuuskatu", "name": "Helsinki Teollisuuskatu", "coordinates": [24.9448, 60.19512], "district": "22" },
+          "60_19305 25_03704": { "id": "herttoniemi-2", "name": "Helsinki Herttoniemi 2", "coordinates": [25.03704, 60.19305], "district": "43" },
+          "60_22393 25_10244": { "id": "vartiokyla-huivipolku", "name": "Helsinki Vartiokylä Huivipolku", "coordinates": [25.10244, 60.22393], "district": "45" },
+          "60_22024 24_81133": { "id": "leppavaara-lakkisepankuja", "name": "Espoo Leppävaara Läkkisepänkuja", "coordinates": [24.81133, 60.22024] },
+          "60_17513 24_80034": { "id": "tapiola-4", "name": "Espoo Tapiola 4", "coordinates": [24.80034, 60.17513] },
+          "60_31439 24_68486": { "id": "luukki", "name": "Espoo Luukki", "coordinates": [24.68486, 60.31439] },
+          "60_28995 25_03953": { "id": "tikkurila-neilikkatie", "name": "Vantaa Tikkurila Neilikkatie", "coordinates": [25.03953, 60.28995] },
+          "60_32733 25_01067": { "id": "ilola", "name": "Vantaa Ilola", "coordinates": [25.01067, 60.32733] },
+          "60_26459 25_14044": { "id": "jatevoimala", "name": "Vantaa Jätevoimala", "coordinates": [25.14044, 60.26459] }
+        }
+        let members = this.FeatureCollection.member.or([])
+        let members = if $members.type() == "array" { $members } else { [$members] }
+        # The newest reading of each station and parameter; FMI writes a missing value as NaN.
+        let latest = $members.map_each(member -> member.BsWfsElement).filter(row -> row.ParameterValue.or("NaN") != "NaN").sort_by(row -> row.Time).map_each(row -> {
+          "key": "%v|%v".format(row.Location.Point.pos.trim().replace_all(".", "_"), row.ParameterName),
+          "row": row
+        }).fold({}, item -> item.tally.assign({ item.value.key: item.value.row }))
+        root = $stations.key_values().map_each(station -> {
+          "station": station.value,
+          "pm10": $latest.get(station.key + "|PM10_PT1H_avg").or(null),
+          "pm25": $latest.get(station.key + "|PM25_PT1H_avg").or(null),
+          "index": $latest.get(station.key + "|AQINDEX_PT1H_avg").or(null)
+        }).filter(read -> read.pm10 != null || read.pm25 != null || read.index != null).map_each(read -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:fmi-%v".format("AirQualityObserved", $domain, env("JC_SPACE"), read.station.id),
+          "type": "AirQualityObserved",
+          "name": { "type": "LanguageProperty", "languageMap": { "fi": read.station.name } },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": read.station.coordinates } },
+          "dateObserved": { "type": "Property", "value": [read.pm10, read.pm25, read.index].filter(r -> r != null).map_each(r -> r.Time).sort().index(-1) },
+          "pm10": if read.pm10 == null { null } else {
+            { "type": "Property", "value": read.pm10.ParameterValue.number(), "unitCode": "GQ", "observedAt": read.pm10.Time }
+          },
+          "pm25": if read.pm25 == null { null } else {
+            { "type": "Property", "value": read.pm25.ParameterValue.number(), "unitCode": "GQ", "observedAt": read.pm25.Time }
+          },
+          "airQualityIndex": if read.index == null { null } else {
+            { "type": "Property", "value": read.index.ParameterValue.number(), "observedAt": read.index.Time }
+          },
+          "districtCode": if read.station.district != null { { "type": "Property", "value": read.station.district } },
+          "source": { "type": "Property", "value": "https://opendata.fmi.fi/wfs" }
+        }.filter(entry -> entry.value != null))

@@ -1,0 +1,22 @@
+# The hub's tables of the municipalities of the Bratislava Region as KeyPerformanceIndicator, one
+# entity per figure, area and period (T-5674), with the same mapping text as the statistics
+# pipeline. The tables change once a year at most; a weekly run shows a new year within a week. 2
+# tables, 356 figures on 2026-10-25, and T-5675's three (housing stock and population 1980-2051,
+# students commuting from the surrounding municipalities), 1,441 figures; the run fits 128 MiB.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: statistics-obce
+  namespace: bratislava
+  title:
+    sk: Štatistiky obcí Bratislavského kraja
+    en: Statistics of the municipalities of the Bratislava Region
+spec:
+  class: auto
+  period: 168h
+  schedule: '0 5 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: bratislava-hub }
+  targetEndpoint: urn:ngsi-ld:Endpoint:bratislava.sk:bratislava:bratislava
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

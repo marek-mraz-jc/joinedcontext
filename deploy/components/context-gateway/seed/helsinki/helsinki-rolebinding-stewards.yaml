@@ -1,0 +1,13 @@
+# The demo steward (DEMO.md) holds the steward role across the organization (and org-admin,
+# see admins). Reading is a binding of its own since PF-59: the demo viewer holds `viewer`
+# through the group everyone lands in (viewers.yaml) and nothing else (PF-50, PF-56).
+apiVersion: joinedcontext.com/v1alpha1
+kind: RoleBinding
+metadata:
+  name: stewards
+  namespace: org
+spec:
+  subjects:
+    - user: de300000-0000-4000-8000-000000000001 # demo.steward
+  role: steward
+  scope: { organization: hel }

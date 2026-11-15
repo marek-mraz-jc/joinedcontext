@@ -1,0 +1,45 @@
+# The mapping of the obyvatelia pipeline (PL-03): one KeyPerformanceIndicator per year of age
+# from the city's own register of inhabitants, 105 rows, ages 0 to 104.
+#
+# It is not a JSON-stat cube: it is a flat array the city serves, `{ "Vek", "Počet_občanov…",
+# "Počet_mužov", "Počet_žien" }`, with the counts padded with spaces and a non-breaking space as
+# the thousands separator. **The register declares no period at all** — it is "as of now" — so
+# `refPeriod` is the day the row was fetched and not a year the publisher never stated. A year
+# invented here would be a figure dated to a year nobody published it for. The id is the age
+# alone, so each run updates the same 105 entities and the space's history keeps the past counts
+# (F-BNT1-014: an id with the day in it minted 105 new entities every night).
+
+pipeline:
+  processors:
+    - unarchive: { format: json_array }
+
+    - mapping: |
+        let cube = "mesto-obyvatelia-vek"
+        let source_url = "https://egov.banskabystrica.sk/Default.aspx?NavigationState=920:0::plac1140:_144053_5_8"
+        let today = now().ts_format("2006-01-02", "UTC")
+        let fetched = now().ts_format("2006-01-02T15:04:05Z07:00", "UTC")
+        # "   1 071" -> 1071. Every byte that is not a digit goes, the ASCII space and the
+        # non-breaking space alike; a count that still does not parse is dropped, not guessed.
+        let age = this."Vek".or("").string().re_replace_all("[^0-9]", "")
+        let count = this."Počet_občanov_v_danom_veku".or("").string().re_replace_all("[^0-9]", "")
+        root = if $age == "" || $count == "" { deleted() } else {
+          {
+            "id": "urn:ngsi-ld:%v:%v:%v:%v".format("KeyPerformanceIndicator", "banskabystrica.sk", env("JC_SPACE"), "%v-SK0321508438-POCET-%v".format($cube, $age)),
+            "type": "KeyPerformanceIndicator",
+            "dataSet": { "type": "Property", "value": $cube },
+            "indicator": { "type": "Property", "value": "POCET" },
+            "refArea": { "type": "Property", "value": "SK0321508438" },
+            "refPeriod": { "type": "Property", "value": $today },
+            "dimensionKey": { "type": "Property", "value": $age },
+            # `observedAt` belongs to the attribute, never to the entity: CIM 009 4.5.1 makes it a
+            # core non-reified term, and the broker refuses a whole entity that carries one as an
+            # attribute of its own — 400 per entity, dropped by `drop_on`, so the space stayed
+            # empty in silence (T-2445).
+            "kpiValue": { "type": "Property", "value": $count.number(), "unitCode": "C62", "observedAt": $fetched },
+            "unitText": { "type": "Property", "value": "osoby v danom veku" },
+            "source": { "type": "Property", "value": $source_url },
+            "dateObserved": { "type": "Property", "value": $fetched }
+          }
+        }
+
+    - archive: { format: json_array }

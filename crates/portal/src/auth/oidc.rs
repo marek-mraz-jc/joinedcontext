@@ -1341,6 +1341,9 @@ pub(crate) mod tests {
             "/\r\nLocation: https://evil.example",
             "/ /evil.example",
             "https://evil.example",
+            // Another origin of the same Organization is another origin all the same (T-6991 §7).
+            "https://api.smartcity.bbsk.sk/",
+            "//opendata.bbsk.sk/dataset",
             "http:/evil.example",
             "javascript:alert(1)",
             "data:text/html,x",

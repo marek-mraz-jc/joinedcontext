@@ -1,0 +1,80 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "Petition": {
+      "@id": "jc:Petition"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "datumDorucenia": {
+      "@id": "jc:datumDorucenia",
+      "@type": "xsd:date"
+    },
+    "datumVybavenia": {
+      "@id": "jc:datumVybavenia",
+      "@type": "xsd:date"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "id": "@id",
+    "identifier": {
+      "@id": "sdm:dataModel.CPSV-AP/identifier"
+    },
+    "isPartOf": {
+      "@id": "jc:isPartOf",
+      "@type": "xsd:anyURI"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "jeKvorova": {
+      "@id": "jc:jeKvorova"
+    },
+    "link": {
+      "@id": "jc:link"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "name": {
+      "@id": "sdm:name"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "pocetOsobPodporujucichPetici": {
+      "@id": "jc:pocetOsobPodporujucichPetici",
+      "@type": "xsd:integer"
+    },
+    "poznamka": {
+      "@id": "jc:poznamka"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "sposobVybavenia": {
+      "@id": "jc:sposobVybavenia"
+    },
+    "text": {
+      "@id": "jc:text"
+    },
+    "type": "@type",
+    "vybavovatelPeticie": {
+      "@id": "jc:vybavovatelPeticie"
+    },
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "zverejnenieVysledkuVybavenia": {
+      "@id": "jc:zverejnenieVysledkuVybavenia",
+      "@type": "xsd:date"
+    }
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

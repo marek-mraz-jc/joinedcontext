@@ -1,0 +1,18 @@
+# One KeyPerformanceIndicator per territory per year per pollutant from the ŠÚ SR emissions cube.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: emisie
+  namespace: bbsk
+  title: { sk: Emisie tuhých látok na km², en: Solid particulate emissions per km² }
+spec:
+  class: auto
+  # Annual data. Polling it weekly is already ten times more often than it changes, and it is
+  # the publisher's bandwidth being spent (PL-26, PL-27).
+  period: 168h
+  schedule: '27 3 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: susr-zp3803rs }
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

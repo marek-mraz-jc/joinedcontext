@@ -1,0 +1,6 @@
+apiVersion: v2
+name: sync
+description: The nightly full pass of Decidim's Publish to context space, queued from a CronJob
+type: application
+version: 0.1.0
+appVersion: '1.0.0'

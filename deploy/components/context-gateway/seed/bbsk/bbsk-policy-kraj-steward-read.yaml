@@ -1,0 +1,53 @@
+# The person who keeps the region's raw rows reads them (EP-14). Until now only the pipelines'
+# service account was granted anything in this space, so a signed-in human saw an empty space
+# and the records application had nothing to draw. The rows are somebody else's published data
+# mirrored here, so the narrowing is the type and the published columns, not secrecy: what is
+# withheld from the public is the republication under our own name, which is the endpoint's
+# `organization` audience and stays as it is.
+#
+# Reading is a Policy of its own and not a second operation on the note grant beside it: one
+# Policy carries one attribute whitelist for every operation it names, so a grant that listed
+# both `retrieveOps` and `updateAttrs` over these columns would let the same person overwrite
+# `kpiValue` (GW17, T-2434).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: kraj-steward-read
+  namespace: bbsk
+  title:
+    sk: Správca údajov číta zdrojové riadky kraja
+    en: The data steward reads the region's raw rows
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: bbsk-kraj }
+  assigner: did:web:bbsk.sk
+  # The person, not a role: `steward` is a RoleBinding over manifests (users/roles/steward.yaml)
+  # and never reaches a token, whose only realm role is `portal-approver`
+  # (components/keycloak/demo-users.yaml). A `kind: role` assignee here would match nobody and
+  # the refusal would look like a bug in the application. Helsinki's own steward grant
+  # (helsinki-policy-bikes-ops-steward.yaml) names the person for the same reason, by
+  # their Keycloak user id and never by e-mail (PF-126, ADR-N-061).
+  assignee:
+    kind: user
+    id: de300000-0000-4000-8000-000000000001 # demo.steward
+  operations:
+    - retrieveOps
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: KeyPerformanceIndicator
+      # The columns the records application shows and filters on. A filter names an attribute,
+      # so an attribute missing here is a filter the endpoint refuses rather than answers.
+      propertyNames:
+        - dataSet
+        - indicator
+        - refArea
+        - refPeriod
+        - dimensionKey
+        - kpiValue
+        - unitText
+        - source
+        - dateObserved
+        - stewardNote

@@ -1,0 +1,64 @@
+# The air-quality dataset of Barcelona in the city's CKAN organisation: the stations and their
+# hourly means as NGSI-LD (with 30 days of history), CSV, GeoJSON by OGC API Features, OData and
+# MCP (T-5263, EP-118).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: air-quality
+  namespace: barcelona
+  title:
+    ca: Qualitat de l'aire a Barcelona
+    es: Calidad del aire en Barcelona
+    en: Air quality in Barcelona
+  description:
+    ca: Les estacions de la xarxa de qualitat de l'aire de Barcelona i la darrera mitjana horària de cada contaminant (NO2, O3, PM10, PM2.5, SO2, CO, NO, NOx, carboni negre), amb 30 dies d'història.
+    es: Las estaciones de la red de calidad del aire de Barcelona y la última media horaria de cada contaminante (NO2, O3, PM10, PM2.5, SO2, CO, NO, NOx, carbono negro), con 30 días de historia.
+    en: The stations of Barcelona's air-quality network and the latest hourly mean of each pollutant (NO2, O3, PM10, PM2.5, SO2, CO, NO, NOx, black carbon), with 30 days of history.
+spec:
+  contextSpaceRef: barcelona
+  slug: esbxdrr7snorjsp7uus2luihr6vl5vv6
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:barcelona.cat:barcelona:public-air-quality
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: barcelona }
+      license: cc-by
+  catalog:
+    publisher:
+      name:
+        ca: Ajuntament de Barcelona
+        es: Ayuntamiento de Barcelona
+        en: Barcelona City Council
+      uri: http://datos.gob.es/recurso/sector-publico/org/Organismo/L01080193
+    license: CC_BY_4_0
+    attribution:
+      ca: 'Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0'
+      es: 'Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0'
+      en: 'Source: Barcelona City Council (Ajuntament de Barcelona), Open Data BCN, CC BY 4.0'
+    themes: [ENVI, HEAL]
+    keywords:
+      ca: [qualitat de l'aire, contaminació, NO2, PM10]
+      es: [calidad del aire, contaminación, NO2, PM10]
+      en: [air quality, pollution, NO2, PM10]
+    spatial:
+      - ES511
+      - https://sws.geonames.org/3128760/
+    frequency: HOURLY
+    source:
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/qualitat-aire-detall-bcn
+        title:
+          ca: Qualitat de l'aire. Dades horàries (Open Data BCN)
+          en: Air quality, hourly data (Open Data BCN)
+        description:
+          ca: Mitjanes horàries de les estacions de la xarxa de vigilància de la qualitat de l'aire, CC BY 4.0.
+          en: Hourly means of the stations of the air-quality monitoring network, CC BY 4.0.
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/qualitat-aire-estacions-bcn
+        title:
+          ca: Qualitat de l'aire. Estacions de mesura (Open Data BCN)
+          en: Air quality, measuring stations (Open Data BCN)
+        description:
+          ca: Nom, ubicació i contaminants de cada estació, CC BY 4.0.
+          en: Name, place and pollutants of each station, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: air-quality }

@@ -1,0 +1,155 @@
+---
+# apps-db (ADR-N-044 §2.5): reached by the Portal, which provisions and migrates every App's
+# schema, and later by the shards of jc-wasm-host (their rule lands with their component,
+# T-3344); by nothing else. Its own instances, the operator and the API server as the
+# platform's cluster (components/postgres/networkpolicies.yaml).
+apps-db:
+  podSelector:
+    cnpg.io/cluster: apps-db
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: apps-db
+          componentNamespace: apps-db
+      ports:
+        - protocol: TCP
+          port: 5432
+    # The in-cluster artifact store, where an environment archives apps-db to it (T-5662).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: store
+          componentNamespace: artifact-store
+      ports:
+        - protocol: TCP
+          port: 9000
+    # The kube-apiserver (6443 on k3s), as for the platform's cluster; no pod a selector can
+    # name. WAL archiving to an external object store (443) opens in networkpolicies.yaml.gotmpl
+    # only where an environment archives there (T-6218).
+    - to:
+        - kubeApi: true
+      ports:
+        - protocol: TCP
+          port: 6443
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudnative-pg
+          componentNamespace: postgres.operator
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/jobRole: join
+          componentNamespace: apps-db
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: apps-db
+          componentNamespace: apps-db
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8000
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+        # jc, which carries the Portal where an environment runs it (components/jc).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jc-server
+          componentNamespace: jc
+        # Each shard of the WASM host as its own login role (ADR-N-044 §2.5, T-3361).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: wasm-host-shard
+          componentNamespace: wasm-host
+        # The nightly dump and the stat-statements Job of the `backup` part (F-DEP1-018).
+        - podSelector:
+            matchLabels:
+              joinedcontext.com/psql-client: "true"
+              app.kubernetes.io/name: apps-db-backup
+          componentNamespace: apps-db.backup
+      ports:
+        - protocol: TCP
+          port: 5432
+    # The Prometheus that scrapes the instances' exporter on :9187 (cluster.monitoring.enabled, T-5125),
+    # from its own namespace only; no peer is rendered while monitoring.prometheusNamespace is empty.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+          namespaceFrom: monitoring.monitoring.prometheusNamespace
+      ports:
+        - protocol: TCP
+          port: 9187
+
+# The operator side: it polls every instance's manager for status, and the platform's
+# `postgres-operator-egress` names only postgres-cluster, so without this the operator reports
+# "Instance Status Extraction Error: HTTP communication issue" and the Cluster never turns ready.
+apps-db-operator-egress:
+  deployLayer: operators
+  componentNamespace: postgres.operator
+  podSelector:
+    app.kubernetes.io/name: cloudnative-pg
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: apps-db
+          componentNamespace: apps-db
+      ports:
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 5432
+
+# The `backup` part's Jobs (F-DEP1-018): the nightly dump and stat-statements connect to the -rw
+# service with the superuser and exit; DNS and apps-db's 5432, nothing else.
+apps-db-backup:
+  podSelector:
+    joinedcontext.com/psql-client: "true"
+    app.kubernetes.io/name: apps-db-backup
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: apps-db
+          componentNamespace: apps-db
+      ports:
+        - protocol: TCP
+          port: 5432

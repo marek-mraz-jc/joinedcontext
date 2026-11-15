@@ -1,0 +1,20 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: heritage
+  namespace: barcelona
+  title:
+    ca: Patrimoni arquitectònic de Barcelona, cada setmana
+    es: Patrimonio arquitectónico de Barcelona, cada semana
+    en: Barcelona architectural heritage, weekly
+spec:
+  class: auto
+  # Wikidata's heritage items of the city change a few times a month; a weekly run finds them.
+  schedule: '41 6 * * 4'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-heritage }
+  targetEndpoint: urn:ngsi-ld:Endpoint:barcelona.cat:barcelona:barcelona
+  # Upsert, as the equipaments: both write PointOfInterest, so a replace would delete the other's.
+  # A building Wikidata drops leaves by its expiresAt, three weeks after its last listing.
+  output: { type: PointOfInterest, mode: upsert }
+  quotas: { maxMemoryMb: 192, cpuMillicores: 100 }

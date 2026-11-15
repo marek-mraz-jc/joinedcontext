@@ -1,0 +1,16 @@
+# The forge as a runner reaches it, in-cluster.
+forge: ''
+# The Portal API as a job reaches it, in-cluster; empty when the installation has no Portal.
+portalUrl: ''
+# The Portal's ServiceAccount, the one subject of the Role.
+portal:
+  serviceAccount: portal
+  namespace: ''
+# One runner configuration per build class; the Portal mounts `gitea-runner-build-{class}`.
+classes:
+  node:
+    label: app-build-node
+    timeout: 20m
+  rust:
+    label: app-build-rust
+    timeout: 30m

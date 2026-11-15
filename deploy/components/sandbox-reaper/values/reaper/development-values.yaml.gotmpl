@@ -1,0 +1,11 @@
+---
+# A development cluster is where sandboxes are actually created, so the reaper runs there for
+# real. The ceiling is the requirement's, not a looser one: a sandbox that outlives the
+# ceiling in development is the case OPS-44 exists for.
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi

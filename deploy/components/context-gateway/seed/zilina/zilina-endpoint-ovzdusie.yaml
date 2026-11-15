@@ -1,0 +1,53 @@
+# One Smart Data Model type per catalogue dataset (T-4344): AirQualityObserved of the space
+# zilina-verejne, read through its own Policy, which narrows the space's public read to these types.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: zilina-ovzdusie
+  namespace: zilina
+  title: { sk: Kvalita ovzdušia — Žilina, en: Air quality — Žilina }
+  description:
+    sk: 'Hodinové merania PM10, PM2,5, NO2, O3 a CO na stanici SK0020A. Zdroj: Európska environmentálna agentúra (údaje SHMÚ), CC BY 4.0.'
+    en: "Hourly PM10, PM2.5, NO2, O3 and CO at station SK0020A. Source: the European Environment Agency (SHMÚ's data), CC BY 4.0."
+spec:
+  contextSpaceRef: zilina-verejne
+  slug: rhnhewwotdngtrsb7gnzpj63ysnkutwl
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:zilina.sk:zilina-verejne:ovzdusie-read
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: zilina }
+      license: cc-by
+  catalog:
+    publisher:
+      name:
+        sk: Projekt Žilina, platforma joinedcontext
+        en: The Žilina project, joinedcontext platform
+      uri: https://dev.joinedcontext.com/
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Európska environmentálna agentúra, údaje SHMÚ, CC BY 4.0'
+      en: "Source: European Environment Agency, SHMÚ's data, CC BY 4.0"
+    themes: [ENVI, HEAL]
+    keywords:
+      sk:
+        - kvalita ovzdušia
+        - PM10
+        - PM2,5
+        - NO2
+        - Žilina
+      en: [air quality, PM10, PM2.5, NO2, Žilina]
+    spatial:
+      - SK031
+      - https://data.gov.sk/id/lau2/SK031B517402
+    frequency: HOURLY
+    source:
+      - url: https://eeadmz1batchservice02.blob.core.windows.net/airquality-p/SK/SPO-SK0020A_00005_100.parquet
+        title:
+          sk: Kvalita ovzdušia, stanica SK0020A (EEA, E2a)
+          en: Air quality, station SK0020A (EEA, E2a)
+        description:
+          sk: Aktuálne hodinové údaje stanice Žilina, súbory Parquet podľa vzorkovacieho bodu, CC BY 4.0.
+          en: Up-to-date hourly data of the Žilina station, one Parquet file per sampling point, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: ovzdusie-pm10 }

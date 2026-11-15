@@ -1,0 +1,182 @@
+---
+bases:
+  - "../../defaults/helm-defaults.yaml"
+---
+{{- $componentData := (readFile "./component.yaml" | fromYaml) }}
+
+{{- $root := .Values }}
+{{- $component := $componentData.component }}
+{{- $parts :=  $componentData.parts }}
+
+repositories:
+{{- $alreadyAdded := dict }}
+{{- range $parts }}
+  {{- $part := . }}
+  {{- $repoUrl := index $root.charts $component $part.name "repository" | default "" }}
+  {{- if ne $repoUrl "" }}
+    {{- $chart := index $root.charts $component $part.name "chart" }}
+    {{- $chartParts := splitList "/" $chart }}
+    {{- $repoName := index $chartParts 0 }}
+    {{- if not (hasKey $alreadyAdded $repoName) }}
+      {{- $_ := set $alreadyAdded $repoName true }}
+  - name: cc2-{{ $repoName }}
+    url: {{ $repoUrl }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- $dbChart := index $root.charts $component "db" }}
+{{- if $root.global.contextBrokers }}
+  - name: cc2-{{ index (splitList "/" $dbChart.chart) 0 }}
+    url: {{ $dbChart.repository }}
+{{- end }}
+
+releases:
+  {{- range $parts }}
+  {{- $part := . }}
+  {{- $releaseName := printf "%s-%s" $component $part.name }}
+  {{- $repoUrl := index $root.charts $component $part.name "repository" | default "" }}
+  - name: {{ $releaseName }}
+    labels:
+      release: {{ $releaseName }}
+      {{- range $key, $value := (index $part "extraLabels" | default dict) }}
+      {{ $key }}: {{ $value }}
+      {{- end }}
+    namespace: {{ index $root $component $part.name "namespace" }}
+    {{- if ne $repoUrl "" }}
+    chart: cc2-{{ index $root.charts $component $part.name "chart" }}
+    {{- else }}
+    chart: {{ index $root.charts $component $part.name "chart" }}
+    {{- end }}
+    {{- if index $root.charts $component $part.name "version" }}
+    version: {{ index $root.charts $component $part.name "version" }}
+    {{- end }}
+    createNamespace: {{ $root.global.createNamespaces }}
+    installed: {{ index $root $component $part.name "enabled" }}
+    condition: {{ $component }}.{{ $part.name }}.enabled
+    {{- if index $part "needs" }}
+    needs:
+      {{ range index $part "needs" }}
+        {{- $items := splitList "." . -}}
+        {{- $depComponent := index $items 0 -}}
+        {{- $depPart := index $items 1 -}}
+      - {{ index $root $depComponent $depPart "namespace" }}/{{ printf "%s-%s" ($depComponent | kebabcase) $depPart }}
+      {{- end }}
+    {{- end }}
+    {{- if index $part "hooks" }}
+    hooks:
+      {{- range index $part "hooks" }}
+      - {{ . | toYaml | nindent 8 }}
+      {{- end }}
+    {{- end }}
+    values:
+      - values/{{ $part.name | kebabcase }}/base-values.yaml.gotmpl
+      - values/{{ $part.name | kebabcase }}/{{ $root.global.valuesProfile | default $root.global.profile }}-values.yaml.gotmpl
+      - {{- index $root $component $part.name "rawValues" | default dict | toYaml | nindent 8 }}
+  {{- end }}
+
+  {{- /* Every ContextBroker beside `main` (ADR-N-046 §2.5, T-3989; global.contextBrokers): the
+         broker's release, named after it, and a CloudNativePG cluster of its own that no other
+         broker reaches (networkpolicies.yaml.gotmpl). */}}
+  {{- $broker := index $root "context-broker" "broker" }}
+  {{- $sizes := readFile "./sizes.yaml" | fromYaml }}
+  {{- range $b := $root.global.contextBrokers | default list }}
+    {{- /* Names and sizes are checked by defaults/environment/context-brokers-guard.yaml.gotmpl. */}}
+    {{- $name := $b.name }}
+    {{- $size := index $sizes (index $b "size" | default "small") }}
+    {{- $release := printf "context-broker-%s" $name }}
+    {{- $db := printf "%s-db" $release }}
+    {{- $host := printf "%s.%s.svc.cluster.local" $release $broker.namespace }}
+    {{- $images := $root.images.postgres.cluster }}
+  - name: {{ $release }}
+    labels:
+      release: {{ $release }}
+      broker: {{ $name }}
+    namespace: {{ $broker.namespace }}
+    chart: ../../charts/workload
+    createNamespace: {{ $root.global.createNamespaces }}
+    installed: {{ $broker.enabled }}
+    needs:
+      - {{ $broker.namespace }}/{{ $db }}
+    values:
+      - values/broker/base-values.yaml.gotmpl
+      - fullnameOverride: {{ $release }}
+        nameOverride: {{ $release }}
+        replicaCount: 1
+        resources:
+          {{- $size.broker | toYaml | nindent 10 }}
+        envSecret:
+          PGPASSWORD:
+            secret: db-antares-{{ $name }}
+            key: password
+          ANTARES_SECRET_KEY:
+            secret: {{ $release }}-secret-key
+            key: key
+        env:
+          ANTARES_DATABASE_URL: "postgresql://antares:$(PGPASSWORD)@{{ $db }}-rw.{{ $broker.namespace }}.svc.cluster.local:5432/antares"
+          ANTARES_MCP_ALLOWED_HOSTS: "{{ $host }}:8080"
+        extraVolumes:
+          - name: admin-token
+            secret:
+              secretName: {{ $release }}-admin-token
+              items:
+                - key: token
+                  path: token
+  - name: {{ $db }}
+    labels:
+      release: {{ $db }}
+      broker: {{ $name }}
+    namespace: {{ $broker.namespace }}
+    chart: cc2-{{ $dbChart.chart }}
+    version: {{ $dbChart.version | quote }}
+    createNamespace: {{ $root.global.createNamespaces }}
+    installed: {{ $broker.enabled }}
+    values:
+      - fullnameOverride: {{ $db }}
+        type: postgresql
+        version:
+          postgresql: "16"
+        cluster:
+          instances: {{ $size.db.instances }}
+          imageName: "{{ $images.repository }}:{{ $images.tag }}@{{ $images.digest }}"
+          # As components/postgres: the probe port is unmeshed, and the instance manager
+          # watches its own Cluster resource.
+          annotations:
+            config.linkerd.io/skip-inbound-ports: "8000"
+            security.joinedcontext.com/api-access-reason: >-
+              CloudNativePG instance manager: watches its own Cluster resource and reports
+              instance status back to the operator.
+          resources:
+            requests:
+              {{- $size.db.requests | toYaml | nindent 14 }}
+            limits:
+              {{- $size.db.limits | toYaml | nindent 14 }}
+          storage:
+            size: {{ $size.db.storage }}
+            storageClass: {{ index $b "storageClass" | default $root.global.storage.storageClass.rwo | default "" | quote }}
+          {{- if gt (int $size.db.instances) 1 }}
+          affinity:
+            enablePodAntiAffinity: true
+            podAntiAffinityType: required
+            topologyKey: kubernetes.io/hostname
+          {{- end }}
+          # The broker's login owns its database. Its first migration needs postgis and
+          # btree_gin, which PostgreSQL does not mark trusted and the login (no superuser:
+          # ANTARES_REQUIRE_RLS) cannot create, so the superuser does it once here.
+          initdb:
+            database: antares
+            owner: antares
+            secret:
+              name: db-antares-{{ $name }}
+            postInitApplicationSQL:
+              - CREATE EXTENSION IF NOT EXISTS postgis
+              - CREATE EXTENSION IF NOT EXISTS btree_gin
+          postgresql:
+            # TLS or nothing, and the broker's login alone (components/postgres, apps-db).
+            pg_hba:
+              - hostnossl all all all reject
+              - hostssl antares antares all scram-sha-256
+              - host all all all reject
+  {{- end }}
+
+commonLabels:
+  component: {{ $component }}

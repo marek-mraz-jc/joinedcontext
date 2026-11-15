@@ -1,0 +1,19 @@
+# The live context, as a member of the hub. `endpointRef` names an Endpoint of this platform,
+# never an address: a hub answer that leaked a member's internal address would tell a public
+# caller where to knock next (EP-71). The registration is written into the hub space's tenant
+# and the hub broker reads the member's tenant directly (PF-48, CIM 009 clause 4.3.6.5).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSourceRegistration
+metadata:
+  name: transport
+  namespace: helsinki
+  title: { en: HSL trunk-line buses }
+spec:
+  contextSpaceRef: helsinki-hub
+  endpointRef: { kind: Endpoint, name: helsinki-transport }
+  information:
+    - entities:
+        - type: Vehicle
+  federation:
+    identity: serviceAccount
+    serviceAccountRef: { kind: ServiceAccount, name: hub-reader }

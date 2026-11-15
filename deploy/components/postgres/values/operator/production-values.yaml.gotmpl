@@ -1,0 +1,37 @@
+---
+{{- $this := .Values.postgres.operator -}}
+{{- $global := .Values.global }}
+# - [x] Resources (requests and limits)
+# - [x] Larger Storage -> not applicable for operator
+# - [x] 2+ Replicas or HorizontalPodAutoscaler
+# - [x] Rolling updates `maxUnavailable: 0`, `maxSurge: 25%`
+# - [ ] PodDisruptionBudget (at least `minAvailable: 1`)
+
+
+replicaCount: 2
+
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 25%
+    maxUnavailable: 0
+
+
+resources:
+  requests:
+    cpu: "200m"
+    memory: "400Mi"
+  limits:
+    cpu: "400m"
+    memory: "400Mi"
+
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+                - cloudnative-pg
+        topologyKey: kubernetes.io/hostname

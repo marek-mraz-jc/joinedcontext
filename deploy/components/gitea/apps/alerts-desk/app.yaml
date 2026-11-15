@@ -1,0 +1,39 @@
+# The capital region's traffic alerts as one sortable, filterable grid (T-3016, owner decision
+# (a) of 2026-09-26): it reads and never writes. Hand written from the SDK template, so no
+# generated-by annotation; it replaces the generated version of 2026-09-22, whose edit form
+# needed a write no person in the project holds (AP-132, PF-70).
+#
+# A React frontend, `ui` with a Vite build. Its source is its own repository on the forge, which
+# the build lane builds at `ref` (AP-75, AP-80); this folder of the portal repository is where CI
+# tests the same tree before it is pushed there (T-2599).
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: alerts-desk
+  namespace: helsinki
+  title:
+    en: "Alerts desk"
+    fi: "Tiedotepöytä"
+  description:
+    en: "Every road work and traffic announcement in the capital region in one table: sort by any column, filter by category, subcategory, text and end date, export what is shown."
+    fi: "Pääkaupunkiseudun tietyöt ja liikennetiedotteet yhdessä taulukossa: lajittele minkä tahansa sarakkeen mukaan, suodata luokan, alaluokan, tekstin ja päättymispäivän mukaan, vie näkyvät rivit."
+spec:
+  kind: ui
+  source:
+    git:
+      url: https://dev.joinedcontext.com/git/joinedcontext/helsinki_alerts-desk.git
+      ref: main
+  build:
+    node: "22"
+  # Everyone in the project opens it: it shows what the city publishes anyway.
+  visibility: project
+  lifecycle: published
+  dataNeeds:
+    # The attributes of `Alert` in the `helsinki` model the desk shows; reads only.
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [Alert]
+      attrs: [name, description, category, subCategory, address, dateIssued, validFrom, validTo, source]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, ogc-features]

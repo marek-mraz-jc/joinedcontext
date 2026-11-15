@@ -1,0 +1,44 @@
+# 2011 census: population by marital status: one public dataset of the hub (T-5274), item 11df36d644144e1ea350d5d359b2e499, written by the statistics-okresy pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-sodb-2011-obyvatelstvo-podla-rodinneho
+  namespace: bratislava
+  title:
+    sk: SODB 2011 - Obyvateľstvo podľa rodinného stavu
+    en: '2011 census: population by marital status'
+  description:
+    sk: 'Ukazovatele tabuľky „SODB 2011 - Obyvateľstvo podľa rodinného stavu“ z data.bratislava.sk, jeden na okres Bratislava I až V, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: 'The figures of the data.bratislava.sk table “2011 census: population by marital status”, one per okres Bratislava I to V, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0.'
+spec:
+  contextSpaceRef: bratislava
+  slug: km5e2dtmqv5iwvsleesoiratnkbjxigi
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-sodb-2011-obyvatelstvo-podla-rodinneho
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/11df36d644144e1ea350d5d359b2e499
+        title:
+          sk: SODB 2011 - Obyvateľstvo podľa rodinného stavu
+          en: '2011 census: population by marital status'
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: SODB 2011 - Obyvateľstvo podľa rodinného stavu. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: 2011 census: population by marital status. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: statistics-okresy }

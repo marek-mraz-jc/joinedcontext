@@ -1,0 +1,19 @@
+# The register of immovable national cultural monuments of the Žilina region (Pamiatkový úrad SR,
+# published by MK SR), one row per object of a monument, 1 770 rows of which 104 lie in the city.
+# No coordinates; the mapping places each object through the register of addresses. No key.
+# CC BY 4.0 on the catalogue's record (Research/zilina-open-data-sources.md §2).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: mksr-pamiatky-zsk
+  namespace: zilina
+  title:
+    sk: Register nehnuteľných NKP, Žilinský kraj
+    en: Register of immovable national cultural monuments, Žilina region
+spec:
+  type: http
+  http:
+    url: https://data.slovensko.sk/download?id=dc413b1c-3c2e-454f-b986-d15e1c16093c
+    verb: GET
+    headers: { Accept: text/csv }
+    timeout: 60s

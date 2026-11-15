@@ -1,0 +1,19 @@
+{{/*
+  One ConfigMap holding every dashboard in files/. The JSON is read with `.Files.Get`, which
+  does not template it: a Grafana `legendFormat` is written `{{label}}` and any pass through
+  `tpl` would try to call it as a function and fail the render.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.configMapName }}
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/component: dashboards
+    grafana_dashboard: "1"
+    joinedcontext.com/dashboard-provider: {{ .Values.provider | quote }}
+data:
+{{- range $path, $_ := .Files.Glob "files/*.json" }}
+  {{ base $path }}: |
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}

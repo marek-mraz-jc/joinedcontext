@@ -1,0 +1,51 @@
+# One Smart Data Model type per catalogue dataset (T-4344, T-5255): the AirQualityObserved readings
+# of Forum Virium Helsinki's street cleaning pilot, read through their own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-street-cleaning-air
+  namespace: helsinki
+  title:
+    fi: Ilmanlaatu katujen siivouksen aikana — Helsinki
+    en: Air quality during street cleaning — Helsinki
+  description:
+    fi: 'Hiukkaspitoisuudet (PM10, PM2.5, µg/m³) kadunpesuautosta, harjakoneesta ja Rastilan kiinteästä mittauspisteestä keväällä 2023, yksi havainto lukemaa kohden. Kokeilun muut lukemat (PM1, lämpötila, kosteus, ilmanpaine, sade, valo, ääni, nopeus, ajoneuvon tila) eivät sisälly; lukemat ilman sijaintia, Helsingin ulkopuolella tai mittausalueen ulkopuolisilla arvoilla jätetään pois. Lähde: Forum Virium Helsinki, CC BY 4.0.'
+    en: "Particulate matter (PM10, PM2.5, µg/m³) from a street washer, a brush machine and the fixed point in Rastila in spring 2023, one observation per reading. The pilot's other readings (PM1, temperature, humidity, air pressure, rain, light, sound, speed, vehicle status) are not included; readings with no position, outside Helsinki or with values outside the sensor range are left out. Source: Forum Virium Helsinki, CC BY 4.0."
+spec:
+  contextSpaceRef: helsinki
+  slug: p2qfrq3sxuoif6okjzhrp4jwul3eeowd
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-street-cleaning-air
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Forum Virium Helsinki, katujen siivouksen ilmanlaatukokeilu, CC BY 4.0'
+      sv: 'Källa: Forum Virium Helsinki, luftkvalitet under gatustädning, CC BY 4.0'
+      en: 'Source: Forum Virium Helsinki, air quality during street cleaning pilot, CC BY 4.0'
+    themes: [ENVI, HEAL]
+    keywords:
+      fi: [ilmanlaatu, pienhiukkaset, katujen siivous]
+      sv: [luftkvalitet, partiklar, gatustädning]
+      en: [air quality, particulate matter, street cleaning]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    temporal: { start: '2023-04-07', end: '2023-05-24' }
+    frequency: NEVER
+    source:
+      - url: https://hri.fi/data/en_GB/dataset/datankeruukokeilu-helsingissa-ilmanlaatu-katujen-siivouksen-aikana
+        title:
+          fi: 'Datankeruukokeilu Helsingissä: ilmanlaatu katujen siivouksen aikana'
+          en: 'Data collection pilot in Helsinki: air quality during street cleaning'
+        description:
+          fi: Kokeilun kaikki lukemat JSON-muodossa (Swarco-anturit).
+          en: Every reading of the pilot as JSON (Swarco sensors).
+    pipelineRef: { kind: Pipeline, name: street-cleaning-air }

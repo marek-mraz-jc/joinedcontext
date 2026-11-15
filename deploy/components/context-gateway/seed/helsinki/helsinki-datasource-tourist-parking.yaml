@@ -1,0 +1,15 @@
+# The places where tourist coaches may park, as an open WFS layer, in WGS84. No key. CC-BY-4.0, read from the HRI
+# catalogue (package helsingin-matkailuliikenteen-pysakit-ja-pysakointipaikat). 11 places on 2026-10-26.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hel-tourist-parking
+  namespace: helsinki
+  title: { en: Tourist coach parking places, fi: Matkailuliikenteen pysäköintipaikat }
+spec:
+  type: http
+  http:
+    url: https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Matkailuliikenne_pysakointipaikat_piste
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

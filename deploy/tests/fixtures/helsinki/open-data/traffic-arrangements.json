@@ -1,0 +1,117 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "id": "Tilapainen_liikennejarjestely_alue.35",
+   "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [
+     [
+      [
+       [
+        24.94883,
+        60.19148203
+       ],
+       [
+        24.948804,
+        60.19149403
+       ],
+       [
+        24.94868,
+        60.19142703
+       ],
+       [
+        24.948706,
+        60.19141503
+       ],
+       [
+        24.94883,
+        60.19148203
+       ]
+      ]
+     ]
+    ]
+   },
+   "geometry_name": "singlegeom",
+   "properties": {
+    "id": 35,
+    "hakemus": "Tilapäinen liikennejärjestely",
+    "hakemuksen_laji": "Muu",
+    "hakemustunnus": "LJ2300179-3",
+    "liikennejarjestely_alkaa": "2023-10-11",
+    "liikennejarjestely_paattyy": "2027-12-31",
+    "tyon_tarkoitus": "Päätöksensaaja varaa tilaa raskassuojille.\n\nLISÄYS 27.6.2024: uusia alueita Konepajanraitille sekä Konepajankujalle.\nLISÄYS 17.12.2025: lisäaika 11.10.2025–31.12.2027.",
+    "osoite": "Konepajankuja 7 -8, Bruno Granholmin kuja 2, Konepajanraitti X Konepajankuja, Konepajanraitti X Konepajanpasaasi, Konepajanraitti X Bruno Granholmin kuja, Konepajankuja 3 ",
+    "kaupunginosa": "22 VALLILA",
+    "status": "Käynnissä",
+    "hakija": "",
+    "geometrytype": "ST_Polygon",
+    "tyon_suorittaja": "",
+    "liikennejarjestely_alkaa_txt": "11.10.2023",
+    "liikennejarjestely_paattyy_txt": "31.12.2027"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "Tilapainen_liikennejarjestely_alue.146",
+   "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [
+     [
+      [
+       [
+        25.04393,
+        60.25854503
+       ],
+       [
+        25.043934,
+        60.25856303
+       ],
+       [
+        25.043464,
+        60.25859203
+       ],
+       [
+        25.04346,
+        60.25857403
+       ],
+       [
+        25.04393,
+        60.25854503
+       ]
+      ]
+     ]
+    ]
+   },
+   "geometry_name": "singlegeom",
+   "properties": {
+    "id": 146,
+    "hakemus": "Tilapäinen liikennejärjestely",
+    "hakemuksen_laji": "Muu",
+    "hakemustunnus": "LJ2500139",
+    "liikennejarjestely_alkaa": "2025-10-31",
+    "liikennejarjestely_paattyy": "2027-10-31",
+    "tyon_tarkoitus": "Malmin kentän liikennejärjestelyt",
+    "osoite": "Malminkenttä",
+    "kaupunginosa": "38 MALMI",
+    "status": "Käynnissä",
+    "hakija": "",
+    "geometrytype": "ST_Polygon",
+    "tyon_suorittaja": "",
+    "liikennejarjestely_alkaa_txt": "31.10.2025",
+    "liikennejarjestely_paattyy_txt": "31.10.2027"
+   }
+  }
+ ],
+ "totalFeatures": 297,
+ "numberMatched": 297,
+ "numberReturned": 2,
+ "timeStamp": "2026-09-25T05:12:22.130Z",
+ "crs": {
+  "type": "name",
+  "properties": {
+   "name": "urn:ogc:def:crs:EPSG::4326"
+  }
+ }
+}

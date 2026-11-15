@@ -1,0 +1,76 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "Invoice": {
+      "@id": "jc:Invoice"
+    },
+    "cisloObjednavky": {
+      "@id": "jc:cisloObjednavky"
+    },
+    "cisloZmluvy": {
+      "@id": "jc:cisloZmluvy"
+    },
+    "dIC": {
+      "@id": "jc:dIC"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "datumDorucenia": {
+      "@id": "jc:datumDorucenia",
+      "@type": "xsd:date"
+    },
+    "datumSplatnosti": {
+      "@id": "jc:datumSplatnosti",
+      "@type": "xsd:date"
+    },
+    "dodavatel": {
+      "@id": "jc:dodavatel"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "iCO": {
+      "@id": "jc:iCO"
+    },
+    "id": "@id",
+    "identifier": {
+      "@id": "sdm:dataModel.CPSV-AP/identifier"
+    },
+    "isPartOf": {
+      "@id": "jc:isPartOf",
+      "@type": "xsd:anyURI"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "predmetFaktury": {
+      "@id": "jc:predmetFaktury"
+    },
+    "rok": {
+      "@id": "jc:rok"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "suma": {
+      "@id": "jc:suma",
+      "@type": "xsd:float"
+    },
+    "type": "@type",
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

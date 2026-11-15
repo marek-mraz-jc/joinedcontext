@@ -1,0 +1,477 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     14.4029,
+     50.01997
+    ]
+   },
+   "properties": {
+    "last_position": {
+     "bearing": 191,
+     "delay": {
+      "actual": 27,
+      "last_stop_arrival": 10,
+      "last_stop_departure": null
+     },
+     "is_canceled": null,
+     "last_stop": {
+      "arrival_time": "2026-10-22T20:10:00+02:00",
+      "departure_time": "2026-10-22T20:10:00+02:00",
+      "id": "U2731Z2P",
+      "sequence": 30
+     },
+     "next_stop": {
+      "arrival_time": "2026-10-22T20:11:00+02:00",
+      "departure_time": "2026-10-22T20:11:00+02:00",
+      "id": "U19Z2P",
+      "sequence": 31
+     },
+     "origin_timestamp": "2026-10-22T20:10:10+02:00",
+     "shape_dist_traveled": "15.629",
+     "speed": null,
+     "state_position": "at_stop",
+     "tracking": true
+    },
+    "trip": {
+     "agency_name": {
+      "real": "DP PRAHA",
+      "scheduled": "DP PRAHA"
+     },
+     "cis": {
+      "line_id": null,
+      "trip_number": null
+     },
+     "gtfs": {
+      "route_id": "L17",
+      "route_short_name": "17",
+      "route_type": 0,
+      "trip_headsign": "Libuš",
+      "trip_id": "17_39152_261007",
+      "trip_short_name": null
+     },
+     "origin_route_name": "17",
+     "sequence_id": 15,
+     "start_timestamp": "2026-10-22T19:24:00+02:00",
+     "vehicle_registration_number": 9099,
+     "vehicle_type": {
+      "description_cs": "tramvaj",
+      "description_en": "tram",
+      "id": 2
+     },
+     "wheelchair_accessible": true,
+     "air_conditioned": false,
+     "usb_chargers": false
+    }
+   },
+   "type": "Feature"
+  },
+  {
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     14.576773,
+     50.108954
+    ]
+   },
+   "properties": {
+    "last_position": {
+     "bearing": 259,
+     "delay": {
+      "actual": 0,
+      "last_stop_arrival": null,
+      "last_stop_departure": null
+     },
+     "is_canceled": null,
+     "last_stop": {
+      "arrival_time": "2026-10-22T20:11:15+02:00",
+      "departure_time": "2026-10-22T20:11:15+02:00",
+      "id": "U897Z101P",
+      "sequence": 1
+     },
+     "next_stop": {
+      "arrival_time": "2026-10-22T20:12:40+02:00",
+      "departure_time": "2026-10-22T20:13:00+02:00",
+      "id": "U818Z101P",
+      "sequence": 2
+     },
+     "origin_timestamp": "2026-10-22T20:10:06+02:00",
+     "shape_dist_traveled": "0",
+     "speed": null,
+     "state_position": "at_stop",
+     "tracking": true
+    },
+    "trip": {
+     "agency_name": {
+      "real": "DP PRAHA",
+      "scheduled": "DP PRAHA"
+     },
+     "cis": {
+      "line_id": null,
+      "trip_number": null
+     },
+     "gtfs": {
+      "route_id": "L992",
+      "route_short_name": "B",
+      "route_type": 1,
+      "trip_headsign": "Zličín",
+      "trip_id": "992_129_260323",
+      "trip_short_name": null
+     },
+     "origin_route_name": "992",
+     "sequence_id": 25,
+     "start_timestamp": "2026-10-22T20:11:15+02:00",
+     "vehicle_registration_number": null,
+     "vehicle_type": {
+      "description_cs": "metro",
+      "description_en": "metro",
+      "id": 1
+     },
+     "wheelchair_accessible": true,
+     "air_conditioned": null,
+     "usb_chargers": null
+    }
+   },
+   "type": "Feature"
+  },
+  {
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     14.43283,
+     50.0649071
+    ]
+   },
+   "properties": {
+    "last_position": {
+     "bearing": 262,
+     "delay": {
+      "actual": 113,
+      "last_stop_arrival": null,
+      "last_stop_departure": 120
+     },
+     "is_canceled": false,
+     "last_stop": {
+      "arrival_time": "2026-10-22T20:06:00+02:00",
+      "departure_time": "2026-10-22T20:06:00+02:00",
+      "id": "T57072",
+      "sequence": 2
+     },
+     "next_stop": {
+      "arrival_time": "2026-10-22T20:09:30+02:00",
+      "departure_time": "2026-10-22T20:09:30+02:00",
+      "id": "T58366",
+      "sequence": 3
+     },
+     "origin_timestamp": "2026-10-22T20:09:55+02:00",
+     "shape_dist_traveled": "2.288",
+     "speed": null,
+     "state_position": "on_track",
+     "tracking": true
+    },
+    "trip": {
+     "agency_name": {
+      "real": null,
+      "scheduled": "ČESKÉ DRÁHY"
+     },
+     "cis": {
+      "line_id": "none",
+      "trip_number": 752
+     },
+     "gtfs": {
+      "route_id": "L1116",
+      "route_short_name": "R16",
+      "route_type": 2,
+      "trip_headsign": "Plzeň hlavní nádraží",
+      "trip_id": "1116_752_261020",
+      "trip_short_name": "R 752"
+     },
+     "origin_route_name": null,
+     "sequence_id": null,
+     "start_timestamp": "2026-10-22T20:05:00+02:00",
+     "vehicle_registration_number": null,
+     "vehicle_type": null,
+     "wheelchair_accessible": true,
+     "air_conditioned": null,
+     "usb_chargers": null
+    }
+   },
+   "type": "Feature"
+  },
+  {
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     14.39453,
+     50.10697
+    ]
+   },
+   "properties": {
+    "last_position": {
+     "bearing": 88,
+     "delay": {
+      "actual": 112,
+      "last_stop_arrival": 110,
+      "last_stop_departure": null
+     },
+     "is_canceled": null,
+     "last_stop": {
+      "arrival_time": "2026-10-22T20:08:00+02:00",
+      "departure_time": "2026-10-22T20:08:00+02:00",
+      "id": "U906Z2P",
+      "sequence": 9
+     },
+     "next_stop": {
+      "arrival_time": "2026-10-22T20:10:00+02:00",
+      "departure_time": "2026-10-22T20:10:00+02:00",
+      "id": "U980Z2P",
+      "sequence": 10
+     },
+     "origin_timestamp": "2026-10-22T20:09:52+02:00",
+     "shape_dist_traveled": "3.833073",
+     "speed": null,
+     "state_position": "at_stop",
+     "tracking": true
+    },
+    "trip": {
+     "agency_name": {
+      "real": "DP PRAHA",
+      "scheduled": "DP PRAHA"
+     },
+     "cis": {
+      "line_id": null,
+      "trip_number": null
+     },
+     "gtfs": {
+      "route_id": "L51",
+      "route_short_name": "51",
+      "route_type": 11,
+      "trip_headsign": "Hradčanská",
+      "trip_id": "51_31_261019",
+      "trip_short_name": null
+     },
+     "origin_route_name": "51",
+     "sequence_id": 2,
+     "start_timestamp": "2026-10-22T19:57:00+02:00",
+     "vehicle_registration_number": 514,
+     "vehicle_type": {
+      "description_cs": "trolejbus",
+      "description_en": "trolleybus",
+      "id": 18
+     },
+     "wheelchair_accessible": true,
+     "air_conditioned": true,
+     "usb_chargers": true
+    }
+   },
+   "type": "Feature"
+  },
+  {
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     15.21351,
+     50.04125
+    ]
+   },
+   "properties": {
+    "last_position": {
+     "bearing": 205,
+     "delay": {
+      "actual": -41,
+      "last_stop_arrival": -41,
+      "last_stop_departure": 0
+     },
+     "is_canceled": false,
+     "last_stop": {
+      "arrival_time": "2026-10-22T20:10:00+02:00",
+      "departure_time": "2026-10-22T20:10:00+02:00",
+      "id": "U6610Z2",
+      "sequence": 12
+     },
+     "next_stop": {
+      "arrival_time": "2026-10-22T20:12:00+02:00",
+      "departure_time": "2026-10-22T20:12:00+02:00",
+      "id": "U6609Z2",
+      "sequence": 13
+     },
+     "origin_timestamp": "2026-10-22T20:09:19+02:00",
+     "shape_dist_traveled": "24.708291",
+     "speed": 27,
+     "state_position": "at_stop",
+     "tracking": true
+    },
+    "trip": {
+     "agency_name": {
+      "real": "ČSAD POLKOST",
+      "scheduled": "OAD KOLÍN (Kostelec n.Č.l.)"
+     },
+     "cis": {
+      "line_id": "230706",
+      "trip_number": 1031
+     },
+     "gtfs": {
+      "route_id": "L706",
+      "route_short_name": "706",
+      "route_type": 3,
+      "trip_headsign": "Kolín,nádraží",
+      "trip_id": "706_13_260707",
+      "trip_short_name": null
+     },
+     "origin_route_name": "432",
+     "sequence_id": 62,
+     "start_timestamp": "2026-10-22T19:33:00+02:00",
+     "vehicle_registration_number": 1613,
+     "vehicle_type": {
+      "description_cs": "regionální autobus",
+      "description_en": "regional bus",
+      "id": 4
+     },
+     "wheelchair_accessible": true,
+     "air_conditioned": true,
+     "usb_chargers": false
+    }
+   },
+   "type": "Feature"
+  },
+  {
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     14.20018,
+     50.16701
+    ]
+   },
+   "properties": {
+    "last_position": {
+     "bearing": 242,
+     "delay": {
+      "actual": -424,
+      "last_stop_arrival": null,
+      "last_stop_departure": null
+     },
+     "is_canceled": false,
+     "last_stop": {
+      "arrival_time": "2026-10-22T20:17:00+02:00",
+      "departure_time": "2026-10-22T20:17:00+02:00",
+      "id": "U5961Z1",
+      "sequence": 4
+     },
+     "next_stop": {
+      "arrival_time": "2026-10-22T20:19:00+02:00",
+      "departure_time": "2026-10-22T20:22:00+02:00",
+      "id": "U4816Z2",
+      "sequence": 5
+     },
+     "origin_timestamp": "2026-10-22T20:09:56+02:00",
+     "shape_dist_traveled": "3.405633",
+     "speed": 10,
+     "state_position": "at_stop",
+     "tracking": true
+    },
+    "trip": {
+     "agency_name": {
+      "real": "ARRIVA CITY (Kladno)",
+      "scheduled": "ARRIVA CITY (Kladno)"
+     },
+     "cis": {
+      "line_id": "220624",
+      "trip_number": 1048
+     },
+     "gtfs": {
+      "route_id": "L624",
+      "route_short_name": "624",
+      "route_type": 3,
+      "trip_headsign": "Družec,náves",
+      "trip_id": "624_221_260901",
+      "trip_short_name": null
+     },
+     "origin_route_name": "300",
+     "sequence_id": 27,
+     "start_timestamp": "2026-10-22T20:10:00+02:00",
+     "vehicle_registration_number": 8996,
+     "vehicle_type": {
+      "description_cs": "regionální autobus",
+      "description_en": "regional bus",
+      "id": 4
+     },
+     "wheelchair_accessible": true,
+     "air_conditioned": true,
+     "usb_chargers": false
+    }
+   },
+   "type": "Feature"
+  },
+  {
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     14.20018,
+     50.16701
+    ]
+   },
+   "properties": {
+    "last_position": {
+     "bearing": 242,
+     "delay": {
+      "actual": 640,
+      "last_stop_arrival": 572,
+      "last_stop_departure": 634
+     },
+     "is_canceled": false,
+     "last_stop": {
+      "arrival_time": "2026-10-22T19:59:00+02:00",
+      "departure_time": "2026-10-22T19:59:00+02:00",
+      "id": "U5961Z1",
+      "sequence": 14
+     },
+     "next_stop": {
+      "arrival_time": "2026-10-22T20:01:00+02:00",
+      "departure_time": "2026-10-22T20:01:00+02:00",
+      "id": "U4398Z1",
+      "sequence": 15
+     },
+     "origin_timestamp": "2026-10-22T20:09:56+02:00",
+     "shape_dist_traveled": "13.581",
+     "speed": 10,
+     "state_position": "on_track",
+     "tracking": true
+    },
+    "trip": {
+     "agency_name": {
+      "real": "ARRIVA CITY (Kladno)",
+      "scheduled": "ARRIVA CITY (Kladno)"
+     },
+     "cis": {
+      "line_id": "220624",
+      "trip_number": 1045
+     },
+     "gtfs": {
+      "route_id": "L624",
+      "route_short_name": "624",
+      "route_type": 3,
+      "trip_headsign": "Dřetovice",
+      "trip_id": "624_220_260817",
+      "trip_short_name": null
+     },
+     "origin_route_name": "300",
+     "sequence_id": 27,
+     "start_timestamp": "2026-10-22T19:31:00+02:00",
+     "vehicle_registration_number": 8996,
+     "vehicle_type": {
+      "description_cs": "regionální autobus",
+      "description_en": "regional bus",
+      "id": 4
+     },
+     "wheelchair_accessible": true,
+     "air_conditioned": true,
+     "usb_chargers": false
+    }
+   },
+   "type": "Feature"
+  }
+ ]
+}

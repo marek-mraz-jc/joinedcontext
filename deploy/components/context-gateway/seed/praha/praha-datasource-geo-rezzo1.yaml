@@ -1,0 +1,17 @@
+# IPR Praha's geoportal item d2382afbf9454951ab71a0a89c762d15 (Vyjmenované stacionární zdroje znečišťování ovzduší - REZZO 1), 409 sources on 2026-10-24, served by its ArcGIS Hub
+# download as GeoJSON in WGS 84. No key. CC BY 4.0, "datový podklad © IPR Praha" (T-5429).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-geo-rezzo1
+  namespace: praha
+  title:
+    en: Stationary air pollution sources, REZZO 1 (IPR Praha)
+    cs: Vyjmenované stacionární zdroje znečišťování ovzduší - REZZO 1 (IPR Praha)
+spec:
+  type: http
+  http:
+    url: https://hub.arcgis.com/api/v3/datasets/d2382afbf9454951ab71a0a89c762d15_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

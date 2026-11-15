@@ -1,0 +1,15 @@
+# OpenStreetMap through the Overpass API (T-4514), ODbL 1.0. The query and its mirror live in the
+# mapping (pipeline-osm-bento.yaml), which also deletes what the map drops; this source only
+# starts one run per schedule tick.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: osm-overpass
+  namespace: banskabystrica
+  title: { sk: OpenStreetMap (Overpass API), en: OpenStreetMap (Overpass API) }
+spec:
+  type: generate
+  input:
+    mapping: root = ""
+    count: 1
+    interval: ''

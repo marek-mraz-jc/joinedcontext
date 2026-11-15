@@ -1,0 +1,82 @@
+{
+  "id": "urn:ngsi-ld:CouncilMeeting:joinedcontext.com:example:1",
+  "type": "CouncilMeeting",
+  "cZasadnutia": {
+    "type": "Property",
+    "value": 0
+  },
+  "cisloZasadnutia": {
+    "type": "Property",
+    "value": "cisloZasadnutia"
+  },
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "datumZasadnutia": {
+    "type": "Property",
+    "value": "datumZasadnutia"
+  },
+  "hyperlinkNaDochadzku": {
+    "type": "Property",
+    "value": "hyperlinkNaDochadzku"
+  },
+  "hyperlinkNaPozvanku": {
+    "type": "Property",
+    "value": "hyperlinkNaPozvanku"
+  },
+  "hyperlinkNaPrijateUznesenia": {
+    "type": "Property",
+    "value": "hyperlinkNaPrijateUznesenia"
+  },
+  "hyperlinkNaVysledkyHlasovani": {
+    "type": "Property",
+    "value": "hyperlinkNaVysledkyHlasovani"
+  },
+  "hyperlinkNaZapisnicu": {
+    "type": "Property",
+    "value": "hyperlinkNaZapisnicu"
+  },
+  "iCOSamospravy": {
+    "type": "Property",
+    "value": "iCOSamospravy"
+  },
+  "isPartOf": {
+    "type": "Property",
+    "value": "https://example.org/isPartOf"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "nazovSamospravy": {
+    "type": "Property",
+    "value": "nazovSamospravy"
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "organSamospravy": {
+    "type": "Property",
+    "value": "organSamospravy"
+  },
+  "rok": {
+    "type": "Property",
+    "value": 0
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/CouncilMeeting/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

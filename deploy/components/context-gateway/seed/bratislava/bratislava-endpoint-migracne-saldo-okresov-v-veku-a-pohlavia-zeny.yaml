@@ -1,0 +1,44 @@
+# Net migration of Bratislava's districts by age, 2017-2021 (women): one public dataset of the hub (T-5274), item 223273ef75cc4e4a9c41afaa7ddda8c8, written by the statistics-okresy pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-migracne-saldo-okresov-v-veku-a-pohlavia-zeny
+  namespace: bratislava
+  title:
+    sk: Migračné saldo okresov Bratislavy v rokoch 2017 – 2021 podľa veku a pohlavia (ženy)
+    en: Net migration of Bratislava's districts by age, 2017-2021 (women)
+  description:
+    sk: 'Ukazovatele tabuľky „Migračné saldo okresov Bratislavy v rokoch 2017 – 2021 podľa veku a pohlavia (ženy)“ z data.bratislava.sk, jeden na okres Bratislava I až V, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: "The figures of the data.bratislava.sk table “Net migration of Bratislava's districts by age, 2017-2021 (women)”, one per okres Bratislava I to V, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0."
+spec:
+  contextSpaceRef: bratislava
+  slug: 4nsys7s6wtk7oc2idgza7yayi2oeyejn
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-migracne-saldo-okresov-v-veku-a-pohlavia-zeny
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: NEVER
+    source:
+      - url: https://data.bratislava.sk/datasets/223273ef75cc4e4a9c41afaa7ddda8c8
+        title:
+          sk: Migračné saldo okresov Bratislavy v rokoch 2017 – 2021 podľa veku a pohlavia (ženy)
+          en: Net migration of Bratislava's districts by age, 2017-2021 (women)
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Migračné saldo okresov Bratislavy v rokoch 2017 – 2021 podľa veku a pohlavia (ženy). Licencia CC BY 4.0.'
+          en: "A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Net migration of Bratislava's districts by age, 2017-2021 (women). Licence CC BY 4.0."
+    pipelineRef: { kind: Pipeline, name: statistics-okresy }

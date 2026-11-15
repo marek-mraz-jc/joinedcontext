@@ -743,6 +743,29 @@ def test_opening_a_project_named_like_another_organizations_is_not_available_and
     assert all(m == "POST" and p == "/api/v1/projects" for _, m, p, _ in asked)
 
 
+@pytest.mark.parametrize("answer,ok", [
+    ((403, "Organization 'ops' is the installation's and holds no projects; name the project's Organization"), True),
+    ((403, "Organization 'ops' is the installation's and holds no projects; iso-b is ctl-b's"), False),
+    ((409, "project name 'iso-b' is not available (PF-67)"), False),  # the installation's Organization opened one
+    ((202, "{}"), False),
+])
+def test_the_installations_admin_opens_no_project_and_the_refusal_names_nothing(tmp_path, answer, ok):
+    # PF-121: the installation's Organization holds no projects, so its admin never reaches the name
+    # check; the row measures that refusal (a pass or a fail), never a skip over the skip bound
+    s = suite.Suite(args(tmp_path))
+    s.installation = "ops"
+    s.exp = {"ops": {"projects": {}}, "ctl-b": {"projects": {"iso-b": EMPTY, "iso-b2": EMPTY}}}
+
+    class S:
+        def call(self, method, path, body=None):
+            return answer[0], {}, answer[1].encode()
+
+    s.session = lambda key, on=None: S()
+    s.check_names()
+    got = {r["id"]: r["result"] for r in s.rows}
+    assert got["names.ops-admin.project-of-ctl-b"] == ("pass" if ok else "fail")
+
+
 SAME_PROJECTS = {"ctl-a": ["ctl-a-iso", "ctl-a-iso2"], "ctl-b": ["ctl-b-iso", "ctl-b-iso2"]}
 
 

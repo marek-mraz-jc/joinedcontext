@@ -1,0 +1,15 @@
+/* The application's own layout, over the token variables the SDK sets from design-tokens.json. The
+   screens are laid out by the SDK's primitives (Page, Grid, Card, Split); what is here is only what
+   they do not cover. */
+
+.app-muted {
+  color: var(--jc-color-muted, #64748b);
+}
+
+/* The steward's actions on the alert last opened: one wrapping row above the map. */
+.app-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jc-space-2, 0.5rem);
+}

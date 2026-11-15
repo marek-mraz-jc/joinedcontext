@@ -1,0 +1,17 @@
+# IPR Praha's geoportal item fc295e699c5346de9cf6a7e1e634726b (Záplavové území (Q20)), 1 area on 2026-10-24, served by its ArcGIS Hub
+# download as GeoJSON in WGS 84. No key. CC BY 4.0, "datový podklad © IPR Praha" (T-5429).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-geo-flood-q20
+  namespace: praha
+  title:
+    en: Flood area of the 20-year flood (Q20) (IPR Praha)
+    cs: Záplavové území (Q20) (IPR Praha)
+spec:
+  type: http
+  http:
+    url: https://hub.arcgis.com/api/v3/datasets/fc295e699c5346de9cf6a7e1e634726b_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

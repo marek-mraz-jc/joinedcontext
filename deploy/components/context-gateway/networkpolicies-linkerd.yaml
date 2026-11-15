@@ -1,0 +1,133 @@
+---
+context-gateway-allow-linkerd:
+  podSelector:
+    app.kubernetes.io/name: context-gateway-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+          componentNamespace: apisix
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pipeline-runner-runner
+          componentNamespace: pipeline-runner
+        # A shard of the WASM host (ADR-N-044 §2.7, T-3361).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: wasm-host-shard
+          componentNamespace: wasm-host
+        # The Portal on JC_PORTAL_GATEWAY_URL: the access check before every App build (AP-132),
+        # Subscriptions (T-0931) and the assistant's reads, each with the person's own token;
+        # the Portal's egress already names this pod (T-2944).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+        # A published App's pod calls its endpoint on this Service in the cluster, never through
+        # the public host (AP-134). Every project's apps namespace is the Portal's, created with
+        # this label (AP-116, AP-117), and only an App pod carries the other one.
+        - namespaceSelector:
+            matchLabels:
+              joinedcontext.com/managed-by: joinedcontext-portal
+          podSelector:
+            matchLabels:
+              joinedcontext.com/app: "true"
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+
+# Same reason as the pipeline runner: the gateway declares an egress policy, so its
+# Linkerd proxy needs identity (8080), destination (8086) and policy (8090) explicitly.
+context-gateway-linkerd-control-plane:
+  podSelector:
+    app.kubernetes.io/name: context-gateway-gateway
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8086
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-broker-broker
+          componentNamespace: context-broker
+      ports:
+        - protocol: TCP
+          port: 4143
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+          componentNamespace: keycloak
+      ports:
+        - protocol: TCP
+          port: 4143
+    # The preview list from the Portal's internal listener, meshed (Architecture/06 §7.2).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 4143
+    # `search_documents` to the assistant, meshed (AG-119, T-4659).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: assistant-worker
+          componentNamespace: assistant
+      ports:
+        - protocol: TCP
+          port: 4143
+    # MCP tool calls to the Activity collector, meshed (T-5322).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: observability-collector
+          componentNamespace: observability
+      ports:
+        - protocol: TCP
+          port: 4143
+    # git-sync fetches the configuration repository through the mesh (T-0278).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+              app.kubernetes.io/instance: gitea-forge
+          componentNamespace: gitea
+      ports:
+        - protocol: TCP
+          port: 4143
+
+portal-linkerd-from-context-gateway:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+      ports:
+        - port: 4143
+          protocol: TCP

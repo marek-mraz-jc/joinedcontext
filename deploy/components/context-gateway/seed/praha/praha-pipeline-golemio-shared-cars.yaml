@@ -1,0 +1,18 @@
+# The car-sharing cars free to rent in Prague from Golemio into the city space, one Vehicle per
+# car, every five minutes (T-5680).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: golemio-shared-cars
+  namespace: praha
+  title: { en: Shared cars free to rent, cs: Volná sdílená auta }
+spec:
+  class: auto
+  # Golemio re-reads the companies every few minutes; every five is where a person looking for a
+  # car finds one still there, at one request of the key's 20 per 8 s.
+  period: 5m
+  source:
+    dataSourceRef: { kind: DataSource, name: golemio-shared-cars }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: Vehicle, mode: upsert }
+  quotas: { maxMemoryMb: 64, cpuMillicores: 50 }

@@ -1,0 +1,19 @@
+# One PointOfInterest per record of the IPR layer Oázy chladu – kašny, fontány into the city space (T-5269).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: geo-fountains
+  namespace: praha
+  title:
+    en: 'Cool spots: fountains'
+    cs: Oázy chladu – kašny, fontány
+spec:
+  class: auto
+  # IPR republishes its layers a few times a year; one read a week keeps up.
+  period: 168h
+  schedule: '35 2 * * 2'
+  source:
+    dataSourceRef: { kind: DataSource, name: ipr-geo-fountains }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:praha-mesto:praha-mesto
+  output: { type: PointOfInterest, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

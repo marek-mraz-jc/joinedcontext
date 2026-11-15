@@ -1,0 +1,50 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: explain-linkerd-cni-opt-out
+  annotations:
+    # The DaemonSet and its Pods are matched by their own rules below.
+    pod-policies.kyverno.io/autogen-controllers: none
+    policies.kyverno.io/title: Say Why the Linkerd CNI Plugin Runs Unmeshed
+    policies.kyverno.io/category: Linkerd
+    policies.kyverno.io/severity: low
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Linkerd in CNI mode (T-2832) installs a DaemonSet in linkerd-cni that
+      writes each meshed pod's iptables rules. Its chart opts it out of
+      injection and has no value for pod annotations, so without the reason
+      the justify-linkerd-inject-opt-out policy asks for, the plugin is
+      refused and no meshed pod can drop linkerd-init. This supplies that
+      reason for the plugin alone.
+spec:
+  background: false
+  rules:
+    - name: linkerd-cni-daemonset-reason
+      match:
+        any:
+          - resources:
+              kinds: [DaemonSet]
+              namespaces: [linkerd-cni]
+              operations: [CREATE, UPDATE]
+      mutate:
+        patchStrategicMerge:
+          spec:
+            template:
+              metadata:
+                annotations:
+                  mesh.joinedcontext.com/opt-out-reason: &reason >-
+                    Linkerd CNI plugin: it sets up the mesh's networking on the
+                    node before any proxy exists, so it cannot run behind one.
+    - name: linkerd-cni-pod-reason
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [linkerd-cni]
+              operations: [CREATE]
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            annotations:
+              mesh.joinedcontext.com/opt-out-reason: *reason

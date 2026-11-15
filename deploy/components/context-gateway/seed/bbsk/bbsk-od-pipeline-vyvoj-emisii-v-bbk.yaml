@@ -1,0 +1,24 @@
+# One KeyPerformanceIndicator per row of "Vývoj emisií v BBK" (T-4255); one row per station or source and year.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-vyvoj-emisii-v-bbk
+  namespace: bbsk
+  title:
+    sk: Vývoj emisií v BBK
+    en: Vývoj emisií v BBK
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 38 4 19 * *
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-vyvoj-emisii-v-bbk
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: KeyPerformanceIndicator
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

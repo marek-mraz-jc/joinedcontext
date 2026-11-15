@@ -1,0 +1,1140 @@
+{
+ "police": {
+  "type": "FeatureCollection",
+  "features": [
+   {
+    "geometry": {
+     "coordinates": [
+      14.431439393000089,
+      50.08265599000005
+     ],
+     "type": "Point"
+    },
+    "properties": {
+     "id": "106",
+     "cadastral_area": "",
+     "note": "OŘ MP Praha 1",
+     "district": "praha-1",
+     "updated_at": "2026-10-01T00:25:02.460Z",
+     "address": {
+      "address_formatted": "Opletalova 19, 11000 Praha Nové Město, Česko",
+      "street_address": "Opletalova 19",
+      "postal_code": "11000",
+      "address_locality": "Praha",
+      "address_region": "Nové Město",
+      "address_country": "Česko"
+     }
+    },
+    "type": "Feature"
+   },
+   {
+    "geometry": {
+     "coordinates": [
+      14.432794760000034,
+      50.09162339500005
+     ],
+     "type": "Point"
+    },
+    "properties": {
+     "id": "107",
+     "cadastral_area": "",
+     "note": "Služebna",
+     "district": "praha-1",
+     "updated_at": "2026-10-01T00:25:02.460Z",
+     "address": {
+      "address_formatted": "Lodecká 1206/2, 11000 Praha Nové Město, Česko",
+      "street_address": "Lodecká 1206/2",
+      "postal_code": "11000",
+      "address_locality": "Praha",
+      "address_region": "Nové Město",
+      "address_country": "Česko"
+     }
+    },
+    "type": "Feature"
+   },
+   {
+    "geometry": {
+     "coordinates": [
+      14.41793015400004,
+      50.08711535400009
+     ],
+     "type": "Point"
+    },
+    "properties": {
+     "id": "108",
+     "cadastral_area": "",
+     "note": "Služebna",
+     "district": "praha-1",
+     "updated_at": "2026-10-01T00:25:02.460Z",
+     "address": {
+      "address_formatted": "Mariánské náměstí 2/2, 11000 Praha Staré Město, Česko",
+      "street_address": "Mariánské náměstí 2/2",
+      "postal_code": "11000",
+      "address_locality": "Praha",
+      "address_region": "Staré Město",
+      "address_country": "Česko"
+     }
+    },
+    "type": "Feature"
+   }
+  ]
+ },
+ "libraries": {
+  "type": "FeatureCollection",
+  "features": [
+   {
+    "geometry": {
+     "coordinates": [
+      14.41738,
+      50.08738
+     ],
+     "type": "Point"
+    },
+    "properties": {
+     "id": "69",
+     "name": "Ústřední knihovna - Suterén",
+     "address": {
+      "address_country": "Česko",
+      "address_formatted": "Mariánské náměstí 98/1, 115 72 Praha 1, Česko",
+      "address_locality": "Praha 1",
+      "postal_code": "115 72",
+      "street_address": "Mariánské náměstí 98/1"
+     },
+     "email": "suteren@mlp.cz",
+     "telephone": "+420 777 496 992",
+     "web": "https://www.mlp.cz/cz/pobocky/ustredni-knihovna-suteren/",
+     "district": "praha-1",
+     "updated_at": "2024-06-07T00:20:01.544Z",
+     "opening_hours": [
+      {
+       "day_of_week": "Monday",
+       "opens": "13:00",
+       "closes": "17:00",
+       "description": "Běžná otevírací doba",
+       "is_default": true,
+       "valid_from": null,
+       "valid_through": null,
+       "type": "standard"
+      },
+      {
+       "day_of_week": "Tuesday",
+       "opens": "16:00",
+       "closes": "20:00",
+       "description": "Běžná otevírací doba",
+       "is_default": true,
+       "valid_from": null,
+       "valid_through": null,
+       "type": "standard"
+      },
+      {
+       "day_of_week": "Wednesday",
+       "opens": "15:00",
+       "closes": "17:00",
+       "description": "Běžná otevírací doba",
+       "is_default": true,
+       "valid_from": null,
+       "valid_through": null,
+       "type": "standard"
+      }
+     ],
+     "services": [
+      {
+       "id": 53,
+       "name": "Wi-Fi",
+       "description": "Bezdrátové připojení k internetu. Knihovna provozuje síť s názvem „Mestska knihovna“."
+      }
+     ]
+    },
+    "type": "Feature"
+   },
+   {
+    "geometry": {
+     "coordinates": [
+      14.36824,
+      50.028402
+     ],
+     "type": "Point"
+    },
+    "properties": {
+     "id": "2",
+     "name": "Barrandov",
+     "address": {
+      "address_country": "Česko",
+      "address_formatted": "Wassermannova 926/16, 152 00 Praha 5, Česko",
+      "address_locality": "Praha 5",
+      "postal_code": "152 00",
+      "street_address": "Wassermannova 926/16"
+     },
+     "email": "knihovna@mlp.cz",
+     "telephone": "+420 770 130 262",
+     "web": "https://www.mlp.cz/cz/pobocky/barrandov/",
+     "district": "praha-5",
+     "updated_at": "2026-01-09T01:20:01.389Z",
+     "opening_hours": [
+      {
+       "day_of_week": "Monday",
+       "opens": "13:00",
+       "closes": "19:00",
+       "description": "Otevírací doba (středa a čtvrtek 9:00-13:00 bez obsluhy)",
+       "is_default": true,
+       "valid_from": null,
+       "valid_through": null,
+       "type": "standard"
+      },
+      {
+       "day_of_week": "Tuesday",
+       "opens": "09:00",
+       "closes": "17:00",
+       "description": "Otevírací doba (středa a čtvrtek 9:00-13:00 bez obsluhy)",
+       "is_default": true,
+       "valid_from": null,
+       "valid_through": null,
+       "type": "standard"
+      },
+      {
+       "day_of_week": "Wednesday",
+       "opens": "09:00",
+       "closes": "19:00",
+       "description": "Otevírací doba (středa a čtvrtek 9:00-13:00 bez obsluhy)",
+       "is_default": true,
+       "valid_from": null,
+       "valid_through": null,
+       "type": "standard"
+      },
+      {
+       "day_of_week": "Wednesday",
+       "opens": "09:00",
+       "closes": "13:00",
+       "description": "Otevírací doba (středa a čtvrtek 9:00-13:00 bez obsluhy)",
+       "is_default": true,
+       "valid_from": null,
+       "valid_through": null,
+       "type": "standard"
+      },
+      {
+       "day_of_week": "Thursday",
+       "opens": "09:00",
+       "closes": "19:00",
+       "description": "Otevírací doba (středa a čtvrtek 9:00-13:00 bez obsluhy)",
+       "is_default": true,
+       "valid_from": null,
+       "valid_through": null,
+       "type": "standard"
+      },
+      {
+       "day_of_week": "Thursday",
+       "opens": "09:00",
+       "closes": "13:00",
+       "description": "Otevírací doba (středa a čtvrtek 9:00-13:00 bez obsluhy)",
+       "is_default": true,
+       "valid_from": null,
+       "valid_through": null,
+       "type": "standard"
+      },
+      {
+       "day_of_week": "Friday",
+       "opens": "09:00",
+       "closes": "17:00",
+       "description": "Otevírací doba (středa a čtvrtek 9:00-13:00 bez obsluhy)",
+       "is_default": true,
+       "valid_from": null,
+       "valid_through": null,
+       "type": "standard"
+      }
+     ],
+     "services": [
+      {
+       "id": 3,
+       "name": "Bezbariérový přístup",
+       "description": "Bezbariérový přístup pro vozíčkáře i rodiče s kočárky"
+      }
+     ]
+    },
+    "type": "Feature"
+   },
+   {
+    "geometry": {
+     "coordinates": [
+      14.36824,
+      50.028402
+     ],
+     "type": "Point"
+    },
+    "properties": {
+     "id": "barrandov",
+     "name": "Barrandov",
+     "address": {
+      "address_country": "Česko",
+      "address_formatted": "Wassermannova 926/16, 152 00 Praha 5, Česko",
+      "address_locality": "Praha 5",
+      "postal_code": "152 00",
+      "street_address": "Wassermannova 926/16"
+     },
+     "email": "knihovna@mlp.cz",
+     "telephone": "+420770130262",
+     "web": "https://www.mlp.cz/cz/pobocky/barrandov",
+     "district": "praha-5",
+     "updated_at": "2026-10-16T00:20:02.277Z",
+     "opening_hours": [
+      {
+       "day_of_week": "Monday",
+       "opens": "13:00",
+       "closes": "19:00",
+       "description": "Běžná otevírací doba",
+       "is_default": true,
+       "valid_from": null,
+       "valid_through": null,
+       "type": "standard"
+      },
+      {
+       "day_of_week": "Tuesday",
+       "opens": "09:00",
+       "closes": "17:00",
+       "description": "Běžná otevírací doba",
+       "is_default": true,
+       "valid_from": null,
+       "valid_through": null,
+       "type": "standard"
+      },
+      {
+       "day_of_week": "Wednesday",
+       "opens": "09:00",
+       "closes": "19:00",
+       "description": "Běžná otevírací doba",
+       "is_default": true,
+       "valid_from": null,
+       "valid_through": null,
+       "type": "standard"
+      },
+      {
+       "day_of_week": "Wednesday",
+       "opens": "09:00",
+       "closes": "13:00",
+       "description": "Běžná otevírací doba",
+       "is_default": true,
+       "valid_from": null,
+       "valid_through": null,
+       "type": "self_service"
+      },
+      {
+       "day_of_week": "Thursday",
+       "opens": "09:00",
+       "closes": "19:00",
+       "description": "Běžná otevírací doba",
+       "is_default": true,
+       "valid_from": null,
+       "valid_through": null,
+       "type": "standard"
+      },
+      {
+       "day_of_week": "Thursday",
+       "opens": "09:00",
+       "closes": "13:00",
+       "description": "Běžná otevírací doba",
+       "is_default": true,
+       "valid_from": null,
+       "valid_through": null,
+       "type": "self_service"
+      },
+      {
+       "day_of_week": "Friday",
+       "opens": "09:00",
+       "closes": "17:00",
+       "description": "Běžná otevírací doba",
+       "is_default": true,
+       "valid_from": null,
+       "valid_through": null,
+       "type": "standard"
+      },
+      {
+       "day_of_week": "Monday",
+       "opens": "13:00",
+       "closes": "19:00",
+       "description": "Zavřeno ve středu 28. 10. 2026",
+       "is_default": false,
+       "valid_from": "2026-10-27T23:00:00.000Z",
+       "valid_through": "2026-10-27T23:00:00.000Z",
+       "type": "standard"
+      },
+      {
+       "day_of_week": "Tuesday",
+       "opens": "09:00",
+       "closes": "17:00",
+       "description": "Zavřeno ve středu 28. 10. 2026",
+       "is_default": false,
+       "valid_from": "2026-10-27T23:00:00.000Z",
+       "valid_through": "2026-10-27T23:00:00.000Z",
+       "type": "standard"
+      },
+      {
+       "day_of_week": "Wednesday",
+       "opens": "09:00",
+       "closes": "13:00",
+       "description": "Zavřeno ve středu 28. 10. 2026",
+       "is_default": false,
+       "valid_from": "2026-10-27T23:00:00.000Z",
+       "valid_through": "2026-10-27T23:00:00.000Z",
+       "type": "self_service"
+      },
+      {
+       "day_of_week": "Thursday",
+       "opens": "09:00",
+       "closes": "19:00",
+       "description": "Zavřeno ve středu 28. 10. 2026",
+       "is_default": false,
+       "valid_from": "2026-10-27T23:00:00.000Z",
+       "valid_through": "2026-10-27T23:00:00.000Z",
+       "type": "standard"
+      },
+      {
+       "day_of_week": "Thursday",
+       "opens": "09:00",
+       "closes": "13:00",
+       "description": "Zavřeno ve středu 28. 10. 2026",
+       "is_default": false,
+       "valid_from": "2026-10-27T23:00:00.000Z",
+       "valid_through": "2026-10-27T23:00:00.000Z",
+       "type": "self_service"
+      }
+     ],
+     "services": [
+      {
+       "id": 3,
+       "name": "Bezbariérový přístup",
+       "description": "Bezbariérový přístup pro vozíčkáře i rodiče s kočárky"
+      }
+     ]
+    },
+    "type": "Feature"
+   }
+  ]
+ },
+ "authorities": {
+  "type": "FeatureCollection",
+  "features": [
+   {
+    "geometry": {
+     "coordinates": [
+      14.4012036,
+      50.10041
+     ],
+     "type": "Point"
+    },
+    "properties": {
+     "id": "urad-mestske-casti-praha-6",
+     "agendas": [
+      {
+       "keywords": [
+        "pronájem",
+        "byt",
+        "pronájem bytu",
+        "nebytové prostory"
+       ],
+       "description": "Pronájem bytových a nebytových prostor"
+      }
+     ],
+     "district": "praha-6",
+     "email": [
+      "podatelna@praha6.cz",
+      "info2@praha6.cz"
+     ],
+     "image": {
+      "mimetype": "image/jpeg",
+      "size": 626778,
+      "url": "https://www.mojepraha.eu/images/municipal-authorities/o0i8j81g4ugVYxwg.jpg"
+     },
+     "name": "Úřad městské části Praha 6",
+     "official_board": null,
+     "opening_hours": [
+      {
+       "closes": "18:00",
+       "day_of_week": "Monday",
+       "description": null,
+       "opens": "08:00"
+      },
+      {
+       "closes": "18:00",
+       "day_of_week": "Wednesday",
+       "description": null,
+       "opens": "08:00"
+      }
+     ],
+     "telephone": [
+      "220 189 111 (ústředna)",
+      "220 189 562 (Informační kancelář ÚMČ)",
+      "220 189 820 (Živnostenský odbor)",
+      "220 189 809 (Odbor evid. obyvatel a osobních dokladů)"
+     ],
+     "web": [
+      "www.praha6.cz"
+     ],
+     "updated_at": "2025-05-23T00:20:05.398Z",
+     "address": {
+      "address_formatted": "Čs. armády 601/23, 160 00 Praha 6"
+     },
+     "type": {
+      "description": "Obecní úřad",
+      "id": "municipality"
+     }
+    },
+    "type": "Feature"
+   },
+   {
+    "geometry": {
+     "coordinates": [
+      14.4340153,
+      50.0971945
+     ],
+     "type": "Point"
+    },
+    "properties": {
+     "id": "urad-mestske-casti-praha-7",
+     "agendas": [
+      {
+       "keywords": [
+        "pronájem",
+        "byt",
+        "pronájem bytu",
+        "nebytové prostory"
+       ],
+       "description": "Pronájem bytových a nebytových prostor"
+      }
+     ],
+     "district": "praha-7",
+     "email": [
+      "podatelna@p7.mepnet.cz"
+     ],
+     "image": {
+      "mimetype": "image/jpeg",
+      "size": 89791,
+      "url": "https://www.mojepraha.eu/images/municipal-authorities/_pdjmrnhyKR7z9ej.jpeg"
+     },
+     "name": "Úřad městské části Praha 7",
+     "official_board": null,
+     "opening_hours": [
+      {
+       "closes": "11:30",
+       "day_of_week": "Monday",
+       "description": null,
+       "opens": "07:30"
+      },
+      {
+       "closes": "18:00",
+       "day_of_week": "Monday",
+       "description": null,
+       "opens": "12:00"
+      },
+      {
+       "closes": "11:30",
+       "day_of_week": "Wednesday",
+       "description": null,
+       "opens": "07:30"
+      },
+      {
+       "closes": "18:00",
+       "day_of_week": "Wednesday",
+       "description": null,
+       "opens": "12:00"
+      }
+     ],
+     "telephone": [
+      "220 144 111 (ústředna)"
+     ],
+     "web": [
+      "www.praha7.cz"
+     ],
+     "updated_at": "2025-05-23T00:20:05.398Z",
+     "address": {
+      "address_formatted": "Nábř. kpt. Jaroše 1000, 170 00 Praha 7"
+     },
+     "type": {
+      "description": "Obecní úřad",
+      "id": "municipality"
+     }
+    },
+    "type": "Feature"
+   }
+  ]
+ },
+ "gardens": {
+  "type": "FeatureCollection",
+  "features": [
+   {
+    "geometry": {
+     "coordinates": [
+      14.4202892,
+      50.0959721
+     ],
+     "type": "Point"
+    },
+    "properties": {
+     "address": {
+      "address_formatted": "Letenské sady 1574, 17000 Praha, Česko"
+     },
+     "image": {
+      "url": "http://www.praha.eu/public/96/f8/10/96936_4_letna.jpg"
+     },
+     "description": "Jedno z nejhezčích posezení na letní zahrádce s výhledem na Prahu a orosenou sklenicí piva se nachází ve východní části rozlehlého parku s travnatými plochami, vzrostlými stromy, pestrou směsicí dřevin osázenými stráněmi a s dlouhou platanovou alejí, všeobecně nazývaného Letná, jinak též Letenská pláň.",
+     "district": "praha-7",
+     "id": "letenske-sady",
+     "name": "Letenské sady",
+     "properties": [
+      {
+       "description": "Občerstvení",
+       "id": "restaurace",
+       "value": "Občerstvení: Letenský zámeček www.letenskyzamecek.czHanavský pavilon www.hanavskypavilon.cz"
+      },
+      {
+       "description": "Bruslení",
+       "id": "brusle",
+       "value": "ANO"
+      },
+      {
+       "description": "Povrch cest",
+       "id": "cesty",
+       "value": "Asfaltové"
+      },
+      {
+       "description": "Otevírací doba",
+       "id": "doba",
+       "value": "Celoročně"
+      },
+      {
+       "description": "Dětské hřiště",
+       "id": "hriste",
+       "value": "ANO, celkem 4, u objektu Letenský zámeček, 2 x v sousedství tenisových kurtů, u Hanavského pavilonu"
+      },
+      {
+       "description": "Cyklostezky",
+       "id": "kolo",
+       "value": "ANO"
+      },
+      {
+       "description": "MHD",
+       "id": "mhd",
+       "value": "Letenské náměstí a Sparta tram č. 1, 8, 15, 25, 26, 51, 56,  Čechův most tram č. 12, 17, 53, Chotkovy sady tram č. 18, 20, 57, metro Hradčanská"
+      },
+      {
+       "description": "Zajímavosti",
+       "id": "misto",
+       "value": "Rozsáhlý areál pro volný čas, vhodný pro všechny věkové kategorie, psi ANO, možnost celodenního pobytu, v průběhu roku kulturní akce"
+      },
+      {
+       "description": "Parkování",
+       "id": "parking",
+       "value": "ANO, při ul. Kostelní"
+      },
+      {
+       "description": "Provozovatel",
+       "id": "provoz",
+       "value": "Hlavní město Praha"
+      },
+      {
+       "description": "Sportovní hřiště",
+       "id": "sport",
+       "value": "NE; možnost sportovních aktivit na trávnících, půjčovna in-line bruslí - ANO 2x: Skala sport, tel.: +420 605 258 670, +420 220 571 721, půjčovna v areálu AC Sparta, tel.: +420 603 938 328, plácek na kopanou, zpoplatněné tenisové kurty v areálu LTC Slavia Tel.: 777 789 140"
+      },
+      {
+       "description": "WC",
+       "id": "wc",
+       "value": "ANO v objektu restaurací"
+      }
+     ],
+     "updated_at": "2025-05-23T00:20:02.074Z",
+     "url": "http://www.praha.eu/jnp/cz/co_delat_v_praze/parky/letna/letna.html"
+    },
+    "type": "Feature"
+   },
+   {
+    "geometry": {
+     "coordinates": [
+      14.395004,
+      50.070894
+     ],
+     "type": "Point"
+    },
+    "properties": {
+     "address": {
+      "address_formatted": "Mozartova 844/14, 15000 Praha, Česko"
+     },
+     "image": {
+      "url": "http://www.praha.eu/public/5c/7c/31/96820_4_bertramka_08.jpg"
+     },
+     "description": "Mozartova busta v zahradě legendární usedlosti stojí na vyvýšeném, trochu zvláštním, místě, jakoby stranou pomyslné hlavní osy podlouhlého pozemku. Mistr, byť pouze v kamenné podobě, tak má dokonalý přehled o dění v zahradě, ale současně překrásný výhled na stráně vrchu Mrázovka.",
+     "district": "praha-5",
+     "id": "betramka",
+     "name": "Betramka",
+     "properties": [
+      {
+       "description": "Bruslení",
+       "id": "brusle",
+       "value": "NE"
+      },
+      {
+       "description": "Povrch cest",
+       "id": "cesty",
+       "value": "Dlažba"
+      },
+      {
+       "description": "Otevírací doba",
+       "id": "doba",
+       "value": "Celoročně duben až říjen 9-18 hod., listopad až březen 9:30-16 hod."
+      },
+      {
+       "description": "Dětské hřiště",
+       "id": "hriste",
+       "value": "NE"
+      },
+      {
+       "description": "Cyklostezky",
+       "id": "kolo",
+       "value": "ANO"
+      },
+      {
+       "description": "MHD",
+       "id": "mhd",
+       "value": "Bertramka tram č. 4, 7, 9, 10, 58, 59"
+      },
+      {
+       "description": "Zajímavosti",
+       "id": "misto",
+       "value": "Kulturní památka, koncerty vážné hudby, společenské akce, muzeum W. A. Mozarta"
+      },
+      {
+       "description": "Parkování",
+       "id": "parking",
+       "value": "ANO, v podzemním parkingu OC Smíchov"
+      },
+      {
+       "description": "Provozovatel",
+       "id": "provoz",
+       "value": "Městská část Praha 5 a spol. Comenius"
+      },
+      {
+       "description": "Sportovní hřiště",
+       "id": "sport",
+       "value": "NE"
+      },
+      {
+       "description": "WC",
+       "id": "wc",
+       "value": "ANO"
+      }
+     ],
+     "updated_at": "2025-05-23T00:20:02.074Z",
+     "url": "http://www.praha.eu/jnp/cz/co_delat_v_praze/parky/bertramka/bertramka_text.html"
+    },
+    "type": "Feature"
+   },
+   {
+    "geometry": {
+     "coordinates": [
+      14.393881,
+      50.081394
+     ],
+     "type": "Point"
+    },
+    "properties": {
+     "address": {
+      "address_formatted": "Olympijská 4, 16000 Praha, Česko"
+     },
+     "image": {
+      "url": "http://www.praha.eu/public/59/90/31/96872_4_petrin2.jpg"
+     },
+     "description": "Jaro a podzim jsou období, kdy je Petřín nekrásnější. Zjara  rozkvétá množství ovocných stromů v Seminářské zahradě, na podzim se celý  vrch halí do pestrých barev podzimního listí.",
+     "district": "praha-6",
+     "id": "petrin",
+     "name": "Petřín",
+     "properties": [
+      {
+       "description": "Občerstvení",
+       "id": "restaurace",
+       "value": "Občerstvení: ANO - restaurace Nebozízek, Petřínské terasy, bufet u rozhledny, restaurace v areálu Strahovského kláštera Peklo, Bella vista"
+      },
+      {
+       "description": "Bruslení",
+       "id": "brusle",
+       "value": "ANO"
+      },
+      {
+       "description": "Povrch cest",
+       "id": "cesty",
+       "value": "asfaltové, betonové, dlážděné, mlatové"
+      },
+      {
+       "description": "Otevírací doba",
+       "id": "doba",
+       "value": "Celoročně volný přístup na Petřín, celoročně Štefánikova hvězdárna, rozhledna  Leden, únor, březen, listopad, prosinec 10-18 hod., duben, září, říjen 10-19 hod, květen až srpen 10-22 hod."
+      },
+      {
+       "description": "Dětské hřiště",
+       "id": "hriste",
+       "value": "ANO u Hellichovy ulice"
+      },
+      {
+       "description": "Cyklostezky",
+       "id": "kolo",
+       "value": "ANO"
+      },
+      {
+       "description": "MHD",
+       "id": "mhd",
+       "value": "Újezd tram č. 6, 9, 12, 20, 22, 23, 57, 58, 59, Hellichova  tram č. 12, 20, 22, 23, 57, Pohořelec tram. Č. 22, 23, Koleje Strahov BUS č. 143, 149, 217"
+      },
+      {
+       "description": "Zajímavosti",
+       "id": "misto",
+       "value": "vhodné pro rodiny s dětmi i turisty, možno pěšky i lanovkou, rozhledna, bludiště, hvězdárna, podzemní štoly, ovocné sady"
+      },
+      {
+       "description": "Parkování",
+       "id": "parking",
+       "value": "ANO u Strahovského stadionu"
+      },
+      {
+       "description": "Provozovatel",
+       "id": "provoz",
+       "value": "Hlavní město Praha"
+      },
+      {
+       "description": "Sportovní hřiště",
+       "id": "sport",
+       "value": "NE"
+      },
+      {
+       "description": "WC",
+       "id": "wc",
+       "value": "V přilehlých restauracích a u rozhledny"
+      }
+     ],
+     "updated_at": "2025-05-23T00:20:02.074Z",
+     "url": "http://www.praha.eu/jnp/cz/co_delat_v_praze/parky/petrin/petrin.html"
+    },
+    "type": "Feature"
+   }
+  ]
+ },
+ "playgrounds": {
+  "type": "FeatureCollection",
+  "features": [
+   {
+    "geometry": {
+     "coordinates": [
+      14.613753319,
+      50.11164856
+     ],
+     "type": "Point"
+    },
+    "properties": {
+     "image": {
+      "url": "http://www.hristepraha.cz/images/img/840ce044e65195caa5465818342e3ac4o.jpg"
+     },
+     "content": "Dětské hřiště (62.A) se rozkládá v parčíku, u konečné autobusu č. 223. Tvoří ho hned 3 části. První je oplocena vyšším...",
+     "id": 89,
+     "name": " Horní Počernice - hřiště 62.A",
+     "perex": "Lokalita vám nabídne velmi pěkné hřiště a několik zajímavých doprovodných aktivit.",
+     "properties": [
+      {
+       "description": "Fitness prvky",
+       "id": 4
+      },
+      {
+       "description": "Kultura (muzea, galerie, venkovní sochy, divadla, planetária)",
+       "id": 9
+      }
+     ],
+     "updated_at": "2026-10-01T00:30:02.999Z",
+     "url": "http://www.hristepraha.cz/hriste/mapa/horni-pocernice-hriste-62-a",
+     "district": "praha-20",
+     "address": {
+      "address_country": "Česko",
+      "address_formatted": "Jívanská 1748/28, 19300 Horní Počernice, Česko",
+      "street_address": "Jívanská 1748/28",
+      "postal_code": "19300",
+      "address_locality": "",
+      "address_region": "Horní Počernice"
+     }
+    },
+    "type": "Feature"
+   },
+   {
+    "geometry": {
+     "coordinates": [
+      14.620864868,
+      50.116016388
+     ],
+     "type": "Point"
+    },
+    "properties": {
+     "image": {
+      "url": "http://www.hristepraha.cz/images/img/b34b7ee471a5dc4384315a6d8e6e8659o.jpg"
+     },
+     "content": "Dětské hřiště (62.A) se rozkládá v parčíku, u konečné autobusu č. 223. Tvoří ho hned 3 části. První je oplocena vyšším...",
+     "id": 90,
+     "name": " Horní Počernice - hřiště 62.B",
+     "perex": "Lokalita vám nabídne velmi pěkné hřiště a několik zajímavých doprovodných aktivit.",
+     "properties": [
+      {
+       "description": "Kultura (muzea, galerie, venkovní sochy, divadla, planetária)",
+       "id": 9
+      }
+     ],
+     "updated_at": "2026-10-01T00:30:02.999Z",
+     "url": "http://www.hristepraha.cz/hriste/mapa/horni-pocernice-hriste-62-b",
+     "district": "praha-20",
+     "address": {
+      "address_country": "Česko",
+      "address_formatted": "193 00 Česko",
+      "street_address": "",
+      "postal_code": "193 00",
+      "address_locality": "",
+      "address_region": ""
+     }
+    },
+    "type": "Feature"
+   },
+   {
+    "geometry": {
+     "coordinates": [
+      14.408036232,
+      50.083118439
+     ],
+     "type": "Point"
+    },
+    "properties": {
+     "image": {
+      "url": "http://www.hristepraha.cz/images/img/57f2066cfff473d06ee021542e4526b7o.jpg"
+     },
+     "content": "V parku Kampa, na terase u Rybí restaurace, leží nevelké, ale moderní hřiště pro malé děti (63.A). Zahrnuje asi 10...",
+     "id": 93,
+     "name": " Kampa a Karlův most - Kampa",
+     "perex": "Na malostranském nábřeží Vltavy najdeme dvě menší hřiště, takže jejich návštěvu je vhodné zařadit jako doplňkovou aktivitu při procházce centrem města.",
+     "properties": [
+      {
+       "description": "Voda-hydrant nebo umyvadlo",
+       "id": 5
+      },
+      {
+       "description": "WC na hřišti nebo v bezprostřední blízkosti",
+       "id": 6
+      },
+      {
+       "description": "Částečný stín",
+       "id": 8
+      }
+     ],
+     "updated_at": "2026-10-01T00:30:02.999Z",
+     "url": "http://www.hristepraha.cz/hriste/mapa/kampa-a-karluv-most-kampa",
+     "district": "praha-1",
+     "address": {
+      "address_country": "Česko",
+      "address_formatted": "U Sovových mlýnů 645, 11800 Praha Malá Strana, Česko",
+      "street_address": "U Sovových mlýnů 645",
+      "postal_code": "11800",
+      "address_locality": "Praha",
+      "address_region": "Malá Strana"
+     }
+    },
+    "type": "Feature"
+   }
+  ]
+ },
+ "yards": {
+  "type": "FeatureCollection",
+  "features": [
+   {
+    "geometry": {
+     "coordinates": [
+      14.436865185000068,
+      50.00458090000007
+     ],
+     "type": "Point"
+    },
+    "properties": {
+     "id": "sberny-dvur-hlavniho-mesta-prahy-generala-sisky-9093",
+     "name": "Sběrný dvůr hlavního města Prahy Generála Šišky",
+     "operating_hours": "Po - So 8:30 - 18:00 hod. (8:30 - 17:00 hod. v zimním období), občané mají přednostní právo odevzdat odpady před právnickými subjekty. Poslední příjem odpadu je umožněn 15 minut před koncem provozní doby ",
+     "operator": "Pražské služby, a.s.",
+     "type": null,
+     "contact": "731 685 002",
+     "district": "praha-12",
+     "icz": "CZA00230",
+     "updated_at": "2026-09-01T00:25:00.753Z",
+     "properties": [
+      {
+       "id": "ODPADPRIJEM",
+       "description": "Příjem odpadu",
+       "value": "objemný odpad (nábytek, zařízení domácnosti), kovy, dřevo, odpad z údržby zeleně, suť z bytových úprav, papír, sklo, plasty, nápojové kartony, nebezpečné odpady, pneumatiky, použitý textil, obuv a oděvy, jedlé oleje a tuky (v uzavřených pet lahvích)"
+      },
+      {
+       "id": "POZNAMKA",
+       "description": "Poznámka",
+       "value": "ve stabilních sběrnách nebezpečných odpadů zřízených v rámci Sběrných dvorů hl. m. Prahy jsou zářivky a výbojky odebírány v rámci zpětného odběru"
+      },
+      {
+       "id": "REUSE",
+       "description": "Re-use point",
+       "value": "Přijímány jsou předměty ve skvělém stavu, které dále využije někdo jiný, typově předměty z domácnosti, drobnější nábytek, knihy, hračky, sportovní vybavení atp. Provozní doba Re-use pointů se shoduje s provozní dobou sběrného dvora, na níž je point umístěn. Z tohoto Reuse pointu si můžete předměty, které jsou aktuálně k dispozici, vybrat přímo na místě a rovnou je odnést bez rezervace."
+      },
+      {
+       "id": "ODPADOMEZENI",
+       "description": "Omezení příjmu odpadu",
+       "value": "Omezení u jednorázového návozu – možný vjezd vozidel max.do 3,5 t; suť z bytových úprav do 4 m3/os/rok (při jedné návštěvě max. 2 m3/osoba); u objemného odpadu max. 750 kg/os/rok."
+      },
+      {
+       "id": "NEBEZPODPADPRIJEM",
+       "description": "Příjem nebezpečného odpadu",
+       "value": "rozpouštědla, kyseliny, zásady ,fotochemikálie ,pesticidy, odpad s obsahem rtuti, olej a tuk kromě jedlého, barvy, lepidla, pryskyřice, detergenty obsahující nebezp.látky (čist.prostředky), nepoužitelná léčiva"
+      },
+      {
+       "id": "ZPETNYODBER",
+       "description": "Zpětný odběr odpadu",
+       "value": "elektrická a elektronická zařízení, např. lednice, pračky, sporáky, malé spotřebiče, TV, PC, monitory, rádia, zářivky, výbojky, nástroje, hračky, baterie, tiskárny, tonery."
+      },
+      {
+       "id": "PLATBAODPAD",
+       "description": "Platba za odpad",
+       "value": "zdarma pro občany s trvalým pobytem na území hl.m. Prahy; vždy je nutno se prokázat platným občanským průkazem - odpady lze odevzdávat pouze na občanské průkazy přítomných osob starších 15 let."
+      },
+      {
+       "id": "PLATBANEBEZPODPAD",
+       "description": "Platba za nebezpečný odpad",
+       "value": "zdarma pro občany s trvalým pobytem na území hl.m. Prahy; vždy je nutno se prokázat platným občanským průkazem"
+      }
+     ],
+     "address": {
+      "address_formatted": "Generála Šišky, Praha 12 - Modřany"
+     }
+    },
+    "type": "Feature"
+   },
+   {
+    "geometry": {
+     "coordinates": [
+      14.486010033000106,
+      50.08610969000004
+     ],
+     "type": "Point"
+    },
+    "properties": {
+     "id": "sberny-dvur-hlavniho-mesta-prahy-malesicka-9094",
+     "name": "Sběrný dvůr hlavního města Prahy Malešická",
+     "operating_hours": "Po - So 8:30 - 18:00 hod. (8:30 - 17:00 hod. v zimním období), občané mají přednostní právo odevzdat odpady před právnickými subjekty. Poslední příjem odpadu je umožněn 15 minut před koncem provozní doby.",
+     "operator": "AVE CZ odpadové hospodářství, s.r.o.",
+     "type": null,
+     "contact": "734161076",
+     "district": "praha-3",
+     "icz": "CZA00789",
+     "updated_at": "2026-09-01T00:25:00.753Z",
+     "properties": [
+      {
+       "id": "ODPADPRIJEM",
+       "description": "Příjem odpadu",
+       "value": "objemný odpad (nábytek, zařízení domácnosti), kovy, dřevo, odpad z údržby zeleně, suť z bytových úprav, papír, sklo, plasty, nápojové kartony, nebezpečné odpady, pneumatiky, použitý textil, obuv a oděvy, jedlé oleje a tuky (v uzavřených pet lahvích)"
+      },
+      {
+       "id": "PLATBAODPAD",
+       "description": "Platba za odpad",
+       "value": "zdarma pro občany s trvalým pobytem na území hl.m. Prahy; vždy je nutno se prokázat platným občanským průkazem - odpady lze odevzdávat pouze na občanské průkazy přítomných osob starších 15 let."
+      },
+      {
+       "id": "PLATBANEBEZPODPAD",
+       "description": "Platba za nebezpečný odpad",
+       "value": "zdarma pro občany s trvalým pobytem na území hl.m. Prahy; vždy je nutno se prokázat platným občanským průkazem"
+      },
+      {
+       "id": "POZNAMKA",
+       "description": "Poznámka",
+       "value": "ve stabilních sběrnách nebezpečných odpadů zřízených v rámci Sběrných dvorů hl. m. Prahy jsou zářivky a výbojky odebírány v rámci zpětného odběru"
+      },
+      {
+       "id": "ODPADOMEZENI",
+       "description": "Omezení příjmu odpadu",
+       "value": "Omezení u jednorázového návozu – možný vjezd vozidel max.do 3,5 t; suť z bytových úprav do 4 m3/os/rok (při jedné návštěvě max. 2 m3/osoba); u objemného odpadu max. 750 kg/os/rok."
+      },
+      {
+       "id": "NEBEZPODPADPRIJEM",
+       "description": "Příjem nebezpečného odpadu",
+       "value": "rozpouštědla, kyseliny, zásady ,fotochemikálie ,pesticidy, odpad s obsahem rtuti, olej a tuk kromě jedlého, barvy, lepidla, pryskyřice, detergenty obsahující nebezp.látky (čist.prostředky), nepoužitelná léčiva"
+      },
+      {
+       "id": "REUSE",
+       "description": "Re-use point",
+       "value": "Přijímány jsou předměty ve skvělém stavu, které dále využije někdo jiný, typově předměty z domácnosti, drobnější nábytek, knihy, hračky, sportovní vybavení atp. Provozní doba Re-use pointů se shoduje s provozní dobou sběrného dvora, na níž je point umístěn. Z tohoto Reuse pointu si můžete předměty, které jsou aktuálně k dispozici, vybrat přímo na místě a rovnou je odnést bez rezervace."
+      },
+      {
+       "id": "ZPETNYODBER",
+       "description": "Zpětný odběr odpadu",
+       "value": "elektrická a elektronická zařízení, např. lednice, pračky, sporáky, malé spotřebiče, TV, PC, monitory, rádia, zářivky, výbojky, nástroje, hračky, baterie, tiskárny, tonery."
+      }
+     ],
+     "address": {
+      "address_formatted": "Malešická 74, 130 00  Praha 3"
+     }
+    },
+    "type": "Feature"
+   },
+   {
+    "geometry": {
+     "coordinates": [
+      14.573911978000053,
+      50.04341443300006
+     ],
+     "type": "Point"
+    },
+    "properties": {
+     "id": "sberny-dvur-hlavniho-mesta-prahy-za-zastavkou-9104",
+     "name": "Sběrný dvůr hlavního města Prahy Za zastávkou",
+     "operating_hours": "Po - So 8:30 - 18:00 hod. (8:30 - 17:00 hod. v zimním období), občané mají přednostní právo odevzdat odpady před právnickými subjekty. Poslední příjem odpadu je umožněn 15 minut před koncem provozní doby ",
+     "operator": "Pražské služby, a.s.",
+     "type": null,
+     "contact": "733164810",
+     "district": "praha-dolni-mecholupy",
+     "icz": "CZA00439",
+     "updated_at": "2026-09-01T00:25:00.753Z",
+     "properties": [
+      {
+       "id": "ODPADPRIJEM",
+       "description": "Příjem odpadu",
+       "value": "objemný odpad (nábytek, zařízení domácnosti), kovy, dřevo, odpad z údržby zeleně, suť z bytových úprav, papír, sklo, plasty, nápojové kartony, nebezpečné odpady, pneumatiky, použitý textil, obuv a oděvy, jedlé oleje a tuky (v uzavřených pet lahvích)"
+      },
+      {
+       "id": "PLATBANEBEZPODPAD",
+       "description": "Platba za nebezpečný odpad",
+       "value": "zdarma pro občany s trvalým pobytem na území hl.m. Prahy; vždy je nutno se prokázat platným občanským průkazem"
+      },
+      {
+       "id": "PLATBAODPAD",
+       "description": "Platba za odpad",
+       "value": "zdarma pro občany s trvalým pobytem na území hl.m. Prahy; vždy je nutno se prokázat platným občanským průkazem - odpady lze odevzdávat pouze na občanské průkazy přítomných osob starších 15 let."
+      },
+      {
+       "id": "ODPADOMEZENI",
+       "description": "Omezení příjmu odpadu",
+       "value": "Omezení u jednorázového návozu – možný vjezd vozidel max.do 3,5 t; suť z bytových úprav do 4 m3/os/rok (při jedné návštěvě max. 2 m3/osoba); u objemného odpadu max. 750 kg/os/rok."
+      },
+      {
+       "id": "NEBEZPODPADPRIJEM",
+       "description": "Příjem nebezpečného odpadu",
+       "value": "rozpouštědla, kyseliny, zásady ,fotochemikálie ,pesticidy, odpad s obsahem rtuti, olej a tuk kromě jedlého, barvy, lepidla, pryskyřice, detergenty obsahující nebezp.látky (čist.prostředky), nepoužitelná léčiva"
+      },
+      {
+       "id": "POZNAMKA",
+       "description": "Poznámka",
+       "value": "ve stabilních sběrnách nebezpečných odpadů zřízených v rámci Sběrných dvorů hl. m. Prahy jsou zářivky a výbojky odebírány v rámci zpětného odběru"
+      },
+      {
+       "id": "ZPETNYODBER",
+       "description": "Zpětný odběr odpadu",
+       "value": "elektrická a elektronická zařízení, např. lednice, pračky, sporáky, malé spotřebiče, TV, PC, monitory, rádia, zářivky, výbojky, nástroje, hračky, baterie, tiskárny, tonery."
+      }
+     ],
+     "address": {
+      "address_formatted": "Za zastávkou 3, 109 00 Praha - Dolní Měcholupy"
+     }
+    },
+    "type": "Feature"
+   }
+  ]
+ }
+}

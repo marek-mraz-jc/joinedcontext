@@ -1,0 +1,17 @@
+# One OnStreetParking (category feeCharged, T-4329) per record of `hel-parking-fee-zones`, written into the city space (T-2787).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: fee-parking-zones
+  namespace: helsinki
+  title: { en: Parking fee zones }
+spec:
+  class: auto
+  # Zones change with a council decision; weekly is enough.
+  period: 168h
+  schedule: '5 4 * * 1'
+  source:
+    dataSourceRef: { kind: DataSource, name: hel-parking-fee-zones }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  output: { type: OnStreetParking, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

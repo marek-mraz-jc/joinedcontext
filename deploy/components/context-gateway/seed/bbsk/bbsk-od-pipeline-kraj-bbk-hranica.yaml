@@ -1,0 +1,24 @@
+# One AdministrativeArea per row of "Kraj BBK - hranica" (T-4255); the name of the bbsk-registre class.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: od-kraj-bbk-hranica
+  namespace: bbsk
+  title:
+    sk: Kraj BBK - hranica
+    en: Kraj BBK - hranica
+spec:
+  class: scheduled
+  enabled: true
+  schedule: 6 3 * * 4
+  source:
+    dataSourceRef:
+      kind: DataSource
+      name: od-kraj-bbk-hranica
+  targetEndpoint: urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-otvorene-data:bbsk-otvorene-data
+  output:
+    type: AdministrativeArea
+    mode: replace
+  quotas:
+    maxMemoryMb: 128
+    cpuMillicores: 100

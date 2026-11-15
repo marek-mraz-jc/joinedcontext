@@ -1,0 +1,64 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "OfficeHours": {
+      "@id": "jc:OfficeHours"
+    },
+    "dataProvider": {
+      "@id": "sdm:dataProvider"
+    },
+    "denVTyzdni": {
+      "@id": "jc:denVTyzdni"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "iCOSamospravy": {
+      "@id": "jc:iCOSamospravy"
+    },
+    "id": "@id",
+    "identifikatorKontaktnehoMiest": {
+      "@id": "jc:identifikatorKontaktnehoMiest"
+    },
+    "isPartOf": {
+      "@id": "jc:isPartOf",
+      "@type": "xsd:anyURI"
+    },
+    "jc": "https://joinedcontext.com/models/",
+    "kodDnaVTyzdni": {
+      "@id": "jc:kodDnaVTyzdni"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "name": {
+      "@id": "sdm:name"
+    },
+    "nazovSamospravy": {
+      "@id": "jc:nazovSamospravy"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "otvoreneDo": {
+      "@id": "jc:otvoreneDo"
+    },
+    "otvoreneOd": {
+      "@id": "jc:otvoreneOd"
+    },
+    "schema": "http://schema.org/",
+    "sdm": "https://smartdatamodels.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "source": {
+      "@id": "sdm:source",
+      "@type": "xsd:anyURI"
+    },
+    "type": "@type",
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "x-generator-version": "linkml-1.11.1"
+}

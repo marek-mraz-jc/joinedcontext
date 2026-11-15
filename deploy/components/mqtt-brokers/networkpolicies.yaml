@@ -1,0 +1,129 @@
+---
+# A broker has two listeners and one call out (ADR-N-048, PL-76, PL-77): 1883 from the pipeline
+# runner, 1884 from the ingress controller, which terminates TLS on 8883 for the devices (or,
+# instead, 8884, TLS in RMQTT behind a dedicated port, T-5856, T-5871), and
+# the gateway's CONNECT check on its internal listener.
+mqtt-brokers:
+  podSelector:
+    app.kubernetes.io/name: mqtt-broker
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # The runner, and the Portal's capture subscriber (ADR-N-048 §2.10, T-4880): the chart's
+    # Linkerd Server admits both identities, the gateway grants the Portal subscribe on a
+    # capture broker only.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pipeline-runner-runner
+          componentNamespace: pipeline-runner
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 1883
+    # Traefik in `traefik` (kube-hetzner) or `kube-system` (plain k3s); the peer APISIX names.
+    - from:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: [traefik, kube-system]
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 1884
+        # A dedicated port's TLS listener (T-5856), on brokers that hold one; Traefik passes TLS through.
+        - protocol: TCP
+          port: 8884
+    # The Portal reads the HTTP API (ADR-N-048 §2.8, T-4043); the chart's Linkerd Server admits
+    # its identity on two GET routes only.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portal-portal
+          componentNamespace: portal
+      ports:
+        - protocol: TCP
+          port: 6060
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: context-gateway-gateway
+          componentNamespace: context-gateway
+      ports:
+        - protocol: TCP
+          port: 8082
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# The other half of the CONNECT check: the gateway's internal listener admits broker pods only.
+# The gateway answers whoever reaches it by that caller's mesh identity, so this is what keeps
+# every other pod from asking.
+gateway-from-mqtt-brokers:
+  componentNamespace: context-gateway
+  podSelector:
+    app.kubernetes.io/name: context-gateway-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mqtt-broker
+          componentNamespace: mqtt-brokers
+      ports:
+        - protocol: TCP
+          port: 8082
+
+# The runner's side of 1883.
+runner-to-mqtt-brokers:
+  componentNamespace: pipeline-runner
+  podSelector:
+    app.kubernetes.io/name: pipeline-runner-runner
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mqtt-broker
+          componentNamespace: mqtt-brokers
+      ports:
+        - protocol: TCP
+          port: 1883
+
+# The Portal's side of 6060, and of 1883 for its capture subscriber.
+portal-to-mqtt-brokers:
+  componentNamespace: portal
+  podSelector:
+    app.kubernetes.io/name: portal-portal
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mqtt-broker
+          componentNamespace: mqtt-brokers
+      ports:
+        - protocol: TCP
+          port: 6060
+        - protocol: TCP
+          port: 1883

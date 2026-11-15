@@ -1,0 +1,20 @@
+# The steward may add one Alert from the data workspace's "Add row" form and remove it again
+# (T-5092, ui/e2e/live/data-workspace.spec.ts): create and delete, only for rows with category
+# `journey` and no `source`. The form mints a random id, so the grant selects by value, not by
+# idPattern; the gateway reads the stored entity before a delete (R45). Every pipeline row writes
+# category `traffic` and a `source`, so this grant reaches none of them.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: steward-row-journey
+  namespace: helsinki
+  title: { en: The steward adds and removes the data workspace journey's test alerts }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: user, id: de300000-0000-4000-8000-000000000001 } # demo.steward
+  operations: [createEntity, deleteEntity]
+  information:
+    - entities:
+        - type: Alert
+  q: category=="journey";!source

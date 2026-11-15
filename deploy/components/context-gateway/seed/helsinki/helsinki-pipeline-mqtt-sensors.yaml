@@ -1,0 +1,39 @@
+# The air sensors into the space (T-4857, PL-76): one AirQualityObserved per sensor, its id from
+# the client id in the topic, which the broker's ACL binds to the sensor's verified token
+# (ADR-N-048 §3), so a sensor only ever writes its own entity. A message that is not
+# {"pm10": n, "pm25": n} with 0 <= n <= 1000, or whose observedAt is more than five minutes from
+# its arrival, is dropped. A demo sensor leaves every read an hour after its last message.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: mqtt-sensors
+  namespace: helsinki
+  title: { en: Air sensors over MQTT into the space }
+spec:
+  class: auto
+  source:
+    dataSourceRef: { kind: DataSource, name: mqtt-sensors }
+  compute:
+    kind: bloblang
+    bloblang: |
+      let sensor = meta("mqtt_topic").or("").split("/").index(1).catch("")
+      let received = now()
+      let seen = this.observedAt.or($received).string().catch("")
+      let skew = ($seen.ts_unix_milli() - $received.ts_unix_milli()).catch(null)
+      let pm10 = this.pm10.catch(null)
+      let pm25 = this.pm25.catch(null)
+      let valid = $sensor.re_match("^helsinki-[a-z0-9-]{1,40}$") && $pm10.type() == "number" && $pm25.type() == "number" && $pm10 >= 0 && $pm10 <= 1000 && $pm25 >= 0 && $pm25 <= 1000 && $skew != null && $skew <= 300000 && $skew >= -300000
+      root = if !$valid { deleted() } else { {
+        "id": "urn:ngsi-ld:AirQualityObserved:%v:%v:mqtt-%v".format(env("JC_ORG_DOMAIN"), env("JC_SPACE"), $sensor),
+        "type": "AirQualityObserved",
+        "name": { "type": "LanguageProperty", "languageMap": { "en": "Demo air sensor %v (test data)".format($sensor), "fi": "Esittelyanturi %v".format($sensor) } },
+        "pm10": { "type": "Property", "value": $pm10, "unitCode": "GQ", "observedAt": $seen },
+        "pm25": { "type": "Property", "value": $pm25, "unitCode": "GQ", "observedAt": $seen },
+        "dateObserved": { "type": "Property", "value": $seen, "observedAt": $seen },
+        "source": { "type": "Property", "value": "MQTT demo device %v".format($sensor), "observedAt": $seen }
+      } }
+  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:helsinki:helsinki-all
+  quotas: { maxMemoryMb: 64, cpuMillicores: 50 }
+  lifetime:
+    - type: AirQualityObserved
+      entity: { rolling: PT1H }

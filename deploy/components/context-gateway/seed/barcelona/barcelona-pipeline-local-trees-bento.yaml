@@ -1,0 +1,77 @@
+# The mapping of the local-trees pipeline (PL-03, T-5413): one PointOfInterest per tree of local
+# interest of Open Data BCN (dataset arbres-interes-local, 208 trees on 2026-10-23), read from the
+# DataStore of its CSV as the bcn-local-trees DataSource's one SQL query answers it: the register
+# id, the name the city gives the tree (species and place, "Tipuanes de la plaça Sant Felip Neri"),
+# its address, district and point in WGS84. The id carries the prefix local-tree-, so a tree never
+# meets a facility of the same register (equipaments) and the Endpoint local-trees reads them by
+# idPattern. Written: name, category [environment, local-interest-tree], location, address and
+# source.
+#
+# Plausibility (owner 2026-10-22): a row whose id is no number or with no name, whose point is no
+# number or lies outside the municipality's 1 km margin (the space's in-area bbox), and a second
+# row of one id or of one point (within ~1 m, 5 decimals of a degree) are each dropped and counted
+# by reason in `dropped`, which the next step logs. An answer the portal refuses, or one with no
+# tree at all, fails the run, so the trees stand instead of going quiet. `expiresAt`: a tree the
+# register drops leaves every read three weeks (three weekly runs) after it was last listed.
+
+pipeline:
+  processors:
+    - mapping: |
+        let bbox = [2.04, 41.3, 2.24, 41.48]
+        let rows = if content().length() > 2097152 {
+          throw("the trees answer is %d bytes, more than the 2 MiB read".format(content().length()))
+        } else if this.success.or(false) != true {
+          throw("Open Data BCN refused the trees query: %s".format(this.error.format_json(no_indent: true).or("no reason given")))
+        } else if this.result.records.or([]).length() >= 1000 {
+          throw("the trees answered %d rows, the LIMIT 1000 of its query: raise it, or the rows past it are dropped".format(this.result.records.length()))
+        } else { this.result.records.or([]) }
+        let placed = $rows.map_each(r -> {
+          "id": r.id.or("").string().trim(),
+          "name": r.name.or("").string().trim(),
+          "street": [r.street.or("").string().trim(), r.num.or("").string().trim()].filter(s -> s != "" && s != "9999").join(" "),
+          "district": r.district.or("").string().trim(),
+          "lon": r.lon.or("").string().trim().number().catch(null),
+          "lat": r.lat.or("").string().trim().number().catch(null)
+        })
+        let coded = $placed.filter(t -> t.id.re_match("^[0-9]{1,20}$") && t.name != "")
+        let pointed = $coded.filter(t -> t.lon != null && t.lat != null)
+        let inside = $pointed.filter(t -> t.lon >= $bbox.index(0) && t.lon <= $bbox.index(2) && t.lat >= $bbox.index(1) && t.lat <= $bbox.index(3))
+        # One tree per id, then per ~1 m cell: sorted, so a repeat sits beside its first.
+        let by_id = $inside.sort_by(t -> t.id)
+        let ids = $by_id.enumerated().filter(e -> e.index == 0 || $by_id.index(e.index - 1).id != e.value.id).map_each(e -> e.value)
+        let by_cell = $ids.map_each(t -> t.assign({ "cell": "%.5f %.5f".format(t.lon, t.lat) })).sort_by(t -> t.cell + " " + t.id)
+        let unique = $by_cell.enumerated().filter(e -> e.index == 0 || $by_cell.index(e.index - 1).cell != e.value.cell).map_each(e -> e.value)
+        root.dropped = {
+          "noIdOrName": $placed.length() - $coded.length(),
+          "noPoint": $coded.length() - $pointed.length(),
+          "outsideTheCity": $pointed.length() - $inside.length(),
+          "duplicateId": $inside.length() - $ids.length(),
+          "samePoint": $ids.length() - $unique.length()
+        }
+        root.trees = if $unique.length() == 0 { throw("the trees answer holds no tree") } else { $unique.map_each(t -> t.without("cell")) }
+    - log:
+        level: INFO
+        message: 'local trees: ${! json("trees").length() } written; dropped ${! json("dropped").format_json(no_indent: true) }'
+    - mapping: root = this.trees
+    - unarchive: { format: json_array }
+    - mapping: |
+        # The domain comes from the deployment, never from this file (PF-44); the run's clock is
+        # bcn_now when a test sets it.
+        let now = @bcn_now.or(now()).ts_parse("2006-01-02T15:04:05Z07:00").ts_unix()
+        root = {
+          "id": "urn:ngsi-ld:%v:%v:%v:local-tree-%v".format("PointOfInterest", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.id),
+          "type": "PointOfInterest",
+          "expiresAt": ($now + 21 * 86400).ts_format("2006-01-02T15:04:05Z", "UTC"),
+          "name": { "type": "Property", "value": this.name },
+          "category": { "type": "Property", "value": ["environment", "local-interest-tree"] },
+          "location": { "type": "GeoProperty", "value": {
+            "type": "Point", "coordinates": [(this.lon * 1000000).round() / 1000000, (this.lat * 1000000).round() / 1000000]
+          } },
+          "address": { "type": "Property", "value": {
+            "streetAddress": this.street,
+            "addressLocality": "Barcelona",
+            "district": this.district,
+            "addressCountry": "ES"
+          }.filter(entry -> entry.value != "") },
+          "source": { "type": "Property", "value": "https://opendata-ajuntament.barcelona.cat/data/dataset/arbres-interes-local" }
+        }

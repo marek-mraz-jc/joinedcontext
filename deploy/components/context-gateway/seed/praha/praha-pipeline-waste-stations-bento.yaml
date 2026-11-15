@@ -1,0 +1,25 @@
+# The mapping of the waste-stations pipeline (PL-03): one WasteContainerIsle per sorted-waste
+# collection point of the city (MHMP, published through the city geoportal), 5813 on 2026-09-25,
+# with the district it stands in by its RÚIAN code. The containers of each point are a second
+# layer of 23 455 rows and are not read here: the sensor-monitored ones and their fill level are
+# the `waste-fill` pipeline's, from Golemio. The id is the point's number in the waste register
+# (`0022/ 001` is `station-0022-001`, `0013/-001` is `station-0013--001`, both kinds exist), the
+# key Golemio shares; IPR's globalid is a row id of the geoportal layer that nobody else knows.
+
+pipeline:
+  processors:
+    - mapping: |
+        let access = { "volně": "public", "obyvatelům domu": "residents" }
+        root = this.features.or([]).filter(f -> f.geometry.or(null) != null && f.properties.stationnumber.or("").string().trim().lowercase().replace_all("/ ", "-").replace_all("/-", "--").re_match("^[0-9a-z-]+$")).map_each(f -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:station-%v".format("WasteContainerIsle", env("JC_ORG_DOMAIN"), env("JC_SPACE"), f.properties.stationnumber.string().trim().lowercase().replace_all("/ ", "-").replace_all("/-", "--")),
+          "type": "WasteContainerIsle",
+          "name": if f.properties.stationname.or("").trim() == "" { null } else { { "type": "LanguageProperty", "languageMap": { "cs": f.properties.stationname.trim() } } },
+          "stationCode": { "type": "Property", "value": f.properties.stationnumber.trim() },
+          "accessRestriction": if $access.get(f.properties.pristup.or("")) == null { null } else { { "type": "Property", "value": $access.get(f.properties.pristup) } },
+          "refDistrict": if !f.properties.citydistrictruiancode.or("").string().re_match("^[0-9]{6}$") { null } else {
+            { "type": "Relationship", "object": "urn:ngsi-ld:%v:%v:%v:district-%v".format("AdministrativeArea", env("JC_ORG_DOMAIN"), env("JC_SPACE"), f.properties.citydistrictruiancode.string()) }
+          },
+          "location": { "type": "GeoProperty", "value": f.geometry },
+          "dataProvider": { "type": "Property", "value": "datový podklad © IPR Praha (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://opendata.geoportalpraha.cz/" }
+        }.filter(entry -> entry.value != null))

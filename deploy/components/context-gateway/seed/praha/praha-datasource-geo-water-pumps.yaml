@@ -1,0 +1,15 @@
+# IPR Praha's geoportal item 39f6228757cf424889f79b0ef7a7b415 (Oázy chladu – pumpy), 95 records on 2026-10-23, served by its ArcGIS Hub
+# download as GeoJSON in WGS 84, as the toilets read theirs. No key. CC BY 4.0, "datový podklad © IPR Praha" (T-5269).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: ipr-geo-water-pumps
+  namespace: praha
+  title: { en: 'Cool spots: water pumps (IPR Praha)', cs: Oázy chladu – pumpy (IPR Praha) }
+spec:
+  type: http
+  http:
+    url: https://hub.arcgis.com/api/v3/datasets/39f6228757cf424889f79b0ef7a7b415_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

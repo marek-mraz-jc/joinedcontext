@@ -1,0 +1,17 @@
+# The monthly activity reports of the municipal police of Prague for 2025 per police unit, 9,152 figures (LKOD cc9dbd08).
+# No key. CC0: the catalogue names no author's work, no database right and no personal data.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: mp-utvary
+  namespace: praha
+  title:
+    en: Municipal police monthly activity reports by unit 2025 (Městská policie hl. m. Prahy)
+    cs: Měsíční zprávy o činnosti Městské policie hl. m. Prahy 2025 podle útvarů
+spec:
+  type: http
+  http:
+    url: https://mppraha.cz/opendata/cinnost/mesicni_zpravy_za_rok_podle_utvaru_2025.json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

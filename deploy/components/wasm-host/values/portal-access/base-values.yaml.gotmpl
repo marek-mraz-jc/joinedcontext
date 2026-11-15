@@ -1,0 +1,12 @@
+shards: {{ index .Values "apps-db" "cluster" "shards" | default 2 }}
+{{- if has "jc" .Values.components }}
+portal:
+  # jc carries the Portal: its pod's ServiceAccount is jc's (fullnameOverride of jc.server).
+  serviceAccount: jc
+  namespace: {{ .Values.jc.server.namespace | quote }}
+{{- else if has "portal" .Values.components }}
+portal:
+  # fullnameOverride of the portal part names its ServiceAccount.
+  serviceAccount: portal
+  namespace: {{ .Values.portal.portal.namespace | quote }}
+{{- end }}

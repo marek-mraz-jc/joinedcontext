@@ -1,0 +1,30 @@
+---
+basemap:
+  tiles:
+    # Rendered only where the environment lists the component (dev, T-4638): the extract is
+    # gigabytes on the node's disk.
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "basemap") }}
+    # The first of the month, 03:00 UTC. A failed run keeps the old file; dev-smoke fails once
+    # the file is older than 40 days.
+    schedule: '0 3 1 * *'
+    # One file of every region below, the deepest zoom Protomaps builds. Slovakia, Czechia and
+    # Finland at z15 measured 5.0 GB on the 2026-10-17 build (z14: 2.7 GB); one combined
+    # bounding box would have been 14 GB, three files would need three sources in the style.
+    file: basemap.pmtiles
+    maxzoom: 15
+    # [west, south, east, north] per region; later each catalogue instance names its own (T-4636).
+    regions:
+      sk: [16.83, 47.73, 22.57, 49.62]
+      cz: [12.09, 48.55, 18.86, 51.06]
+      fi: [20.55, 59.45, 31.59, 70.09]
+    # The volume holds the file and, during a refresh, its successor beside it.
+    storage: 12Gi
+    builds: https://build.protomaps.com
+    pmtiles:
+      version: 1.31.2
+      sha256: 3ed7dbf4ec2e6dfe5e25b6f70d1ffc932729f93c86db353bf514dd71010a312f
+    # protomaps/basemaps-assets at a commit: the fonts (Noto Sans) and sprites the style names.
+    assets:
+      commit: 028c18f713baecad011301ff7a69acc39bcc2ae7
+      sha256: 57e40e8c512bd8042d0a3a251f19d0d1c8523ad963c666c3c6643bada4dc92d0

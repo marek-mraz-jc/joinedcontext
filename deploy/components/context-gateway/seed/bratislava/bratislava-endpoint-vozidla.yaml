@@ -1,0 +1,54 @@
+# One catalogue dataset (T-4344, T-5273): the vehicle- entities of TrafficFlowObserved of the space bratislava, read through
+# its own Policy, which narrows the space's public read to them.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-vozidla
+  namespace: bratislava
+  title: { sk: Vozidlá podľa sčítačov — Bratislava, en: Vehicle counts — Bratislava }
+  description:
+    sk: >-
+      Motorové vozidlá, ktoré mestské sčítače dopravy napočítali za uplynulý deň, podľa sčítača a smeru; každý deň zostáva v histórii entity. Typ Smart Data Models TrafficFlowObserved (laneDirection forward k prvému menovanému smeru). Vynechané sú sčítače bez polohy, mimo Bratislavy, zopakované, s nulou celý deň (sčítač bez daného senzora) a hodiny mimo rozsahu. Zdroj: Hlavné mesto SR Bratislava, CC BY 4.0.
+    en: >-
+      The motor vehicles the city's counter sites counted the day before, per site and direction; each day stays in the entity's history. Smart Data Models type TrafficFlowObserved (laneDirection forward towards the first named direction). Left out: sites without a position, outside Bratislava, repeated ones, sites at 0 all day (a site without that sensor) and hours out of range. Source: City of Bratislava, CC BY 4.0.
+spec:
+  contextSpaceRef: bratislava
+  slug: ajzj3wxn6infhs6ykwjqppxkr4vwpmh3
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-vozidla
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+      license: cc-by
+  catalog:
+    # The publisher is the Project's spec.catalog (T-4596). Counts and stations: no record names a person.
+    personalData: does-not-contain
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [TRAN]
+    keywords:
+      sk: [Bratislava, doprava, sčítanie dopravy]
+      en: [Bratislava, traffic, traffic counts]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: DAILY
+    source:
+      - url: https://services8.arcgis.com/pRlN1m0su5BYaFAS/arcgis/rest/services/vozidla_00/FeatureServer/0
+        title:
+          sk: Počet prejazdov vozidiel podľa sčítačov za hodinu
+          en: Vehicles per counter site and hour
+        description:
+          sk: 'Vrstva ArcGIS Feature Service, ktorú data.bratislava.sk publikuje ako dataset: Počet prejazdov vozidiel podľa sčítačov za hodinu. Licencia CC BY 4.0.'
+          en: 'The ArcGIS Feature Service layer data.bratislava.sk publishes as the dataset: Vehicles per counter site and hour. Licence CC BY 4.0.'
+      - url: https://data.bratislava.sk/datasets/7b5628f9234a461e8becfa37665290b3
+        title:
+          sk: Počet prejazdov vozidiel podľa sčítačov za hodinu (data.bratislava.sk)
+          en: Vehicles per counter site and hour (data.bratislava.sk)
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Počet prejazdov vozidiel podľa sčítačov za hodinu. Licencia CC BY 4.0.'
+          en: 'A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Vehicles per counter site and hour. Licence CC BY 4.0.'
+    pipelineRef: { kind: Pipeline, name: counters }

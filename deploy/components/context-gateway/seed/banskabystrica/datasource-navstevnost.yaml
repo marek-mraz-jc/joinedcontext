@@ -1,0 +1,16 @@
+# Visitors and overnight stays in the city's accommodation per month, total, domestic and foreign, 2017 on. Monthly, published with about two months' delay. No key, CC-BY-SA-4.0 (NKOD, the cr38 distribution family).
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: susr-cr3803mr
+  namespace: banskabystrica
+  title:
+    sk: Návštevnosť ubytovacích zariadení v obciach (ŠÚ SR, cr3803mr)
+    en: Visitors to accommodation in municipalities (ŠÚ SR, cr3803mr)
+spec:
+  type: http
+  http:
+    url: https://data.statistics.sk/api/v2/dataset/cr3803mr/SK0321508438/*/1.,2.,3.,4.,5.,6.,7.,8.,9.,10.,11.,12./U_CR_0005,U_CR_0008/VISIT_TOTAL,VISIT_DOM,VISIT_FOR?lang=sk&type=json
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 30s

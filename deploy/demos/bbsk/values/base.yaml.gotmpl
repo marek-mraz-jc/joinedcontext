@@ -1,0 +1,14 @@
+{{- $pg := (readFile "../../../components/postgres/images.yaml" | fromYaml).postgres.cluster }}
+{{- $nginx := (readFile "../../../components/basemap/images.yaml" | fromYaml).basemap.tiles.server }}
+host: {{ .Values.host }}
+ckanService: ckan-demo-bbsk
+postgres:
+  image: {{ printf "%s:%s@%s" $pg.repository $pg.tag $pg.digest }}
+domain: {{ .Values.domain }}
+landing:
+  image: {{ printf "%s:%s@%s" $nginx.repository $nginx.tag $nginx.digest }}
+  # The catalogue's own dock (T-4685), the same files, so the page docks the assistant as the
+  # catalogue does and a fix there reaches the demo with the next apply.
+  scripts:
+    jc-dock.js: {{ readFile "../../../charts/ckan/files/jc_theme/public__jc-dock.js" | toJson }}
+    jc-assistant.js: {{ readFile "../../../charts/ckan/files/jc_theme/public__jc-assistant.js" | toJson }}

@@ -1,0 +1,49 @@
+# One catalogue dataset (T-4344, T-5273): BikeHireDockingStation of the space bratislava, read through
+# its own Policy, which narrows the space's public read to them.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-bajk
+  namespace: bratislava
+  title:
+    sk: Zdieľané bicykle Slovnaft BAjk — Bratislava
+    en: Slovnaft BAjk shared bikes — Bratislava
+  description:
+    sk: >-
+      Stanice zdieľaných bicyklov Slovnaft BAjk v Bratislave s počtom voľných bicyklov, obnovované každých päť minút. Typ Smart Data Models BikeHireDockingStation. Vynechané sú stanice bez polohy, mimo Bratislavy a zopakované. Zdroj: nextbike, GBFS, CC0 1.0.
+    en: >-
+      The Slovnaft BAjk shared-bike stations in Bratislava with the bikes free, refreshed every five minutes. Smart Data Models type BikeHireDockingStation. Left out: stations without a position, outside Bratislava and repeated ones. Source: nextbike, GBFS, CC0 1.0.
+spec:
+  contextSpaceRef: bratislava
+  slug: gw7l2bre2oeo4vj4ghhghnyiefiauh2f
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-bajk
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+      license: cc-zero
+  catalog:
+    # The publisher is the Project's spec.catalog (T-4596). Counts and stations: no record names a person.
+    personalData: does-not-contain
+    license: CC0
+    attribution:
+      sk: 'Zdroj: nextbike, Slovnaft BAjk (CC0 1.0)'
+      en: 'Source: nextbike, Slovnaft BAjk (CC0 1.0)'
+    themes: [TRAN]
+    keywords:
+      sk: [Bratislava, zdieľané bicykle, Slovnaft BAjk]
+      en: [Bratislava, bike sharing, Slovnaft BAjk]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: CONT
+    source:
+      - url: https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_bi/gbfs.json
+        title:
+          sk: Slovnaft BAjk, GBFS (nextbike Bratislava)
+          en: Slovnaft BAjk, GBFS (nextbike Bratislava)
+        description:
+          sk: Stanice zdieľaných bicyklov Slovnaft BAjk a ich obsadenosť vo formáte GBFS od prevádzkovateľa nextbike, CC0 1.0.
+          en: The Slovnaft BAjk shared-bike stations and what they hold, as GBFS from the operator nextbike, CC0 1.0.
+    pipelineRef: { kind: Pipeline, name: bike-availability }

@@ -1,0 +1,22 @@
+# One KeyPerformanceIndicator per (indicator, area) of the city's statistics on Open Data BCN: the
+# Padró, the cadastre, the notaries' sales and the vehicle register, for each barri, district and
+# the whole city (T-5266). Which tables, and why, is in the mapping and in the task's matrix.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: statistics
+  namespace: barcelona
+  title:
+    ca: Estadístiques de Barcelona per barris
+    es: Estadísticas de Barcelona por barrios
+    en: Barcelona statistics by neighbourhood
+spec:
+  class: auto
+  # Yearly and monthly tables, each published on its own day: a daily read finds a new period
+  # within a day and writes no history row when nothing changed (record: onChange).
+  schedule: '40 5 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-statistics-dimensions }
+  targetEndpoint: urn:ngsi-ld:Endpoint:barcelona.cat:barcelona:barcelona
+  output: { type: KeyPerformanceIndicator, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

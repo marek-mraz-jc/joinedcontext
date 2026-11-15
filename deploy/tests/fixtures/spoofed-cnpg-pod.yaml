@@ -1,0 +1,30 @@
+# A workload that is not CloudNativePG claiming the labels NetworkPolicies use to
+# authorize PostgreSQL access.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: spoofed-postgres
+  namespace: dev
+  labels:
+    app.kubernetes.io/name: postgresql
+    cnpg.io/jobRole: initdb
+spec:
+  containers:
+    - name: shell
+      image: busybox:1.38
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: spoofed-postgres-job
+  namespace: dev
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgresql
+        cnpg.io/jobRole: initdb
+    spec:
+      containers:
+        - name: shell
+          image: busybox:1.38

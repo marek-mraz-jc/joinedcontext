@@ -1,0 +1,1553 @@
+{
+  "$id": "https://joinedcontext.com/models/bratislava/bratislava",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": true,
+  "definitions": {
+    "AdministrativeArea": {
+      "additionalProperties": false,
+      "description": "One of the 17 city districts (mestsk\u00e9 \u010dasti) of Bratislava, its outline and its Z\u00daJ code, as the Smart Data Model extension AdministrativeArea (PointOfInterest base).",
+      "properties": {
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "districtCode": {
+          "description": "The district's Z\u00daJ code (z\u00e1kladn\u00e1 \u00fazemn\u00e1 jednotka), the key the national registers use.",
+          "pattern": "^5[0-9]{5}$",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name of the station, counter site, stop, line, district, place or indicator as its publisher writes it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The hub page or open-data service of the dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "districtCode",
+        "id",
+        "type"
+      ],
+      "title": "AdministrativeArea",
+      "type": "object"
+    },
+    "AirQualityObserved": {
+      "additionalProperties": false,
+      "description": "One air-quality station of Bratislava and its PM10 mean.",
+      "properties": {
+        "dateObserved": {
+          "description": "The end of the period the entity's reading covers, UTC.",
+          "format": "date-time",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name of the station, counter site, stop, line, district, place or indicator as its publisher writes it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "pm10": {
+          "description": "Particulate matter up to 10 \u00b5m, the period's mean at the station.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "ug/m3"
+          }
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "dateObserved",
+        "id",
+        "type"
+      ],
+      "title": "AirQualityObserved",
+      "type": "object"
+    },
+    "BikeHireDockingStation": {
+      "additionalProperties": false,
+      "description": "One Slovnaft BAjk station of nextbike's Bratislava system and what it holds right now.",
+      "properties": {
+        "availableBikeNumber": {
+          "description": "Bikes ready to rent at the station right now.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateModified": {
+          "description": "When the station last reported the values beside it.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "freeSlotNumber": {
+          "description": "Empty docks a bike can be returned to right now.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name of the station, counter site, stop, line, district, place or indicator as its publisher writes it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The hub page or open-data service of the dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StationStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Whether the station rents bikes right now.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "totalSlotNumber": {
+          "description": "The number of docks the station has, where the feed names one.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "BikeHireDockingStation",
+      "type": "object"
+    },
+    "CoachStopCategory": {
+      "description": "The OnStreetParking `category` values the city's tourist coach stops map to, a subset of the Smart Data Model's enum.",
+      "enum": [
+        "shortTerm",
+        "mediumTerm"
+      ],
+      "title": "CoachStopCategory",
+      "type": "string",
+      "x-enum-descriptions": {
+        "mediumTerm": "A long-term stop where a coach waits (the Smart Data Model has no longer term).",
+        "shortTerm": "A short-term stop: passengers get on and off."
+      }
+    },
+    "CountedVehicleType": {
+      "description": "The kinds of vehicle a city counter tells apart, a subset of Smart Data Models' vehicleType.",
+      "enum": [
+        "bicycle"
+      ],
+      "title": "CountedVehicleType",
+      "type": "string",
+      "x-enum-descriptions": {
+        "bicycle": "A bicycle, as the city's counter sites count it."
+      }
+    },
+    "CrowdFlowObserved": {
+      "additionalProperties": false,
+      "description": "One day of one of the city's counter sites: the pedestrians it counted, each direction apart.",
+      "properties": {
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateObserved": {
+          "description": "The end of the period the entity's reading covers, UTC.",
+          "format": "date-time",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateObservedFrom": {
+          "description": "The start of the counted day, the Bratislava midnight that opens it, UTC.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateObservedTo": {
+          "description": "The end of the counted day, the Bratislava midnight that closes it, UTC.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name of the station, counter site, stop, line, district, place or indicator as its publisher writes it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "peopleCount": {
+          "description": "The pedestrians the counter site detected in the day, both directions.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "/d"
+          }
+        },
+        "peopleCountAway": {
+          "description": "The pedestrians of the day walking towards the second place the counter names (SMER_Z).",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "/d"
+          }
+        },
+        "peopleCountTowards": {
+          "description": "The pedestrians of the day walking towards the place the counter names first (SMER_DO).",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "/d"
+          }
+        },
+        "source": {
+          "description": "The hub page or open-data service of the dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "dateObserved",
+        "id",
+        "type"
+      ],
+      "title": "CrowdFlowObserved",
+      "type": "object"
+    },
+    "Entity": {
+      "additionalProperties": false,
+      "description": "The root every NGSI-LD entity class specialises.",
+      "properties": {
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "Entity",
+      "type": "object"
+    },
+    "GtfsAgency": {
+      "additionalProperties": false,
+      "description": "The transit agency DPB's GTFS timetable names, Dopravn\u00fd podnik Bratislava itself.",
+      "properties": {
+        "agencyName": {
+          "description": "The transit agency's full name.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "language": {
+          "description": "The agency's main language, a two-letter code.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "page": {
+          "description": "The publisher's web page about it.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "phone": {
+          "description": "The agency's public customer service number.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The hub page or open-data service of the dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "timezone": {
+          "description": "The agency's time zone, an IANA name such as Europe/Bratislava.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "GtfsAgency",
+      "type": "object"
+    },
+    "GtfsRoute": {
+      "additionalProperties": false,
+      "description": "One DPB line as its GTFS timetable gives it, every variant, with its number, what runs it, its colour and the agency.",
+      "properties": {
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "operatedBy": {
+          "description": "The agency that runs the line.",
+          "pattern": "^urn:ngsi-ld:GtfsAgency:",
+          "type": "string",
+          "x-ngsi-ld-kind": "Relationship",
+          "x-ngsi-ld-relationship": {
+            "cardinality": "many-to-one",
+            "inverse": "routes",
+            "onDelete": "restrict",
+            "target": "GtfsAgency",
+            "unique": false
+          }
+        },
+        "routeColor": {
+          "description": "The line's colour on DPB's maps and signs, six hexadecimal digits without the hash (F56200).",
+          "pattern": "^[0-9A-F]{6}$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "routeType": {
+          "description": "GTFS's basic route type: 0 a tram, 3 a bus. A trolleybus (GTFS 11, which Smart Data Models' list lacks) is written as 3, and transportMode says trolleybus.",
+          "pattern": "^[0-7]$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "shortName": {
+          "description": "The line number riders see, such as 4, 40 or N29.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The hub page or open-data service of the dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "transportMode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TransportMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What runs the line.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "GtfsRoute",
+      "type": "object"
+    },
+    "GtfsStop": {
+      "additionalProperties": false,
+      "description": "One platform of a DPB stop (GTFS stop of location type 0): its name, the stop number and platform letter on its sign, its fare zone and where it is. The lines stopping there come through trips.txt and stop_times.txt, which are not read.",
+      "properties": {
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name of the station, counter site, stop, line, district, place or indicator as its publisher writes it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "platformCode": {
+          "description": "The platform letter of a stop (A, B), as the sign shows it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The hub page or open-data service of the dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "stopCode": {
+          "description": "The number DPB gives a stop, shared by its platforms (93 for every platform of Hlavn\u00e1 stanica).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "zoneCode": {
+          "description": "The fare zone of the Bratislava integrated transport system the stop lies in (100 the city core, 101 the rest of the city).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "GtfsStop",
+      "type": "object"
+    },
+    "KeyPerformanceIndicator": {
+      "additionalProperties": false,
+      "description": "One figure of one hub table for one city district and one period: a count, a rate or an area, such as the offences the city police recorded in Nov\u00e9 Mesto in 2025.",
+      "properties": {
+        "area": {
+          "description": "The city district the figure describes, by its name.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "calculationFrequency": {
+          "description": "How often the hub publishes the figure (yearly, quarterly, every five years).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "calculationPeriod": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/KpiPeriod"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The period the figure covers, its first and last day.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "category": {
+          "description": "The kind of place (its table's code first, then the table's own word, such as `barrier-free`, `Kult\u00fara, kostoly`), or of indicator (`quantitative`).",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "description": {
+          "description": "What the place offers or how it is reached, or the hub table an indicator comes from.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "kpiValue": {
+          "description": "The figure for the district and period, as the hub's table states it.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name of the station, counter site, stop, line, district, place or indicator as its publisher writes it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "organization": {
+          "description": "The body the figure describes, the City of Bratislava.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "process": {
+          "description": "What the indicator counts or measures, in the hub's words, with its unit.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The hub page or open-data service of the dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "KeyPerformanceIndicator",
+      "type": "object"
+    },
+    "KpiPeriod": {
+      "additionalProperties": false,
+      "description": "The value of `calculationPeriod`, never an entity of its own.",
+      "properties": {
+        "from": {
+          "description": "The first day of the period.",
+          "format": "date",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "to": {
+          "description": "The last day of the period.",
+          "format": "date",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "title": "KpiPeriod",
+      "type": "object"
+    },
+    "LaneDirection": {
+      "description": "",
+      "enum": [
+        "forward",
+        "backward"
+      ],
+      "title": "LaneDirection",
+      "type": "string",
+      "x-enum-descriptions": {
+        "backward": "Towards the second place the counter names, or against a one-way street.",
+        "forward": "Towards the first place the counter names."
+      }
+    },
+    "OnStreetParking": {
+      "additionalProperties": false,
+      "description": "One tourist coach stop of the city's list (data.bratislava.sk), placed by its name with OpenStreetMap; the list carries no coordinates.",
+      "properties": {
+        "allowedVehicleType": {
+          "description": "What may stop there; a tourist coach stop of the city's list is for coaches (bus).",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "category": {
+          "description": "The kind of place (its table's code first, then the table's own word, such as `barrier-free`, `Kult\u00fara, kostoly`), or of indicator (`quantitative`).",
+          "items": {
+            "$ref": "#/definitions/CoachStopCategory"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "description": {
+          "description": "What the place offers or how it is reached, or the hub table an indicator comes from.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name of the station, counter site, stop, line, district, place or indicator as its publisher writes it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The hub page or open-data service of the dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "totalSpotNumber": {
+          "description": "The coach places of a long-term stop as the city's list counts them.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "OnStreetParking",
+      "type": "object"
+    },
+    "PointOfInterest": {
+      "additionalProperties": false,
+      "description": "One place a resident goes to: a barrier-free place, a lifelong-learning provider, a needle drop point or a service for homeless people, with its own coordinates from the hub.",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PostalAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Smart Data Models PostalAddress of the place, its street, district and city.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "category": {
+          "description": "The kind of place (its table's code first, then the table's own word, such as `barrier-free`, `Kult\u00fara, kostoly`), or of indicator (`quantitative`).",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "description": {
+          "description": "What the place offers or how it is reached, or the hub table an indicator comes from.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name of the station, counter site, stop, line, district, place or indicator as its publisher writes it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The hub page or open-data service of the dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "url": {
+          "description": "The place's own web page.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "PointOfInterest",
+      "type": "object"
+    },
+    "PostalAddress": {
+      "additionalProperties": false,
+      "description": "The value of `address`: a postal address, never an entity of its own (Smart Data Models' common schema).",
+      "properties": {
+        "addressCountry": {
+          "description": "The country, as an ISO 3166-1 alpha-2 code.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "addressLocality": {
+          "description": "The city, Bratislava.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "district": {
+          "description": "The city district (mestsk\u00e1 \u010das\u0165) as the publisher writes it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "streetAddress": {
+          "description": "The street and number as the publisher writes them.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "title": "PostalAddress",
+      "type": "object"
+    },
+    "StationStatus": {
+      "description": "",
+      "enum": [
+        "working",
+        "outOfService"
+      ],
+      "title": "StationStatus",
+      "type": "string",
+      "x-enum-descriptions": {
+        "outOfService": "The station neither rents nor takes back bikes right now.",
+        "working": "The station rents bikes and takes them back."
+      }
+    },
+    "TrafficFlowObserved": {
+      "additionalProperties": false,
+      "description": "One day of one of the city's counter sites in one direction: the cyclists or the motor vehicles it counted, from the hub's hourly tables. The site's name and place ride on the observation; the history of the days is the entity's temporal history.",
+      "properties": {
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateObserved": {
+          "description": "The end of the period the entity's reading covers, UTC.",
+          "format": "date-time",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateObservedFrom": {
+          "description": "The start of the counted day, the Bratislava midnight that opens it, UTC.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateObservedTo": {
+          "description": "The end of the counted day, the Bratislava midnight that closes it, UTC.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "intensity": {
+          "description": "How many bicycles, or motor vehicles, the counter site detected in the day in one direction.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "/d"
+          }
+        },
+        "laneDirection": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LaneDirection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The direction the counted traffic travels: forward towards the place the city's counter names first (SMER_DO), backward towards the second (SMER_Z, or against a one-way street).",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The name of the station, counter site, stop, line, district, place or indicator as its publisher writes it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The hub page or open-data service of the dataset the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "vehicleType": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CountedVehicleType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The one kind of vehicle the observation counts; absent when the site sums every motor vehicle.",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "dateObserved",
+        "id",
+        "type"
+      ],
+      "title": "TrafficFlowObserved",
+      "type": "object"
+    },
+    "TransportMode": {
+      "description": "",
+      "enum": [
+        "tram",
+        "bus",
+        "trolleybus"
+      ],
+      "title": "TransportMode",
+      "type": "string",
+      "x-enum-descriptions": {
+        "bus": "Bus (GTFS route type 3).",
+        "tram": "Tram (GTFS route type 0).",
+        "trolleybus": "Trolleybus (GTFS route type 11)."
+      }
+    }
+  },
+  "metamodel_version": "1.12.0",
+  "title": "bratislava",
+  "type": "object",
+  "version": null,
+  "x-generator-version": "linkml-1.12.0"
+}

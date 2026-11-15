@@ -1,0 +1,165 @@
+# The city amenities of the IPR Praha geoportal (T-5269): health centres, universities, places of
+# worship, community centres, accommodation, grocery stores, cool spots (drinking fountains,
+# fountains, springs, pumps, mist showers, places to swim), animal corners, landmarks, hazardous and
+# bio-waste collection points and nature trail stops,
+# PointOfInterest of the space praha-mesto read through its own Policy, which narrows the public
+# read to the geo- ids.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-vybavenost
+  namespace: praha
+  title:
+    cs: Občanská vybavenost a oázy chladu — Praha
+    en: City amenities and cool spots — Prague
+  description:
+    cs: 'Polikliniky, vysoké školy, sakrální objekty, kulturně komunitní centra, ubytování, prodejny potravin, pítka, fontány, studánky, pumpy, mlžítka, místa ke koupání, zookoutky, významné stavby, sběrná místa nebezpečných a bioodpadů a zastávky naučných stezek: poloha, adresa a web. Zdroj: IPR Praha, CC BY 4.0.'
+    en: 'Polyclinics, universities, places of worship, community centres, accommodation, grocery stores, drinking fountains, fountains, springs, pumps, mist showers, places to swim, animal corners, notable buildings, hazardous and bio-waste collection points and nature trail stops: location, address and web page. Source: IPR Praha, CC BY 4.0.'
+spec:
+  contextSpaceRef: praha-mesto
+  slug: clzdywmfngd752m3hgg33aufkgfvqvj7
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-vybavenost
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-by
+  catalog:
+    # Public places by address; the animal corners' contact person, e-mail and phone are not read.
+    personalData: does-not-contain
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC_BY_4_0
+    attribution:
+      cs: 'Zdroj: datový podklad © IPR Praha (CC BY 4.0)'
+      en: 'Source: data © IPR Praha (CC BY 4.0)'
+    themes: [HEAL, EDUC, SOCI, ENVI]
+    keywords:
+      cs:
+        - Praha
+        - zdravotnictví
+        - vysoké školy
+        - kostely
+        - komunitní centra
+        - ubytování
+        - obchody
+        - oázy chladu
+        - pítka
+        - památky
+      en:
+        - Prague
+        - health care
+        - universities
+        - churches
+        - community centres
+        - accommodation
+        - shops
+        - cool spots
+        - drinking fountains
+        - landmarks
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: WEEKLY
+    source:
+      - url: https://hub.arcgis.com/api/v3/datasets/3fbd520692be4ac889550cf7c5137282_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Polikliniky a zdravotní střediska (IPR Praha)
+          en: Polyclinics and health centres (IPR Praha)
+        description:
+          cs: Polikliniky a zdravotní střediska z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Polyclinics and health centres from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/28a9425f2ee748328fc5346030de2d83_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Vysoké školy (IPR Praha), en: Universities (IPR Praha) }
+        description:
+          cs: Vysoké školy z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Universities from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/47befb94777e42808f9934f60768072b_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Sakrální objekty (IPR Praha), en: Places of worship (IPR Praha) }
+        description:
+          cs: Sakrální objekty z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Places of worship from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/c0bca952f09d44b0bf38885f499ad59d_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Kulturně komunitní centra (IPR Praha)
+          en: Cultural and community centres (IPR Praha)
+        description:
+          cs: Kulturně komunitní centra z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Cultural and community centres from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/81c543a1199e46da87e18e12125e29a3_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Ubytovací zařízení (IPR Praha), en: Accommodation (IPR Praha) }
+        description:
+          cs: Ubytovací zařízení z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Accommodation from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/97a5ee3b3d0c4e27b423f28daeb84e67_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Potravinářské plnosortimentní prodejny (IPR Praha)
+          en: Grocery stores (IPR Praha)
+        description:
+          cs: Potravinářské plnosortimentní prodejny z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Grocery stores from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/ae0ef46774394e09a91850fb9b826788_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Oázy chladu – pítka (IPR Praha)
+          en: 'Cool spots: drinking fountains (IPR Praha)'
+        description:
+          cs: Oázy chladu – pítka z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: 'Cool spots: drinking fountains from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.'
+      - url: https://hub.arcgis.com/api/v3/datasets/3d3add84fb784ed297725c566f149a51_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Oázy chladu – kašny, fontány (IPR Praha)
+          en: 'Cool spots: fountains (IPR Praha)'
+        description:
+          cs: Oázy chladu – kašny, fontány z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: 'Cool spots: fountains from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.'
+      - url: https://hub.arcgis.com/api/v3/datasets/8aabe75c9689487a88d3e297bf498d6a_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Oázy chladu – studánky, prameny (IPR Praha)
+          en: 'Cool spots: wells and springs (IPR Praha)'
+        description:
+          cs: Oázy chladu – studánky, prameny z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: 'Cool spots: wells and springs from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.'
+      - url: https://hub.arcgis.com/api/v3/datasets/39f6228757cf424889f79b0ef7a7b415_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Oázy chladu – pumpy (IPR Praha), en: 'Cool spots: water pumps (IPR Praha)' }
+        description:
+          cs: Oázy chladu – pumpy z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: 'Cool spots: water pumps from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.'
+      - url: https://hub.arcgis.com/api/v3/datasets/33eadb4efd7944adb3abf5cb77b40c06_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Oázy chladu – mlžítka (IPR Praha), en: 'Cool spots: mist showers (IPR Praha)' }
+        description:
+          cs: Oázy chladu – mlžítka z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: 'Cool spots: mist showers from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.'
+      - url: https://hub.arcgis.com/api/v3/datasets/8d435d33cd5d431cbaeda5837b3d3a77_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Oázy chladu – místa ke koupání (IPR Praha)
+          en: 'Cool spots: places to swim (IPR Praha)'
+        description:
+          cs: Oázy chladu – místa ke koupání z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: 'Cool spots: places to swim from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.'
+      - url: https://hub.arcgis.com/api/v3/datasets/e332ec5438b645b6a08a54a0da1accd6_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Zookoutky, farmy a záchranné stanice (IPR Praha)
+          en: Petting zoos, farms and rescue stations (IPR Praha)
+        description:
+          cs: Zookoutky, farmy a záchranné stanice z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Petting zoos, farms and rescue stations from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/fb6ab7891a7244f39a3a380027af2981_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Významné stavby a místa (IPR Praha)
+          en: Notable buildings and places (IPR Praha)
+        description:
+          cs: Významné stavby a místa z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Notable buildings and places from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/176f314a9ded40ef88ce55a2ed401c2e_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title:
+          cs: Shromažďovací místa nebezpečných a bioodpadů (IPR Praha)
+          en: Hazardous and bio-waste collection points (IPR Praha)
+        description:
+          cs: Odpadní zařízení pro občany z geoportálu IPR Praha bez sběrných dvorů, CC BY 4.0, datový podklad © IPR Praha.
+          en: Waste facilities for residents from the IPR Praha geoportal without the collection yards, CC BY 4.0, data © IPR Praha.
+      - url: https://hub.arcgis.com/api/v3/datasets/bed7894d358a4d08b640c972e844d7f3_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+        title: { cs: Naučné stezky – zastávky (IPR Praha), en: Nature trail stops (IPR Praha) }
+        description:
+          cs: Zastávky naučných stezek odboru ochrany prostředí MHMP z geoportálu IPR Praha, CC BY 4.0, datový podklad © IPR Praha.
+          en: Stops of the City of Prague's nature trails from the IPR Praha geoportal, CC BY 4.0, data © IPR Praha.

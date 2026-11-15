@@ -1,0 +1,23 @@
+{{- range $app, $files := .Values.apps }}
+{{- if $.Values.rewrites }}
+{{- $out := dict }}
+{{- range $key, $text := $files }}
+{{- range $.Values.rewrites }}{{ $text = regexReplaceAll .from $text .to }}{{ end }}
+{{- $_ := set $out $key $text }}
+{{- end }}
+{{- $files = $out }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $.Values.configMaps }}-{{ $app }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: sample-apps
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    helm.sh/chart: {{ printf "%s-%s" $.Chart.Name $.Chart.Version }}
+data:
+  {{- toYaml $files | nindent 2 }}
+{{- end }}

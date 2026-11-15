@@ -1,0 +1,32 @@
+---
+{{- $global := .Values.global }}
+# Checklist:
+# - [x] Minimal Resources
+# - [x] Minimal storage -> stateless broker pods
+# - [x] 1 Replica
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    # T-4473: dev, kubectl top 2026-10-17 21:22-22:22Z: median 368, peak 591Mi.
+    memory: 448Mi
+  limits:
+    cpu: '1'
+    # 1Gi: a Load take's pipeline upserts 4 000 vehicles per poll, and at 512Mi the broker was
+    # OOM-killed six seconds after each restart while the runner replayed its batches. At 1Gi
+    # it was killed again on 2026-09-25 at 14:20Z with every seeded pipeline running.
+    memory: 1536Mi
+
+env:
+  # One 2Gi Postgres carries every database here, and each connection holds about 19MiB of its
+  # own (T-4933): the base pool of 40 was 760MiB of it, and Postgres was OOMKilled nine times when
+  # shared_buffers grew beside it. 22 is nearly three times the 8 statements dev ran at once
+  # under the night load; a pool that runs dry pages through antares_pg_pool_timeouts_total.
+  # 16, not 22: with max_connections 50 (3 kept for superusers) the other databases held 24 and
+  # Postgres refused Gitea's token lookups (53300, 124 times in 30 min on 2026-10-21 05:2xZ), so
+  # every Gitea token answered 401 and a new Portal never finished its first sync. Every
+  # client's ceiling is counted in tests/test_postgres_connection_budget.py. 13 since the
+  # assistant's pool grew to 10 (T-5780, 2026-10-26).
+  ANTARES_PG_POOL: "13"

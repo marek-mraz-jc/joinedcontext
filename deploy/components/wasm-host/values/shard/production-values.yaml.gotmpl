@@ -1,0 +1,7 @@
+---
+# Two replicas per shard and a budget that keeps one up through a drain: an App's API answers
+# from its shard alone.
+replicaCount: 2
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1

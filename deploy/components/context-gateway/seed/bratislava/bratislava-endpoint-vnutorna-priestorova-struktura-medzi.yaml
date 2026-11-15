@@ -1,0 +1,44 @@
+# Internal spatial structure between Bratislava's city districts, 2001-2051 (%): one public dataset of the hub (T-5274), item 44905e2fbe5145e2850c106db4fac7e7, written by the statistics pipeline.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: bratislava-vnutorna-priestorova-struktura-medzi
+  namespace: bratislava
+  title:
+    sk: Vnútorná priestorová štruktúra medzi mestskými časťami Bratislavy v rokoch 2001 - 2051 (v %)
+    en: Internal spatial structure between Bratislava's city districts, 2001-2051 (%)
+  description:
+    sk: 'Ukazovatele tabuľky „Vnútorná priestorová štruktúra medzi mestskými časťami Bratislavy v rokoch 2001 - 2051 (v %)“ z data.bratislava.sk, jeden na mestskú časť, obdobie a údaj, ako KeyPerformanceIndicator. Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0.'
+    en: "The figures of the data.bratislava.sk table “Internal spatial structure between Bratislava's city districts, 2001-2051 (%)”, one per city district, period and figure, as KeyPerformanceIndicator. Source: City of Bratislava, data.bratislava.sk, CC BY 4.0."
+spec:
+  contextSpaceRef: bratislava
+  slug: sbxbfumjxeg3jgjcyegvyf2nxlgnpsey
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:bratislava.sk:bratislava:public-vnutorna-priestorova-struktura-medzi
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: bratislava }
+  catalog:
+    publisher:
+      name: { sk: Hlavné mesto SR Bratislava, en: City of Bratislava }
+      uri: https://data.gov.sk/id/legal-subject/00603481
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Hlavné mesto SR Bratislava, data.bratislava.sk, CC BY 4.0'
+      en: 'Source: City of Bratislava (Hlavné mesto SR Bratislava), data.bratislava.sk, CC BY 4.0'
+    themes: [SOCI]
+    spatial:
+      - SK010
+      - https://sws.geonames.org/3060972/
+    frequency: ANNUAL
+    source:
+      - url: https://data.bratislava.sk/datasets/44905e2fbe5145e2850c106db4fac7e7
+        title:
+          sk: Vnútorná priestorová štruktúra medzi mestskými časťami Bratislavy v rokoch 2001 - 2051 (v %)
+          en: Internal spatial structure between Bratislava's city districts, 2001-2051 (%)
+        description:
+          sk: 'Dataset Hlavného mesta SR Bratislava na portáli otvorených dát data.bratislava.sk: Vnútorná priestorová štruktúra medzi mestskými časťami Bratislavy v rokoch 2001 - 2051 (v %). Licencia CC BY 4.0.'
+          en: "A dataset of the City of Bratislava on its open data portal data.bratislava.sk: Internal spatial structure between Bratislava's city districts, 2001-2051 (%). Licence CC BY 4.0."
+    pipelineRef: { kind: Pipeline, name: statistics }

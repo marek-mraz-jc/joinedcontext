@@ -1,0 +1,25 @@
+---
+# Re-pin a digest with (the manifest list, so every architecture keeps its image):
+#   docker buildx imagetools inspect <repository>:<tag> | awk '/^Digest:/ { print $2; exit }'
+gitops:
+  # Every Argo CD workload, and the Job that writes Redis's password.
+  # Argo CD v3.5.4 with git-lfs 3.8.0 and kustomize 5.8.3 in place of the builds it bundles
+  # (CVE-2025-68121, T-4706) and the Ubuntu archive's fixes (libbrotli1 for CVE-2026-111497, T-6114):
+  # images/gitops-argocd, signed by image-gitops.yml run 40958311476 at b92a8aa0.
+  # Back to quay.io/argoproj/argocd once an upstream tag scans clean at CRITICAL.
+  argocd:
+    repository: 'ghcr.io/marek-mraz-jc/joinedcontext-argocd'
+    tag: 'v3.5.4'
+    digest: 'sha256:ec7fc33b94d1f73fa2ee796be437943c77e9efce4f222b411e9e7b63b4ac9255'
+  redis:
+    repository: 'ecr-public.aws.com/docker/library/redis'
+    tag: '8.6.4-alpine'
+    digest: 'sha256:2cc044fc5a07c9b701f8f1255a309ae9ad7856e694ac03513bf3648c01e40763'
+  # The helmfile plugin sidecar and the smoke gate's image: our own (images/gitops-helmfile,
+  # T-4706) with the versions CI renders with (helmfile 1.8.1, helm 4.3.0), kubectl, yq, jq and
+  # curl, and none of the stock image's unused, CRITICAL-flagged tools. Signed by
+  # image-gitops.yml run 40589520902 at fd1dd1a6 (alpine 3.24.3, brotli-libs without CVE-2026-111497, T-5887).
+  helmfile:
+    repository: 'ghcr.io/marek-mraz-jc/joinedcontext-gitops-helmfile'
+    tag: '1.8.1'
+    digest: 'sha256:0f9ccb5182517edd8faaae17fcef38c41785d616e75b46cc5d1f4651cc130996'

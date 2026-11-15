@@ -1,0 +1,19 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: groundwater
+  namespace: barcelona
+  title:
+    ca: Aigües subterrànies de Barcelona, cada dia
+    es: Aguas subterráneas de Barcelona, cada día
+    en: Barcelona groundwater, daily
+spec:
+  class: auto
+  # The city rewrites the file about once a month on no fixed day; once a day finds it.
+  schedule: '35 5 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-groundwater }
+  targetEndpoint: urn:ngsi-ld:Endpoint:barcelona.cat:barcelona:barcelona
+  # Upsert, never replace: a well missing from one file keeps its last reading (T-5263).
+  output: { type: PhreaticObserved, mode: upsert }
+  quotas: { maxMemoryMb: 128, cpuMillicores: 100 }

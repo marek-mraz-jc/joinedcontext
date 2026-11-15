@@ -1,0 +1,23 @@
+{
+  "dataProvider": "dataProvider",
+  "denVTyzdni": "denVTyzdni",
+  "iCOSamospravy": "iCOSamospravy",
+  "id": "urn:ngsi-ld:OfficeHours:joinedcontext.com:example:1",
+  "identifikatorKontaktnehoMiest": "identifikatorKontaktnehoMiest",
+  "isPartOf": "https://example.org/isPartOf",
+  "kodDnaVTyzdni": "kodDnaVTyzdni",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "name": "name",
+  "nazovSamospravy": "nazovSamospravy",
+  "observedAt": "2026-01-01T00:00:00Z",
+  "otvoreneDo": "otvoreneDo",
+  "otvoreneOd": "otvoreneOd",
+  "source": "https://example.org/source",
+  "type": "OfficeHours"
+}

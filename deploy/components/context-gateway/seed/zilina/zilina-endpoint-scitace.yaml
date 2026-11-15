@@ -1,0 +1,49 @@
+# One Smart Data Model type per catalogue dataset (T-4344): TrafficFlowObserved of the space zilina-doprava,
+# read through its own Policy. The publisher is Mesto Žilina by its registry IRI, as the
+# Project's spec.catalog names it (T-4596); the data is the city's under ODbL, credited "Mesto Žilina" (T-5232).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: zilina-scitace
+  namespace: zilina
+  title: { sk: Sčítače dopravy — Žilina, en: Traffic counters — Žilina }
+  description:
+    sk: 'Sčítače dopravy mesta Žilina s počtom vozidiel a ich priemernou rýchlosťou za poslednú celú hodinu, s históriou 30 dní. Zdroj: Mesto Žilina, opendata.zilina.sk, ODbL.'
+    en: "The City of Žilina's traffic counters with the vehicles counted and their mean speed in the last full hour, with 30 days of history. Source: City of Žilina, opendata.zilina.sk, ODbL."
+spec:
+  contextSpaceRef: zilina-doprava
+  slug: alto7pngg4yp3wybfy4l3qtyd7l2bhnq
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:zilina.sk:zilina-doprava:scitace-read
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: zilina }
+      license: odc-odbl
+  catalog:
+    # Public facilities, counts and vehicle positions: no record names a person.
+    personalData: does-not-contain
+    publisher:
+      name: { sk: Mesto Žilina, en: City of Žilina }
+      uri: https://data.gov.sk/id/legal-subject/00321796
+    license: ODC_ODBL
+    attribution:
+      sk: 'Zdroj: Mesto Žilina, otvorené dáta opendata.zilina.sk, ODbL'
+      en: 'Source: City of Žilina (Mesto Žilina), open data opendata.zilina.sk, ODbL'
+    themes: [TRAN]
+    keywords:
+      sk: [sčítanie dopravy, intenzita dopravy, rýchlosť, Žilina]
+      en: [traffic count, traffic intensity, speed, Žilina]
+    spatial:
+      - SK031
+      - https://data.gov.sk/id/lau2/SK031B517402
+    frequency: HOURLY
+    source:
+      - url: https://opendata.zilina.sk/sk/dataset-list/detail/182
+        title:
+          sk: Počet vozidiel za hodinu (opendata.zilina.sk)
+          en: Vehicles per hour (opendata.zilina.sk)
+        description:
+          sk: Mesto Žilina, platforma Invipo, POST https://opendata.zilina.sk/api/datasets/v1/traffic-counters/vehicles/hourly, ODbL.
+          en: City of Žilina, Invipo platform, POST https://opendata.zilina.sk/api/datasets/v1/traffic-counters/vehicles/hourly, ODbL.
+    pipelineRef: { kind: Pipeline, name: scitace }

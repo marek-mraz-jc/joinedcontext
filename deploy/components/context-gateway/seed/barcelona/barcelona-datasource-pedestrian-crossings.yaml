@@ -1,0 +1,20 @@
+# Open Data BCN's inventory of pedestrian crossings (dataset infraestructures-inventari-pas-vianants,
+# CC BY 4.0): every crossing ever painted, current or gone, with its kind, its area and its point.
+# The resource's download link answers 302 to this address on the same host; the DataSource names
+# it directly. About 5.1 MB, rewritten weekly; the mapping refuses more than 8 MiB.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: bcn-pedestrian-crossings
+  namespace: barcelona
+  title:
+    ca: Inventari de passos de vianants de Barcelona (Open Data BCN)
+    es: Inventario de pasos de peatones de Barcelona (Open Data BCN)
+    en: Barcelona pedestrian crossings inventory (Open Data BCN)
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/resources/bcn/Infraestructures/Infraestructures_Inventari_Pas_Vianants.csv
+    verb: GET
+    headers: { Accept: text/csv }
+    timeout: 60s

@@ -1,0 +1,154 @@
+{
+  "id": "urn:ngsi-ld:Contract:joinedcontext.com:example:1",
+  "type": "Contract",
+  "cenaCelkom": {
+    "type": "Property",
+    "value": "cenaCelkom"
+  },
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "datumPlatnostiDo": {
+    "type": "Property",
+    "value": "2026-01-01"
+  },
+  "datumPodpisu": {
+    "type": "Property",
+    "value": "datumPodpisu"
+  },
+  "datumPrilohy": {
+    "type": "Property",
+    "value": "2026-01-01"
+  },
+  "datumUcinnosti": {
+    "type": "Property",
+    "value": "2026-01-01"
+  },
+  "datumUzavretia": {
+    "type": "Property",
+    "value": "2026-01-01"
+  },
+  "datumZverejnenia": {
+    "type": "Property",
+    "value": "datumZverejnenia"
+  },
+  "druh": {
+    "type": "Property",
+    "value": "druh"
+  },
+  "iCODodavatela": {
+    "type": "Property",
+    "value": "iCODodavatela"
+  },
+  "iCOObjednavatela": {
+    "type": "Property",
+    "value": "iCOObjednavatela"
+  },
+  "iCOOrganizacie": {
+    "type": "Property",
+    "value": "iCOOrganizacie"
+  },
+  "iDZmluvy": {
+    "type": "Property",
+    "value": "iDZmluvy"
+  },
+  "identifier": {
+    "type": "Property",
+    "value": "identifier"
+  },
+  "index": {
+    "type": "Property",
+    "value": "index"
+  },
+  "isPartOf": {
+    "type": "Property",
+    "value": "https://example.org/isPartOf"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "mena": {
+    "type": "Property",
+    "value": "mena"
+  },
+  "name": {
+    "type": "Property",
+    "value": "name"
+  },
+  "nazovDodavatela": {
+    "type": "Property",
+    "value": "nazovDodavatela"
+  },
+  "nazovObjednavatela": {
+    "type": "Property",
+    "value": "nazovObjednavatela"
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "poznamka": {
+    "type": "Property",
+    "value": "poznamka"
+  },
+  "predmet": {
+    "type": "Property",
+    "value": "predmet"
+  },
+  "priloha": {
+    "type": "Property",
+    "value": "priloha"
+  },
+  "rezort": {
+    "type": "Property",
+    "value": "rezort"
+  },
+  "rok": {
+    "type": "Property",
+    "value": 0
+  },
+  "sidloObjednavatela": {
+    "type": "Property",
+    "value": "sidloObjednavatela"
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "sumaSpoluVEUR": {
+    "type": "Property",
+    "value": "sumaSpoluVEUR"
+  },
+  "sumaVEUR": {
+    "type": "Property",
+    "value": "sumaVEUR"
+  },
+  "typ": {
+    "type": "Property",
+    "value": "typ"
+  },
+  "zdrojNazov": {
+    "type": "Property",
+    "value": "zdrojNazov"
+  },
+  "zmluvneStrany": {
+    "type": "Property",
+    "value": "zmluvneStrany"
+  },
+  "zmluvneStranySUdajomICO": {
+    "type": "Property",
+    "value": "zmluvneStranySUdajomICO"
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/Contract/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

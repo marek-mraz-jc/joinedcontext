@@ -1,0 +1,47 @@
+# One catalogue dataset per file family (T-4344, T-5428): KeyPerformanceIndicator of the space praha-mesto whose ids
+# the Policy public-cerpani-rozpoctu names, so each city table is its own dataset.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: praha-cerpani-rozpoctu
+  namespace: praha
+  title: { cs: Čerpání rozpočtu — Praha, en: Budget execution — Prague }
+  description:
+    cs: 'Kolik hlavní město Praha z každého řádku rozpočtu na rok 2026 dosud vyčerpalo, vedle upraveného rozpočtu řádku, v tisících Kč. Zdroj: hl. m. Praha, bez omezení práv.'
+    en: "What the City of Prague has drawn so far of each line of its 2026 budget, beside the line's adjusted budget, in thousands of CZK. Source: the City of Prague, free of rights."
+spec:
+  contextSpaceRef: praha-mesto
+  slug: 7pgly3i4vszsaavrrcwexk2bdhls3niq
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:praha.eu:praha-mesto:public-cerpani-rozpoctu
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: praha }
+      license: cc-zero
+  catalog:
+    # The publisher and contact desk are the Project's spec.catalog, its registry IRI (T-4596).
+    # Figures and works of public bodies: the pipeline leaves out every field that names a person.
+    personalData: does-not-contain
+    # Open data under the Czech act on free access to information (DCAT-AP-CZ, API/08 section 3).
+    applicableLegislation:
+      - https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19
+    license: CC0
+    attribution:
+      cs: 'Zdroj: čerpání rozpočtu hl. m. Prahy'
+      en: 'Source: City of Prague budget execution'
+    themes: [ECON, GOVE]
+    keywords:
+      cs: [Praha, rozpočet, čerpání, veřejné finance]
+      en: [Prague, budget, execution, public finance]
+    spatial:
+      - CZ010
+      - https://linked.cuzk.cz/resource/ruian/obec/554782
+    frequency: MONTHLY
+    source:
+      - url: https://opendata-storage.praha.eu/UCT_cerpani_rozpoctu/cerpani_rozpoctu/Zdroje/2026/Cerpani_rozpoctu_MHMP_2026.json
+        title: { cs: Čerpání rozpočtu hl. m. Prahy 2026, en: City of Prague budget execution 2026 }
+        description:
+          cs: Čerpání rozpočtu hlavního města Prahy na rok 2026 po řádcích, bez omezení práv.
+          en: The execution of the City of Prague's 2026 budget, line by line, free of rights.
+    pipelineRef: { kind: Pipeline, name: budget-drawing }

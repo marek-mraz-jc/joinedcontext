@@ -1,0 +1,27 @@
+# The hub (Architecture/04 §5a): a space that holds no entities of its own, only registrations
+# to the spaces that do. "What is happening in Helsinki right now" spans the live context and
+# the indicators derived from it, and asking it should not mean two endpoints and a join in the
+# caller (EP-70).
+apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: helsinki-hub
+  namespace: helsinki
+  title:
+    en: Helsinki, all of it
+  description:
+    en: "One question over the city's live context and its indicators: this space holds registrations, never entities"
+spec:
+  # Pinned so no entity id changes: the space predates rendered segments (PF-84).
+  urnSegment: helsinki-hub
+  isSandbox: false
+  # The one model of this space: a write of a type it does not declare is refused (DM-61).
+  dataModelRef: { kind: DataModel, name: helsinki-hub }
+  defaultLocale: en
+  # History per type (DM-82, ADR-N-046 2.3, T-4275): a measurement series keeps 30 days, every
+  # other type keeps its current state only. Owners change it on the space's Retention tab.
+  retention:
+    - entityType: KeyPerformanceIndicator
+      history: P30D
+    - entityType: Vehicle
+      history: 'off'

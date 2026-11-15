@@ -1,0 +1,21 @@
+# The platform's blueprint library (CC-28, T-1571): the four common flows the platform publishes in
+# `library/blueprints/` of its own repository. This instance follows it, and each new version of
+# the library arrives as a merge request somebody reviews (CC-26): nothing merges by itself and
+# nothing the library dropped is deleted here.
+apiVersion: joinedcontext.com/v1alpha1
+kind: SyncSource
+metadata:
+  name: blueprint-library
+  namespace: helsinki
+  title: { en: Platform blueprint library, fi: Alustan pohjakirjasto }
+spec:
+  source:
+    git:
+      url: https://github.com/marek-mraz-jc/joinedcontext-platform.git
+      ref: main
+      path: library/blueprints
+  schedule: { interval: '1d' }
+  mode: mirror
+  conflictPolicy: replace
+  prune: false
+  autoMerge: false

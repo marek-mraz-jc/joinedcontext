@@ -1,0 +1,26 @@
+# The BBSK demo (T-4687, owner 2026-10-18: "outside our regular deployment"): an open-data catalogue
+# of only Banská Bystrica and the region, with the region's assistant docked, on a host of its own.
+# Its own helmfile, namespace and command (`just demo-bbsk-apply <env>`, `just demo-bbsk-destroy
+# <env>`), so the platform's apply never renders or touches it and one command removes it whole.
+# It reads the platform only through public APIs: the gateway's Endpoints and the assistant host.
+# Both environments are private: their values live in the JC_ENVIRONMENTS checkout
+# (docs/Deployment/01-repository-layout.md).
+environments:
+  dev:
+    values: [{{ requiredEnv "JC_ENVIRONMENTS" }}/demos/bbsk/dev.yaml]
+  smartcity:
+    values: [{{ requiredEnv "JC_ENVIRONMENTS" }}/demos/bbsk/smartcity.yaml]
+---
+releases:
+  - name: demo-bbsk-base
+    namespace: demo-bbsk
+    chart: ./chart
+    createNamespace: true
+    values:
+      - values/base.yaml.gotmpl
+  - name: demo-bbsk-ckan
+    namespace: demo-bbsk
+    chart: ../../charts/ckan
+    needs: [demo-bbsk/demo-bbsk-base]
+    values:
+      - values/ckan.yaml.gotmpl

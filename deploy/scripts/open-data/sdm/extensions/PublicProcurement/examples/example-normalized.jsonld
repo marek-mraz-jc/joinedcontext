@@ -1,0 +1,170 @@
+{
+  "id": "urn:ngsi-ld:PublicProcurement:joinedcontext.com:example:1",
+  "type": "PublicProcurement",
+  "adresaNajvyhodnejsiehoUchadza": {
+    "type": "Property",
+    "value": "adresaNajvyhodnejsiehoUchadza"
+  },
+  "cPVCastiNazov": {
+    "type": "Property",
+    "value": "cPVCastiNazov"
+  },
+  "cPVNazov": {
+    "type": "Property",
+    "value": "cPVNazov"
+  },
+  "cisloSpisu": {
+    "type": "Property",
+    "value": "cisloSpisu"
+  },
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "datumSpustenia": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "datumUkoncenia": {
+    "type": "Property",
+    "value": "datumUkoncenia"
+  },
+  "druhKomoditAleboSluzieb": {
+    "type": "Property",
+    "value": "druhKomoditAleboSluzieb"
+  },
+  "druhObstaravania": {
+    "type": "Property",
+    "value": "druhObstaravania"
+  },
+  "druhPostupu": {
+    "type": "Property",
+    "value": "druhPostupu"
+  },
+  "elektronickaAukcia": {
+    "type": "Property",
+    "value": "elektronickaAukcia"
+  },
+  "financovanie": {
+    "type": "Property",
+    "value": "financovanie"
+  },
+  "hlavnyCPV": {
+    "type": "Property",
+    "value": "hlavnyCPV"
+  },
+  "hlavnyCPVCasti": {
+    "type": "Property",
+    "value": "hlavnyCPVCasti"
+  },
+  "iDZakazky": {
+    "type": "Property",
+    "value": 0
+  },
+  "identifier": {
+    "type": "Property",
+    "value": "identifier"
+  },
+  "isPartOf": {
+    "type": "Property",
+    "value": "https://example.org/isPartOf"
+  },
+  "lehotaNaPredkladanie": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "mena": {
+    "type": "Property",
+    "value": "mena"
+  },
+  "najvyhodnejsiUchadzac": {
+    "type": "Property",
+    "value": "najvyhodnejsiUchadzac"
+  },
+  "name": {
+    "type": "Property",
+    "value": "name"
+  },
+  "nazovCasti": {
+    "type": "Property",
+    "value": "nazovCasti"
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "obstaravatel": {
+    "type": "Property",
+    "value": "obstaravatel"
+  },
+  "pHZ": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "pocetUchadzacov": {
+    "type": "Property",
+    "value": 0
+  },
+  "pocetZaujemcov": {
+    "type": "Property",
+    "value": 0
+  },
+  "ponukaUchadzaca": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "predpokladanaHodnota": {
+    "type": "Property",
+    "value": "predpokladanaHodnota"
+  },
+  "rok": {
+    "type": "Property",
+    "value": "rok"
+  },
+  "socialneZodpovedneObstaravani": {
+    "type": "Property",
+    "value": "socialneZodpovedneObstaravani"
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "spolocenskyZodpovedneVerejne": {
+    "type": "Property",
+    "value": "spolocenskyZodpovedneVerejne"
+  },
+  "stav": {
+    "type": "Property",
+    "value": "stav"
+  },
+  "typKomodity": {
+    "type": "Property",
+    "value": "typKomodity"
+  },
+  "typVydavku": {
+    "type": "Property",
+    "value": "typVydavku"
+  },
+  "utvarOvZP": {
+    "type": "Property",
+    "value": "utvarOvZP"
+  },
+  "zeleneObstaravanie": {
+    "type": "Property",
+    "value": "zeleneObstaravanie"
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/PublicProcurement/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

@@ -1,0 +1,45 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-transport
+  namespace: helsinki
+  title:
+    en: 'Public read: HSL vehicles, stops, lines, departures, service alerts and park and ride'
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:{orgDomain}
+  assignee: { kind: role, id: public }
+  # The subscription operations are what a citizen's x-subscribe over the Endpoint's WebSocket
+  # runs (owner order 2026-10-12, T-4049): anyone may follow the buses live. A REST subscription
+  # they open is held to the same notification-address checks as every other (T-1302, GW27).
+  # Discovery beside the reads (T-4258, EP-116): which types and attributes the Endpoint holds,
+  # narrowed to this grant (EP-26), so an anonymous MCP client finds them before it queries.
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: Vehicle
+        - type: GtfsStop
+        - type: PublicTransportRoute
+        # HSL's GTFS static feed (T-3890).
+        - type: GtfsStation
+        - type: GtfsAgency
+        - type: GtfsRoute
+        - type: GtfsShape
+        # Today's scheduled departures per mode (T-6467).
+        - type: GtfsDailyDepartures
+        # HSL's service alerts (T-3892), beside Digitraffic's road alerts of the same type, and
+        # the park and ride sites of the HSL area (T-3894). A GtfsStop carries its departures
+        # (T-3891), a Vehicle its mode (T-3893): both types are above.
+        - type: Alert
+        - type: OffStreetParking

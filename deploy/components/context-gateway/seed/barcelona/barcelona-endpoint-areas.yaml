@@ -1,0 +1,57 @@
+# The districts and barris of Barcelona in the city's CKAN organisation: AdministrativeArea with
+# outlines as NGSI-LD, CSV, GeoJSON by OGC API Features, OData and MCP (T-5264, EP-118). Every
+# other Barcelona dataset can join to them by district or barri.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: areas
+  namespace: barcelona
+  title:
+    ca: Districtes i barris de Barcelona
+    es: Distritos y barrios de Barcelona
+    en: Barcelona districts and neighbourhoods
+  description:
+    ca: Els 10 districtes i els 73 barris de Barcelona, amb el seu codi, el seu límit i el districte de cada barri.
+    es: Los 10 distritos y los 73 barrios de Barcelona, con su código, su límite y el distrito de cada barrio.
+    en: The 10 districts and 73 neighbourhoods (barris) of Barcelona, with their code, their boundary and each barri's district.
+spec:
+  contextSpaceRef: barcelona
+  slug: 32aelhvdzllfb2swtwko6b7fo3rkjumr
+  audience: public
+  # The one Policy this endpoint evaluates: the slice of the space it publishes (EP-14).
+  policyRef: urn:ngsi-ld:Policy:barcelona.cat:barcelona:public-areas
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: barcelona }
+      license: cc-by
+  catalog:
+    publisher:
+      name:
+        ca: Ajuntament de Barcelona
+        es: Ayuntamiento de Barcelona
+        en: Barcelona City Council
+      uri: http://datos.gob.es/recurso/sector-publico/org/Organismo/L01080193
+    license: CC_BY_4_0
+    attribution:
+      ca: 'Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0'
+      es: 'Fuente: Ayuntamiento de Barcelona, Open Data BCN, CC BY 4.0'
+      en: 'Source: Barcelona City Council (Ajuntament de Barcelona), Open Data BCN, CC BY 4.0'
+    themes: [REGI]
+    keywords:
+      ca: [districtes, barris, límits administratius]
+      es: [distritos, barrios, límites administrativos]
+      en: [districts, neighbourhoods, administrative boundaries]
+    spatial:
+      - ES511
+      - https://sws.geonames.org/3128760/
+    frequency: IRREG
+    source:
+      - url: https://opendata-ajuntament.barcelona.cat/data/dataset/20170706-districtes-barris
+        title:
+          ca: Àrees estadístiques bàsiques, barris i districtes (Open Data BCN)
+          en: Basic statistical areas, neighbourhoods and districts (Open Data BCN)
+        description:
+          ca: Codis i límits dels districtes i barris, CC BY 4.0.
+          en: Codes and boundaries of the districts and neighbourhoods, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: neighbourhoods }

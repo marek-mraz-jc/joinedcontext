@@ -1,0 +1,25 @@
+{{- if not .Values.domain }}{{ fail "ai: domain is required" }}{{ end }}
+{{- $api := printf "https://assistant.%s" .Values.domain }}
+{{- $frames := printf "frame-src https://viz.%s; " .Values.domain }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "app.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    {{- .Files.Get "files/nginx.conf" | replace "__API__" $api | replace "__FRAMES__" $frames | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "app.fullname" . }}-site
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+data:
+  {{- range $path, $_ := .Files.Glob "files/site/*" }}
+  {{ base $path }}: {{ $.Files.Get $path | replace "__API__" $api | replace "__FRAMES__" $frames | quote }}
+  {{- end }}

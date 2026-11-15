@@ -1,0 +1,66 @@
+{
+  "id": "urn:ngsi-ld:EmissionSource:joinedcontext.com:example:1",
+  "type": "EmissionSource",
+  "coEmission": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "dataProvider": {
+    "type": "Property",
+    "value": "dataProvider"
+  },
+  "fuelType": {
+    "type": "Property",
+    "value": "fuelType"
+  },
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "coordinates": [
+        0.0,
+        0.0
+      ],
+      "type": "Point"
+    }
+  },
+  "name": {
+    "type": "Property",
+    "value": "name"
+  },
+  "noxEmission": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "observedAt": {
+    "type": "Property",
+    "value": "2026-01-01T00:00:00Z"
+  },
+  "pm10Emission": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "pm25Emission": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "registerCategory": {
+    "type": "Property",
+    "value": "registerCategory"
+  },
+  "so2Emission": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "vocEmission": {
+    "type": "Property",
+    "value": 0.0
+  },
+  "@context": [
+    "https://github.com/marek-mraz/joinedcontext-deployment/blob/main/scripts/open-data/sdm/extensions/EmissionSource/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"
+  ]
+}

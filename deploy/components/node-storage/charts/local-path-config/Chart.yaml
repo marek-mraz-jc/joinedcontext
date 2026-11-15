@@ -1,0 +1,6 @@
+apiVersion: v2
+name: local-path-config
+description: The local-path-provisioner's ConfigMap, with an SELinux type that lets its helper delete a released volume
+type: application
+version: 0.1.0
+appVersion: '1.0.0'

@@ -1,0 +1,49 @@
+# One Smart Data Model type per catalogue dataset (T-4344): Vehicle of the space zilina-doprava,
+# read through its own Policy. The publisher is Mesto Žilina by its registry IRI, as the
+# Project's spec.catalog names it (T-4596); the data is the city's under ODbL, credited "Mesto Žilina" (T-5232).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: zilina-mhd
+  namespace: zilina
+  title: { sk: Vozidlá MHD a meškanie — Žilina, en: Public transport vehicles and delay — Žilina }
+  description:
+    sk: 'Autobusy a trolejbusy DPMŽ v prevádzke: poloha, linka, smer, nasledujúca zastávka a meškanie, obnovované každých 5 minút. Zdroj: Mesto Žilina, opendata.zilina.sk, ODbL.'
+    en: "DPMŽ's buses and trolleybuses in service: position, line, direction, next stop and delay, refreshed every 5 minutes. Source: City of Žilina, opendata.zilina.sk, ODbL."
+spec:
+  contextSpaceRef: zilina-doprava
+  slug: 4tuk6jz4qlpodue5v3mr66qc5wjlttbp
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:zilina.sk:zilina-doprava:mhd-read
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  catalog:
+    # Off the catalogue (T-5767, owner order 2026-10-26T06:33Z: an empty dataset leaves it): on dev
+    # none of the 63 vehicles the city portal lists reached the broker.
+    # The harvest feeds leave it out (EP-139); publish it again once it holds data.
+    harvest: false
+    # Public facilities, counts and vehicle positions: no record names a person.
+    personalData: does-not-contain
+    publisher:
+      name: { sk: Mesto Žilina, en: City of Žilina }
+      uri: https://data.gov.sk/id/legal-subject/00321796
+    license: ODC_ODBL
+    attribution:
+      sk: 'Zdroj: Mesto Žilina, otvorené dáta opendata.zilina.sk, ODbL'
+      en: 'Source: City of Žilina (Mesto Žilina), open data opendata.zilina.sk, ODbL'
+    themes: [TRAN]
+    keywords:
+      sk: [MHD, meškanie, autobus, trolejbus, Žilina]
+      en: [public transport, delay, bus, trolleybus, Žilina]
+    spatial:
+      - SK031
+      - https://data.gov.sk/id/lau2/SK031B517402
+    frequency: CONT
+    source:
+      - url: https://opendata.zilina.sk/sk/dataset-list/detail/124
+        title:
+          sk: Zoznam vozidiel verejnej dopravy (opendata.zilina.sk)
+          en: Public transport vehicles (opendata.zilina.sk)
+        description:
+          sk: Mesto Žilina, platforma Invipo, POST https://opendata.zilina.sk/api/datasets/v1/public-transport/vehicles/list, ODbL.
+          en: City of Žilina, Invipo platform, POST https://opendata.zilina.sk/api/datasets/v1/public-transport/vehicles/list, ODbL.
+    pipelineRef: { kind: Pipeline, name: mhd-vozidla }

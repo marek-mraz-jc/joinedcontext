@@ -1,0 +1,28 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: public-bilancni-celky
+  namespace: praha
+  title: { cs: 'Veřejné čtení: bilanční územní celky' }
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: praha-mesto }
+  assigner: did:web:praha.eu
+  assignee: { kind: role, id: public }
+  # The reads, the discovery (EP-116) and the subscriptions of the Endpoint praha-bilancni-celky, and only
+  # the records of its IPR layer (area-buc-): the space's other AdministrativeArea stay with their own datasets (T-5426).
+  operations:
+    - retrieveOps
+    - retrieveEntityTypes
+    - retrieveEntityTypeDetails
+    - retrieveEntityTypeInfo
+    - retrieveAttrTypes
+    - retrieveAttrTypeDetails
+    - retrieveAttrTypeInfo
+    - createSubscription
+    - retrieveSubscription
+    - updateSubscription
+    - deleteSubscription
+  information:
+    - entities:
+        - type: AdministrativeArea
+          idPattern: ^urn:ngsi-ld:AdministrativeArea:[a-z0-9.-]+:praha-mesto:area-buc-[0-9a-f-]{36}$

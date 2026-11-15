@@ -373,9 +373,26 @@ fn host_table(cfg: &Config, plans: &[MountPlan]) -> Result<Option<HostTable>, Ro
             Some(id) => table.organization_id(&org.name, id.as_str())?,
             None => table.organization(&org.name)?,
         };
-        for (_, host) in org.hosts.by_module() {
-            table = table.bound(host, &org.name, "/")?;
-            bound.insert(host.split(':').next().unwrap_or(host).to_owned());
+        for m in org.hosts.by_module() {
+            if m.bound {
+                table = table.bound(m.host, &org.name, "/")?;
+                bound.insert(m.host.split(':').next().unwrap_or(m.host).to_owned());
+            }
+            if let Some(role) = m.role {
+                table = table.role(m.host, role)?;
+            }
+        }
+        // A page on another group's host moves to the host that serves it (T-6991 §7).
+        if org.hosts.opendata.is_some() {
+            table = table.move_pages(
+                &org.hosts.portal,
+                crate::config::DATAROOM_ON_WORKING_HOST,
+                &org.opendata_base(),
+                false,
+            )?;
+        }
+        if let Some(api) = org.hosts.api.as_deref().filter(|_| !org.hosts.shared) {
+            table = table.move_pages(api, "/", &org.hosts.portal, true)?;
         }
     }
     for row in &cfg.hosts {
@@ -386,11 +403,20 @@ fn host_table(cfg: &Config, plans: &[MountPlan]) -> Result<Option<HostTable>, Ro
         )?;
         bound.insert(row.host.split(':').next().unwrap_or(&row.host).to_owned());
     }
-    let mounted = plans
+    let mounted: Vec<(&str, &str)> = plans
         .iter()
         .flat_map(|p| p.specs().chain(p.renamed.iter().map(|r| &r.spec)))
-        .filter_map(|spec| spec.host.as_deref());
-    for host in mounted.chain([cfg.base_host.as_str(), "localhost", "127.0.0.1", "[::1]"]) {
+        .filter_map(|spec| Some((spec.module.as_str(), spec.host.as_deref()?)))
+        .collect();
+    for &(module, host) in &mounted {
+        if apps_wildcard(host).is_some() {
+            table = table.role(host, jc_router::HostRole::Apps)?;
+        } else if module == Module::Kaisatsu.name() && host == cfg.login_host {
+            table = table.role(host, jc_router::HostRole::SignIn)?;
+        }
+    }
+    let hosts = mounted.iter().map(|&(_, h)| h);
+    for host in hosts.chain([cfg.base_host.as_str(), "localhost", "127.0.0.1", "[::1]"]) {
         if !bound.contains(host.split(':').next().unwrap_or(host)) {
             table = table.shared(host)?;
         }
@@ -398,25 +424,26 @@ fn host_table(cfg: &Config, plans: &[MountPlan]) -> Result<Option<HostTable>, Ro
     Ok(Some(table))
 }
 
-/// The entries of `module` on the `[[organizations]]` hosts: each answers its whole host, and
-/// the gateway also answers its root paths on the Organization's Portal host, as on dev, where
-/// the Portal's pages read the gateway as the person on their own host.
+/// The entries of `module` on the `[[organizations]]` hosts (`OrganizationHosts::by_module`):
+/// each answers its whole host or its prefix there, once even when several `auto`
+/// Organizations share the host.
 fn organization_specs(cfg: &Config, module: Module) -> Vec<MountSpec> {
-    let spec = |host: &str, prefix: Option<&str>| MountSpec {
-        module: module.name().to_owned(),
-        host: Some(host.to_owned()),
-        path_prefix: prefix.map(str::to_owned),
-    };
-    let mut out = Vec::new();
+    let mut out: Vec<MountSpec> = Vec::new();
     for org in &cfg.organizations {
-        for (m, host) in org.hosts.by_module() {
-            if m == module {
-                out.push(spec(host, None));
-            }
-        }
-        if module == Module::Gateway && cfg.roles.contains(&Module::Portal) {
-            for prefix in ["/cs", "/api/endpoint", "/api/mcp"] {
-                out.push(spec(&org.hosts.portal, Some(prefix)));
+        for m in org.hosts.by_module() {
+            let spec = MountSpec {
+                module: module.name().to_owned(),
+                host: Some(m.host.to_owned()),
+                path_prefix: m.prefix.map(str::to_owned),
+            };
+            // The gateway's paths on the working host serve the Portal's pages there; a jc
+            // without the Portal leaves them to the one with it, unless there is no API host.
+            let beside_portal = module == Module::Gateway
+                && m.host == org.hosts.portal
+                && org.hosts.api.is_some()
+                && !cfg.roles.contains(&Module::Portal);
+            if m.module == module && !beside_portal && !out.contains(&spec) {
+                out.push(spec);
             }
         }
     }
@@ -434,7 +461,7 @@ fn check_organization_hosts(cfg: &Config, plans: &[MountPlan]) -> Result<(), Sta
             org.hosts
                 .by_module()
                 .into_iter()
-                .map(|(_, host)| (bare(host), org.name.as_str()))
+                .map(|m| (bare(m.host), org.name.as_str()))
         })
         .collect();
     let placed: Vec<MountSpec> = cfg
@@ -832,10 +859,16 @@ fn split_credentials(cfg: &Config) -> Vec<crate::setup::Secret> {
     let served = crate::config::SPLIT_MODULES
         .into_iter()
         .filter(|m| cfg.door.is_some() && cfg.roles.contains(m));
-    served
+    let mut out: Vec<_> = served
         .chain(cfg.remote_modules.keys().copied())
         .filter_map(crate::setup::Secret::service_credential)
-        .collect()
+        .collect();
+    // The Portal registers its hooks on a shako in another container with the webhook secret and
+    // checks their deliveries with it, so it keeps that secret (on disk) without shako beside it.
+    if cfg.roles.contains(&Module::Portal) && cfg.remote_modules.contains_key(&Module::Shako) {
+        out.push(crate::setup::Secret::ForgeWebhookSecret);
+    }
+    out
 }
 
 /// One loopback forwarder per `[remote.modules]` entry, each added to `siblings` so the Portal
@@ -1402,6 +1435,33 @@ mod tests {
         Config::merge(cli, file).unwrap()
     }
 
+    /// A Portal whose shako runs in another container holds the forge webhook secret beside the
+    /// shako token: without it the Portal got no `JC_SHAKO_*` group and never started (T-7014).
+    #[test]
+    fn a_portal_with_a_remote_shako_holds_the_forge_webhook_secret() {
+        use crate::setup::Secret;
+        let cfg = dev_config(
+            "kaisatsu,portal",
+            "[remote]\ntoken_url = \"http://id/token\"\nclient_id = \"portal-remote\"\n\
+             [remote.modules]\nshako = \"https://git.city.test\"\n",
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state");
+        let setup = Setup::prepare_with(
+            &state,
+            &cfg.roles,
+            &std::collections::BTreeMap::new(),
+            &split_credentials(&cfg),
+        )
+        .unwrap();
+        assert!(setup.value(Secret::ShakoToken).is_some());
+        assert!(setup.value(Secret::ForgeWebhookSecret).is_some());
+        assert!(
+            state.join("forge-webhook-secret").is_file(),
+            "kept across restarts"
+        );
+    }
+
     /// Which module the planned router table sends `host` `path` to, and the path it hands over
     /// (a `308`'s `Location` instead).
     async fn routed(plans: &[MountPlan], host: &str, path: &str) -> (StatusCode, String) {
@@ -1487,8 +1547,8 @@ mod tests {
         for org in
             dev_config("dataroom", include_str!("../tests/fixtures/two-orgs.toml")).organizations
         {
-            for (_, host) in org.hosts.by_module() {
-                placed.insert(host.split('.').next().unwrap_or(host).to_owned());
+            for m in org.hosts.by_module() {
+                placed.insert(m.host.split('.').next().unwrap_or(m.host).to_owned());
             }
         }
         for module in Module::ALL {

@@ -1,0 +1,46 @@
+---
+# A Pod whose chart leaves automountServiceAccountToken unset (the apisix chart), as it reaches
+# Kyverno: the API server's ServiceAccount plugin has already added kube-api-access-* and mounted
+# it in every container. No reason, so the mutation must take the token away again.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: injected-token-without-a-reason
+  namespace: dev
+spec:
+  serviceAccountName: apisix
+  initContainers:
+    - name: copy
+      image: nginx:1.27
+      volumeMounts:
+        - name: conf
+          mountPath: /mnt
+        - name: kube-api-access-abcde
+          mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: true
+  containers:
+    - name: apisix
+      image: nginx:1.27
+      volumeMounts:
+        - name: conf
+          mountPath: /usr/local/apisix/conf
+        - name: kube-api-access-abcde
+          mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: true
+    - name: sidecar
+      image: nginx:1.27
+  volumes:
+    - name: conf
+      emptyDir: {}
+    - name: kube-api-access-abcde
+      projected:
+        defaultMode: 420
+        sources:
+          - serviceAccountToken:
+              expirationSeconds: 3607
+              path: token
+          - configMap:
+              name: kube-root-ca.crt
+              items:
+                - key: ca.crt
+                  path: ca.crt

@@ -1,0 +1,7 @@
+---
+component: assistant
+parts:
+  # jc-assistant (Architecture/22, ADR-N-040, T-3052): the knowledge assistant's crawl worker. It
+  # reads the organization's KnowledgeSource manifests, crawls the public websites they name
+  # and indexes them into its own database.
+  - name: worker

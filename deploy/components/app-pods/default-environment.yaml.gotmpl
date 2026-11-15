@@ -1,0 +1,10 @@
+---
+app-pods:
+  hsl-transport:
+    enabled: true
+    namespace: {{ include "jc.namespace" (dict "global" .Values.global "suffix" "app-pods") }}
+    # The slug of the public Endpoint the App reads (prod's `app-hsl-transport` of space helsinki,
+    # in the App's JC_APP_CONFIG). The render refuses an empty one.
+    endpointSlug: ""
+    # The project the App belongs to: its Portal page and basemap route.
+    project: helsinki

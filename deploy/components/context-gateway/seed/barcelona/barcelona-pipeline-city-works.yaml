@@ -1,0 +1,20 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: city-works
+  namespace: barcelona
+  title:
+    ca: Obres a l'espai públic de Barcelona, cada dia
+    es: Obras en el espacio público de Barcelona, cada día
+    en: Barcelona works on the public space, daily
+spec:
+  class: auto
+  # The city rewrites the file once a day at about 05:30 UTC.
+  schedule: '40 6 * * *'
+  source:
+    dataSourceRef: { kind: DataSource, name: bcn-city-works }
+  targetEndpoint: urn:ngsi-ld:Endpoint:barcelona.cat:barcelona:barcelona
+  # Upsert: a work the file drops leaves by its expiresAt, three days after its last listing (T-5264).
+  output: { type: CityWork, mode: upsert }
+  # The whole 7.7 MB file ran in 128 MiB on 2026-10-23; 192 leaves room for its growth.
+  quotas: { maxMemoryMb: 192, cpuMillicores: 200 }

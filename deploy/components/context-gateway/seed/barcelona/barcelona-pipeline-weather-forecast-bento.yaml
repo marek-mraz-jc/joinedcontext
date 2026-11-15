@@ -1,0 +1,81 @@
+# The mapping of the weather-forecast pipeline (PL-03, T-5413): one WeatherForecast per day ahead
+# of Meteocat's forecast for the comarca of Barcelonès (idcomarca 13) in Open Data BCN's XML file
+# (dataset prediccio-meteorologica-del-barcelones, two days on 2026-10-24). The file lists the 43
+# comarques of Catalonia; the rest are left out. Written per day: dateIssued (the file's
+# datacreacio, local time, as UTC), validFrom and validTo (the day's local midnights, as UTC),
+# dayMaximum and dayMinimum ({temperature} in °C), weatherType (the morning and afternoon sky named
+# by the file's own symbol table), a point in the city centre, address, areaServed, dataProvider
+# and source. Left out: the precipitation, hail and intensity classes (named categories, no
+# probability or amount the Smart Data Model could carry).
+#
+# Plausibility (owner 2026-10-22): a day whose number or date does not read, whose temperatures are
+# no number, outside -40 to 50 °C or with the minimum above the maximum, a day that ended before the
+# issue or starts more than four days after the run, and a second entry of one day number are each
+# dropped and counted by reason in `dropped`, which the next step logs. A file over 1 MiB, one that
+# is no Meteocat XML, has no issue time, was issued more than two days ago or more than a day ahead,
+# or holds no valid day of Barcelonès fails the run, so the last forecast stands.
+
+pipeline:
+  processors:
+    - mapping: |
+        let now = @bcn_now.or(now()).ts_parse("2006-01-02T15:04:05Z07:00").ts_unix()
+        let doc = if content().length() > 1048576 { throw("the forecast file is %d bytes, more than the 1 MiB read".format(content().length())) } else { content().parse_xml(cast: false).smc.catch(null) }
+        let smc = if $doc == null || $doc.type() != "object" { throw("the forecast file is no Meteocat XML (no smc element)") } else { $doc }
+        let symbol_list = $smc.simbol.or([])
+        let symbols = (if $symbol_list.type() == "array" { $symbol_list } else { [$symbol_list] }).fold({}, item -> item.tally.assign({ item.value."-id".or("").string(): item.value."-nomsimbol".or("").string().trim() }))
+        let issued_local = $smc."-datacreacio".or("").string().trim().ts_strptime("%d-%m-%Y %H:%M:%S").ts_unix().catch(null)
+        let issued = if $issued_local == null { throw("the forecast file has no issue time (datacreacio)") } else { $issued_local - $issued_local.ts_format("-07", "Europe/Madrid").number() * 3600 }
+        let fresh = if $issued < $now - 2 * 86400 { throw("the forecast was issued %v, more than two days ago".format($issued.ts_format("2006-01-02T15:04:05Z", "UTC"))) } else if $issued > $now + 86400 { throw("the forecast was issued %v, more than a day ahead".format($issued.ts_format("2006-01-02T15:04:05Z", "UTC"))) } else { $issued }
+        let forecasts = $smc.prediccio.or([])
+        let mine = (if $forecasts.type() == "array" { $forecasts } else { [$forecasts] }).filter(p -> p."-idcomarca".or("").string() == "13")
+        let variables = if $mine.length() == 0 { [] } else { $mine.index(0).variable.or([]) }
+        let days = if $variables.type() == "array" { $variables } else { [$variables] }
+        let read = $days.map_each(v -> {
+          "day": v."-dia".or("").string().trim(),
+          "naive": v."-data".or("").string().trim().ts_strptime("%d-%m-%Y").ts_unix().catch(null),
+          "max": v."-tempmax".or("").string().trim().number().catch(null),
+          "min": v."-tempmin".or("").string().trim().number().catch(null),
+          "morning": $symbols.get(v."-simbolmati".or("").string().trim_suffix(".png")).or(""),
+          "afternoon": $symbols.get(v."-simboltarda".or("").string().trim_suffix(".png")).or("")
+        })
+        let dated = $read.filter(d -> d.day.re_match("^[1-9]$") && d.naive != null).map_each(d -> d.assign({
+          "from": d.naive - d.naive.ts_format("-07", "Europe/Madrid").number() * 3600,
+          "to": d.naive + 86400 - (d.naive + 86400).ts_format("-07", "Europe/Madrid").number() * 3600
+        }))
+        let numeric = $dated.filter(d -> d.max != null && d.min != null)
+        let ranged = $numeric.filter(d -> d.min >= -40 && d.max <= 50 && d.min <= d.max)
+        let ahead = $ranged.filter(d -> d.to > $fresh && d.from <= $now + 4 * 86400)
+        # One entry per day number: a repeated one is a duplicate, its first stands.
+        let first = $ahead.enumerated().fold({}, item -> if item.tally.exists(item.value.value.day) { item.tally } else { item.tally.assign({ item.value.value.day: item.value.index }) })
+        let unique = $ahead.enumerated().filter(e -> $first.get(e.value.day) == e.index).map_each(e -> e.value)
+        root.dropped = {
+          "notADay": $read.length() - $dated.length(),
+          "notANumber": $dated.length() - $numeric.length(),
+          "outOfRange": $numeric.length() - $ranged.length(),
+          "outsideTheForecast": $ranged.length() - $ahead.length(),
+          "duplicateDay": $ahead.length() - $unique.length()
+        }
+        # Each forecast value is observed at the issue: a rerun over the same file repeats that measurement
+        # (DM-104), so only a new issue adds a history row.
+        let issued = $fresh.ts_format("2006-01-02T15:04:05Z", "UTC")
+        root.entities = if $unique.length() == 0 { throw("the forecast file holds no valid day for Barcelonès (comarca 13)") } else { $unique.map_each(d -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:barcelones-day-%v".format("WeatherForecast", env("JC_ORG_DOMAIN"), env("JC_SPACE"), d.day),
+          "type": "WeatherForecast",
+          "name": { "type": "Property", "value": "Predicció del Barcelonès, dia %v".format(d.day) },
+          "dateIssued": { "type": "Property", "value": $issued, "observedAt": $issued },
+          "validFrom": { "type": "Property", "value": d.from.ts_format("2006-01-02T15:04:05Z", "UTC"), "observedAt": $issued },
+          "validTo": { "type": "Property", "value": d.to.ts_format("2006-01-02T15:04:05Z", "UTC"), "observedAt": $issued },
+          "dayMaximum": { "type": "Property", "value": { "temperature": d.max }, "observedAt": $issued },
+          "dayMinimum": { "type": "Property", "value": { "temperature": d.min }, "observedAt": $issued },
+          "weatherType": if d.morning == "" && d.afternoon == "" { deleted() } else { { "type": "Property", "value": if d.morning == d.afternoon || d.afternoon == "" { d.morning } else if d.morning == "" { d.afternoon } else { "%s (matí), %s (tarda)".format(d.morning, d.afternoon) }, "observedAt": $issued } },
+          # Plaça de Sant Jaume: the forecast is for the comarca, its point the capital's centre.
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [2.177, 41.3826] } },
+          "address": { "type": "Property", "value": { "addressLocality": "Barcelona", "addressCountry": "ES" } },
+          "areaServed": { "type": "Property", "value": "Barcelonès" },
+          "dataProvider": { "type": "Property", "value": "Ajuntament de Barcelona, Open Data BCN, from Meteocat (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://opendata-ajuntament.barcelona.cat/data/dataset/prediccio-meteorologica-del-barcelones" }
+        }) }
+    - log:
+        level: INFO
+        message: 'weather forecast: ${! json("entities").length() } days written; dropped ${! json("dropped").format_json(no_indent: true) }'
+    - mapping: root = this.entities

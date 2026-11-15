@@ -1,0 +1,110 @@
+# The mapping of the weather pipeline (PL-03, T-5263): one WeatherObserved per station of the
+# Catalan weather service (Meteocat, XEMA network) inside Barcelona, with the newest day's values.
+# The source is Open Data BCN's <year>_MeteoCat_Detall_Estacions.csv (dataset
+# mesures-estacions-meteorologiques, rewritten every night at about 03:00 UTC): one row per day,
+# station and variable (ACRÒNIM) since 1 January, the day in DATA_LECTURA, the time of an extreme in
+# DATA_EXTREM. The stations' names and places are not in it; they are listed here, read from the
+# dataset metadades-estacions-meteorologiques (2020_MeteoCat_Estacions.csv, 2026-10-23). That list
+# gives el Raval (X4) district Sarrià-Sant Gervasi and Zona Universitària (X8) district Ciutat
+# Vella and barri Sant Gervasi - Galvany: the two rows carry each other's districts (el Raval is in
+# Ciutat Vella; the UB tracks at 41.37919, 2.1054 lie in les Corts), so they are written as the
+# coordinates place them and X8 carries no barri. Zoo (X2) is in the list and has no row in 2026.
+#
+# Variables written, in Smart Data Models' names and units: TM temperature (mean, °C), TX and TN
+# maxTemperature and minTemperature (°C, properties of this model), HRM relativeHumidity (mean, %
+# as a 0..1 fraction), PM atmosphericPressure (mean at the station's height, hPa), PPT
+# precipitation (mm = l/m² of the day), VVM10 and DVM10 windSpeed (m/s) and windDirection (°, the
+# day's means at 10 m), VVX10 gustSpeed (the day's strongest gust, m/s) and RS24h solarRadiation
+# (the day's global irradiation in MJ/m², written as the day's mean irradiance in W/m²: x 1e6 /
+# 86400). Left out: the humidity and pressure extremes (HRX, HRN, PX, PN) and the gust direction
+# (DVVX10), which the model has no attribute for.
+#
+# Plausibility (owner 2026-10-22): a variable not listed above, a station not listed, a value that
+# is no number or outside its physical range, a day more than a day ahead, and a second row for one
+# station, variable and day are each dropped and counted by reason in `dropped`, which the next
+# step logs. A file with no valid value, or whose newest day ended more than four days ago (the
+# city's one-day delay plus three update periods), fails the run and leaves the entities as they
+# were. The file is one per year: on 1 January the city opens a new resource, this one stops
+# moving and the run fails as stale until the DataSource names the new year's file.
+# ponytail: one resource id per year, the DataSource is moved each January; upgrade path: resolve
+# the newest resource through package_show in the mapping, as soon as the runner tests mappings
+# with an http step offline.
+
+pipeline:
+  processors:
+    - mapping: |
+        let text = if content().length() > 2097152 { throw("the daily file is %d bytes, more than the 2 MiB read".format(content().length())) } else { content().string().trim_prefix("﻿") }
+        # The run's clock; a test sets bcn_now to read a recorded file as of its own day.
+        let now = @bcn_now.or(now()).ts_parse("2006-01-02T15:04:05Z07:00").ts_unix()
+        let stations = {
+          "D5": { "name": "Barcelona - Observatori Fabra", "street": "Observatori Fabra", "district": "Sarrià-Sant Gervasi", "barri": "Vallvidrera, el Tibidabo i les Planes", "altitude": 411, "coordinates": [2.12379, 41.41864] },
+          "X2": { "name": "Barcelona - Zoo", "street": "Zoo", "district": "Ciutat Vella", "barri": "Sant Pere, Santa Caterina i la Ribera", "altitude": 7, "coordinates": [2.18847, 41.38943] },
+          "X4": { "name": "Barcelona - el Raval", "street": "Facultat de Geografia i Història. c. Montalegre nº6, 6a", "district": "Ciutat Vella", "barri": "el Raval", "altitude": 33, "coordinates": [2.16775, 41.3839] },
+          "X8": { "name": "Barcelona - Zona Universitària", "street": "Pistes UB", "district": "les Corts", "altitude": 79, "coordinates": [2.1054, 41.37919] }
+        }
+        # acronym -> attribute, UN/CEFACT unit, physical range, and the factor that turns the file's
+        # unit into the model's.
+        let variables = {
+          "TM": { "attribute": "temperature", "unit": "CEL", "min": -40, "max": 50 },
+          "TX": { "attribute": "maxTemperature", "unit": "CEL", "min": -40, "max": 50 },
+          "TN": { "attribute": "minTemperature", "unit": "CEL", "min": -40, "max": 50 },
+          "HRM": { "attribute": "relativeHumidity", "unit": "C62", "min": 0, "max": 100, "factor": 0.01 },
+          "PM": { "attribute": "atmosphericPressure", "unit": "A97", "min": 850, "max": 1100 },
+          "PPT": { "attribute": "precipitation", "unit": "MMT", "min": 0, "max": 500 },
+          "VVM10": { "attribute": "windSpeed", "unit": "MTS", "min": 0, "max": 60 },
+          "DVM10": { "attribute": "windDirection", "unit": "DD", "min": 0, "max": 360 },
+          "VVX10": { "attribute": "gustSpeed", "unit": "MTS", "min": 0, "max": 90 },
+          "RS24h": { "attribute": "solarRadiation", "unit": "D54", "min": 0, "max": 45, "factor": 11.574074074074074 }
+        }
+        let rows = $text.parse_csv(true, ",").map_each(r -> {
+          "station": r.CODI_ESTACIO.or("").trim(),
+          "variable": r.get("ACRÒNIM").or("").trim(),
+          "day": r.DATA_LECTURA.or("").trim(),
+          "value": r.VALOR.or("").trim().number().catch(null)
+        })
+        let known = $rows.filter(r -> $stations.exists(r.station) && $variables.exists(r.variable))
+        # One row per station, variable and day; a repeated row is a duplicate, its first stands.
+        let keyed = $known.enumerated().map_each(e -> e.value.assign({ "key": "%v|%v|%v".format(e.value.station, e.value.variable, e.value.day), "position": e.index }))
+        let first = $keyed.fold({}, item -> if item.tally.exists(item.value.key) { item.tally } else { item.tally.assign({ item.value.key: item.value.position }) })
+        let unique = $keyed.filter(r -> $first.get(r.key) == r.position)
+        # The day's end, local midnight, as UTC: the day read as UTC plus a day, less Madrid's offset.
+        let timed = $unique.map_each(r -> r.assign({ "naive": (r.day + "T00:00:00Z").ts_parse("2006-01-02T15:04:05Z07:00").catch(null) })).map_each(r -> if r.naive == null { r.assign({ "instant": null }) } else {
+          r.assign({ "instant": r.naive.ts_unix() + 86400 - (r.naive.ts_unix() + 86400).ts_format("-07", "Europe/Madrid").number() * 3600 })
+        })
+        let dated = $timed.filter(r -> r.instant != null)
+        let numeric = $dated.filter(r -> r.value != null)
+        let ranged = $numeric.filter(r -> r.value >= $variables.get(r.variable).min && r.value <= $variables.get(r.variable).max)
+        let valid = $ranged.filter(r -> r.instant <= $now + 86400)
+        let newest = $valid.map_each(r -> r.instant).sort().index(-1).catch(null)
+        root.dropped = {
+          "unknownStationOrVariable": $rows.length() - $known.length(),
+          "duplicateRow": $known.length() - $unique.length(),
+          "notADate": $unique.length() - $dated.length(),
+          "notANumber": $dated.length() - $numeric.length(),
+          "outOfRange": $numeric.length() - $ranged.length(),
+          "inTheFuture": $ranged.length() - $valid.length()
+        }
+        let by_station = if $newest == null { throw("the daily file holds no valid value of a known station") } else if $newest < $now - 4 * 86400 { throw("the newest day of the daily file ended %v, more than four days ago".format($newest.ts_format("2006-01-02T15:04:05Z", "UTC"))) } else {
+          $valid.sort_by(r -> r.instant).fold({}, item -> item.tally.assign({ item.value.station + "|" + item.value.variable: item.value })).values().fold({}, item -> item.tally.assign({ item.value.station: item.tally.get(item.value.station).or([]).append(item.value) }))
+        }
+        root.entities = $by_station.key_values().sort_by(s -> s.key).map_each(s -> $stations.get(s.key).assign({ "code": s.key, "readings": s.value })).map_each(st -> {
+          "id": "urn:ngsi-ld:%v:%v:%v:meteocat-%v".format("WeatherObserved", env("JC_ORG_DOMAIN"), env("JC_SPACE"), st.code),
+          "type": "WeatherObserved",
+          "name": { "type": "Property", "value": st.name },
+          "stationCode": { "type": "Property", "value": st.code },
+          "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": st.coordinates } },
+          "altitude": { "type": "Property", "value": st.altitude },
+          "address": { "type": "Property", "value": { "streetAddress": st.street, "addressLocality": "Barcelona", "district": st.district, "addressCountry": "ES" } },
+          "areaServed": if st.barri.or(null) == null { deleted() } else { { "type": "Property", "value": st.barri } },
+          "dateObserved": { "type": "Property", "value": st.readings.map_each(r -> r.instant).sort().index(-1).ts_format("2006-01-02T15:04:05Z", "UTC") },
+          "dataProvider": { "type": "Property", "value": "Ajuntament de Barcelona, Open Data BCN, from Meteocat (CC BY 4.0)" },
+          "source": { "type": "Property", "value": "https://opendata-ajuntament.barcelona.cat/data/dataset/mesures-estacions-meteorologiques" }
+        }.merge(st.readings.fold({}, item -> item.tally.assign({ $variables.get(item.value.variable).attribute: {
+          "type": "Property", "value": ((item.value.value * $variables.get(item.value.variable).factor.or(1)) * 1000).round() / 1000,
+          "unitCode": $variables.get(item.value.variable).unit,
+          "observedAt": item.value.instant.ts_format("2006-01-02T15:04:05Z", "UTC")
+        } }))))
+    - log:
+        level: INFO
+        message: 'weather: ${! json("entities").length() } stations written; dropped ${! json("dropped").format_json(no_indent: true) }'
+    - mapping: root = this.entities

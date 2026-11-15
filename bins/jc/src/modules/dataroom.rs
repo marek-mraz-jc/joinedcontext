@@ -264,7 +264,7 @@ pub async fn build_with_writer(
             )));
         }
         let tenant = own_org[&org.name];
-        let host = bare_host(&org.hosts.opendata);
+        let host = bare_host(org.hosts.opendata_host());
         dataroom_server::ensure_catalogue(store.as_ref(), tenant, id, &org.name, host)
             .await
             .map_err(|e| err(&e))?;
@@ -319,7 +319,7 @@ pub async fn build_with_writer(
                 (
                     own_org[&org.name],
                     CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| err(&e))?,
-                    format!("{}://{}", mount.scheme, org.hosts.opendata),
+                    format!("{}://{}", mount.scheme, org.opendata_base()),
                 )
             }
         };
@@ -358,7 +358,7 @@ pub async fn build_with_writer(
     for org in organizations {
         let id = CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| err(&e))?;
         by_organization.insert(org.name.clone(), (own_org[&org.name], id));
-        bases.insert(id, format!("{}://{}", mount.scheme, org.hosts.opendata));
+        bases.insert(id, format!("{}://{}", mount.scheme, org.opendata_base()));
     }
     #[cfg(feature = "portal")]
     let followed = portal_orgs(
@@ -448,7 +448,7 @@ fn portal_orgs(
                 &org.name,
                 own_org[&org.name],
                 catalogue_id,
-                org.hosts.opendata.clone(),
+                org.opendata_base(),
                 org.hosts.portals.clone(),
             ))
         })
@@ -463,16 +463,22 @@ fn own_gateway(
     live: &crate::siblings::LiveAddresses,
     siblings: &Siblings,
 ) -> Option<(String, Option<std::net::SocketAddr>)> {
-    let gateway = siblings.get(Module::Gateway)?;
-    let public = crate::siblings::origin(&gateway.public);
     if live.api.is_empty() {
         return None;
     }
-    let internal = crate::siblings::origin(&gateway.internal);
-    let loopback = internal
-        .strip_prefix("http://")
-        .and_then(|a| a.parse::<std::net::SocketAddr>().ok())
-        .filter(|a| a.ip().is_loopback());
+    let loopback_of = |url: &str| {
+        crate::siblings::origin(url)
+            .strip_prefix("http://")
+            .and_then(|a| a.parse::<std::net::SocketAddr>().ok())
+            .filter(|a| a.ip().is_loopback())
+    };
+    let Some(gateway) = siblings.get(Module::Gateway) else {
+        // The gateway runs in another container (role split): the api address the operator
+        // named is its, read directly only when it is a loopback literal (a kit's front).
+        return Some((live.api.clone(), loopback_of(&live.api)));
+    };
+    let public = crate::siblings::origin(&gateway.public);
+    let loopback = loopback_of(&gateway.internal);
     // A named api address that is not the gateway's mount is another host: no shortcut. A
     // public origin that is the loopback listener itself (a kit on http://127.0.0.1:<port>) is
     // still jc serving it there.
@@ -638,7 +644,7 @@ fn organization_branding(
     assistant_widget: Option<String>,
 ) -> BrandingBlock {
     let mut block = installation_branding(own, live, assistant_widget);
-    block.addresses.api = format!("{scheme}://{}", org.hosts.api);
+    block.addresses.api = format!("{scheme}://{}", org.api_base());
     block.addresses.portal = format!("{scheme}://{}", org.hosts.portal);
     block
 }
@@ -667,7 +673,7 @@ async fn ensure_publisher(
                 name: org.name.clone(),
                 title: BTreeMap::from([("en".to_owned(), org.name.clone())]),
                 description: BTreeMap::new(),
-                uri: format!("{scheme}://{}/publisher/{}", org.hosts.opendata, org.name),
+                uri: format!("{scheme}://{}/publisher/{}", org.opendata_base(), org.name),
                 publisher_type: None,
                 identifier: None,
                 email: None,
@@ -918,11 +924,13 @@ mod tests {
                 id: None,
                 hosts: crate::config::OrganizationHosts {
                     portal: format!("portal.{name}.test"),
-                    opendata: format!("data.{name}.test"),
-                    api: format!("api.{name}.test"),
-                    mcp: format!("mcp.{name}.test"),
-                    portals: Vec::new(),
+                    opendata: Some(format!("data.{name}.test")),
+                    api: Some(format!("api.{name}.test")),
+                    mcp: Some(format!("mcp.{name}.test")),
+                    ..Default::default()
                 },
+                host: None,
+                same_site_apps: false,
                 catalogue_id: format!("6f1c0b2e-5d3a-4c1e-9a8b-7e2d4f6a1b{n:02}"),
                 portal_token_file: None,
             })
@@ -964,7 +972,7 @@ mod tests {
                 installation,
                 cat,
                 &org.name,
-                &org.hosts.opendata,
+                org.hosts.opendata_host(),
             )
             .await
             .unwrap();
@@ -1025,7 +1033,7 @@ mod tests {
         for org in &organizations {
             let request =
                 axum::http::Request::get(format!("/api/3/action/package_show?id=air-{}", org.name))
-                    .header("host", &org.hosts.opendata)
+                    .header("host", org.hosts.opendata_host())
                     .body(axum::body::Body::empty())
                     .unwrap();
             let answer = router.clone().oneshot(request).await.unwrap();
@@ -1714,7 +1722,24 @@ mod tests {
             Some(("http://localhost:42102".into(), None))
         );
         assert_eq!(own_gateway(&live(""), &slug), None);
-        assert_eq!(own_gateway(&live("x"), &Siblings::new(&[], listener)), None);
+        // No gateway in this jc (role split): the named api address, on loopback only as a literal.
+        let apart = Siblings::new(&[], listener);
+        assert_eq!(own_gateway(&live(""), &apart), None);
+        assert_eq!(
+            own_gateway(&live("https://api.city.example"), &apart),
+            Some(("https://api.city.example".into(), None))
+        );
+        assert_eq!(
+            own_gateway(&live("http://127.0.0.1:42262"), &apart),
+            Some((
+                "http://127.0.0.1:42262".into(),
+                Some("127.0.0.1:42262".parse().unwrap())
+            ))
+        );
+        assert_eq!(
+            own_gateway(&live("http://10.0.0.5:8080"), &apart),
+            Some(("http://10.0.0.5:8080".into(), None))
+        );
     }
 
     /// Without a gateway of their own, prod's sources keep prod's converted datasets and read

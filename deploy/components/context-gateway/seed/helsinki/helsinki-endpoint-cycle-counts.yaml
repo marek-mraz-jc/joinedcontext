@@ -1,0 +1,90 @@
+# The cyclists the city's Eco-Counter stations count, one TrafficFlowObserved per station,
+# direction and day (T-5253), read through its own Policy.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-cycle-counts
+  namespace: helsinki
+  title: { fi: Pyöräilijämäärät — Helsinki, en: Cyclist counts — Helsinki }
+  description:
+    fi: >-
+      Pyöräilijät, jotka kaupungin automaattiset laskentapisteet (Eco-Counter) laskivat edellisenä päivänä, laskentapisteittäin
+      ja suunnittain; jokaisen päivän luku jää entiteetin historiaan. Smart Data Models -tyyppi TrafficFlowObserved;
+      oma ominaisuus trafficDirection kertoo kulkusuunnan (north, south, east, west, inbound, outbound). Pois jätetään
+      laskimet ilman sijaintia, Helsingin ulkopuolella, vara- ja testilaskimet, kahdesti listatut sekä kolme päivää
+      hiljaiset. Lähde: Helsingin kaupunki, CC BY 4.0.
+    en: >-
+      The cyclists the city's automatic counting stations (Eco-Counter) counted the day before, per station and direction;
+      each day's figure stays in the entity's history. Smart Data Models type TrafficFlowObserved; the custom property
+      trafficDirection names the direction of travel (north, south, east, west, inbound, outbound). Left out: stations
+      without a position, outside Helsinki, spares and test loggers, stations listed twice, and stations silent for
+      three days. Source: City of Helsinki, CC BY 4.0.
+spec:
+  contextSpaceRef: helsinki
+  slug: kvhnixtbe5dex2wt2kx3i37dzw6yzsxt
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-cycle-counts
+  enabledRepresentations: [ngsi-ld, csv, mcp, websocket, ogc-features, odata, sta]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Helsingin kaupunki, CC BY 4.0'
+      sv: 'Källa: Helsingfors stad, CC BY 4.0'
+      en: 'Source: City of Helsinki, CC BY 4.0'
+    themes: [TRAN]
+    keywords:
+      fi: [pyöräily, pyöräilijämäärät, liikennelaskenta]
+      sv: [cykling, cykelräkning, trafikräkning]
+      en: [cycling, cyclist counts, traffic counting]
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: DAILY
+    source:
+      - url: https://lidotiku.api.hel.fi/api/counters/?source=EcoCounter
+        title:
+          fi: Helsingin liikennemittausten tilastorajapinta
+          en: Statistical API for traffic measurement data
+        description:
+          fi: Kaupungin Eco-Counter-laskentapisteet ja niiden havainnot, CC BY 4.0.
+          en: The city's Eco-Counter stations and their observations, CC BY 4.0.
+    pipelineRef: { kind: Pipeline, name: cycle-counters }
+    # Declared charts replace the automatic ones (T-5432): the Eco-Counter stations count cyclists
+    # and write no averageVehicleSpeed, so that chart stayed empty.
+    visualizations:
+      - name: auto-trafficflowobserved-intensity
+        title: { fi: Pyöräilijöitä vuorokaudessa, sk: Cyklisti za deň, en: Cyclists per day }
+        description:
+          sk: Hodnoty za posledných 7 dní, jedna čiara na sčítacie miesto a smer.
+          en: The values of the last 7 days, one line per station and direction.
+        data:
+          source: temporal
+          type: TrafficFlowObserved
+          attrs: [intensity]
+          last: P7D
+        spec:
+          $schema: https://vega.github.io/schema/vega-lite/v5.json
+          data: { name: source }
+          mark: { type: line, point: true }
+          encoding:
+            x: { field: observedAt, type: temporal, title: null }
+            'y':
+              field: intensity
+              type: quantitative
+              scale: { zero: false }
+            color: { field: name, type: nominal, title: null }
+            tooltip:
+              - field: observedAt
+                type: temporal
+              - field: intensity
+                type: quantitative
+                format: ',d'
+              - field: name
+                type: nominal

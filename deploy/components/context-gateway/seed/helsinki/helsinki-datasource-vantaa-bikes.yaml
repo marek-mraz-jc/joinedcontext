@@ -1,0 +1,16 @@
+# City Bike Vantaa's stations (T-5254), HSL's register of them as GeoJSON in WGS84. No key. CC-BY-4.0, read
+# from the HRI catalogue (package vantaan-kaupunkipyoraasemat). Vantaa's bikes are not in HSL's GBFS feed
+# (hsl-citybikes-gbfs-info), so these 120 stations are not a second copy of a station the bikes seed writes.
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata:
+  name: hsl-vantaa-bikes
+  namespace: helsinki
+  title: { en: City bike stations of Vantaa, fi: Vantaan kaupunkipyöräasemat }
+spec:
+  type: http
+  http:
+    url: https://hub.arcgis.com/api/v3/datasets/681a1aea01e34c0d9e11fa06ac4e2c47_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1
+    verb: GET
+    headers: { Accept: application/json }
+    timeout: 60s

@@ -1,0 +1,42 @@
+{
+  "aktualnyStavebnotechnickyStav": "aktualnyStavebnotechnickyStav",
+  "dataProvider": "dataProvider",
+  "dlzkaPremosteniaM": 0.0,
+  "docasnostMosta": "docasnostMosta",
+  "druhNosnejKonstrukcie": "druhNosnejKonstrukcie",
+  "hodnotenie": "hodnotenie",
+  "id": "urn:ngsi-ld:Bridge:joinedcontext.com:example:1",
+  "identifikacneCislo": "identifikacneCislo",
+  "isPartOf": "https://example.org/isPartOf",
+  "komunikacia": "komunikacia",
+  "legislativnyStav": "legislativnyStav",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "materialNosnejKonstrukcie": "materialNosnejKonstrukcie",
+  "name": "name",
+  "normalnaZatazitelnostT": "normalnaZatazitelnostT",
+  "obec": "obec",
+  "observedAt": "2026-01-01T00:00:00Z",
+  "ojedinelaZatazitelnostT": "ojedinelaZatazitelnostT",
+  "okres": "okres",
+  "pocetDilCelkov": 0,
+  "predmetPremostenia": "predmetPremostenia",
+  "rokKonstrukcie": 0,
+  "rokZasadnejRekonstrukcie": 0,
+  "source": "https://example.org/source",
+  "spravca": "spravca",
+  "triedaCesty": "triedaCesty",
+  "typKomunikacie": "typKomunikacie",
+  "typPamiatky": "typPamiatky",
+  "type": "Bridge",
+  "ulica": "ulica",
+  "vlastnik": "vlastnik",
+  "vyhradnaZatazitelnostT": "vyhradnaZatazitelnostT",
+  "vynimocnaZatazitelnostT": "vynimocnaZatazitelnostT",
+  "zatazitelnostNaJednuNapravu": "zatazitelnostNaJednuNapravu"
+}

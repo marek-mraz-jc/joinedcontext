@@ -1,0 +1,63 @@
+# One Smart Data Model type per catalogue dataset (T-4344): NatureSite of the space helsinki, read
+# through its own Policy, which narrows the space's public read to this type (T-5823).
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-nature
+  namespace: helsinki
+  title:
+    fi: Luontotietojärjestelmä, suojellut ja arvokkaat luontokohteet — Helsinki
+    en: Nature information system, protected and valuable nature sites — Helsinki
+  description:
+    fi: 'Helsingin luontotietojärjestelmän kymmenen tasoa: luonnonsuojelualueet, Natura-alueet, luonnonmuistomerkit, suojellut luontotyypit, luonnonsuojeluohjelman kohteet, liito-oravan ydinalueet, tärkeät lintualueet, lepakkoalueet, arvokkaat kasvikohteet ja geologisesti arvokkaat kohteet. Kohteen nimi (name), taso (natureSiteCategory), arvoluokka järjestelmän omin sanoin (valueClass), pinta-ala hehtaareina (areaHectares), järjestelmän kuvaus (description) ja rajaus. Smart Data Models -kirjastossa ei ole suojelualuemallia, joten NatureSite ja sen kentät ovat alustan omia. Lähde: Helsingin kaupunki, CC BY 4.0.'
+    en: "Ten layers of Helsinki's nature information system: nature reserves, Natura 2000 areas, natural monuments, protected habitat types, sites of the nature conservation programme, flying squirrel core areas, important bird areas, bat areas, valuable plant sites and valuable geological sites. Each site's name (name), layer (natureSiteCategory), value class in the system's own Finnish words (valueClass), area in hectares (areaHectares), the system's description (description) and outline. Smart Data Models has no protected-area model, so NatureSite and its properties are the platform's own. Source: City of Helsinki, CC BY 4.0."
+spec:
+  contextSpaceRef: helsinki
+  slug: kddqg7cdcp4okv6mcfzgfiw6huoyyjjr
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-nature
+  # The contact lines stay in the space, as on helsinki-all (EP-61). A projection only narrows.
+  projection:
+    hiddenAttributes: [contactPoint]
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: hel-fi }
+      license: cc-by
+  catalog:
+    publisher:
+      name: { fi: Helsingin kaupunki, sv: Helsingfors stad, en: City of Helsinki }
+      uri: https://www.hel.fi/
+    license: CC_BY_4_0
+    attribution:
+      fi: 'Lähde: Helsingin kaupunki, CC BY 4.0'
+      sv: 'Källa: Helsingfors stad, CC BY 4.0'
+      en: 'Source: City of Helsinki, CC BY 4.0'
+    themes: [ENVI]
+    keywords:
+      fi:
+        - luonnonsuojelu
+        - luonnonsuojelualueet
+        - Natura 2000
+        - liito-orava
+        - lintualueet
+        - kaupunkiluonto
+      sv: [naturskydd, naturskyddsområden, Natura 2000, flygekorre, fågelområden, stadsnatur]
+      en:
+        - nature conservation
+        - nature reserves
+        - Natura 2000
+        - flying squirrel
+        - bird areas
+        - urban nature
+    spatial:
+      - FI1B1
+      - http://uri.suomi.fi/codelist/jhs/kunta_1_20250101/code/091
+    frequency: DAILY
+    source:
+      - url: https://hri.fi/data/fi/dataset/helsingin-luontotietojarjestelma
+        title: { fi: Helsingin luontotietojärjestelmä, en: Helsinki's nature information system }
+        description:
+          fi: Helsingin karttapalvelun kymmenen WFS-tasoa LTJ_avoin_*, GeoJSON, yhdellä kyselyllä. Luetaan päivittäin (putki nature).
+          en: Ten WFS layers LTJ_avoin_* of the city map service, as GeoJSON in one query. Read daily (pipeline nature).
+    pipelineRef: { kind: Pipeline, name: nature }

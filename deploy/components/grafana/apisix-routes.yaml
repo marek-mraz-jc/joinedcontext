@@ -1,0 +1,12 @@
+---
+# One path on the primary host, exactly as the route table publishes it
+# (docs Deployment/10 section 2). Grafana serves itself from that sub-path, so the route
+# forwards the URI unchanged and no rewriting has to stay in step with an asset path.
+grafana:
+  name: grafana
+  description: Operational dashboards (Grafana addon)
+  upstream: grafana.{{ include "jc.namespace" (dict "global" .Values.global "suffix" "grafana") }}.svc.cluster.local:3000 # yamllint disable-line rule:line-length
+  host: '{{ .Values.global.domain }}'
+  uri: '/grafana*'
+  # Above the Portal UI's `/*` at priority 1, the same way the catalogue redirect sits above it.
+  priority: 5

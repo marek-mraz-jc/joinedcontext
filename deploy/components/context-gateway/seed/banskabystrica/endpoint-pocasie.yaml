@@ -1,0 +1,38 @@
+# One Smart Data Model type per catalogue dataset (T-4344): WeatherObserved of the space
+# banskabystrica-verejne, read through its own Policy, which narrows the space's public read to these types.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: banskabystrica-pocasie
+  namespace: banskabystrica
+  title: { sk: Počasie — Banská Bystrica, en: Weather — Banská Bystrica }
+  description:
+    sk: 'Počasie na automatických staniciach SHMÚ Banská Bystrica - Zelená a Donovaly, každých päť minút. Zdroj: Slovenský hydrometeorologický ústav, CC BY 4.0.'
+    en: "The weather at SHMÚ's automatic stations Banská Bystrica - Zelená and Donovaly, every five minutes. Source: the Slovak Hydrometeorological Institute, CC BY 4.0."
+spec:
+  contextSpaceRef: banskabystrica-verejne
+  slug: 3iasem46w7d7pxxypwdfdzheyaodv3qn
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:banskabystrica.sk:banskabystrica-verejne:pocasie-read
+  enabledRepresentations: [ngsi-ld, csv, websocket, ogc-features, odata, mcp]
+  publish:
+    ckan:
+      instanceRef: { kind: CkanInstance, name: banskabystrica }
+      license: cc-by
+  catalog:
+    # The publisher and contact desk are the Project's spec.catalog, its registry IRI (T-4596).
+    # Aggregates of public facilities and readings: no record names a person (T-4596).
+    personalData: does-not-contain
+    license: CC_BY_4_0
+    attribution:
+      sk: 'Zdroj: Slovenský hydrometeorologický ústav, CC BY 4.0'
+      en: 'Source: Slovak Hydrometeorological Institute, CC BY 4.0'
+    themes: [ENVI]
+    keywords:
+      sk: [počasie, teplota, SHMÚ, Banská Bystrica]
+      en: [weather, temperature, SHMÚ, Banská Bystrica]
+    spatial:
+      - SK032
+      - https://data.gov.sk/id/lau2/SK0321508438
+    frequency: CONT
+    pipelineRef: { kind: Pipeline, name: pocasie }

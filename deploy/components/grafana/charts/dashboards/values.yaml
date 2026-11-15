@@ -1,0 +1,14 @@
+---
+# The ConfigMap the Grafana release mounts through `dashboardsConfigMaps`. The name is a
+# contract between the two releases of this component.
+configMapName: grafana-dashboards
+
+# The dashboard provider the files belong to, which decides the folder they appear in.
+provider: platform
+
+# The second ConfigMap, what the Grafana container's postStart hook reads (T-6504).
+projectsConfigMapName: grafana-projects
+# The gateway as this cluster reaches it; each datasource is one Endpoint under it.
+gatewayUrl: ''
+# One entry per project with a dashboard: components/grafana/README.md, "Project dashboards".
+projects: []
