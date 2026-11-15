@@ -2601,6 +2601,7 @@
       "pick": "{count, plural, one {# Eintrag} other {# Einträge}} gefunden",
       "pickHint": "Wählen Sie einen; Übernehmen schreibt ihn ins Formular, wo Sie ihn noch ändern können.",
       "use": "Übernehmen",
+      "useNeeds": "Wählen Sie zuerst einen Eintrag aus der Liste.",
       "truncated": "Der Dienst listet mehr, als das Portal liest; fehlt Ihrer, geben Sie eine engere URL ein.",
       "none": "Der Dienst listet nichts, was diese Vorlage lesen kann. Prüfen Sie URL und API-Art.",
       "failed": "Nichts gelistet: {reason}. Prüfen Sie URL und API-Art und versuchen Sie es erneut.",

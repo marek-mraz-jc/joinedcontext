@@ -149,6 +149,7 @@ export function PresetDiscovery({
                   variant="primary"
                   size="sm"
                   disabled={picked === "" || !http}
+                  title={picked === "" || !http ? t("datasources.discover.useNeeds") : undefined}
                   onClick={() => {
                     if (!http) return;
                     onUse(applied(http, answer, picked));

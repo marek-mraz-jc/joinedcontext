@@ -2601,6 +2601,7 @@
       "pick": "Nalezeno {count, plural, one {# položka} few {# položky} other {# položek}}",
       "pickHint": "Vyberte jednu; Použít ji zapíše do formuláře, kde ji ještě můžete změnit.",
       "use": "Použít",
+      "useNeeds": "Nejprve vyberte položku ze seznamu.",
       "truncated": "Služba vypisuje víc, než Portál čte; chybí-li vaše položka, zadejte užší URL.",
       "none": "Služba nevypisuje nic, co by tato předvolba četla. Zkontrolujte URL a druh API.",
       "failed": "Nic se nevypsalo: {reason}. Zkontrolujte URL a druh API a zkuste to znovu.",

@@ -2789,7 +2789,7 @@ export interface paths {
         put?: never;
         /**
          * Data Source Discovery
-         * @description Reads the listing of a public open data service once on the project's runner and answers what a preset of that kind can pick: CKAN organizations, ArcGIS layers, OData entity sets, WFS feature types, OGC API collections or SensorThings Things. Nothing is written.
+         * @description Lists what a public service offers an http preset: organizations, layers, entity sets, feature types, collections or Things.
          */
         post: operations["discover_datasource"];
         delete?: never;
@@ -4688,6 +4688,26 @@ export interface paths {
          * @description Dry-runs a DataSource manifest and probes the external feed
          */
         post: operations["jc_datasource_check"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/ops/jc_datasource_discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Data Source Discovery
+         * @description Lists what a public service offers an http preset: organizations, layers, entity sets, feature types, collections or Things
+         */
+        post: operations["jc_datasource_discover"];
         delete?: never;
         options?: never;
         head?: never;
@@ -30463,6 +30483,92 @@ export interface operations {
                             trace?: Record<string, never>;
                         };
                     };
+                };
+            };
+            /** @description The change the operation opened, waiting for a person's approval */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Forbidden: the caller lacks what x-jc-requires names */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The project or an object the input names is not there */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The input does not match the schema; the problem names the path */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    jc_datasource_discover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project slug */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "kind": "ckan",
+                 *       "url": "example"
+                 *     }
+                 */
+                "application/json": {
+                    /**
+                     * @description The preset kind
+                     * @enum {string}
+                     */
+                    kind: "ckan" | "arcgisFeature" | "odata" | "wfs" | "ogcFeatures" | "sensorThings";
+                    /** @description The service or any address under it */
+                    url: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The operation's answer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
                 };
             };
             /** @description The change the operation opened, waiting for a person's approval */

@@ -823,6 +823,7 @@ fn init_registry() -> Vec<Operation> {
     operations.extend(space_reads::operations());
     operations.extend(administration::operations());
     operations.extend(repositories::operations());
+    operations.extend(datasource_discover::operations());
     operations
 }
 

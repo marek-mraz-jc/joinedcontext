@@ -11090,7 +11090,7 @@
           "datasources"
         ],
         "summary": "Data Source Discovery",
-        "description": "Reads the listing of a public open data service once on the project's runner and answers what a preset of that kind can pick: CKAN organizations, ArcGIS layers, OData entity sets, WFS feature types, OGC API collections or SensorThings Things. Nothing is written.",
+        "description": "Lists what a public service offers an http preset: organizations, layers, entity sets, feature types, collections or Things.",
         "operationId": "discover_datasource",
         "parameters": [
           {
@@ -22869,6 +22869,138 @@
           "checkedBy": "project",
           "kind": "DataSource",
           "verb": "read"
+        }
+      }
+    },
+    "/api/v1/projects/{project}/ops/jc_datasource_discover": {
+      "post": {
+        "description": "Lists what a public service offers an http preset: organizations, layers, entity sets, feature types, collections or Things",
+        "operationId": "jc_datasource_discover",
+        "parameters": [
+          {
+            "description": "Project slug",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "kind": "ckan",
+                "url": "example"
+              },
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "description": "The preset kind",
+                    "enum": [
+                      "ckan",
+                      "arcgisFeature",
+                      "odata",
+                      "wfs",
+                      "ogcFeatures",
+                      "sensorThings"
+                    ],
+                    "type": "string"
+                  },
+                  "url": {
+                    "description": "The service or any address under it",
+                    "maxLength": 2048,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "url"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "required": [
+                    "field",
+                    "url",
+                    "choices",
+                    "truncated"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The operation's answer"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The change the operation opened, waiting for a person's approval"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden: the caller lacks what x-jc-requires names"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The project or an object the input names is not there"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The input does not match the schema; the problem names the path"
+          }
+        },
+        "summary": "Data Source Discovery",
+        "tags": [
+          "ops"
+        ],
+        "x-jc-requires": {
+          "checkedBy": "registry",
+          "kind": "DataSource",
+          "verb": "propose"
         }
       }
     },

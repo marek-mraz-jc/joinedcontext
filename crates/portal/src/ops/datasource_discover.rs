@@ -17,7 +17,10 @@ use serde_json::{json, Value};
 use url::Url;
 use utoipa::ToSchema;
 
+use super::{bounds, parse_input, Operation, OperationAnnotations};
+use crate::change::Lane;
 use crate::error::ApiError;
+use jc_core::kinds::Verb;
 
 /// The bytes of a service's listing the runner hands back. A longer XML listing is read up to
 /// the cut, a longer JSON one is refused, and either way the answer says it was cut.
@@ -372,6 +375,55 @@ fn unescaped(text: &str) -> String {
         .replace("&quot;", "\"")
         .replace("&apos;", "'")
         .replace("&amp;", "&")
+}
+
+/// `jc_datasource_discover`: the agent's way to the same listing the form's "Find in the service"
+/// reads (`POST /api/v1/projects/{project}/datasource-discovery`).
+pub fn operations() -> Vec<Operation> {
+    vec![Operation {
+        name: "jc_datasource_discover",
+        title: "Data Source Discovery",
+        description: "Lists what a public service offers an http preset: organizations, layers, \
+                      entity sets, feature types, collections or Things",
+        input: || {
+            json!({
+                "type": "object",
+                "required": ["kind", "url"],
+                "additionalProperties": false,
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": ["ckan", "arcgisFeature", "odata", "wfs", "ogcFeatures", "sensorThings"],
+                        "description": "The preset kind"
+                    },
+                    "url": bounds::text("The service or any address under it", bounds::URL)
+                }
+            })
+        },
+        output: || json!({ "type": "object", "required": ["field", "url", "choices", "truncated"] }),
+        annotations: OperationAnnotations {
+            read_only_hint: true,
+            destructive_hint: false,
+            idempotent_hint: true,
+        },
+        kind: "DataSource",
+        verb: Some(Verb::Propose),
+        lane: Lane::Green,
+        validate: |val| parse_input::<DiscoverRequest>(val.clone()).map(|_| ()),
+        run: |caller, state, project, val| {
+            Box::pin(async move {
+                let request: DiscoverRequest = parse_input(val)?;
+                let found = crate::api::datasource_test::discovery(
+                    state,
+                    &caller.identity,
+                    project,
+                    request,
+                )
+                .await?;
+                Ok(serde_json::to_value(found)?)
+            })
+        },
+    }]
 }
 
 #[cfg(test)]

@@ -277,10 +277,8 @@ fn pages_of(trace: &TestTrace) -> Option<usize> {
     post,
     path = "/api/v1/projects/{project}/datasource-discovery",
     summary = "Data Source Discovery",
-    description = "Reads the listing of a public open data service once on the project's runner \
-                   and answers what a preset of that kind can pick: CKAN organizations, ArcGIS \
-                   layers, OData entity sets, WFS feature types, OGC API collections or \
-                   SensorThings Things. Nothing is written.",
+    description = "Lists what a public service offers an http preset: organizations, layers, \
+                   entity sets, feature types, collections or Things.",
     tag = "datasources",
     params(("project" = String, Path, description = "Project slug")),
     request_body = DiscoverRequest,
@@ -299,11 +297,24 @@ pub async fn discover_datasource(
     Path(project): Path<String>,
     Json(request): Json<DiscoverRequest>,
 ) -> Result<Json<Discovery>, ApiError> {
-    if !is_dns1123(&project) {
+    Ok(Json(
+        discovery(&state, &user.0.identity, &project, request).await?,
+    ))
+}
+
+/// The listing behind the route and `jc_datasource_discover`: the propose grant, the URL's
+/// shape, the public-only check, then one read on the runner.
+pub async fn discovery(
+    state: &AppState,
+    identity: &Identity,
+    project: &str,
+    request: DiscoverRequest,
+) -> Result<Discovery, ApiError> {
+    if !is_dns1123(project) {
         return Err(ApiError::NotFound(format!("project '{project}' not found")));
     }
     // A listing is read to write a source: the caller who may propose one reads it.
-    crate::permissions::for_request(&state, &user.0.identity, &project).check(
+    crate::permissions::for_request(state, identity, project).check(
         "DataSource",
         Verb::Propose,
         None,
@@ -313,15 +324,11 @@ pub async fn discover_datasource(
     crate::ops::pipeline_steps::sample_address(url.as_str(), "/url")
         .await
         .map_err(crate::ops::OpError::into_api_error)?;
-    let trace = run_stream(&state, &project, |capture| {
+    let trace = run_stream(state, project, |capture| {
         datasource_discover::listing_read(&url, capture)
     })
     .await?;
-    Ok(Json(datasource_discover::discovery_of(
-        request.kind,
-        &url,
-        trace,
-    )))
+    Ok(datasource_discover::discovery_of(request.kind, &url, trace))
 }
 
 pub fn router() -> Router<AppState> {

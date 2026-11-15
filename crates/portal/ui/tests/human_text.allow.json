@@ -171,6 +171,18 @@
       ],
       "reason": "T-6791: the example is an entity type exactly as the dropdown lists it and the manifest takes it"
     },
+    "datasources.preset.hint": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "ArcGIS, OData and SensorThings are the services' own names, the ones a person finds on the provider's page"
+    },
+    "datasources.preset.kinds.sensorThings": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "SensorThings is the OGC standard's own name, the one a person picks from the API list"
+    },
     "datasources.type.websocket": {
       "rules": [
         "kind"
