@@ -1233,6 +1233,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         };
         vars.extend(modules::portal::organization_vars(cfg, siblings.listener));
         vars.extend(modules::portal::apps_vars(cfg));
+        vars.extend(modules::portal::ingest_vars(cfg));
         vars.extend(modules::portal::limits_vars(cfg));
         vars.extend(modules::portal::reconciler_vars(cfg));
         modules::portal::config(mount, env, vars)?;
@@ -1390,6 +1391,7 @@ async fn portal_attempt(
                 modules::portal::organization_vars(&cfg, shared.siblings.listener)
                     .into_iter()
                     .chain(modules::portal::apps_vars(&cfg))
+                    .chain(modules::portal::ingest_vars(&cfg))
                     .chain(modules::portal::limits_vars(&cfg))
                     .chain(modules::portal::reconciler_vars(&cfg))
                     .collect(),
@@ -2322,6 +2324,27 @@ mod tests {
             "mode = \"host\"\nbase_host = \"city.test\"\n",
         );
         assert!(modules::portal::apps_vars(&none).is_empty());
+    }
+
+    /// PL-118: the ekiben entry at `/ingest` on a host is where a webhook sender posts, and the
+    /// Portal is told so; without one it shows no address.
+    #[test]
+    fn the_ekiben_ingest_entry_tells_the_portal_where_webhooks_post() {
+        let cfg = dev_config(
+            "ekiben,portal",
+            "mode = \"host\"\nbase_host = \"city.test\"\n\n[[mounts.ekiben]]\nhost = \"localhost:8080\"\npath_prefix = \"/streams\"\n\n[[mounts.ekiben]]\nhost = \"Portal.City.Test\"\npath_prefix = \"/ingest\"\n",
+        );
+        assert_eq!(
+            modules::portal::ingest_vars(&cfg)
+                .get("JC_PORTAL_INGEST_URL")
+                .map(String::as_str),
+            Some("https://portal.city.test/ingest/default")
+        );
+        let none = dev_config(
+            "ekiben,portal",
+            "mode = \"host\"\nbase_host = \"city.test\"\n\n[[mounts.ekiben]]\nhost = \"localhost:8080\"\npath_prefix = \"/streams\"\n",
+        );
+        assert!(modules::portal::ingest_vars(&none).is_empty());
     }
 
     /// LIM-01, T-6716: `[portal.limits]` reaches the Portal as its inline bounds, the Portal

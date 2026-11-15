@@ -281,6 +281,11 @@ pub struct Config {
     /// call the Portal API with the viewer's session (T-2476), and another App's. `None` serves
     /// on every host, as a Portal without an edge in front of it does.
     pub apps_url: Option<Url>,
+    /// Where a webhook DataSource's sender posts (`JC_PORTAL_INGEST_URL`, PL-118, e.g.
+    /// `https://portal.{domain}/ingest/default`): a pipeline's address is
+    /// `{ingest_url}/{project}.{pipeline}/{dataSource}`. `None`: this installation publishes no
+    /// ingest listener, and the DataSource page says so.
+    pub ingest_url: Option<String>,
     /// Whether this Portal answers the App hosts under `apps_url` itself (`JC_PORTAL_SERVE_APP_HOSTS=true`,
     /// jc with its `*.apps.{domain}` entry): every request on `{name}.apps.{domain}` reaches App
     /// `name` alone ([`crate::apps::app_host`]), as the edge file has APISIX do where an edge
@@ -501,6 +506,7 @@ impl std::fmt::Debug for Config {
             .field("reconciler_state_dir", &self.reconciler_state_dir)
             .field("removal_hold_percent", &self.removal_hold_percent)
             .field("apps_url", &self.apps_url.as_ref().map(Url::as_str))
+            .field("ingest_url", &self.ingest_url)
             .field("serve_app_hosts", &self.serve_app_hosts)
             .field("app_pods", &self.app_pods)
             .field("artifact_store", &self.artifact_store)
@@ -967,6 +973,33 @@ fn removal_hold_percent(lookup: &impl Fn(&str) -> Option<String>) -> Result<u8, 
             var: "JC_PORTAL_REMOVAL_HOLD_PERCENT",
             reason: format!("`{raw}` is not a whole percent from 1 to 100, e.g. 25"),
         })
+}
+
+/// `JC_PORTAL_INGEST_URL`: an absolute `http(s)` URL with a path and no query or fragment,
+/// kept without its trailing `/`.
+fn ingest_url(lookup: &impl Fn(&str) -> Option<String>) -> Result<Option<String>, ConfigError> {
+    let Some(raw) = lookup("JC_PORTAL_INGEST_URL").filter(|v| !v.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let invalid = |reason: &str| ConfigError::Invalid {
+        var: "JC_PORTAL_INGEST_URL",
+        reason: reason.to_owned(),
+    };
+    let url: Url = raw
+        .trim()
+        .parse()
+        .map_err(|e: url::ParseError| invalid(&e.to_string()))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !url.username().is_empty()
+    {
+        return Err(invalid(
+            "an http(s) URL without a query, such as https://portal.example.org/ingest/default",
+        ));
+    }
+    Ok(Some(url.as_str().trim_end_matches('/').to_owned()))
 }
 
 fn apps_url(lookup: &impl Fn(&str) -> Option<String>) -> Result<Option<Url>, ConfigError> {
@@ -2167,6 +2200,7 @@ impl Config {
             lookup("JC_PORTAL_RECONCILER_STATE_DIR").filter(|dir| !dir.trim().is_empty());
         let removal_hold_percent = removal_hold_percent(&lookup)?;
         let apps_url = apps_url(&lookup)?;
+        let ingest_url = ingest_url(&lookup)?;
         let serve_app_hosts = apps_url.is_some()
             && lookup("JC_PORTAL_SERVE_APP_HOSTS").is_some_and(|v| v.trim() == "true");
         let app_pods = app_pods(&lookup)?;
@@ -2265,6 +2299,7 @@ impl Config {
             reconciler_state_dir,
             removal_hold_percent,
             apps_url,
+            ingest_url,
             serve_app_hosts,
             app_pods,
             branding_file,
@@ -2360,6 +2395,7 @@ impl Config {
             reconciler_state_dir: None,
             removal_hold_percent: crate::reconciler::removal_hold::DEFAULT_PERCENT,
             apps_url: None,
+            ingest_url: None,
             serve_app_hosts: false,
             app_pods: std::collections::BTreeMap::new(),
             branding_file: None,

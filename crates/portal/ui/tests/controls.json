@@ -1304,7 +1304,16 @@
         "Button": 1
       },
       "tests": [
-        "context_sources_ui.test.tsx"
+        "context_sources_ui.test.tsx",
+        "datasource_webhook_ui.test.tsx"
+      ]
+    },
+    "src/pages/datasources/WebhookPanel.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "datasource_webhook_ui.test.tsx"
       ]
     },
     "src/pages/datasources/DataSourcesPage.tsx": {

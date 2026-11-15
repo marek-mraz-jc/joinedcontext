@@ -440,7 +440,8 @@ export function generateSlug(): string {
 /** A `records` path of an http DataSource: 1 to 8 dot-separated names (jc-core records_mapping). */
 export const RECORDS_PATH = "^[A-Za-z0-9_-]{1,64}(\\.[A-Za-z0-9_-]{1,64}){0,7}$";
 
-export const DATA_SOURCE_TYPES = ["http", "mqtt", "websocket", "gtfs-rt"] as const;
+// A webhook last: the one type a sender pushes to, rendered on the runner's ingest listener (PL-118).
+export const DATA_SOURCE_TYPES = ["http", "mqtt", "websocket", "gtfs-rt", "webhook"] as const;
 
 export type TypedDataSourceType = (typeof DATA_SOURCE_TYPES)[number];
 
@@ -456,6 +457,7 @@ export const CONNECTION_BLOCK: Record<TypedDataSourceType, string> = {
   http: "http",
   websocket: "webSocket",
   "gtfs-rt": "gtfsRt",
+  webhook: "webhook",
 };
 
 /**
@@ -656,6 +658,74 @@ export function dataSourceSchema(
         openMessage: { type: "string", title: t("datasources.field.openMessage") },
       },
     },
+    // PL-118: exactly one credential, chosen first; jc-core refuses none, two, or `public`.
+    webhook: {
+      type: "object",
+      title: t("datasources.type.webhook"),
+      required: ["auth"],
+      properties: {
+        auth: {
+          type: "object",
+          title: t("datasources.field.webhookAuth"),
+          oneOf: [
+            {
+              title: t("datasources.field.webhookHmac"),
+              required: ["hmac"],
+              properties: {
+                hmac: {
+                  type: "object",
+                  title: t("datasources.field.webhookHmac"),
+                  required: ["header", "secretRef"],
+                  properties: {
+                    header: {
+                      type: "string",
+                      title: t("datasources.field.signatureHeader"),
+                      description: t("datasources.field.signatureHeaderHelp"),
+                      pattern: "^[A-Za-z0-9!#$%&'*+.^_`|~-]+$",
+                      maxLength: 128,
+                      examples: ["X-Hub-Signature-256"],
+                    },
+                    secretRef: {
+                      ...secretRef(t, t("datasources.field.signingSecret"), secrets),
+                      description: t("datasources.field.signingSecretHelp"),
+                    },
+                  },
+                },
+              },
+            },
+            {
+              title: t("datasources.field.webhookBearer"),
+              required: ["bearer"],
+              properties: {
+                bearer: {
+                  type: "object",
+                  title: t("datasources.field.webhookBearer"),
+                  required: ["tokenRef"],
+                  properties: {
+                    tokenRef: {
+                      ...secretRef(t, t("datasources.field.bearerToken"), secrets),
+                      description: t("datasources.field.bearerTokenHelp"),
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+        maxBodyBytes: {
+          type: "integer",
+          title: t("datasources.field.maxBodyBytes"),
+          minimum: 1,
+          maximum: 16777216,
+        },
+        maxInFlight: {
+          type: "integer",
+          title: t("datasources.field.maxInFlight"),
+          minimum: 1,
+          maximum: 1024,
+        },
+      },
+    },
     "gtfs-rt": {
       type: "object",
       title: t("datasources.type.gtfs-rt"),
@@ -679,7 +749,8 @@ export function dataSourceSchema(
       name,
       title,
       [CONNECTION_BLOCK[type]]: connection[type],
-      tls,
+      // A webhook is called over the installation's own HTTPS edge: no certificate to trust.
+      ...(type === "webhook" ? {} : { tls }),
     },
   };
 }
@@ -687,6 +758,9 @@ export function dataSourceSchema(
 /** Long free text gets a text area; the rest is default rendering. */
 export const dataSourceUiSchema: UiSchema = {
   webSocket: { openMessage: { "ui:widget": "textarea" } },
+  // Each credential choice renders with a uiSchema of its own, so the choice's help is not said a
+  // second time inside it and the one-field branch reads as its fields (rjsf MultiSchemaField).
+  webhook: { auth: { oneOf: [{}, {}] } },
 };
 
 /** Where a sync source reads from (MF-27): one of the three, chosen before the form opens. */

@@ -39,6 +39,7 @@ pub mod data_access;
 pub mod data_views;
 pub mod datamodels;
 pub mod datasource_test;
+pub mod datasource_webhook;
 pub mod delete;
 pub mod drafts;
 pub mod drift;
@@ -140,6 +141,7 @@ pub fn router() -> Router<AppState> {
         .merge(assistant::router())
         .merge(pipeline_test::router())
         .merge(datasource_test::router())
+        .merge(datasource_webhook::router())
         .merge(blueprints::router())
         .merge(branding::router())
         .merge(catalogue::router())

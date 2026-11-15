@@ -91,6 +91,11 @@ fn reading(
     capture: &str,
     envelope: String,
 ) -> Result<Value, ApiError> {
+    if source.source_type == DataSourceType::Webhook {
+        return Err(ApiError::BadRequest(
+            "a webhook has no feed to read: it waits for its sender; use Send test event on the DataSource page".into(),
+        ));
+    }
     let context = InputContext::new(name, project, reader);
     let input = serde_json::to_value(input_of(source, &context))
         .map_err(|e| ApiError::Internal(e.to_string()))?;

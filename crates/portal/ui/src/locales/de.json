@@ -2410,7 +2410,8 @@
       "mqtt": "MQTT-Broker",
       "http": "HTTP-Endpunkt",
       "websocket": "WebSocket-Stream",
-      "gtfs-rt": "GTFS-Realtime-Feed"
+      "gtfs-rt": "GTFS-Realtime-Feed",
+      "webhook": "Webhook (gesendete Ereignisse)"
     },
     "dialog": {
       "create": "Neue Datenquelle",
@@ -2418,7 +2419,8 @@
       "mqtt": "Abonniert Topics auf einem Broker und übergibt jede Nachricht der Pipeline, die ihn referenziert.",
       "http": "Ruft eine URL im Takt der Pipeline ab.",
       "websocket": "Hält einen Socket offen und liest die Nachrichten, die der Server sendet.",
-      "gtfs-rt": "Liest einen GTFS-Realtime-Feed; das Protobuf wird vor der Pipeline dekodiert."
+      "gtfs-rt": "Liest einen GTFS-Realtime-Feed; das Protobuf wird vor der Pipeline dekodiert.",
+      "webhook": "Wartet darauf, dass ein Absender Ereignisse sendet; sobald eine Pipeline die Quelle liest, zeigt die Seite die Adresse für ihn."
     },
     "field": {
       "type": "Typ",
@@ -2452,7 +2454,18 @@
       "broker": "Broker",
       "externalBroker": "Externer Broker (URL und Secret unten)",
       "records": "Datensätze stehen in",
-      "recordsHelp": "Bei einer JSON-Antwort mit den Datensätzen in einem Array der Pfad dorthin, zum Beispiel data.stations; jedes Element wird ein Datensatz. Leer gelassen wird die ganze Antwort ein Datensatz."
+      "recordsHelp": "Bei einer JSON-Antwort mit den Datensätzen in einem Array der Pfad dorthin, zum Beispiel data.stations; jedes Element wird ein Datensatz. Leer gelassen wird die ganze Antwort ein Datensatz.",
+      "webhookAuth": "Wie sich der Absender ausweist",
+      "webhookHmac": "Signierter Inhalt (HMAC SHA-256)",
+      "webhookBearer": "Bearer-Token",
+      "signatureHeader": "Signatur-Header",
+      "signatureHeaderHelp": "Der Header, in den Ihr Absender die Signatur schreibt, zum Beispiel X-Hub-Signature-256.",
+      "signingSecret": "Signaturgeheimnis",
+      "signingSecretHelp": "Das Geheimnis mit dem gemeinsamen Signaturschlüssel, zum Beispiel ttn-webhook mit dem Schlüssel secret. Legen Sie es zuerst unter Geheimnisse an.",
+      "bearerToken": "Zugriffstoken",
+      "bearerTokenHelp": "Das Geheimnis mit dem Token, das der Absender hinter Bearer schreibt, zum Beispiel chirpstack mit dem Schlüssel token.",
+      "maxBodyBytes": "Größter Inhalt (Bytes)",
+      "maxInFlight": "Ereignisse gleichzeitig"
     },
     "probe": {
       "title": "Ein Abruf des Feeds",
@@ -2541,6 +2554,29 @@
       "title": "Fertige Einrichtungen",
       "lead": "Eine Einrichtung schreibt die Quelle, ihre Pipeline und ihren Zeitplan in einer Änderung aus wenigen Antworten. Beispiel: ein GBFS-Feed für Leihräder, jede Minute abgefragt.",
       "back": "Zurück zu den Datenquellen"
+    },
+    "webhook": {
+      "title": "Wohin Absender senden",
+      "hint": "Tragen Sie die Adresse einer Pipeline beim Absender ein. Er sendet POST-Anfragen mit dem Header unten.",
+      "header": "HTTP-Header: {header}",
+      "maxBody": "Größter Inhalt: {bytes} Bytes",
+      "noReaders": "Noch liest keine Pipeline diese Quelle, daher hat sie keine Adresse. Legen Sie eine Pipeline an, die sie liest, und kommen Sie zurück.",
+      "unpublished": "Diese Installation veröffentlicht keine Adresse für Webhooks. Bitten Sie eine Administratorin, den Ingest-Eintrag in die Bereitstellung aufzunehmen.",
+      "copy": "Adresse kopieren",
+      "copied": "Adresse kopiert",
+      "test": {
+        "title": "Testereignis senden",
+        "hint": "Sendet den Inhalt unten an die gewählte Pipeline, signiert wie Ihr Absender signiert. Das Ereignis durchläuft die Pipeline wie ein echtes.",
+        "pipeline": "Pipeline",
+        "pipelineHint": "Eine der Pipelines, die diese Quelle lesen, zum Beispiel ttn-uplinks.",
+        "body": "Inhalt",
+        "bodyHint": "Das Ereignis, wie Ihr Absender es senden würde, zum Beispiel das JSON eines Uplinks laut Dokumentation Ihres Anbieters.",
+        "button": "Testereignis senden",
+        "running": "Wird gesendet…",
+        "accepted": "Angenommen ({status}): Die Pipeline hat das Ereignis übernommen.",
+        "refused": "Der Runner antwortete {status}: {answer}",
+        "unauthorized": "Das Geheimnis oder der Header dieser Quelle passt nicht zu dem, was der Runner hat: prüfen Sie beides und senden Sie erneut."
+      }
     }
   },
   "pipelines": {

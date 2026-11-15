@@ -2410,7 +2410,8 @@
       "mqtt": "MQTT broker",
       "http": "HTTP endpoint",
       "websocket": "WebSocket stream",
-      "gtfs-rt": "GTFS-realtime feed"
+      "gtfs-rt": "GTFS-realtime feed",
+      "webhook": "Webhook (pushed events)"
     },
     "group": {
       "typed": "Common connections",
@@ -2437,7 +2438,8 @@
       "mqtt": "Subscribes to topics on a broker and hands every message to the pipeline that references it.",
       "http": "Polls a URL on the pipeline's own period.",
       "websocket": "Holds a socket open and reads the messages the server pushes.",
-      "gtfs-rt": "Reads a GTFS-realtime feed; the protobuf is decoded before the pipeline sees it."
+      "gtfs-rt": "Reads a GTFS-realtime feed; the protobuf is decoded before the pipeline sees it.",
+      "webhook": "Waits for a sender to post events; the page shows the address to give it once a pipeline reads the source."
     },
     "field": {
       "type": "Type",
@@ -2471,7 +2473,18 @@
       "broker": "Broker",
       "externalBroker": "External broker (URL and secret below)",
       "records": "Records are in",
-      "recordsHelp": "For a JSON answer that holds its records in an array, the path to it, for example data.stations; each item becomes one record. Leave empty to read the whole answer as one record."
+      "recordsHelp": "For a JSON answer that holds its records in an array, the path to it, for example data.stations; each item becomes one record. Leave empty to read the whole answer as one record.",
+      "webhookAuth": "How the sender proves itself",
+      "webhookHmac": "Signed body (HMAC SHA-256)",
+      "webhookBearer": "Bearer token",
+      "signatureHeader": "Signature header",
+      "signatureHeaderHelp": "The header your sender writes the signature into, for example X-Hub-Signature-256.",
+      "signingSecret": "Signing secret",
+      "signingSecretHelp": "The secret holding the shared signing key, for example ttn-webhook with key secret. Add it under Secrets first.",
+      "bearerToken": "Token",
+      "bearerTokenHelp": "The secret holding the token the sender puts after Bearer, for example chirpstack with key token.",
+      "maxBodyBytes": "Largest body (bytes)",
+      "maxInFlight": "Events at once"
     },
     "probe": {
       "title": "One fetch of the feed",
@@ -2541,6 +2554,29 @@
       "title": "Ready-made set-ups",
       "lead": "A set-up writes the source, its pipeline and its schedule in one change, from a few answers. Example: a city-bike GBFS feed polled every minute.",
       "back": "Back to data sources"
+    },
+    "webhook": {
+      "title": "Where senders post",
+      "hint": "Paste the address of a pipeline into your sender. It sends POST requests with the header below.",
+      "header": "Header: {header}",
+      "maxBody": "Largest body: {bytes} bytes",
+      "noReaders": "No pipeline reads this source yet, so it has no address. Create a pipeline that reads it, then come back.",
+      "unpublished": "This installation publishes no address for webhooks. Ask an administrator to add the ingest entry to the deployment.",
+      "copy": "Copy address",
+      "copied": "Address copied",
+      "test": {
+        "title": "Send test event",
+        "hint": "Sends the body below to the pipeline you pick, signed the way your sender signs it. The event runs through the pipeline like a real one.",
+        "pipeline": "Pipeline",
+        "pipelineHint": "One of the pipelines that read this source, for example ttn-uplinks.",
+        "body": "Body",
+        "bodyHint": "The event as your sender would post it, for example the JSON of one uplink your provider documents.",
+        "button": "Send test event",
+        "running": "Sending…",
+        "accepted": "Accepted ({status}): the pipeline took the event.",
+        "refused": "The runner answered {status}: {answer}",
+        "unauthorized": "The secret or the header this source names does not match what the runner holds: check both, then send again."
+      }
     }
   },
   "pipelines": {

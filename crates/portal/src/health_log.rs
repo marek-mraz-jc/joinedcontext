@@ -397,7 +397,7 @@ fn reconcile(project: &str, kind: Kind, envelope: &ResourceEnvelope) -> Finding 
 }
 
 /// The pipelines of the mirror that read DataSource `name` of `project`, by name.
-fn readers_of(mirror: &Mirror, project: &str, name: &str) -> Vec<String> {
+pub(crate) fn readers_of(mirror: &Mirror, project: &str, name: &str) -> Vec<String> {
     let names = |spec: &serde_json::Value| -> bool {
         let reads = |source: &serde_json::Value| {
             source
