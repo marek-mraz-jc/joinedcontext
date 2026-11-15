@@ -1,0 +1,1824 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.201",
+   "geometry": null,
+   "properties": {
+    "id": 201,
+    "c": 1.3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.202",
+   "geometry": null,
+   "properties": {
+    "id": 202,
+    "c": 1.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.203",
+   "geometry": null,
+   "properties": {
+    "id": 203,
+    "c": 1.6
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.204",
+   "geometry": null,
+   "properties": {
+    "id": 204,
+    "c": 1.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.205",
+   "geometry": null,
+   "properties": {
+    "id": 205,
+    "c": 1.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.206",
+   "geometry": null,
+   "properties": {
+    "id": 206,
+    "c": 1.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.207",
+   "geometry": null,
+   "properties": {
+    "id": 207,
+    "c": 1.2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.208",
+   "geometry": null,
+   "properties": {
+    "id": 208,
+    "c": 1.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.209",
+   "geometry": null,
+   "properties": {
+    "id": 209,
+    "c": 1.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.210",
+   "geometry": null,
+   "properties": {
+    "id": 210,
+    "c": 2.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.211",
+   "geometry": null,
+   "properties": {
+    "id": 211,
+    "c": 3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.212",
+   "geometry": null,
+   "properties": {
+    "id": 212,
+    "c": 2.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.213",
+   "geometry": null,
+   "properties": {
+    "id": 213,
+    "c": 0.7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.214",
+   "geometry": null,
+   "properties": {
+    "id": 214,
+    "c": 0.7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.215",
+   "geometry": null,
+   "properties": {
+    "id": 215,
+    "c": 2.6
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.216",
+   "geometry": null,
+   "properties": {
+    "id": 216,
+    "c": 2.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.217",
+   "geometry": null,
+   "properties": {
+    "id": 217,
+    "c": 1.7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.218",
+   "geometry": null,
+   "properties": {
+    "id": 218,
+    "c": 3.2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.219",
+   "geometry": null,
+   "properties": {
+    "id": 219,
+    "c": 1.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.220",
+   "geometry": null,
+   "properties": {
+    "id": 220,
+    "c": 3.3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.221",
+   "geometry": null,
+   "properties": {
+    "id": 221,
+    "c": 3.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.222",
+   "geometry": null,
+   "properties": {
+    "id": 222,
+    "c": 3.3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.223",
+   "geometry": null,
+   "properties": {
+    "id": 223,
+    "c": 2.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.224",
+   "geometry": null,
+   "properties": {
+    "id": 224,
+    "c": 1.7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.225",
+   "geometry": null,
+   "properties": {
+    "id": 225,
+    "c": 1.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.226",
+   "geometry": null,
+   "properties": {
+    "id": 226,
+    "c": 1.6
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.227",
+   "geometry": null,
+   "properties": {
+    "id": 227,
+    "c": 3.2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.228",
+   "geometry": null,
+   "properties": {
+    "id": 228,
+    "c": 1.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.229",
+   "geometry": null,
+   "properties": {
+    "id": 229,
+    "c": 1.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.230",
+   "geometry": null,
+   "properties": {
+    "id": 230,
+    "c": 2.3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.231",
+   "geometry": null,
+   "properties": {
+    "id": 231,
+    "c": 1.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.232",
+   "geometry": null,
+   "properties": {
+    "id": 232,
+    "c": 2.2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.233",
+   "geometry": null,
+   "properties": {
+    "id": 233,
+    "c": 2.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.234",
+   "geometry": null,
+   "properties": {
+    "id": 234,
+    "c": 2.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.235",
+   "geometry": null,
+   "properties": {
+    "id": 235,
+    "c": 2.2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.236",
+   "geometry": null,
+   "properties": {
+    "id": 236,
+    "c": 2.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.237",
+   "geometry": null,
+   "properties": {
+    "id": 237,
+    "c": 2.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.238",
+   "geometry": null,
+   "properties": {
+    "id": 238,
+    "c": 2.8
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.239",
+   "geometry": null,
+   "properties": {
+    "id": 239,
+    "c": 2.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.240",
+   "geometry": null,
+   "properties": {
+    "id": 240,
+    "c": 2.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.241",
+   "geometry": null,
+   "properties": {
+    "id": 241,
+    "c": 2.7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.242",
+   "geometry": null,
+   "properties": {
+    "id": 242,
+    "c": 2.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.243",
+   "geometry": null,
+   "properties": {
+    "id": 243,
+    "c": 2.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.244",
+   "geometry": null,
+   "properties": {
+    "id": 244,
+    "c": 2.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.245",
+   "geometry": null,
+   "properties": {
+    "id": 245,
+    "c": 2.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.246",
+   "geometry": null,
+   "properties": {
+    "id": 246,
+    "c": 2.8
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.247",
+   "geometry": null,
+   "properties": {
+    "id": 247,
+    "c": 2.3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.248",
+   "geometry": null,
+   "properties": {
+    "id": 248,
+    "c": 2.7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.249",
+   "geometry": null,
+   "properties": {
+    "id": 249,
+    "c": 2.6
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.250",
+   "geometry": null,
+   "properties": {
+    "id": 250,
+    "c": 2.6
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.251",
+   "geometry": null,
+   "properties": {
+    "id": 251,
+    "c": 2.6
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.252",
+   "geometry": null,
+   "properties": {
+    "id": 252,
+    "c": 2.6
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.253",
+   "geometry": null,
+   "properties": {
+    "id": 253,
+    "c": 2.7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.254",
+   "geometry": null,
+   "properties": {
+    "id": 254,
+    "c": 1.7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.255",
+   "geometry": null,
+   "properties": {
+    "id": 255,
+    "c": 2.3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.256",
+   "geometry": null,
+   "properties": {
+    "id": 256,
+    "c": 3.2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.257",
+   "geometry": null,
+   "properties": {
+    "id": 257,
+    "c": 3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.258",
+   "geometry": null,
+   "properties": {
+    "id": 258,
+    "c": 3.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.259",
+   "geometry": null,
+   "properties": {
+    "id": 259,
+    "c": 3.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.260",
+   "geometry": null,
+   "properties": {
+    "id": 260,
+    "c": 1.3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.261",
+   "geometry": null,
+   "properties": {
+    "id": 261,
+    "c": 1.3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.262",
+   "geometry": null,
+   "properties": {
+    "id": 262,
+    "c": 2.7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.263",
+   "geometry": null,
+   "properties": {
+    "id": 263,
+    "c": 2.6
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.264",
+   "geometry": null,
+   "properties": {
+    "id": 264,
+    "c": 1.7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.265",
+   "geometry": null,
+   "properties": {
+    "id": 265,
+    "c": 2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.266",
+   "geometry": null,
+   "properties": {
+    "id": 266,
+    "c": 1.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.267",
+   "geometry": null,
+   "properties": {
+    "id": 267,
+    "c": 2.2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.268",
+   "geometry": null,
+   "properties": {
+    "id": 268,
+    "c": 2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.269",
+   "geometry": null,
+   "properties": {
+    "id": 269,
+    "c": 2.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.270",
+   "geometry": null,
+   "properties": {
+    "id": 270,
+    "c": 2.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.271",
+   "geometry": null,
+   "properties": {
+    "id": 271,
+    "c": 2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.272",
+   "geometry": null,
+   "properties": {
+    "id": 272,
+    "c": 1.8
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.273",
+   "geometry": null,
+   "properties": {
+    "id": 273,
+    "c": 2.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.274",
+   "geometry": null,
+   "properties": {
+    "id": 274,
+    "c": 2.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.275",
+   "geometry": null,
+   "properties": {
+    "id": 275,
+    "c": 1.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.276",
+   "geometry": null,
+   "properties": {
+    "id": 276,
+    "c": 2.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.277",
+   "geometry": null,
+   "properties": {
+    "id": 277,
+    "c": 2.7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.278",
+   "geometry": null,
+   "properties": {
+    "id": 278,
+    "c": 3.3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.279",
+   "geometry": null,
+   "properties": {
+    "id": 279,
+    "c": 2.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.280",
+   "geometry": null,
+   "properties": {
+    "id": 280,
+    "c": 2.2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.281",
+   "geometry": null,
+   "properties": {
+    "id": 281,
+    "c": 2.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.282",
+   "geometry": null,
+   "properties": {
+    "id": 282,
+    "c": 2.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.283",
+   "geometry": null,
+   "properties": {
+    "id": 283,
+    "c": 1.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.284",
+   "geometry": null,
+   "properties": {
+    "id": 284,
+    "c": 2.7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.285",
+   "geometry": null,
+   "properties": {
+    "id": 285,
+    "c": 2.6
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.286",
+   "geometry": null,
+   "properties": {
+    "id": 286,
+    "c": 2.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.287",
+   "geometry": null,
+   "properties": {
+    "id": 287,
+    "c": 2.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.288",
+   "geometry": null,
+   "properties": {
+    "id": 288,
+    "c": 2.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.289",
+   "geometry": null,
+   "properties": {
+    "id": 289,
+    "c": 1.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.290",
+   "geometry": null,
+   "properties": {
+    "id": 290,
+    "c": 2.7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.291",
+   "geometry": null,
+   "properties": {
+    "id": 291,
+    "c": 1.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.292",
+   "geometry": null,
+   "properties": {
+    "id": 292,
+    "c": 1.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.293",
+   "geometry": null,
+   "properties": {
+    "id": 293,
+    "c": 2.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.294",
+   "geometry": null,
+   "properties": {
+    "id": 294,
+    "c": 1.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.295",
+   "geometry": null,
+   "properties": {
+    "id": 295,
+    "c": 1.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.296",
+   "geometry": null,
+   "properties": {
+    "id": 296,
+    "c": 2.8
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.297",
+   "geometry": null,
+   "properties": {
+    "id": 297,
+    "c": 2.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.298",
+   "geometry": null,
+   "properties": {
+    "id": 298,
+    "c": 2.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.299",
+   "geometry": null,
+   "properties": {
+    "id": 299,
+    "c": 2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.300",
+   "geometry": null,
+   "properties": {
+    "id": 300,
+    "c": 2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.301",
+   "geometry": null,
+   "properties": {
+    "id": 301,
+    "c": 2.7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.302",
+   "geometry": null,
+   "properties": {
+    "id": 302,
+    "c": 3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.303",
+   "geometry": null,
+   "properties": {
+    "id": 303,
+    "c": 3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.304",
+   "geometry": null,
+   "properties": {
+    "id": 304,
+    "c": 2.3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.305",
+   "geometry": null,
+   "properties": {
+    "id": 305,
+    "c": 2.8
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.306",
+   "geometry": null,
+   "properties": {
+    "id": 306,
+    "c": 2.3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.307",
+   "geometry": null,
+   "properties": {
+    "id": 307,
+    "c": 2.2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.308",
+   "geometry": null,
+   "properties": {
+    "id": 308,
+    "c": 2.2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.309",
+   "geometry": null,
+   "properties": {
+    "id": 309,
+    "c": 2.2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.310",
+   "geometry": null,
+   "properties": {
+    "id": 310,
+    "c": 2.2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.311",
+   "geometry": null,
+   "properties": {
+    "id": 311,
+    "c": 2.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.312",
+   "geometry": null,
+   "properties": {
+    "id": 312,
+    "c": 2.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.313",
+   "geometry": null,
+   "properties": {
+    "id": 313,
+    "c": 3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.314",
+   "geometry": null,
+   "properties": {
+    "id": 314,
+    "c": 2.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.315",
+   "geometry": null,
+   "properties": {
+    "id": 315,
+    "c": 5.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.316",
+   "geometry": null,
+   "properties": {
+    "id": 316,
+    "c": 3.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.317",
+   "geometry": null,
+   "properties": {
+    "id": 317,
+    "c": 5.3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.318",
+   "geometry": null,
+   "properties": {
+    "id": 318,
+    "c": 5.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.319",
+   "geometry": null,
+   "properties": {
+    "id": 319,
+    "c": 5.6
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.320",
+   "geometry": null,
+   "properties": {
+    "id": 320,
+    "c": 8.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.321",
+   "geometry": null,
+   "properties": {
+    "id": 321,
+    "c": 7.7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.322",
+   "geometry": null,
+   "properties": {
+    "id": 322,
+    "c": 10.3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.323",
+   "geometry": null,
+   "properties": {
+    "id": 323,
+    "c": 2.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.324",
+   "geometry": null,
+   "properties": {
+    "id": 324,
+    "c": 2.2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.325",
+   "geometry": null,
+   "properties": {
+    "id": 325,
+    "c": 2.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.326",
+   "geometry": null,
+   "properties": {
+    "id": 326,
+    "c": 6.3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.327",
+   "geometry": null,
+   "properties": {
+    "id": 327,
+    "c": 9.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.328",
+   "geometry": null,
+   "properties": {
+    "id": 328,
+    "c": 2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.329",
+   "geometry": null,
+   "properties": {
+    "id": 329,
+    "c": 7.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.330",
+   "geometry": null,
+   "properties": {
+    "id": 330,
+    "c": 4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.331",
+   "geometry": null,
+   "properties": {
+    "id": 331,
+    "c": 9.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.332",
+   "geometry": null,
+   "properties": {
+    "id": 332,
+    "c": 9.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.333",
+   "geometry": null,
+   "properties": {
+    "id": 333,
+    "c": 9.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.334",
+   "geometry": null,
+   "properties": {
+    "id": 334,
+    "c": 8.8
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.335",
+   "geometry": null,
+   "properties": {
+    "id": 335,
+    "c": 5.6
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.336",
+   "geometry": null,
+   "properties": {
+    "id": 336,
+    "c": 11.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.337",
+   "geometry": null,
+   "properties": {
+    "id": 337,
+    "c": 12.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.338",
+   "geometry": null,
+   "properties": {
+    "id": 338,
+    "c": 10.6
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.339",
+   "geometry": null,
+   "properties": {
+    "id": 339,
+    "c": 8.8
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.340",
+   "geometry": null,
+   "properties": {
+    "id": 340,
+    "c": 6
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.341",
+   "geometry": null,
+   "properties": {
+    "id": 341,
+    "c": 4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.342",
+   "geometry": null,
+   "properties": {
+    "id": 342,
+    "c": 6
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.343",
+   "geometry": null,
+   "properties": {
+    "id": 343,
+    "c": 7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.344",
+   "geometry": null,
+   "properties": {
+    "id": 344,
+    "c": 11.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.345",
+   "geometry": null,
+   "properties": {
+    "id": 345,
+    "c": 11.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.346",
+   "geometry": null,
+   "properties": {
+    "id": 346,
+    "c": 10.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.347",
+   "geometry": null,
+   "properties": {
+    "id": 347,
+    "c": 9.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.348",
+   "geometry": null,
+   "properties": {
+    "id": 348,
+    "c": 1.6
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.349",
+   "geometry": null,
+   "properties": {
+    "id": 349,
+    "c": 1.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.350",
+   "geometry": null,
+   "properties": {
+    "id": 350,
+    "c": 2.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.351",
+   "geometry": null,
+   "properties": {
+    "id": 351,
+    "c": 2.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.352",
+   "geometry": null,
+   "properties": {
+    "id": 352,
+    "c": 2.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.353",
+   "geometry": null,
+   "properties": {
+    "id": 353,
+    "c": 2.8
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.354",
+   "geometry": null,
+   "properties": {
+    "id": 354,
+    "c": 2.4
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.355",
+   "geometry": null,
+   "properties": {
+    "id": 355,
+    "c": 2.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.356",
+   "geometry": null,
+   "properties": {
+    "id": 356,
+    "c": 2.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.357",
+   "geometry": null,
+   "properties": {
+    "id": 357,
+    "c": 8.2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.358",
+   "geometry": null,
+   "properties": {
+    "id": 358,
+    "c": 6.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.359",
+   "geometry": null,
+   "properties": {
+    "id": 359,
+    "c": 6.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.360",
+   "geometry": null,
+   "properties": {
+    "id": 360,
+    "c": 6.6
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.361",
+   "geometry": null,
+   "properties": {
+    "id": 361,
+    "c": 5.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.362",
+   "geometry": null,
+   "properties": {
+    "id": 362,
+    "c": 3.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.363",
+   "geometry": null,
+   "properties": {
+    "id": 363,
+    "c": 2.8
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.364",
+   "geometry": null,
+   "properties": {
+    "id": 364,
+    "c": 1.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.365",
+   "geometry": null,
+   "properties": {
+    "id": 365,
+    "c": 1.6
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.366",
+   "geometry": null,
+   "properties": {
+    "id": 366,
+    "c": 1.6
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.367",
+   "geometry": null,
+   "properties": {
+    "id": 367,
+    "c": 2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.368",
+   "geometry": null,
+   "properties": {
+    "id": 368,
+    "c": 1.7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.369",
+   "geometry": null,
+   "properties": {
+    "id": 369,
+    "c": 1.8
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.370",
+   "geometry": null,
+   "properties": {
+    "id": 370,
+    "c": 1.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.371",
+   "geometry": null,
+   "properties": {
+    "id": 371,
+    "c": 1.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.372",
+   "geometry": null,
+   "properties": {
+    "id": 372,
+    "c": 1.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.373",
+   "geometry": null,
+   "properties": {
+    "id": 373,
+    "c": 2.2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.374",
+   "geometry": null,
+   "properties": {
+    "id": 374,
+    "c": 1.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.375",
+   "geometry": null,
+   "properties": {
+    "id": 375,
+    "c": 1.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.376",
+   "geometry": null,
+   "properties": {
+    "id": 376,
+    "c": 1.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.377",
+   "geometry": null,
+   "properties": {
+    "id": 377,
+    "c": 1.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.378",
+   "geometry": null,
+   "properties": {
+    "id": 378,
+    "c": 1.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.379",
+   "geometry": null,
+   "properties": {
+    "id": 379,
+    "c": 1.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.380",
+   "geometry": null,
+   "properties": {
+    "id": 380,
+    "c": 1.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.381",
+   "geometry": null,
+   "properties": {
+    "id": 381,
+    "c": 1.7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.382",
+   "geometry": null,
+   "properties": {
+    "id": 382,
+    "c": 1.7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.383",
+   "geometry": null,
+   "properties": {
+    "id": 383,
+    "c": 1.7
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.384",
+   "geometry": null,
+   "properties": {
+    "id": 384,
+    "c": 2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.385",
+   "geometry": null,
+   "properties": {
+    "id": 385,
+    "c": 1.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.386",
+   "geometry": null,
+   "properties": {
+    "id": 386,
+    "c": 1.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.387",
+   "geometry": null,
+   "properties": {
+    "id": 387,
+    "c": 1.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.388",
+   "geometry": null,
+   "properties": {
+    "id": 388,
+    "c": 1.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.389",
+   "geometry": null,
+   "properties": {
+    "id": 389,
+    "c": 2.2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.390",
+   "geometry": null,
+   "properties": {
+    "id": 390,
+    "c": 2.2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.391",
+   "geometry": null,
+   "properties": {
+    "id": 391,
+    "c": 1.5
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.392",
+   "geometry": null,
+   "properties": {
+    "id": 392,
+    "c": 2.2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.393",
+   "geometry": null,
+   "properties": {
+    "id": 393,
+    "c": 1.2
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.394",
+   "geometry": null,
+   "properties": {
+    "id": 394,
+    "c": 1.9
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.395",
+   "geometry": null,
+   "properties": {
+    "id": 395,
+    "c": 1.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.396",
+   "geometry": null,
+   "properties": {
+    "id": 396,
+    "c": 1.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.397",
+   "geometry": null,
+   "properties": {
+    "id": 397,
+    "c": 1.3
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.398",
+   "geometry": null,
+   "properties": {
+    "id": 398,
+    "c": 1.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.399",
+   "geometry": null,
+   "properties": {
+    "id": 399,
+    "c": 1.1
+   }
+  },
+  {
+   "type": "Feature",
+   "id": "FMI_Paikkakohtainen_vyorymakerroin_piste.400",
+   "geometry": null,
+   "properties": {
+    "id": 400,
+    "c": 1.9
+   }
+  }
+ ],
+ "totalFeatures": 453,
+ "numberMatched": 453,
+ "numberReturned": 200,
+ "timeStamp": "2026-11-15T19:24:51.505Z",
+ "links": [
+  {
+   "title": "previous page",
+   "type": "application/json",
+   "rel": "previous",
+   "href": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?PROPERTYNAME=id%2Cc&REQUEST=GetFeature&OUTPUTFORMAT=application%2Fjson&SRSNAME=EPSG%3A4326&VERSION=2.0.0&TYPENAMES=avoindata%3AFMI_Paikkakohtainen_vyorymakerroin_piste&COUNT=200&SERVICE=WFS&STARTINDEX=0"
+  },
+  {
+   "title": "next page",
+   "type": "application/json",
+   "rel": "next",
+   "href": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?PROPERTYNAME=id%2Cc&REQUEST=GetFeature&OUTPUTFORMAT=application%2Fjson&SRSNAME=EPSG%3A4326&VERSION=2.0.0&TYPENAMES=avoindata%3AFMI_Paikkakohtainen_vyorymakerroin_piste&COUNT=200&SERVICE=WFS&STARTINDEX=400"
+  }
+ ],
+ "crs": null
+}

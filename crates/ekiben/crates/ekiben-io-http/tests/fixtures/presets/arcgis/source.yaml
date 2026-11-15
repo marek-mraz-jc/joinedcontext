@@ -1,0 +1,12 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata: { name: arcgis, namespace: bb-ovzdusie }
+spec:
+  type: http
+  http:
+    url: https://geodata.csu.gov.cz/server/rest/services/Hosted/Open_data_RSO/FeatureServer/17/query?returnGeometry=false
+    preset:
+      kind: arcgisFeature
+      outFields: [objectid, naz_mco]
+      objectIdField: objectid
+      pageSize: 60

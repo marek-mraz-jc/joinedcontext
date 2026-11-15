@@ -45,6 +45,7 @@ pub const PROCESSORS: &[&str] = &[
     "group_by_value",
     "http",
     "insert_part",
+    "javascript",
     "jmespath",
     "jq",
     "json_schema",

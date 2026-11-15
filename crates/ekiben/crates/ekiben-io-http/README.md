@@ -7,6 +7,51 @@ HTTP components of ekiben: the `http` processor, the `http_client` input and out
 Bento 1.22 field names, defaults and answers are kept. What ekiben adds or refuses is listed
 here.
 
+## `http` and `http_client` input: `paginate`
+
+ekiben extension (T-7056). `paginate` walks a paged source page by page, so a mapping no longer
+writes its own loop around `http`. Without the key both components behave exactly as in Bento.
+
+```yaml
+paginate:
+  mode: offset                  # page | offset | cursor | link | next_url
+  offset_param: resultOffset
+  limit_param: resultRecordCount
+  limit: 1000
+  records: features             # the array of one page
+  more: exceededTransferLimit   # a boolean: another page exists
+  order_by: {param: orderByFields, value: OBJECTID}
+  max_pages: 1000               # 1..10000, default 1000
+  max_records: 50000
+  delay: 200ms
+```
+
+- Modes:
+  - `page`: `param` (default `page`), `start` (1), and `size_param` with `size`.
+  - `offset`: `offset_param` (`offset`), `limit_param` (`limit`), `limit` (required), `start` (0).
+    The offset moves by the records received, so a server that caps a page below `limit` loses
+    nothing.
+  - `cursor`: the next cursor from `cursor` (a body path) or `cursor_query` (an interpolation,
+    `${! json("meta.next") }`), sent as `cursor_param` or `cursor_header`.
+  - `link`: the RFC 8288 `Link` header entry with `rel="next"`.
+  - `next_url`: `next`, a body path to the next URL: `@odata.nextLink`, `@iot.nextLink`,
+    `links[rel=next].href`, `_links.next` (an object's `href` is taken).
+- Body paths join keys with `.`; a key holding a dot (`@odata.nextLink`) matches whole, `[n]`
+  picks an index and `[key=value]` the first element whose `key` is `value`.
+- Stop rules: an empty page, the `total` (read from the first page) reached, `more` false, a
+  short page (page and offset modes without `more`), or no next cursor or URL.
+- A run is complete only when a stop rule held. Each of these fails it: `max_pages` or
+  `max_records` reached first, a total that does not match the records read, a page whose
+  `records` path holds no array, a page naming itself (the same cursor or URL) as the next one.
+  The input then ends with that error instead of the end of input, and a page the output nacked
+  fails the next read. The processor flags the message with the error and hands on no page.
+- Each page is one message with `http_page` (1-based) metadata; the processor also sets
+  `http_page_count` on every page of a complete walk.
+- A next URL must keep the configured scheme, host and port and carry no credentials, or the
+  paging step is refused. Every page passes the outbound rule as any request.
+- Refused together: `paginate` with `stream.enabled` on the input, with `batch_as_multipart` or
+  `parallel` on the processor.
+
 ## `http_server`
 
 ekiben extensions:

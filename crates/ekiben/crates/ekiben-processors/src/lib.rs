@@ -11,6 +11,7 @@ pub mod processor_cached;
 pub mod processor_group_by;
 pub mod processor_group_by_value;
 pub mod resources;
+pub mod spreadsheet;
 pub mod switch;
 pub mod utility;
 pub mod workflow;

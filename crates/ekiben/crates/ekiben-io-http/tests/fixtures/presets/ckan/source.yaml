@@ -1,0 +1,11 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata: { name: ckan, namespace: bb-ovzdusie }
+spec:
+  type: http
+  http:
+    url: https://opendata-ajuntament.barcelona.cat/data/api/3/action/package_search
+    preset:
+      kind: ckan
+      organization: ocupacio
+      pageSize: 1

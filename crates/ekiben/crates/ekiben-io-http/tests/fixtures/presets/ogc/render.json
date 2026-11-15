@@ -1,0 +1,8 @@
+{
+  "paginate": {
+    "mode": "next_url",
+    "next": "links[rel=next].href",
+    "records": "features"
+  },
+  "url": "https://demo.pygeoapi.io/master/collections/lakes/items?limit=10"
+}
